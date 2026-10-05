@@ -125,20 +125,14 @@ async def initial_turn_taint(
     plus the rows it already produced with their recorded origin -- they are
     this turn's own, not carry-in.
     """
-    history_limit, history_max_age = (
-        processing_service.context_preparer.get_history_limits(interface_type)
-    )
-    history_messages = await db.message_history.get_recent(
+    window = await processing_service.load_history_window(
+        db,
         interface_type=interface_type,
         conversation_id=conversation_id,
-        limit=history_limit,
-        max_age=history_max_age,
-        processing_profile_id=processing_service.service_config.id,
         subconversation_id=None,
-        current_time=processing_service.clock.now(),
-        exclude_turn_id=resumed_turn_id,
+        active_turn_id=resumed_turn_id,
     )
-    history_state = prompt_window_taint(history_messages)
+    history_state = prompt_window_taint(window.messages)
     if resumed_turn_id is not None:
         history_state = merge_taint_state_origins(
             history_state,

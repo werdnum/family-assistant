@@ -161,7 +161,7 @@ def _config(profile_id: str, **kwargs: Any) -> ProcessingServiceConfig:  # noqa:
         id=profile_id,
         prompts={"system_prompt": f"You are the {profile_id} profile."},
         timezone=ZoneInfo("UTC"),
-        max_history_messages=200,
+        history_budget_chars=100_000,
         history_max_age_hours=24,
         tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,

@@ -185,7 +185,6 @@ async def test_add_and_retrieve_note_rule_mock(
     # Processing Service - Add dummy config values needed by the new __init__
     dummy_prompts = {"system_prompt": "Test system prompt."}
     dummy_timezone_str = "UTC"
-    dummy_max_history = 5
     dummy_history_age = 24
     dummy_app_config = AppConfig()  # Typed app_config
 
@@ -206,7 +205,7 @@ async def test_add_and_retrieve_note_rule_mock(
     test_service_config_obj_notes = ProcessingServiceConfig(
         prompts=dummy_prompts,
         timezone=ZoneInfo(dummy_timezone_str),
-        max_history_messages=dummy_max_history,
+        history_budget_chars=100_000,
         history_max_age_hours=dummy_history_age,
         tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.CONFIRM,  # Added

@@ -6,7 +6,7 @@ import random
 import re
 import uuid
 from collections import OrderedDict
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, NotRequired, TypedDict, cast
@@ -276,6 +276,15 @@ def _subconversation_filter(
     """
     if subconversation_id == "*":
         return None
+    if subconversation_id is None:
+        return message_history_table.c.subconversation_id.is_(None)
+    return message_history_table.c.subconversation_id == subconversation_id
+
+
+def _exact_subconversation_condition(
+    subconversation_id: str | None,
+) -> ColumnElement[bool]:
+    """One subconversation exactly; ``None`` is the main conversation."""
     if subconversation_id is None:
         return message_history_table.c.subconversation_id.is_(None)
     return message_history_table.c.subconversation_id == subconversation_id
@@ -1568,6 +1577,162 @@ class MessageHistoryRepository(BaseRepository):
             )
             for row in rows
         ]
+
+    def _row_with_metadata(self, row: Mapping[str, Any]) -> MessageWithMetadata:
+        timestamp = _aware_timestamp(row["timestamp"])
+        if timestamp is None:
+            raise ValueError(f"Message {row['internal_id']} has no timestamp")
+        return MessageWithMetadata(
+            message=self._process_message_row(row),
+            internal_id=str(row["internal_id"]),
+            interface_message_id=row["interface_message_id"],
+            timestamp=timestamp,
+            conversation_id=row["conversation_id"],
+            interface_type=row["interface_type"],
+            user_id=row["user_id"],
+            turn_id=row["turn_id"],
+            thread_root_id=row["thread_root_id"],
+        )
+
+    async def get_history_window_rows(
+        self,
+        *,
+        interface_type: str,
+        conversation_id: str,
+        processing_profile_id: str,
+        subconversation_id: str | None,
+        since: datetime,
+        row_limit: int,
+        exclude_turn_id: str | None = None,
+    ) -> list[MessageWithMetadata]:
+        """The rows of every turn with activity since ``since``, whole.
+
+        The newest ``row_limit`` rows since the cutoff name the turns; each of
+        those turns is then read in full, including rows older than the cutoff
+        or beyond the limit, so no turn comes back split. Rows without a turn id
+        are turns of their own. Oldest first.
+        """
+        scope = [
+            message_history_table.c.interface_type == interface_type,
+            message_history_table.c.conversation_id == conversation_id,
+            message_history_table.c.processing_profile_id == processing_profile_id,
+            _exact_subconversation_condition(subconversation_id),
+        ]
+        if exclude_turn_id is not None:
+            scope.append(
+                or_(
+                    message_history_table.c.turn_id.is_(None),
+                    message_history_table.c.turn_id != exclude_turn_id,
+                )
+            )
+        newest = await self._db.fetch_all(
+            select(message_history_table)
+            .where(*scope, message_history_table.c.timestamp >= since)
+            .order_by(
+                message_history_table.c.timestamp.desc(),
+                message_history_table.c.internal_id.desc(),
+            )
+            .limit(row_limit)
+        )
+        rows_by_id = {row["internal_id"]: row for row in newest}
+        turn_ids = {row["turn_id"] for row in newest if row["turn_id"] is not None}
+        if turn_ids:
+            for row in await self._db.fetch_all(
+                select(message_history_table).where(
+                    *scope, message_history_table.c.turn_id.in_(turn_ids)
+                )
+            ):
+                rows_by_id.setdefault(row["internal_id"], row)
+        return [
+            self._row_with_metadata(row)
+            for row in sorted(
+                rows_by_id.values(),
+                key=lambda row: (row["timestamp"], row["internal_id"]),
+            )
+        ]
+
+    async def get_turn_rows_with_metadata(
+        self,
+        *,
+        interface_type: str,
+        conversation_id: str,
+        subconversation_id: str | None,
+        turn_ids: Collection[str] = (),
+        internal_ids: Collection[int] = (),
+    ) -> list[MessageWithMetadata]:
+        """Every row of the named turns, and of the turns the named rows are in.
+
+        Only rows in this conversation and subconversation: a turn id is not
+        unique to one, because a turn that messages another conversation or
+        delivers to a subconversation writes rows there under its own id. A
+        named row without a turn id is a turn of its own. Oldest first.
+        """
+        if not turn_ids and not internal_ids:
+            return []
+        scope = [
+            message_history_table.c.interface_type == interface_type,
+            message_history_table.c.conversation_id == conversation_id,
+            _exact_subconversation_condition(subconversation_id),
+        ]
+        wanted_turn_ids = set(turn_ids)
+        named_rows = (
+            await self._db.fetch_all(
+                select(message_history_table).where(
+                    *scope,
+                    message_history_table.c.internal_id.in_(set(internal_ids)),
+                )
+            )
+            if internal_ids
+            else []
+        )
+        rows_by_id = {row["internal_id"]: row for row in named_rows}
+        wanted_turn_ids.update(
+            row["turn_id"] for row in named_rows if row["turn_id"] is not None
+        )
+        if wanted_turn_ids:
+            for row in await self._db.fetch_all(
+                select(message_history_table).where(
+                    *scope, message_history_table.c.turn_id.in_(wanted_turn_ids)
+                )
+            ):
+                rows_by_id.setdefault(row["internal_id"], row)
+        return [
+            self._row_with_metadata(row)
+            for row in sorted(
+                rows_by_id.values(),
+                key=lambda row: (row["timestamp"], row["internal_id"]),
+            )
+        ]
+
+    async def get_thread_turn_rows(
+        self,
+        *,
+        interface_type: str,
+        conversation_id: str,
+        thread_root_id: int,
+        processing_profile_id: str,
+        subconversation_id: str | None,
+    ) -> list[MessageWithMetadata]:
+        """Every turn of a thread on one profile and subconversation, whole."""
+        thread_rows = await self._db.fetch_all(
+            select(
+                message_history_table.c.internal_id, message_history_table.c.turn_id
+            ).where(
+                or_(
+                    message_history_table.c.internal_id == thread_root_id,
+                    message_history_table.c.thread_root_id == thread_root_id,
+                ),
+                message_history_table.c.processing_profile_id == processing_profile_id,
+                _exact_subconversation_condition(subconversation_id),
+            )
+        )
+        return await self.get_turn_rows_with_metadata(
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            subconversation_id=subconversation_id,
+            turn_ids={row["turn_id"] for row in thread_rows if row["turn_id"]},
+            internal_ids={row["internal_id"] for row in thread_rows},
+        )
 
     async def get_recent_tool_examples(
         self,

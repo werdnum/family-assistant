@@ -416,7 +416,7 @@ async def test_computer_use_browser_navigation_e2e(db_engine: AsyncEngine) -> No
                         )
                     },
                     "timezone": "UTC",
-                    "max_history_messages": 10,
+                    "history_budget_chars": 100_000,
                     "history_max_age_hours": 1,
                     "delegation_security_level": "unrestricted",
                 },
@@ -583,7 +583,7 @@ async def test_grab_screenshot_of_website(db_engine: AsyncEngine) -> None:
                         )
                     },
                     "timezone": "UTC",
-                    "max_history_messages": 10,
+                    "history_budget_chars": 100_000,
                     "history_max_age_hours": 1,
                     "delegation_security_level": "unrestricted",
                 },

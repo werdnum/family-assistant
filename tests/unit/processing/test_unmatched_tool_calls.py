@@ -263,7 +263,7 @@ async def test_interrupted_tool_call_in_stored_history_is_repaired(
         service_config=ProcessingServiceConfig(
             prompts={},
             timezone=ZoneInfo("UTC"),
-            max_history_messages=10,
+            history_budget_chars=100_000,
             history_max_age_hours=1,
             tools_config=ToolsConfig(),
             delegation_security_level=DelegationSecurityLevel.CONFIRM,

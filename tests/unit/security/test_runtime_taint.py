@@ -254,7 +254,7 @@ def _tainting_provider() -> TaintTrackingToolsProvider:
 def _processing_service(
     llm_client: RuleBasedMockLLMClient,
     *,
-    max_history_messages: int = 20,
+    history_budget_chars: int = 100_000,
     taint_sink_class: SinkClass | None = None,
     taint_policy: TaintPolicyConfig | None = None,
 ) -> ProcessingService:
@@ -264,7 +264,7 @@ def _processing_service(
         service_config=ProcessingServiceConfig(
             prompts={"system_prompt": "You are a test assistant."},
             timezone=ZoneInfo("UTC"),
-            max_history_messages=max_history_messages,
+            history_budget_chars=history_budget_chars,
             history_max_age_hours=24,
             tools_config=ToolsConfig(),
             delegation_security_level=DelegationSecurityLevel.CONFIRM,

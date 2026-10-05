@@ -209,7 +209,8 @@ def curator_service(
             )
         },
         timezone=ZoneInfo("UTC"),
-        max_history_messages=1,
+        history_budget_chars=0,
+        history_min_turns=0,
         history_max_age_hours=0.5,
         tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.BLOCKED,

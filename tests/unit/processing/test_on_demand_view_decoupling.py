@@ -83,7 +83,8 @@ def _build_service(
         service_config=ProcessingServiceConfig(
             prompts={"system_prompt": "test"},
             timezone=ZoneInfo("UTC"),
-            max_history_messages=1,
+            history_budget_chars=0,
+            history_min_turns=0,
             history_max_age_hours=1,
             tools_config=ToolsConfig(),
             delegation_security_level=DelegationSecurityLevel.CONFIRM,
@@ -113,7 +114,7 @@ def _assistant_config(*, on_demand_local_tools: list[str]) -> dict[str, object]:
                 "processing_config": {
                     "prompts": {},
                     "timezone": "UTC",
-                    "max_history_messages": 10,
+                    "history_budget_chars": 100_000,
                     "history_max_age_hours": 24,
                 },
                 "tools_config": {"on_demand_local_tools": on_demand_local_tools},
@@ -124,7 +125,7 @@ def _assistant_config(*, on_demand_local_tools: list[str]) -> dict[str, object]:
                 "processing_config": {
                     "prompts": {},
                     "timezone": "UTC",
-                    "max_history_messages": 10,
+                    "history_budget_chars": 100_000,
                     "history_max_age_hours": 24,
                 },
                 "tools_config": {},

@@ -768,7 +768,7 @@ async def test_a_committed_run_is_counted_even_if_its_usage_cannot_be_read() -> 
         service_config=ProcessingServiceConfig(
             prompts={},
             timezone=ZoneInfo("UTC"),
-            max_history_messages=10,
+            history_budget_chars=100_000,
             history_max_age_hours=24,
             tools_config=ToolsConfig(),
             delegation_security_level=DelegationSecurityLevel.CONFIRM,

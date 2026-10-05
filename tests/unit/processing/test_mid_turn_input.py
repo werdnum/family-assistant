@@ -122,7 +122,7 @@ async def test_mid_turn_input_is_injected_after_tool_result(
         service_config=ProcessingServiceConfig(
             prompts={},
             timezone=ZoneInfo("UTC"),
-            max_history_messages=5,
+            history_budget_chars=100_000,
             history_max_age_hours=1,
             tools_config=ToolsConfig(),
             delegation_security_level=DelegationSecurityLevel.NONE,

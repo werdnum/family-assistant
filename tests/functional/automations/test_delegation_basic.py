@@ -117,7 +117,7 @@ def primary_service_config(dummy_prompts: dict[str, str]) -> ProcessingServiceCo
     return ProcessingServiceConfig(
         prompts=dummy_prompts,
         timezone=ZoneInfo("UTC"),
-        max_history_messages=5,
+        history_budget_chars=100_000,
         history_max_age_hours=24,
         tools_config=ToolsConfig(
             delegate_handoff_after_seconds=60.0,
@@ -135,7 +135,7 @@ def specialized_service_config(
     return ProcessingServiceConfig(
         prompts=dummy_prompts,
         timezone=ZoneInfo("UTC"),
-        max_history_messages=5,
+        history_budget_chars=100_000,
         history_max_age_hours=24,
         tools_config=ToolsConfig(delegate_handoff_after_seconds=60.0),
         delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,

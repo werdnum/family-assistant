@@ -1218,6 +1218,35 @@ Useful for debugging prompts and responses.
 
 ______________________________________________________________________
 
+### Conversation history window
+
+How much of a conversation's earlier turns a profile's prompt carries. Set under `processing_config`
+in `default_profile_settings` or on a profile; the `web_` variants apply on the web interface and
+fall back to the plain settings when unset.
+
+| Key                                                   | Default (shipped)  | Meaning                                                          |
+| ----------------------------------------------------- | ------------------ | ---------------------------------------------------------------- |
+| `history_budget_chars` / `web_history_budget_chars`   | `40000` / `120000` | Size of the window, in characters of rendered history.           |
+| `history_min_turns` / `web_history_min_turns`         | `2`                | The newest turns that stay whatever their size.                  |
+| `history_max_age_hours` / `web_history_max_age_hours` | `2` / `720`        | No turn whose last activity is older than this joins the window. |
+
+The window is made of whole turns — a request, every tool call and result it led to, and the answer
+— taken newest first until the budget is reached. A turn is never split. Only the active profile's
+rows are loaded, on every path. A reply to a Telegram thread also brings in that thread's turns on
+the active profile, and the message replied to, whatever their age or size; rows a delegation or an
+event pins to its turn come in the same way.
+
+An inlined image counts as 4,000 characters. Cached history is cheap on every current provider, so
+the budget is a setting for the model's attention rather than for cost; tune it from the prompt and
+cache token counts in diagnostics. A profile that should see no history (an event handler, say) sets
+both `history_budget_chars` and `history_min_turns` to `0`.
+
+These replace `max_history_messages` and `web_max_history_messages`, which counted rows; a
+configuration that still sets them is rejected at startup. See
+[history-compaction.md](../design/history-compaction.md).
+
+______________________________________________________________________
+
 ## Calendar Integration
 
 Family Assistant supports multi-source calendar integration with CalDAV servers (e.g. Nextcloud,

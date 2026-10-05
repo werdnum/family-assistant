@@ -117,7 +117,7 @@ async def test_image_handling_with_real_db(
                 "system_prompt": "You are a test assistant."
             },  # Corrected quote escaping
             timezone=ZoneInfo("UTC"),
-            max_history_messages=10,
+            history_budget_chars=100_000,
             history_max_age_hours=24,
             tools_config=ToolsConfig(),
             delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,

@@ -835,10 +835,14 @@ default_profile_settings:
 
     # Default values, can be overridden by environment variables.
     timezone: "Australia/Sydney"
-    max_history_messages: 10
+    # The history window: whole turns, newest first, up to a budget in
+    # characters, always keeping the newest `history_min_turns`. Cached history
+    # is cheap, so the budget is set for the model's attention, not for cost.
+    history_budget_chars: 40000
+    history_min_turns: 2
     history_max_age_hours: 2
     # Web-specific history settings for better conversation context
-    web_max_history_messages: 100
+    web_history_budget_chars: 120000
     web_history_max_age_hours: 720 # 30 days
     max_iterations: 10 # Maximum number of tool call iterations
   tools_config:
@@ -1745,7 +1749,9 @@ service_profiles:
       #   - "scripting.md"
       prompts:
         system_prompt: "You are an automated event handler assistant. You are responding to events from scripts and automations. Provide clear, concise responses focused on the event context.\n\nNotes you save are automatically confined to the event_logs visibility label (they are not visible to the main assistant); do not try to make them broadly visible, and do not try to modify notes outside that label."
-      max_history_messages: 1 # Minimal history for event processing
+      # No history: each event is handled on its own.
+      history_budget_chars: 0
+      history_min_turns: 0
       history_max_age_hours: 0.5 # 30 minutes - events are typically immediate
     tools_policy: # REPLACES default_profile_settings.tools_policy entirely for this profile
       default_decision: "deny"
@@ -1877,7 +1883,8 @@ service_profiles:
       # a final reply. Anything higher only buys loops over a store it has
       # already read.
       max_iterations: 6
-      max_history_messages: 1
+      history_budget_chars: 0
+      history_min_turns: 0
       history_max_age_hours: 0.5
       prompts:
         # docs/design/conversation-memory.md, "What the curator is asked to do".
@@ -2441,9 +2448,9 @@ service_profiles:
       # reported, so the budget per turn is modest; what has to be generous is
       # history, which carries the brief and every report across the phases.
       max_iterations: 30
-      max_history_messages: 200
+      history_budget_chars: 400000
       history_max_age_hours: 48
-      web_max_history_messages: 200
+      web_history_budget_chars: 400000
       web_history_max_age_hours: 48
       prompts:
         system_prompt: |
@@ -2508,9 +2515,9 @@ service_profiles:
       allowed_delegation_sources: ["council"]
       model_tier: "deep"
       max_iterations: 40
-      max_history_messages: 200
+      history_budget_chars: 400000
       history_max_age_hours: 48
-      web_max_history_messages: 200
+      web_history_budget_chars: 400000
       web_history_max_age_hours: 48
       prompts:
         system_prompt: |

@@ -435,9 +435,15 @@ class ProcessingConfig(BaseModel):
             raise ValueError(msg) from e
         return v
 
-    max_history_messages: int = 5
+    # The prompt's history window: whole turns, newest first, until their
+    # rendered size reaches the budget (characters), always keeping the newest
+    # `history_min_turns`, and never a turn older than the age cap. The `web_`
+    # variants override them on the web interface when set.
+    history_budget_chars: int = 40_000
+    history_min_turns: int = 2
     history_max_age_hours: float = 24.0
-    web_max_history_messages: int | None = None
+    web_history_budget_chars: int | None = None
+    web_history_min_turns: int | None = None
     web_history_max_age_hours: float | None = None
     llm_model: str | None = None
     provider: str | None = None  # 'google', 'openai', 'anthropic'

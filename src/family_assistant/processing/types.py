@@ -61,9 +61,11 @@ class ContextPreparerConfig(Protocol):
     id: str
     description: str
     timezone: ZoneInfo
-    max_history_messages: int
+    history_budget_chars: int
+    history_min_turns: int
     history_max_age_hours: float
-    web_max_history_messages: int | None
+    web_history_budget_chars: int | None
+    web_history_min_turns: int | None
     web_history_max_age_hours: float | None
 
 
@@ -242,7 +244,7 @@ class ProcessingServiceConfig:
 
     prompts: dict[str, str]
     timezone: ZoneInfo
-    max_history_messages: int
+    history_budget_chars: int
     history_max_age_hours: float  # Can be fractional (e.g., 0.5 hours)
     tools_config: ToolsConfig
     delegation_security_level: DelegationSecurityLevel
@@ -259,7 +261,9 @@ class ProcessingServiceConfig:
         None  # regex pattern -> provider params mapping
     )
     # Web-specific history settings
-    web_max_history_messages: int | None = None  # If None, uses max_history_messages
+    history_min_turns: int = 2
+    web_history_budget_chars: int | None = None  # If None, uses history_budget_chars
+    web_history_min_turns: int | None = None  # If None, uses history_min_turns
     web_history_max_age_hours: float | None = None  # Can be fractional
     max_iterations: int = 5
     context_pruning_min_turns: int = 3

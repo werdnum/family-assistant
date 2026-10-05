@@ -51,7 +51,7 @@ async def test_the_next_turn_extends_the_previous_request(
         service_config=ProcessingServiceConfig(
             prompts={"system_prompt": "You are a test assistant."},
             timezone=ZoneInfo("Australia/Sydney"),
-            max_history_messages=20,
+            history_budget_chars=100_000,
             history_max_age_hours=24,
             tools_config=ToolsConfig(),
             delegation_security_level=DelegationSecurityLevel.CONFIRM,

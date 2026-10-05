@@ -30,6 +30,7 @@ from family_assistant.llm.messages import (
     UserMessage,
 )
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.processing.history_window import HistoryLimits
 from family_assistant.security.taint import (
     SourceTrustTier,
     TaintSource,
@@ -83,7 +84,7 @@ def processing_service() -> ProcessingService:
     mock_service_config = ProcessingServiceConfig(
         prompts={},  # Not used by _format_history_for_llm
         timezone=ZoneInfo("UTC"),  # Not used
-        max_history_messages=10,  # Not used
+        history_budget_chars=100_000,  # Not used
         history_max_age_hours=1,  # Not used
         tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.CONFIRM,  # Added
@@ -163,7 +164,7 @@ async def test_handle_chat_interaction_persists_system_trigger(
         service_config=ProcessingServiceConfig(
             prompts={},
             timezone=ZoneInfo("UTC"),
-            max_history_messages=10,
+            history_budget_chars=100_000,
             history_max_age_hours=1,
             tools_config=ToolsConfig(),
             delegation_security_level=DelegationSecurityLevel.CONFIRM,
@@ -410,16 +411,14 @@ async def test_format_history_includes_errors_as_assistant(
     history_messages = [
         create_user_message("Try something"),
         create_error_message(
-            content="Something went wrong",
+            content="Something went wrong\nAdditional detail",
             error_traceback="Traceback...",
         ),
         create_assistant_message("Okay"),
     ]
     expected_output = [
         UserMessage(content="Try something"),
-        AssistantMessage(
-            content="I encountered an error: Something went wrong\n\nError details: Traceback..."
-        ),
+        AssistantMessage(content="I encountered an error: Something went wrong"),
         AssistantMessage(content="Okay"),
     ]
     actual_output = await processing_service.context_preparer.format_history(
@@ -472,7 +471,7 @@ async def test_delegated_attachments_are_named_to_the_model(
         service_config=ProcessingServiceConfig(
             prompts={},
             timezone=ZoneInfo("UTC"),
-            max_history_messages=10,
+            history_budget_chars=100_000,
             history_max_age_hours=1,
             tools_config=ToolsConfig(),
             delegation_security_level=DelegationSecurityLevel.CONFIRM,
@@ -544,9 +543,10 @@ def test_web_specific_history_configuration() -> None:
     mock_service_config = ProcessingServiceConfig(
         prompts={},
         timezone=ZoneInfo("UTC"),
-        max_history_messages=5,
+        history_budget_chars=100_000,
         history_max_age_hours=24,
-        web_max_history_messages=100,
+        web_history_budget_chars=100_000,
+        web_history_min_turns=4,
         web_history_max_age_hours=720,
         tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.CONFIRM,
@@ -562,21 +562,12 @@ def test_web_specific_history_configuration() -> None:
         app_config=AppConfig(),
     )
 
-    # Test regular (non-web) history limits via context_preparer
-    non_web_limit, non_web_age = processing_service.context_preparer.get_history_limits(
+    assert processing_service.context_preparer.get_history_limits(
         "telegram"
-    )
-    assert non_web_limit == 5
-    assert non_web_age == timedelta(hours=24)
-
-    # Test web-specific history limits via context_preparer
-    web_limit, web_age = processing_service.context_preparer.get_history_limits("web")
-    assert web_limit == 100
-    assert web_age == timedelta(hours=720)
-
-    # Test that they're different
-    assert non_web_limit != web_limit
-    assert non_web_age != web_age
+    ) == HistoryLimits(budget_chars=100_000, min_turns=2, max_age=timedelta(hours=24))
+    assert processing_service.context_preparer.get_history_limits(
+        "web"
+    ) == HistoryLimits(budget_chars=100_000, min_turns=4, max_age=timedelta(hours=720))
 
 
 def test_web_history_configuration_fallback() -> None:
@@ -584,9 +575,9 @@ def test_web_history_configuration_fallback() -> None:
     mock_service_config = ProcessingServiceConfig(
         prompts={},
         timezone=ZoneInfo("UTC"),
-        max_history_messages=10,
+        history_budget_chars=100_000,
         history_max_age_hours=48,
-        web_max_history_messages=None,
+        web_history_budget_chars=None,
         web_history_max_age_hours=None,
         tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.CONFIRM,
@@ -602,16 +593,13 @@ def test_web_history_configuration_fallback() -> None:
         app_config=AppConfig(),
     )
 
-    # Test that web limits fall back to default values via context_preparer
-    web_limit, web_age = processing_service.context_preparer.get_history_limits("web")
-    assert web_limit == 10
-    assert web_age == timedelta(hours=48)
-
-    # Web and non-web interfaces share the same fallback when unset
-    telegram_limit, telegram_age = (
-        processing_service.context_preparer.get_history_limits("telegram")
+    web_limits = processing_service.context_preparer.get_history_limits("web")
+    assert web_limits == HistoryLimits(
+        budget_chars=100_000, min_turns=2, max_age=timedelta(hours=48)
     )
-    assert (web_limit, web_age) == (telegram_limit, telegram_age)
+    assert web_limits == processing_service.context_preparer.get_history_limits(
+        "telegram"
+    )
 
 
 def test_web_history_configuration_with_zero_values() -> None:
@@ -619,9 +607,10 @@ def test_web_history_configuration_with_zero_values() -> None:
     mock_service_config = ProcessingServiceConfig(
         prompts={},
         timezone=ZoneInfo("UTC"),
-        max_history_messages=10,
+        history_budget_chars=100_000,
         history_max_age_hours=48,
-        web_max_history_messages=0,
+        web_history_budget_chars=0,
+        web_history_min_turns=0,
         web_history_max_age_hours=0,
         tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.CONFIRM,
@@ -637,7 +626,6 @@ def test_web_history_configuration_with_zero_values() -> None:
         app_config=AppConfig(),
     )
 
-    # Test that zero values are respected (not treated as falsy) via context_preparer
-    web_limit, web_age = processing_service.context_preparer.get_history_limits("web")
-    assert web_limit == 0
-    assert web_age == timedelta(hours=0)
+    assert processing_service.context_preparer.get_history_limits(
+        "web"
+    ) == HistoryLimits(budget_chars=0, min_turns=0, max_age=timedelta(hours=0))

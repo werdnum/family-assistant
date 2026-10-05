@@ -55,7 +55,7 @@ def _build_test_config(
         "processing_config": {
             "prompts": {"system_prompt": "You are a test assistant."},
             "timezone": "UTC",
-            "max_history_messages": 5,
+            "history_budget_chars": 100_000,
             "history_max_age_hours": 1,
             "llm_model": "mock-model",
             "delegation_security_level": "none",
@@ -86,7 +86,7 @@ def _build_test_config(
             "processing_config": {
                 "prompts": {"system_prompt": "You are a default assistant."},
                 "timezone": "UTC",
-                "max_history_messages": 5,
+                "history_budget_chars": 100_000,
                 "history_max_age_hours": 1,
                 "delegation_security_level": "none",
             },

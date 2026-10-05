@@ -116,7 +116,7 @@ async def telegram_handler_fixture(
                     "prompts": {"system_prompt": "Test System Prompt"},
                     "calendar_config": {},
                     "timezone": "UTC",
-                    "max_history_messages": 5,
+                    "history_budget_chars": 100_000,
                     "history_max_age_hours": 1,
                     "llm_model": "mock-model-for-testing-profile",  # Will be overridden
                     "delegation_security_level": "none",  # Allow tools for tests

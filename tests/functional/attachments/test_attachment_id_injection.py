@@ -95,7 +95,7 @@ async def create_processing_service_with_image_tools(
         id=profile_id,
         prompts=dummy_prompts,
         timezone=ZoneInfo(TEST_TIMEZONE_STR),
-        max_history_messages=5,
+        history_budget_chars=100_000,
         history_max_age_hours=24,
         tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,

@@ -198,14 +198,13 @@ async def test_schedule_and_execute_callback(
     # Processing Service
     dummy_prompts = {"system_prompt": "Test system prompt for callback."}
     dummy_timezone_str = "UTC"
-    dummy_max_history = 5
     dummy_history_age = 24
     dummy_app_config = AppConfig()  # Typed app_config
 
     test_service_config_obj_callback = ProcessingServiceConfig(
         prompts=dummy_prompts,
         timezone=ZoneInfo(dummy_timezone_str),
-        max_history_messages=dummy_max_history,
+        history_budget_chars=100_000,
         history_max_age_hours=dummy_history_age,
         tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.CONFIRM,  # Added
@@ -471,7 +470,7 @@ async def test_modify_pending_callback(
     test_service_config_obj_modify = ProcessingServiceConfig(
         prompts=dummy_prompts,
         timezone=ZoneInfo("UTC"),
-        max_history_messages=5,
+        history_budget_chars=100_000,
         history_max_age_hours=24,
         tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.CONFIRM,
@@ -786,7 +785,7 @@ async def test_cancel_pending_callback(
     test_service_config_obj_cancel = ProcessingServiceConfig(
         prompts=dummy_prompts,
         timezone=ZoneInfo("UTC"),
-        max_history_messages=5,
+        history_budget_chars=100_000,
         history_max_age_hours=24,
         tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.CONFIRM,
@@ -1104,7 +1103,7 @@ async def test_schedule_reminder_with_follow_up(
     test_service_config = ProcessingServiceConfig(
         prompts={"system_prompt": "Test system prompt for reminders."},
         timezone=ZoneInfo("UTC"),
-        max_history_messages=10,
+        history_budget_chars=100_000,
         history_max_age_hours=24,
         tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.CONFIRM,
@@ -1383,7 +1382,7 @@ async def test_list_pending_callbacks(db_engine: AsyncEngine) -> None:
     test_service_config = ProcessingServiceConfig(
         prompts={"system_prompt": "Test system prompt for list callbacks."},
         timezone=ZoneInfo("UTC"),
-        max_history_messages=5,
+        history_budget_chars=100_000,
         history_max_age_hours=24,
         tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.CONFIRM,
