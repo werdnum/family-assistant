@@ -28,6 +28,7 @@ from family_assistant.config_models import (
     AppConfig,
     MCPConfig,
     MCPServerConfig,
+    TypeSafeConfig,
     mcp_servers_for_runtime,
 )
 from family_assistant.plugins.ai_workers.config import (
@@ -398,3 +399,14 @@ def test_env_placeholders_expand_inside_secret_fields() -> None:
             assert runtime["token"] == "real-token-value", placeholder
     finally:
         del os.environ["FA_TEST_MCP_TOKEN"]
+
+
+def test_typesafe_key_is_masked_in_config_dump() -> None:
+    config = AppConfig(
+        typesafe=TypeSafeConfig(api_key=SecretStr("typesafe-sentinel-secret"))
+    )
+
+    dumped = config.model_dump(mode="json")
+
+    assert "typesafe-sentinel-secret" not in json.dumps(dumped)
+    assert dumped["typesafe"]["api_key"] == "**********"

@@ -279,6 +279,10 @@ class ResolvedModelSelection:
     classifier_model: str | None = None
     """Which model made the routing call, so a change in decision quality can
     be attributed to a change of classifier."""
+    routing_probabilities: tuple[tuple[str, float], ...] | None = None
+    """The classifier's probability for each tier, where it gives one. Stamped
+    on the reply for shadow evaluation; not part of a persisted envelope,
+    which records a decision rather than how it was weighed."""
 
     frozen: bool = False
     """Whether this envelope is settled, so Auto must not revisit it.
@@ -458,6 +462,8 @@ def stamp_model_selection(
         reasoning["model_tier_routing_outcome"] = selection.routing_outcome
     if selection.routing_would_choose is not None:
         reasoning["model_tier_would_choose"] = selection.routing_would_choose
+    if selection.routing_probabilities is not None:
+        reasoning["model_tier_probabilities"] = dict(selection.routing_probabilities)
     if selection.classifier_model is not None:
         # Persisted rather than left to the trace span: the shadow evaluation
         # reads `message_history.reasoning_info`, and a decision whose

@@ -173,6 +173,9 @@ class MessageReasoningInfo(TypedDict, total=False):
     profile's configured tier anyway. This is the evaluation record: comparing
     it against what the run actually did is how Auto is judged before it is
     trusted to decide."""
+    model_tier_probabilities: dict[str, float]
+    """The Auto classifier's probability for each tier, on a routed run whose
+    classifier gives one (Jev). What a confidence threshold is tuned on."""
     model_tier_classifier_model: str
     """Which model made the routing decision on this row. Recorded here and not
     only on the trace span because the evaluation dataset is this column and

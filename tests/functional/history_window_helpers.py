@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
     from family_assistant.llm import LLMInterface
     from family_assistant.llm.messages import LLMMessage
+    from family_assistant.processing.history_relevance import TurnRelevance
     from family_assistant.storage.database import Database
     from family_assistant.tools.metadata import ToolRegistration
     from family_assistant.utils.clock import MockClock
@@ -62,6 +63,7 @@ def make_service(
     profile_id: str = PROFILE_ID,
     tools: Sequence[ToolRegistration] = (),
     llm_client: LLMInterface | None = None,
+    turn_relevance: TurnRelevance | None = None,
 ) -> ProcessingService:
     return ProcessingService(
         llm_client=llm_client
@@ -84,6 +86,7 @@ def make_service(
         server_url=None,
         app_config=AppConfig(),
         clock=mock_clock,
+        turn_relevance=turn_relevance,
     )
 
 

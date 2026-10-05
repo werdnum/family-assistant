@@ -1,0 +1,53 @@
+interactions:
+  - request:
+      body: '{"model":"jev-1.13.0","state":{"recent_conversation":"user: We''re thinking about refinancing.\nassistant: Happy to help think it through.","attachments":[],"request":"Compare keeping our 6.1% fixed loan against refinancing to a 5.4% variable with a $3,000 break fee, given we might sell in three years, and recommend one."},"questions":{"tier":{"type":"choice","instructions":{"routing_guidance":"Use deep for anything that needs a plan weighed across several constraints; standard for everything else.","question":"Which model tier should handle `request`, read in the context of `recent_conversation` and `attachments`, following `routing_guidance`?"},"criteria":{"standard":"Standard -- Everyday requests: lookups, reminders, short answers.","deep":"Deep -- Multi-step reasoning, planning, careful judgement calls."}}}}'
+      headers:
+        accept:
+          - '*/*'
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '822'
+        content-type:
+          - application/json
+        host:
+          - api.typesafe.ai
+        user-agent:
+          - python-httpx/0.28.1
+      method: POST
+      uri: https://api.typesafe.ai/v1/systemone
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAA/02Myw7CIBBF/2XWSCA10fZnDC2jonWG8NCYhn8X0IWr+8i5d4MHW1xhghs+d1rq
+          QSoQYCi+MESYNkgOQ9e3x4otV3YLVuRnJrCIvmWms7NIrVNyHAX4wLOZ3erqRb+KyZA1wTZAafFd
+          driUIiBHc8HGOfI5nRLfkepufzgK4Jz+u0GX8gGIyEA7uwAAAA==
+      headers:
+        CF-RAY:
+          - a45b0a7f9fd3b3a3-SYD
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json
+        Date:
+          - Mon, 05 Oct 2026 08:26:22 GMT
+        Server:
+          - cloudflare
+        Transfer-Encoding:
+          - chunked
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        set-cookie:
+          - __cf_bm=o_GwvO0VOCNNgvuBjk.dnOvgllZXf8dfXPBL74HJ3xk-1791188782.0174072-1.0.1.1-UGcu8VPsm8WL1w51mSaL6Hps9L8DM7BtAUFZJx_dmGlIuWZyTkN1j8YyzQahuMFnAMLb1YT2LHyhBd.JiQPrdlEXfL0hWB3EHrOi5Bny31WlMuEWWabhLvWY4kzDTDLS; HttpOnly; SameSite=None; Secure; Path=/; Domain=typesafe.ai; Expires=Mon, 05 Oct 2026 08:56:22 GMT
+        x-typesafe-request-id:
+          - req_01a10b2bcc0e7506868d0fc45ef3dbc5
+      status:
+        code: 200
+        message: OK
+version: 1

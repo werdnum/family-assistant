@@ -95,10 +95,11 @@ if TYPE_CHECKING:
     from family_assistant.config_models import AppConfig
     from family_assistant.context_providers import ContextProvider
     from family_assistant.interfaces import ChatInterface
-    from family_assistant.llm.model_routing import ModelRouter, RoutingDecision
+    from family_assistant.llm.model_routing import RoutingDecision, TierRouter
     from family_assistant.llm.model_selection import RoutingOutcome
     from family_assistant.memory.review_context import MemoryReviewContext
     from family_assistant.plugins.runtime import ProfilePlugins
+    from family_assistant.processing.history_relevance import TurnRelevance
     from family_assistant.processing.protocol import DelegatableService
     from family_assistant.processing.types import (
         ContextLengthCompactor,
@@ -138,6 +139,14 @@ ABANDONED_TOOL_CALL_RESULT = (
     "Re-run it if you need the result, and check for side effects first if "
     "re-running it would not be safe to do twice."
 )
+
+
+def _probabilities(
+    decision: RoutingDecision,
+) -> tuple[tuple[str, float], ...] | None:
+    if decision.probabilities is None:
+        return None
+    return tuple(sorted(decision.probabilities.items()))
 
 
 @dataclass(slots=True)
@@ -301,7 +310,8 @@ class ProcessingService:
         api_backend: ApiBackend | None = None,
         taint_policy: TaintPolicyConfig | None = None,
         tier_llm_clients: Mapping[str, LLMInterface] | None = None,
-        model_router: ModelRouter | None = None,
+        model_router: TierRouter | None = None,
+        turn_relevance: TurnRelevance | None = None,
     ) -> None:
         """Build a profile's service.
 
@@ -316,6 +326,9 @@ class ProcessingService:
         every profile that opts into routing. ``None`` -- which is every
         deployment with ``model_routing.mode: off``, and every service a test
         builds directly -- means no turn here is ever routed.
+
+        ``turn_relevance`` ranks the window's turns at a compaction event; with
+        none, compaction proceeds oldest-first.
         """
         self._llm_client = llm_client
         self._tier_llm_clients: dict[str, LLMInterface] = dict(tier_llm_clients or {})
@@ -352,6 +365,7 @@ class ProcessingService:
             render=self.context_preparer.format_history,
             timezone=service_config.timezone,
             capabilities=self._compaction_capabilities,
+            relevance=turn_relevance,
         )
         self.tool_executor = ToolExecutor(
             tools_provider,
@@ -703,6 +717,7 @@ class ProcessingService:
                 routing_outcome=outcome,
                 routing_would_choose=decision.tier,
                 classifier_model=decision.classifier_model,
+                routing_probabilities=_probabilities(decision),
             )
         elif decision.tier is None:
             routed = replace(
@@ -714,6 +729,7 @@ class ProcessingService:
             routed, outcome, recorded_tier = self._admit_routed_tier(
                 base, decision.tier, classifier_model=decision.classifier_model
             )
+            routed = replace(routed, routing_probabilities=_probabilities(decision))
 
         record_model_routing(
             profile=self.service_config.id,
@@ -776,7 +792,7 @@ class ProcessingService:
 
     async def _classify(
         self,
-        router: ModelRouter,
+        router: TierRouter,
         db_context: Database,
         *,
         interface_type: str,
@@ -873,7 +889,7 @@ class ProcessingService:
     async def _routing_history(
         self,
         db_context: Database,
-        router: ModelRouter,
+        router: TierRouter,
         *,
         interface_type: str,
         conversation_id: str,
@@ -984,6 +1000,7 @@ class ProcessingService:
         referenced_row_ids: Sequence[int] = (),
         context_length_target: int | None = None,
         record: bool = True,
+        request_text: str | None = None,
     ) -> HistoryWindow:
         """The history window a request on this conversation is built from.
 
@@ -1007,6 +1024,7 @@ class ProcessingService:
             referenced_row_ids=referenced_row_ids,
             context_length_target=context_length_target,
             record=record,
+            request_text=request_text,
         )
 
     async def _compaction_capabilities(self) -> CompactionCapabilities:

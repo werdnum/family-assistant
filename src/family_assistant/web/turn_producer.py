@@ -117,10 +117,13 @@ async def initial_turn_taint(
     interface_type: str,
     conversation_id: str,
     resumed_turn_id: str | None = None,
+    request_text: str | None = None,
 ) -> InitialTurnTaint:
     """Read the history and context taint a turn on this conversation starts with.
 
-    For a new turn this runs before its prompt is written. A resumed turn
+    For a new turn this runs before its prompt is written, so the caller passes
+    the prompt as ``request_text``: a compaction the turn will run then decides
+    the same window here. A resumed turn
     starts where the interrupted run left off: the window the run started from,
     plus the rows it already produced with their recorded origin -- they are
     this turn's own, not carry-in.
@@ -134,6 +137,7 @@ async def initial_turn_taint(
         # The turn records any compaction this window needs when it starts; the
         # taint read only has to see the window that will result.
         record=False,
+        request_text=request_text,
     )
     history_state = prompt_window_taint(window.messages)
     if resumed_turn_id is not None:

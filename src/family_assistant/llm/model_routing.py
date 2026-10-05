@@ -29,7 +29,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from pydantic import BaseModel, ValidationError, create_model
 
@@ -45,6 +45,7 @@ from family_assistant.llm.model_selection import (
     ResolvedModelSelection,
     RoutingOutcome,
 )
+from family_assistant.llm.typesafe import ChoiceQuestion, JevClient, TypeSafeError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -59,10 +60,13 @@ __all__ = [
     "MODEL_ROUTING_PROMPT_KEY",
     "ROUTER_CALL_SELECTION",
     "ROUTER_CALL_TIER",
+    "JevModelRouter",
     "ModelRouter",
     "ModelRoutingChoice",
     "RoutingDecision",
     "RoutingOutcome",
+    "TierRouter",
+    "bounded_text",
     "validate_routing_prompt_renders",
 ]
 
@@ -97,7 +101,7 @@ two messages.
 """
 
 
-def _bounded(text: str, budget: int) -> str:
+def bounded_text(text: str, budget: int) -> str:
     """*text* within *budget* characters, keeping both of its ends.
 
     A prefix is the wrong thing to keep. The common shape of a long request is
@@ -170,6 +174,9 @@ class RoutingDecision:
     outcome: RoutingOutcome
     classifier_model: str
     latency_ms: int
+    probabilities: dict[str, float] | None = None
+    """The classifier's probability for each tier, where it gives one (Jev
+    does; a structured-output LLM does not). What a threshold is tuned on."""
 
 
 def validate_routing_prompt_renders(prompt_template: str) -> None:
@@ -225,7 +232,9 @@ def _render_history(history: Sequence[LLMMessage]) -> str:
         text = _message_text(message).strip()
         if not text:
             continue
-        lines.append(f"{message.role}: {_bounded(text, _HISTORY_CHARS_PER_MESSAGE)}")
+        lines.append(
+            f"{message.role}: {bounded_text(text, _HISTORY_CHARS_PER_MESSAGE)}"
+        )
     return "\n".join(lines)
 
 
@@ -383,7 +392,7 @@ class ModelRouter:
                 "<attachments>\n" + "\n".join(attachment_summary) + "\n</attachments>"
             )
         sections.append(
-            f"<request>\n{_bounded(request_text, _REQUEST_CHARS)}\n</request>"
+            f"<request>\n{bounded_text(request_text, _REQUEST_CHARS)}\n</request>"
         )
         return [
             SystemMessage(content=instructions),
@@ -401,3 +410,125 @@ class ModelRouter:
     @staticmethod
     def _elapsed_ms(started: float) -> int:
         return round((time.monotonic() - started) * 1000)
+
+
+class TierRouter(Protocol):
+    """Whatever classifies a request's tier: the LLM classifier or Jev."""
+
+    history_messages: int
+    """How many recent messages a caller should read for :meth:`route`."""
+
+    async def route(
+        self,
+        *,
+        eligibility: ModelTierEligibility,
+        guidance: str | None,
+        history: Sequence[LLMMessage],
+        request_text: str,
+        attachment_summary: Sequence[str],
+    ) -> RoutingDecision:
+        """Choose a tier from *eligibility*'s automatic list. Never raises."""
+        ...
+
+
+class JevModelRouter:
+    """Auto as a single Jev choice question over the profile's automatic tiers.
+
+    The inputs are the LLM classifier's -- bounded recent history, the
+    request, attachment metadata -- as the state, and the profile's routing
+    guidance as the rubric. The request is its own, never sharing state with
+    the history relevance questions. Its exposure to injected history is the
+    LLM classifier's: the answer cannot leave the offered tiers. It adds a
+    probability for every tier, recorded with the decision.
+    """
+
+    def __init__(
+        self,
+        client: JevClient,
+        *,
+        timeout_seconds: float,
+        history_messages: int,
+    ) -> None:
+        self._client = client
+        self._timeout_seconds = timeout_seconds
+        self.history_messages = history_messages
+
+    async def route(
+        self,
+        *,
+        eligibility: ModelTierEligibility,
+        guidance: str | None,
+        history: Sequence[LLMMessage],
+        request_text: str,
+        attachment_summary: Sequence[str],
+    ) -> RoutingDecision:
+        started = time.monotonic()
+        options = {
+            option.id: option.label
+            + (f" -- {option.description}" if option.description else "")
+            for option in eligibility.auto_options
+        }
+        if not options:
+            logger.error(
+                "Model routing asked for a decision with no eligible tiers; "
+                "skipping the classifier call."
+            )
+            return self._failed("invalid", started)
+        state = {
+            "recent_conversation": _render_history(history),
+            "attachments": list(attachment_summary),
+            "request": bounded_text(request_text, _REQUEST_CHARS),
+        }
+        question = ChoiceQuestion(
+            instructions={
+                "routing_guidance": (guidance or "").strip()
+                or "(no profile-specific guidance)",
+                "question": (
+                    "Which model tier should handle `request`, read in the "
+                    "context of `recent_conversation` and `attachments`, "
+                    "following `routing_guidance`?"
+                ),
+            },
+            options=options,
+        )
+        try:
+            answers = await asyncio.wait_for(
+                self._client.ask(state, {"tier": question}),
+                timeout=self._timeout_seconds,
+            )
+        except TimeoutError:
+            logger.warning(
+                "Jev model routing timed out after %.1fs; the run continues on "
+                "the profile's configured tier.",
+                self._timeout_seconds,
+            )
+            return self._failed("timeout", started)
+        except TypeSafeError:
+            logger.warning(
+                "Jev model routing failed; the run continues on the profile's "
+                "configured tier.",
+                exc_info=True,
+            )
+            return self._failed("error", started)
+        probabilities = answers.choices.get("tier", {})
+        if set(probabilities) != set(options):
+            logger.warning("Jev model routing returned no usable choice.")
+            return self._failed("invalid", started)
+        tier = max(probabilities, key=lambda option: probabilities[option])
+        latency_ms = round((time.monotonic() - started) * 1000)
+        logger.info("Jev model routing chose tier '%s' in %dms.", tier, latency_ms)
+        return RoutingDecision(
+            tier=tier,
+            outcome="decided",
+            classifier_model=answers.model or self._client.model,
+            latency_ms=latency_ms,
+            probabilities=probabilities,
+        )
+
+    def _failed(self, outcome: RoutingOutcome, started: float) -> RoutingDecision:
+        return RoutingDecision(
+            tier=None,
+            outcome=outcome,
+            classifier_model=self._client.model,
+            latency_ms=round((time.monotonic() - started) * 1000),
+        )

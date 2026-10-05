@@ -2,9 +2,11 @@
 
 ## Status
 
-Proposed. Follows [append-only-prompt.md](append-only-prompt.md), which makes every request the
-previous request plus appended messages and leaves "the history window drops messages from the
-front" to this document. Approach-level; construction detail belongs to the implementing PRs.
+Implemented (#1353, #1355 and the Jev milestone); Jev relevance ships in shadow mode. Follows
+[append-only-prompt.md](append-only-prompt.md), which makes every request the previous request plus
+appended messages and leaves "the history window drops messages from the front" to this document.
+Approach-level; construction detail belongs to the implementing PRs, and operator settings are in
+[CONFIGURATION_REFERENCE.md](../operations/CONFIGURATION_REFERENCE.md#conversation-history-window).
 
 ## Problem
 
@@ -155,6 +157,13 @@ today. Window taint is computed over the rendered window by the same loader on e
 - **Relevance is decided only at events.** A turn the user returns to between events stays wherever
   the last event put it, and a turn already dropped is not a candidate again; the stub, where there
   is one, and `get_message_history` cover those cases.
+
+- **The web taint read and the turn ask the classifier separately.** The web producer reads the
+  window's taint before the prompt is stored, and with active relevance asks Jev with the same
+  inputs the turn will. Jev is deterministic, so the two agree, except when one of the calls fails
+  and falls back to oldest-first. The taint read may then cover a turn the prompt dropped. That
+  over-taints, which costs a confirmation, and never under-taints, so the decision is not shared
+  between the two paths.
 
 - **Budgets start as estimates** and are tuned from the provider-reported prompt and cache token
   counts already recorded in diagnostics. No tokenizer is added.

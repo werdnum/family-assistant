@@ -87,6 +87,7 @@ ENV_VAR_MAPPINGS: list[EnvVarMapping] = [
     EnvVarMapping("EMAIL_OUTBOUND_FROM_ADDRESS", "email_intake.outbound_from_address"),
     EnvVarMapping("GEMINI_API_KEY", "gemini_api_key"),
     EnvVarMapping("OPENAI_API_KEY", "openai_api_key"),
+    EnvVarMapping("TYPESAFE_API_KEY", "typesafe.api_key"),
     EnvVarMapping("WILLYWEATHER_API_KEY", "willyweather_api_key"),
     EnvVarMapping("WILLYWEATHER_LOCATION_ID", "willyweather_location_id", int),
     # Database and server
