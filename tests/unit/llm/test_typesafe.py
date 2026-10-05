@@ -29,7 +29,7 @@ async def test_request_body_contains_model_state_and_typed_questions() -> None:
             json={
                 "answers": {
                     "followup": {"noul": 0.8},
-                    "tier": {"probabilities": {"deep": 1.0}},
+                    "tier": {"probabilities": {"standard": 0.0, "deep": 1.0}},
                 }
             },
         )
@@ -289,3 +289,20 @@ async def test_a_failed_call_is_counted_as_an_error() -> None:
         )
         == 1
     )
+
+
+@pytest.mark.parametrize(
+    "probabilities",
+    [{"a": 1.0}, {"a": 0.5, "b": 0.3, "c": 0.2}, {"a": 0.5, "z": 0.5}],
+)
+async def test_a_choice_answer_not_covering_exactly_the_offered_options_is_refused(
+    probabilities: dict[str, float],
+) -> None:
+    client = _client_answering({"answers": {"q": {"probabilities": probabilities}}})
+    try:
+        with pytest.raises(TypeSafeError, match="offered options"):
+            await client.ask(
+                "state", {"q": ChoiceQuestion("Which?", options={"a": None, "b": None})}
+            )
+    finally:
+        await client.close()
