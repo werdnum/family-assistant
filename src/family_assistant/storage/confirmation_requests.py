@@ -28,7 +28,7 @@ confirmation_requests_table = Table(
         JSON().with_variant(postgresql.JSONB(astext_type=Text()), "postgresql"),
         nullable=False,
     ),
-    Column("tool_call_id", String(255), nullable=True),
+    Column("tool_call_id", String(255), nullable=True, index=True),
     Column(
         "source_message_internal_id",
         Integer,
@@ -68,6 +68,14 @@ confirmation_requests_table = Table(
     # process from the one that created the in-memory waiter.
     Column(
         "decision_only",
+        Boolean,
+        nullable=False,
+        server_default="false",
+    ),
+    # True when the system rejected the request on its own (a stopped turn, a
+    # prompt that could not be delivered) rather than a human deciding it.
+    Column(
+        "resolved_by_system",
         Boolean,
         nullable=False,
         server_default="false",

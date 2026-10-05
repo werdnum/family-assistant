@@ -406,6 +406,8 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
                 expires_at=datetime.now(UTC) + timedelta(seconds=effective_timeout),
                 decision_only=not wait_for_durable_execution,
                 processing_profile_id=processing_profile_id,
+                origin_interface_type=interface_type,
+                origin_conversation_id=conversation_id,
                 taint_state_json=taint_state_json,
                 tool_call_review_authorization=tool_call_review_authorization,
             )
@@ -483,6 +485,7 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
                         request_id=confirm_uuid,
                         rejecting_user_id=target_user_id,
                         rejecting_interface="telegram",
+                        by_system=True,
                     )
                 finally:
                     self._unregister_execution_future(confirm_uuid, execution_future)

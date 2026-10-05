@@ -2062,6 +2062,7 @@ async def _reject_pending_confirmations_for_turn(
                 request_id=confirmation["id"],
                 rejecting_user_id=user_id,
                 rejecting_interface="web",
+                by_system=True,
             )
         except (
             ConfirmationExpiredError,

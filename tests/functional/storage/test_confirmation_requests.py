@@ -129,6 +129,7 @@ class _RacingConfirmationRequestsRepository:
         resolving_user_id: str,
         resolving_interface: str,
         now: datetime,
+        by_system: bool = False,
     ) -> ConfirmationRequestRow | None:
         if self._race_mode == "approve_before_reject":
             execution_task_id = f"confirmation_tool_execution:{request_id}"
@@ -155,6 +156,7 @@ class _RacingConfirmationRequestsRepository:
             resolving_user_id=resolving_user_id,
             resolving_interface=resolving_interface,
             now=now,
+            by_system=by_system,
         )
 
     async def mark_expired(self, *, now: datetime) -> int:
@@ -774,3 +776,88 @@ async def test_confirmation_expiry_task_expires_requests_no_waiter_closed(
     assert orphaned["status"] == "expired"
     assert live is not None
     assert live["status"] == "pending"
+
+
+async def _create_conversation_request(
+    service: ConfirmationService,
+    *,
+    tool_call_id: str,
+    conversation_id: str = "chat-1",
+) -> str:
+    request = await service.create_request(
+        target_user_id="user-1",
+        tool_name="send_email",
+        tool_args={"to": "bob@example.test"},
+        tool_call_id=tool_call_id,
+        source_message_internal_id=None,
+        confirmation_prompt="Send an email to bob@example.test?",
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+        origin_interface_type="web",
+        origin_conversation_id=conversation_id,
+    )
+    return request["id"]
+
+
+@pytest.mark.asyncio
+async def test_human_decisions_exclude_system_rejections_and_pending(
+    db_engine: AsyncEngine,
+) -> None:
+    service = _service(db_engine)
+    approved_id = await _create_conversation_request(service, tool_call_id="call-a")
+    declined_id = await _create_conversation_request(service, tool_call_id="call-b")
+    withdrawn_id = await _create_conversation_request(service, tool_call_id="call-c")
+    await _create_conversation_request(service, tool_call_id="call-d")
+    await service.approve_without_enqueueing_execution(
+        request_id=approved_id,
+        approving_user_id="user-1",
+        approving_interface="web",
+    )
+    await service.reject(
+        request_id=declined_id,
+        rejecting_user_id="user-1",
+        rejecting_interface="web",
+    )
+    await service.reject(
+        request_id=withdrawn_id,
+        rejecting_user_id="user-1",
+        rejecting_interface="web",
+        by_system=True,
+    )
+
+    rows = await Database(
+        engine=db_engine
+    ).confirmation_requests.list_human_decisions_for_tool_calls(
+        tool_call_ids=["call-a", "call-b", "call-c", "call-d"],
+        interface_type="web",
+        conversation_id="chat-1",
+    )
+
+    assert [(row["id"], row["status"]) for row in rows] == [
+        (approved_id, "approved"),
+        (declined_id, "rejected"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_human_decisions_are_scoped_to_the_conversation(
+    db_engine: AsyncEngine,
+) -> None:
+    service = _service(db_engine)
+    other_id = await _create_conversation_request(
+        service, tool_call_id="call-shared", conversation_id="chat-2"
+    )
+    await service.approve_without_enqueueing_execution(
+        request_id=other_id,
+        approving_user_id="user-1",
+        approving_interface="web",
+    )
+
+    rows = await Database(
+        engine=db_engine
+    ).confirmation_requests.list_human_decisions_for_tool_calls(
+        tool_call_ids=["call-shared"],
+        interface_type="web",
+        conversation_id="chat-1",
+    )
+
+    assert rows == []

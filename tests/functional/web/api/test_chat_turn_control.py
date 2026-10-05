@@ -904,6 +904,11 @@ async def test_cancel_rejects_pending_confirmations_for_turn(
     # Rejection happens synchronously within the cancel request.
     assert await _confirmation_status(db_engine, turn_conf["id"]) == "rejected"
     assert await _confirmation_status(db_engine, other_conf["id"]) == "pending"
+    # Nobody decided it, so the reviewer must not read it as a human decline.
+    stopped = await Database(engine=db_engine).confirmation_requests.get(
+        turn_conf["id"]
+    )
+    assert stopped is not None and stopped["resolved_by_system"] is True
 
 
 async def test_cancel_returns_503_when_confirmation_rejection_fails(

@@ -283,8 +283,13 @@ class ConfirmationService:
         request_id: str,
         rejecting_user_id: str,
         rejecting_interface: str,
+        by_system: bool = False,
     ) -> ConfirmationRequestRow:
-        """Reject a pending confirmation request."""
+        """Reject a pending confirmation request.
+
+        ``by_system`` records that nobody decided it: the system is withdrawing
+        the request because the turn stopped or the prompt never arrived.
+        """
         request = await self._get_authorized_request(
             db=self._db,
             request_id=request_id,
@@ -306,6 +311,7 @@ class ConfirmationService:
             resolving_user_id=rejecting_user_id,
             resolving_interface=rejecting_interface,
             now=now,
+            by_system=by_system,
         )
         if rejected is None:
             refreshed = await self._db.confirmation_requests.get(request_id)
