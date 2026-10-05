@@ -224,8 +224,6 @@ def _one_line(text: str | None) -> str:
 
 
 def _attachment_reference(attachment_id: str | None) -> TextContentPart:
-    if attachment_id is None:
-        return TextContentPart(type="text", text="[An attachment, not shown]")
     return TextContentPart(
         type="text",
         text=(
@@ -249,16 +247,17 @@ def _compacted_user_content(
     return parts
 
 
-def has_attachments(rows: Sequence[MessageWithMetadata]) -> bool:
-    return any(
-        isinstance(row.message, UserMessage)
-        and isinstance(row.message.content, list)
-        and any(
-            isinstance(part, ImageUrlContentPart | AttachmentContentPart)
-            for part in row.message.content
-        )
+def _attachment_parts(
+    rows: Sequence[MessageWithMetadata],
+) -> list[ImageUrlContentPart | AttachmentContentPart]:
+    return [
+        part
         for row in rows
-    )
+        if isinstance(row.message, UserMessage)
+        and isinstance(row.message.content, list)
+        for part in row.message.content
+        if isinstance(part, ImageUrlContentPart | AttachmentContentPart)
+    ]
 
 
 def has_tool_calls(rows: Sequence[MessageWithMetadata]) -> bool:
@@ -274,7 +273,13 @@ def can_compact(
     """Whether compacting the turn leaves only references the profile can follow."""
     if has_tool_calls(rows) and not capabilities.history_tool:
         return False
-    return not (has_attachments(rows) and not capabilities.media_tool)
+    attachments = _attachment_parts(rows)
+    if not attachments:
+        return True
+    # A reference is only followable with an id to follow it by.
+    return capabilities.media_tool and all(
+        part.attachment_id is not None for part in attachments
+    )
 
 
 def render_compacted_turn(

@@ -323,3 +323,23 @@ def test_a_turn_coming_back_into_the_window_loses_its_thinking() -> None:
     )
 
     assert plan.decisions["pinned"].strip_through == 100
+
+
+def test_an_image_without_an_id_is_never_compacted() -> None:
+    turn = [
+        _row(
+            0,
+            UserMessage(
+                content=[
+                    ImageUrlContentPart(
+                        type="image_url", image_url={"url": "data:image/png;base64,"}
+                    )
+                ]
+            ),
+        ),
+        _row(1, AssistantMessage(content="A cat.")),
+    ]
+
+    assert not can_compact(
+        turn, CompactionCapabilities(history_tool=True, media_tool=True)
+    )
