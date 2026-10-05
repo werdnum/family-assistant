@@ -153,9 +153,11 @@ def select_turns(
     not count against it, so the window does not depend on how far a turn has
     run.
     """
-    newest = {turn.key for turn in turns[len(turns) - limits.min_turns :]}
-    if limits.min_turns <= 0:
-        newest = set()
+    newest = (
+        {turn.key for turn in turns[-limits.min_turns :]}
+        if limits.min_turns > 0
+        else set()
+    )
     kept: set[str] = set(mandatory) | newest
     total = sum(sizes[key] for key in kept)
     for turn in reversed(turns):
