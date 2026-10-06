@@ -757,21 +757,20 @@ _CORE_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.DELEGATION,
         ToolTag.OUTPUT_TRUSTED,
     ),
+    # OUTPUT_TRUSTED: like delegate_to_service, both status tools add each run's
+    # own taint to the turn -- a terminal run's result taint, a pending run's
+    # request taint -- so a pending or clean run does not raise it.
     "get_delegation_status": _metadata(
         ToolTag.DELEGATION,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
-        # OUTPUT_UNTRUSTED: a completed run's result_text is included verbatim, and
-        # for a remote A2A run that text is the remote agent's own output.
-        ToolTag.OUTPUT_UNTRUSTED,
+        ToolTag.OUTPUT_TRUSTED,
     ),
     "list_delegations": _metadata(
         ToolTag.DELEGATION,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
-        # OUTPUT_UNTRUSTED: includes completed runs' result_text verbatim, remote
-        # A2A output among it.
-        ToolTag.OUTPUT_UNTRUSTED,
+        ToolTag.OUTPUT_TRUSTED,
     ),
     "schedule_reminder": _metadata(
         ToolTag.STATE_CHANGING,
