@@ -124,16 +124,13 @@ messages, issue bodies, PR descriptions and review comments are written by anyon
 repository, bots and drive-by contributors included, and content the household did not author must
 never render to the tool-call reviewer as the user's own words.
 
-**A deliberate over-classification, for now.** `output_untrusted` resolves to `UNKNOWN_EXTERNAL`,
-the same tier as a scraped web page, which overstates the risk of one's own repository. The tier
-vocabulary already has the better answer — `KNOWN_CONTACT` and `RECOGNIZED_MACHINE` sit between the
-trusted pole and the open internet, and the taint design nominates private calendars and Home
-Assistant state for exactly that middle — but a *tool* cannot currently reach it: the output tags
-are binary, `output_trusted` or `output_untrusted`, with nothing in between. Closing that gap means
-a tier-valued output tag, which is a change to the tag vocabulary and to every classification that
-depends on it, and it is deliberately not bundled here (tracked in issue #1226). The cost of waiting
-is small: the sink class is `low_bandwidth_external` either way, so the practical difference is
-extra audit rows and a coarser provenance digest, not a change in what the engineer can do.
+**Why not a middle tier.** Tools can declare a tier between the poles: `output_machine_data` grades
+a result `RECOGNIZED_MACHINE`. These servers do not qualify. They read any public repository on
+GitHub, not only the household's own, and what they return is mostly free text other people wrote,
+which is what `UNKNOWN_EXTERNAL` denotes rather than structured machine data. The cost of the
+stricter tier is small: the sink class is `low_bandwidth_external` either way, so the practical
+difference is extra audit rows and a coarser provenance digest, not a change in what the engineer
+can do.
 
 ### Confirmation and Judged Review for Side Effects
 
