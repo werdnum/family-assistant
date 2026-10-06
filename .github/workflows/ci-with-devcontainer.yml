@@ -4,6 +4,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  merge_group:
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -51,6 +52,7 @@ jobs:
         uses: dorny/paths-filter@v4
         id: code_changes
         with:
+          base: ${{ github.event.merge_group.base_sha || github.ref }}
           # A file counts as a code change only when it falls outside *every*
           # exclusion below. This requires predicate-quantifier: every -- with
           # the default 'some', an all-negated list matches as soon as a file
@@ -89,6 +91,7 @@ jobs:
         uses: dorny/paths-filter@v4
         id: filter
         with:
+          base: ${{ github.event.merge_group.base_sha || github.ref }}
           filters: |
             ast_grep_changes:
               - '.ast-grep/**'
@@ -103,6 +106,8 @@ jobs:
               - 'frontend/**/__tests__/**'
             backend_source:
               - 'src/**/*.py'
+              - 'alembic/**'
+              - 'alembic.ini'
             backend_tests_unit:
               - 'tests/**/*.py'
             backend_tests_playwright:
@@ -896,4 +901,3 @@ jobs:
           echo "✅ All tests passed or were skipped!"
 
 # Note: Test images with unique tags will be cleaned up by GHCR retention policies
-
