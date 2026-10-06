@@ -4066,12 +4066,17 @@ class TaintTrackingToolsProvider(ToolsProvider):
             sources_changed = state.sources != state_before_execution.sources
             if not sources_changed and not remerged_external:
                 return None
-            result_tier = max(
-                _tier_added_since(state_before_execution, state)
-                if sources_changed
-                else SourceTrustTier.TRUSTED_INTERNAL,
-                merged_tier or SourceTrustTier.TRUSTED_INTERNAL,
-            )
+            tiers = [
+                tier
+                for tier in (
+                    _tier_added_since(state_before_execution, state)
+                    if sources_changed
+                    else None,
+                    merged_tier,
+                )
+                if tier is not None
+            ]
+            result_tier = max(tiers)
             logger.info(
                 "Tool result inherited dynamic taint: tool=%s call_id=%s max_tier=%s",
                 descriptor.name,

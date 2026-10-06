@@ -3352,6 +3352,46 @@ async def test_rereading_a_tainted_source_records_a_result_taint_row_each_time(
     assert len(tracker.snapshot().sources) == 1
 
 
+async def _user_history_read_tool(exec_context: ToolExecutionContext) -> ToolResult:
+    assert exec_context.taint_tracker is not None
+    exec_context.taint_tracker.add_source(
+        TaintSource(
+            source_type=TaintSourceType.USER_MESSAGE,
+            source_id="history-1",
+            tier=SourceTrustTier.TRUSTED_USER,
+            labels=frozenset(),
+            reason="The user's own message.",
+        )
+    )
+    return ToolResult(text="user message")
+
+
+@pytest.mark.asyncio
+async def test_merged_trusted_user_source_keeps_its_tier_on_the_row(
+    db_engine: AsyncEngine,
+) -> None:
+    provider = TaintTrackingToolsProvider(
+        LocalToolsProvider(
+            registrations=[
+                _registration(
+                    "read_history", _user_history_read_tool, ToolTag.OUTPUT_TRUSTED
+                )
+            ]
+        )
+    )
+    db_context = Database(db_engine)
+    context = _minimal_context(db_context, InMemoryTurnTaintTracker())
+
+    await provider.execute_tool("read_history", {}, context, "call_history")
+    audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
+
+    assert [
+        event["result_tier"]
+        for event in audit_events
+        if event["event_type"] == "result_taint"
+    ] == ["trusted_user"]
+
+
 @pytest.mark.asyncio
 async def test_trusted_tool_after_a_tainted_read_records_no_result_taint_row(
     db_engine: AsyncEngine,
