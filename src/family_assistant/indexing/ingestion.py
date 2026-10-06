@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 import filetype  # type: ignore[import-untyped]
 
 from family_assistant.indexing.types import IngestionResult
+from family_assistant.security.taint import ARTIFACT_PROVENANCE_METADATA_KEYS
 from family_assistant.storage.tasks import TaskPriority
 
 # storage functions now accessed via Database
@@ -65,8 +66,11 @@ async def process_document_ingestion_request(
     """
     original_filename_for_task: str | None = uploaded_file_filename
 
-    if doc_metadata is None:
-        doc_metadata = {}
+    doc_metadata = {
+        key: value
+        for key, value in (doc_metadata or {}).items()
+        if key not in ARTIFACT_PROVENANCE_METADATA_KEYS
+    }
 
     # Ensure original_url and original_filename are in doc_metadata if applicable,
     # without overwriting if they were explicitly provided in metadata_json.
