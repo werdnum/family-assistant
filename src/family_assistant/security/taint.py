@@ -594,7 +594,12 @@ class TurnTaintState:
 
         source_key = taint_source_semantic_key(source)
         key_hash = hash(source_key)
-        if key_hash in self._seen_keys:
+        # A high-tier source can outlive its key in the bounded index, so the
+        # retained sources are checked too.
+        if key_hash in self._seen_keys or any(
+            taint_source_semantic_key(existing) == source_key
+            for existing in self.sources
+        ):
             sources = self.sources
             if not source.inherited:
                 held = [

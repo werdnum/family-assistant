@@ -5,6 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from family_assistant.security.taint import (
+    DEFAULT_MAX_SEEN_KEYS,
     DEFAULT_MAX_SOURCES,
     LEGACY_MISSING_TAINT_METADATA_LABEL,
     PRE_ORIGIN_TAINT_METADATA_VERSION,
@@ -151,6 +152,19 @@ def test_source_bound_evicts_clean_sources_before_the_untrusted_one() -> None:
     ]
     metadata = state.to_metadata()
     assert "web_search" in [s["source_id"] for s in metadata.get("sources", [])]
+
+
+def test_retained_source_is_deduplicated_after_its_index_key_ages_out() -> None:
+    web = _source(SourceTrustTier.UNKNOWN_EXTERNAL, "web_search")
+    state = TurnTaintState.empty().add_source(web)
+    for index in range(DEFAULT_MAX_SEEN_KEYS + 1):
+        state = state.add_source(_source(SourceTrustTier.TRUSTED_INTERNAL, f"t{index}"))
+    distinct = state.distinct_source_count
+
+    state = state.add_source(web)
+
+    assert [s.source_id for s in state.sources].count("web_search") == 1
+    assert state.distinct_source_count == distinct
 
 
 def test_legacy_row_contributes_attributed_sources_not_its_merged_maximum() -> None:
