@@ -154,6 +154,18 @@ REUSABLE_MAX_TIER = SourceTrustTier.MACHINE_REVIEWED
 """Last tier whose content may be reused without being asked for."""
 
 
+ARTIFACT_PROVENANCE_METADATA_KEYS: frozenset[str] = frozenset({
+    "taint_metadata",
+    "source_trust_tier",
+    "provenance_labels",
+})
+"""Keys in a stored artifact's metadata that carry its provenance stamp.
+
+Only the server may write them; caller-supplied metadata must have them removed
+before it is stored, or a caller could stamp its own content trusted.
+"""
+
+
 def is_externally_authored(tier: SourceTrustTier | None) -> bool:
     """Whether content at this tier was authored outside the trust boundary.
 

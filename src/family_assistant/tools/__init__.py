@@ -810,19 +810,21 @@ _CORE_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.EXECUTABLE_PERSISTENCE,
         ToolTag.OUTPUT_TRUSTED,
     ),
+    # OUTPUT_TRUSTED: both document tools add each returned document's stored
+    # provenance to the turn themselves, unstamped documents as unknown_external.
     "search_documents": _metadata(
         ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.DOCUMENTS,
-        ToolTag.OUTPUT_UNTRUSTED,
+        ToolTag.OUTPUT_TRUSTED,
     ),
     "get_full_document_content": _metadata(
         ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.DOCUMENTS,
-        ToolTag.OUTPUT_UNTRUSTED,
+        ToolTag.OUTPUT_TRUSTED,
     ),
     "ingest_document_from_url": _metadata(
         ToolTag.STATE_CHANGING,

@@ -595,9 +595,10 @@ mcp_config:
         # output_untrusted because commit messages, issue bodies, PR
         # descriptions and review comments are written by anyone who can reach
         # the repository -- bots, dependency updaters and drive-by contributors
-        # included -- not only by the household. This is deliberately the same
-        # tier as a scraped web page today; see docs/design/engineer_profile.md
-        # for why a finer tier needs a change to the tag vocabulary first.
+        # included -- not only by the household -- and these servers reach any
+        # public repository. That is free text from outside, not machine data,
+        # so output_machine_data does not fit; see
+        # docs/design/engineer_profile.md.
         "*": ["read_only", "low_bandwidth_external", "output_untrusted"]
     github-issues:
       transport: "streamable_http"
