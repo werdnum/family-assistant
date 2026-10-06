@@ -204,7 +204,8 @@ class NoteWriteOutcome:
     created: bool = False
     admission: AdmissionOutcome | None = None
     admission_note: str | None = None
-    """A sentence for the tool result when the write was gated."""
+    """A sentence for the tool result when the write was gated, or when an
+    ungated write lowered the note's stored tier."""
 
 
 @dataclass(frozen=True)
@@ -465,7 +466,7 @@ async def write_note_through_admission(
                 admission=decision.outcome,
             )
         try:
-            await exec_context.db_context.notes.add_or_update(
+            written = await exec_context.db_context.notes.add_or_update(
                 title=title,
                 content=resolved.candidate.content,
                 include_in_prompt=include_in_prompt,
@@ -498,10 +499,13 @@ async def write_note_through_admission(
             logger.exception(f"Error adding/updating note '{title}': {e}")
             return NoteWriteOutcome(error=f"Failed to add/update note '{title}'. {e}")
         await _attach_note_to_policy_audit(exec_context, title)
+        admission_note = _admission_note(resolved, decision)
         return NoteWriteOutcome(
             created=resolved.revision == note_revision(None),
             admission=decision.outcome,
-            admission_note=_admission_note(resolved, decision),
+            # A gated write's admission note already says where it landed.
+            admission_note=admission_note
+            or (written.tier_lowered.notice() if written.tier_lowered else None),
         )
     raise AssertionError("unreachable: the write loop always returns")
 

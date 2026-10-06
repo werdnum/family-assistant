@@ -25,7 +25,7 @@ async def test_add_note_default_includes_in_prompt(
         write_policy=NoteWritePolicy.UNCONSTRAINED,
         provenance=NoteProvenanceStamp.internal(),
     )
-    assert result == "Success"
+    assert result.tier_lowered is None
 
     # Verify note is included by default
     note = await db.notes.get_by_title(
@@ -129,7 +129,7 @@ async def test_get_prompt_notes_filters_correctly(
             write_policy=NoteWritePolicy.UNCONSTRAINED,
             provenance=NoteProvenanceStamp.internal(),
         )
-        assert result == "Success"
+        assert result.tier_lowered is None
 
     for title, content, include in test_notes:
         note = await db.notes.get_by_title(

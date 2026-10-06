@@ -124,7 +124,9 @@ async def test_notes_indexing_e2e(pg_vector_db_engine: AsyncEngine) -> None:
                 write_policy=NoteWritePolicy.UNCONSTRAINED,
                 provenance=NoteProvenanceStamp.internal(),
             )
-            assert result == "Success", f"Failed to create note {title!r}: {result}"
+            assert result.tier_lowered is None, (
+                f"Unexpected tier change for {title!r}: {result}"
+            )
 
         new_task_event.set()
         await wait_for_tasks_to_complete(pg_vector_db_engine, timeout_seconds=20.0)
