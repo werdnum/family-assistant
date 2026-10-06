@@ -55,7 +55,10 @@ from family_assistant.storage.database import (
 )
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.repositories.notes import NoteReadPolicy, NoteWritePolicy
-from family_assistant.tools import LOCAL_TOOL_METADATA_BY_NAME
+from family_assistant.tools import (
+    LOCAL_TOOL_METADATA_BY_NAME,
+    LOCAL_TOOL_REGISTRATIONS,
+)
 from family_assistant.tools.attachments import read_text_attachment_tool
 from family_assistant.tools.documents import get_full_document_content_tool
 from family_assistant.tools.infrastructure import (
@@ -2596,6 +2599,45 @@ async def test_tainted_note_write_stores_label_and_reread_restores_taint(
 
     assert note_result.data is not None
     assert read_tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+
+
+@pytest.mark.asyncio
+async def test_note_writes_record_the_note_id_on_their_policy_audit_row(
+    db_engine: AsyncEngine,
+) -> None:
+    provider = TaintTrackingToolsProvider(
+        LocalToolsProvider(
+            registrations=[
+                registration
+                for registration in LOCAL_TOOL_REGISTRATIONS
+                if registration.name == "add_or_update_note"
+            ]
+        )
+    )
+    db_context = Database(db_engine)
+    context = _minimal_context(db_context, _unknown_external_tracker())
+
+    for call_id, content in (("call_create", "first"), ("call_update", "second")):
+        await provider.execute_tool(
+            "add_or_update_note",
+            {"title": "Audited note", "content": content},
+            context,
+            call_id,
+        )
+    await provider.close()
+
+    note_id = await db_context.notes.get_id_by_title("Audited note")
+    assert note_id is not None
+    audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
+    policy_events = {
+        event["tool_call_id"]: event
+        for event in audit_events
+        if event["event_type"] == "policy_evaluation"
+    }
+    assert set(policy_events) == {"call_create", "call_update"}
+    for event in policy_events.values():
+        assert event["sink_class"] == "artifact_write"
+        assert event["artifact_id"] == f"note:{note_id}"
 
 
 @pytest.mark.asyncio

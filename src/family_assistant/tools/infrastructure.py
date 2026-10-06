@@ -2524,6 +2524,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
             descriptor, arguments, self._delegation_sink_classes
         )
         evaluation: TaintPolicyEvaluation | None = None
+        policy_audit_event_id: str | None = None
         if context.taint_tracker is not None:
             argument_taint_merged = await self._merge_argument_taint_into_context(
                 arguments,
@@ -2566,7 +2567,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
                     state.max_tier.config_value,
                     evaluation.reason,
                 )
-            await self._record_policy_evaluation_audit(
+            policy_audit_event_id = await self._record_policy_evaluation_audit(
                 descriptor=descriptor,
                 context=context,
                 call_id=call_id,
@@ -2934,10 +2935,12 @@ class TaintTrackingToolsProvider(ToolsProvider):
         )
         previous_confirmation_authorization = context.tool_confirmation_authorization
         previous_definition_gate = context.definition_gate_outcome
+        previous_policy_audit_event_id = context.policy_audit_event_id
         previous_in_flight_result_taint = context.in_flight_result_taint
         if inline_confirmation_authorization is not None:
             context.tool_confirmation_authorization = inline_confirmation_authorization
         context.definition_gate_outcome = definition_gate
+        context.policy_audit_event_id = policy_audit_event_id
         context.in_flight_result_taint = derive_tool_result_taint_source(
             descriptor=descriptor,
             call_id=call_id,
@@ -2959,6 +2962,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
             raise
         finally:
             context.definition_gate_outcome = previous_definition_gate
+            context.policy_audit_event_id = previous_policy_audit_event_id
             context.in_flight_result_taint = previous_in_flight_result_taint
             if inline_confirmation_authorization is not None:
                 context.tool_confirmation_authorization = (
@@ -3949,8 +3953,8 @@ class TaintTrackingToolsProvider(ToolsProvider):
         arguments: dict[str, Any],
         state: TurnTaintState,
         evaluation: TaintPolicyEvaluation,
-    ) -> None:
-        await self._record_named_policy_evaluation_audit(
+    ) -> str:
+        return await self._record_named_policy_evaluation_audit(
             tool_name=descriptor.name,
             context=context,
             call_id=call_id,
@@ -3971,8 +3975,8 @@ class TaintTrackingToolsProvider(ToolsProvider):
         state: TurnTaintState,
         evaluation: TaintPolicyEvaluation,
         safe_argument_keys: Collection[str] = (),
-    ) -> None:
-        await self._record_taint_audit_event(
+    ) -> str:
+        return await self._record_taint_audit_event(
             context=context,
             event_type="policy_evaluation",
             tool_name=tool_name,

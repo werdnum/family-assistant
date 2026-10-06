@@ -663,6 +663,12 @@ class ToolExecutionContext:
     covers reach it through ``definition_gate_outcome``.
     """
     definition_gate_outcome: DefinitionGateOutcome | None = None
+    policy_audit_event_id: str | None = None
+    """The ``policy_evaluation`` audit row recorded for the current call, if any.
+
+    Recorded before the call runs, so a tool that only learns which artifact it
+    wrote afterwards (a note's id, say) attaches it to this row.
+    """
     """How the gate that admitted the current tool call resolved.
 
     Deposited by the confirmation and adjudication chokepoints before the call

@@ -692,6 +692,17 @@ class NotesRepository(BaseRepository):
             for row in rows
         ]
 
+    async def get_id_by_title(self, title: str) -> int | None:
+        """Return the id of the note with this title, unconfined by read policy.
+
+        For bookkeeping that records which row a write landed on; it exposes no
+        note content.
+        """
+        note_id = await self._db.fetch_value(
+            select(notes_table.c.id).where(notes_table.c.title == title)
+        )
+        return int(note_id) if note_id is not None else None
+
     async def get_by_title(
         self,
         title: str,
