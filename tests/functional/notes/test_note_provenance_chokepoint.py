@@ -143,7 +143,7 @@ async def test_overwriting_a_confirmed_note_from_a_tainted_turn_is_audited(
         select(notes_table.c.id).where(notes_table.c.title == "Error digest")
     )
 
-    await add_or_update_note_tool(
+    result = await add_or_update_note_tool(
         tool_context(db, tracker_at(SourceTrustTier.UNKNOWN_EXTERNAL)),
         title="Error digest",
         content="rebuilt from error logs",
@@ -151,6 +151,11 @@ async def test_overwriting_a_confirmed_note_from_a_tainted_turn_is_audited(
     )
 
     assert await stored_tier(db, "Error digest") is SourceTrustTier.UNKNOWN_EXTERNAL
+    assert result == (
+        "Note 'Error digest' has been updated successfully. Note 'Error digest' is "
+        "now rated unknown_external (it was machine_reviewed): this conversation "
+        "has read outside content, and the note now carries that rating."
+    )
     [event] = await _tier_lowered_events(db)
     assert event["previous_tier"] == SourceTrustTier.MACHINE_REVIEWED.config_value
     assert event["max_tier"] == SourceTrustTier.UNKNOWN_EXTERNAL.config_value
@@ -195,7 +200,7 @@ async def test_writes_that_keep_or_raise_a_notes_tier_are_not_audited(
             state_at(SourceTrustTier.UNKNOWN_EXTERNAL)
         ),
     )
-    await add_or_update_note_tool(
+    result = await add_or_update_note_tool(
         tool_context(db, tracker_at(SourceTrustTier.UNKNOWN_EXTERNAL)),
         title="Research",
         content="still external",
@@ -204,6 +209,29 @@ async def test_writes_that_keep_or_raise_a_notes_tier_are_not_audited(
     await _confirm(db, "Research")
 
     assert await _tier_lowered_events(db) == []
+    assert result == "Note 'Research' has been updated successfully."
+
+
+@pytest.mark.asyncio
+async def test_a_model_edit_of_the_users_own_note_does_not_tell_the_writer(
+    db_engine: AsyncEngine,
+) -> None:
+    """trusted_user to trusted_internal is a lowering, but stays trusted."""
+    db = Database(db_engine)
+    await write_note(
+        db,
+        "Groceries",
+        "milk",
+        include_in_prompt=False,
+        provenance=NoteProvenanceStamp.user_edit(),
+    )
+
+    result = await add_or_update_note_tool(
+        tool_context(db, tracker_at(None)), title="Groceries", content="milk, eggs"
+    )
+
+    assert await stored_tier(db, "Groceries") is SourceTrustTier.TRUSTED_INTERNAL
+    assert result == "Note 'Groceries' has been updated successfully."
 
 
 # ---------------------------------------------------------------------------

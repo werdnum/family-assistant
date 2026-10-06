@@ -246,7 +246,7 @@ async def test_note_update_reindexing_e2e(
             write_policy=NoteWritePolicy.UNCONSTRAINED,
             provenance=NoteProvenanceStamp.internal(),
         )
-        assert result == "Success"
+        assert result.tier_lowered is None
 
         note_stmt = select(notes_table.c.id).where(
             notes_table.c.title == unique_note_title
@@ -319,7 +319,7 @@ async def test_note_update_reindexing_e2e(
             write_policy=NoteWritePolicy.UNCONSTRAINED,
             provenance=NoteProvenanceStamp.internal(),
         )
-        assert result == "Success"
+        assert result.tier_lowered is None
         logger.info("Updated note content")
 
         # Wait for re-indexing task
@@ -494,7 +494,7 @@ async def test_notes_indexing_graceful_degradation(
             write_policy=NoteWritePolicy.UNCONSTRAINED,
             provenance=NoteProvenanceStamp.internal(),
         )
-        assert result == "Success"
+        assert result.tier_lowered is None
 
         note_stmt = select(notes_table.c.id).where(
             notes_table.c.title == unique_note_title

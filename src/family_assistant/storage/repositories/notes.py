@@ -25,6 +25,7 @@ from family_assistant.memory.invariants import (
 )
 from family_assistant.security.note_provenance import (
     NoteProvenanceStamp,
+    NoteTierLowered,
     NoteWriter,
     is_ambient_eligible,
     note_provenance_metadata,
@@ -154,6 +155,13 @@ def note_revision(note: NoteModel | None) -> str:
         default=str,
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True)
+class NoteWriteResult:
+    """What a committed note write did that its writer may need to report."""
+
+    tier_lowered: NoteTierLowered | None = None
 
 
 class NoteNotFoundError(Exception):
@@ -804,7 +812,7 @@ class NotesRepository(BaseRepository):
         additional_visibility_labels: list[str] | None = None,
         refresh_core_index: bool = True,
         expected_revision: str | None = None,
-    ) -> str:
+    ) -> NoteWriteResult:
         """Adds a new note or updates an existing note with the given title (upsert).
 
         Args:
@@ -836,7 +844,7 @@ class NotesRepository(BaseRepository):
                 this title, or the resolved labels violate the allowed ceiling.
         """
 
-        async def _write(txn: DatabaseTransaction) -> str:
+        async def _write(txn: DatabaseTransaction) -> NoteWriteResult:
             """Apply the policy preflight, the upsert and the index enqueue as one unit.
 
             The see-before-overwrite read and the write that depends on it
@@ -916,10 +924,18 @@ class NotesRepository(BaseRepository):
                 ),
             )
             provenance_metadata_to_use = note_provenance_metadata(resolved_state)
+            written = NoteWriteResult()
             if (
                 existing_state is not None
                 and resolved_state.max_tier > existing_state.max_tier
             ):
+                written = NoteWriteResult(
+                    tier_lowered=NoteTierLowered(
+                        title=title,
+                        previous=existing_state.max_tier,
+                        stored=resolved_state.max_tier,
+                    )
+                )
                 # Recorded before the upsert so a write that is then refused
                 # rolls its record back with it.
                 await self._record_tier_lowered(
@@ -1040,7 +1056,7 @@ class NotesRepository(BaseRepository):
                     raise
                 if memory_write and refresh_core_index:
                     await self.refresh_core_memory_index(txn, now=now)
-                return "Success"
+                return written
 
             else:
                 # Fallback for SQLite and other dialects: Try INSERT, then UPDATE on IntegrityError.
@@ -1066,7 +1082,7 @@ class NotesRepository(BaseRepository):
                     await self._enqueue_indexing_task(txn, title)
                     if memory_write and refresh_core_index:
                         await self.refresh_core_memory_index(txn, now=now)
-                    return "Success"
+                    return written
                 except SQLAlchemyError as e:
                     # Check specifically for unique constraint violation
                     if isinstance(e, IntegrityError):
@@ -1123,7 +1139,7 @@ class NotesRepository(BaseRepository):
                         await self._enqueue_indexing_task(txn, title)
                         if memory_write and refresh_core_index:
                             await self.refresh_core_memory_index(txn, now=now)
-                        return "Success"
+                        return written
                     else:
                         # Re-raise other SQLAlchemy errors
                         self._logger.exception(

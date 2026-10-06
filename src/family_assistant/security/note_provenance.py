@@ -265,6 +265,32 @@ class NoteProvenanceStamp:
         )
 
 
+@dataclass(frozen=True)
+class NoteTierLowered:
+    """A note write that left the note less trusted than it was."""
+
+    title: str
+    previous: SourceTrustTier
+    stored: SourceTrustTier
+
+    def notice(self) -> str | None:
+        """A sentence for the writer's tool result, or None if it is not worth one.
+
+        Only a note left below the reusable tiers is reported: that is the drop
+        that changes what reading the note does to a later turn. A move within
+        the reusable tiers -- the user's own words edited by the model, say --
+        changes nothing anyone relies on. Memory notes never qualify, because
+        the memory store refuses a write that would leave one there.
+        """
+        if is_admissible_for_reuse(self.stored):
+            return None
+        return (
+            f"Note '{self.title}' is now rated {self.stored.config_value} "
+            f"(it was {self.previous.config_value}): this conversation has read "
+            "outside content, and the note now carries that rating."
+        )
+
+
 def resolve_note_stamp(
     stamp: NoteProvenanceStamp,
     *,
