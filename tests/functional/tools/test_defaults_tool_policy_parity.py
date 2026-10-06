@@ -489,6 +489,12 @@ ENGINEER_TRUSTED_OUTPUT_ALLOWLIST = {
     "list_notes": "merges each listed note's stored provenance on read",
     "query_recent_events": "grades each returned event by its source on read",
     "read_text_attachment": "merges the attachment's stored provenance on read",
+    "search_documents": (
+        "merges each result's stored provenance; unstamped ones as unknown_external"
+    ),
+    "get_full_document_content": (
+        "merges the document's stored provenance; unstamped as unknown_external"
+    ),
     "jq_query": "merges the queried attachment's stored provenance on read",
     "delegate_to_service": "merges the delegated turn's own taint on return",
     "create_github_issue": (
