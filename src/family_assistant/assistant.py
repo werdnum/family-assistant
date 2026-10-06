@@ -1552,6 +1552,7 @@ class Assistant:
             tier_llm_clients=tier_llm_clients,
             model_router=model_router,
             turn_relevance=turn_relevance,
+            jev_client=self._jev_client,
         )
 
         # Render once now so a template referencing a placeholder that no

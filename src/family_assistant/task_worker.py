@@ -6395,6 +6395,8 @@ async def handle_script_execution(
                 external_functions=(
                     "llm",
                     "llm_json",
+                    "classify",
+                    "classify_yes_no",
                     "wake_llm",
                     "json_*",
                     "time_*",

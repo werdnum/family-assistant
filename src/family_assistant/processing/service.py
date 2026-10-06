@@ -97,6 +97,7 @@ if TYPE_CHECKING:
     from family_assistant.interfaces import ChatInterface
     from family_assistant.llm.model_routing import RoutingDecision, TierRouter
     from family_assistant.llm.model_selection import RoutingOutcome
+    from family_assistant.llm.typesafe import JevClient
     from family_assistant.memory.review_context import MemoryReviewContext
     from family_assistant.plugins.runtime import ProfilePlugins
     from family_assistant.processing.history_relevance import TurnRelevance
@@ -312,6 +313,7 @@ class ProcessingService:
         tier_llm_clients: Mapping[str, LLMInterface] | None = None,
         model_router: TierRouter | None = None,
         turn_relevance: TurnRelevance | None = None,
+        jev_client: JevClient | None = None,
     ) -> None:
         """Build a profile's service.
 
@@ -328,8 +330,11 @@ class ProcessingService:
         builds directly -- means no turn here is ever routed.
 
         ``turn_relevance`` ranks the window's turns at a compaction event; with
-        none, compaction proceeds oldest-first.
+        none, compaction proceeds oldest-first. ``jev_client`` is the
+        deployment's TypeSafe client, which scripts' ``classify()`` calls; with
+        none, those calls raise.
         """
+        self.jev_client = jev_client
         self._llm_client = llm_client
         self._tier_llm_clients: dict[str, LLMInterface] = dict(tier_llm_clients or {})
         self._model_router = model_router

@@ -173,6 +173,12 @@ def _generate_builtin_api_stubs(
         lines.append(
             "def llm_json(prompt: str, schema: dict[str, Any] | None = None, system: str | None = None, model: str | None = None) -> dict[str, Any]: ..."
         )
+        lines.append(
+            "def classify(state: str | dict[str, Any], question: str, options: list[str] | dict[str, str | None]) -> dict[str, Any]: ..."
+        )
+        lines.append(
+            "def classify_yes_no(state: str | dict[str, Any], question: str, yes: str | None = None, no: str | None = None) -> float: ..."
+        )
         lines.append("")
 
     # Attachment API (only when attachment registry is available at runtime)

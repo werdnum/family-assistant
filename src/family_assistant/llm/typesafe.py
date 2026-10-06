@@ -202,13 +202,23 @@ def _parse_answers(
         if kind == "noul":
             nouls[key] = _probability(answer.get("noul"), key)
         else:
+            assert isinstance(question, ChoiceQuestion)
             probabilities = answer.get("probabilities")
             if not isinstance(probabilities, dict):
                 raise TypeSafeError(f"Jev answer for {key!r} has no distribution")
-            choices[key] = {
+            distribution = {
                 str(option): _probability(value, key)
                 for option, value in probabilities.items()
             }
+            # The API answers with every offered option and nothing else; any
+            # other answer is broken, and a caller must not act on a label it
+            # never offered or miss one it did.
+            if set(distribution) != set(question.options):
+                raise TypeSafeError(
+                    f"Jev answer for {key!r} does not cover exactly the offered "
+                    f"options: {sorted(distribution)}"
+                )
+            choices[key] = distribution
     usage = body.get("usage")
     input_tokens = usage.get("input_tokens") if isinstance(usage, dict) else None
     output_tokens = usage.get("output_tokens") if isinstance(usage, dict) else None
