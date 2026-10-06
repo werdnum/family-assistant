@@ -182,7 +182,7 @@ async def test_migrations_still_run_under_a_ceiling_that_aborts_queries(
     a long index build or backfill is the one place that ceiling is wrong.
 
     Whatever the newest migration happens to be is the one exercised: the test
-    rewinds by one revision through Alembic itself and reads the target head
+    rewinds to a parent of the head through Alembic itself and reads the target head
     out of the script directory, so it never has to be edited when a migration
     lands. ``env.py`` drives its own event loop, so Alembic runs on a thread.
     """
@@ -192,15 +192,22 @@ async def test_migrations_still_run_under_a_ceiling_that_aborts_queries(
     # ``sqlalchemy.url`` to a specific engine, and standalone ``env.py``
     # overrides that from the environment anyway (set below).
     alembic_config = AlembicConfig(str(PROJECT_ROOT / "alembic.ini"))
-    head_revision = ScriptDirectory.from_config(alembic_config).get_current_head()
+    script_directory = ScriptDirectory.from_config(alembic_config)
+    head_revision = script_directory.get_current_head()
     assert head_revision is not None
+    # A merge revision has several parents, and "-1" from one is ambiguous to
+    # Alembic; stepping down to a named parent works for either shape.
+    head = script_directory.get_revision(head_revision)
+    assert head is not None
+    parents = head.down_revision
+    rewind_target = parents if isinstance(parents, str) else next(iter(parents or ()))
 
     # Rewind one revision so there is genuinely a migration pending while the
     # tight ceiling is in force. Standalone Alembic reads its URL from the
     # environment (see ``alembic/env.py``), which is also how a developer runs
     # a downgrade, so point it at this test's database.
     monkeypatch.setenv("DATABASE_URL", url)
-    await asyncio.to_thread(alembic_command.downgrade, alembic_config, "-1")
+    await asyncio.to_thread(alembic_command.downgrade, alembic_config, rewind_target)
 
     # Well above connection setup: below roughly 25ms the abort lands outside
     # SQLAlchemy's cursor wrapper and surfaces as a raw asyncpg error.
