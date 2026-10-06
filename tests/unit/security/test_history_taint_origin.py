@@ -5,6 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from family_assistant.security.taint import (
+    DEFAULT_MAX_SEEN_KEYS,
     DEFAULT_MAX_SOURCES,
     LEGACY_MISSING_TAINT_METADATA_LABEL,
     PRE_ORIGIN_TAINT_METADATA_VERSION,
@@ -112,19 +113,58 @@ def test_reintroducing_an_inherited_source_makes_it_the_turns_own() -> None:
     assert reread.distinct_source_count == state.distinct_source_count
 
 
+def _crowded_by_inherited_untrusted(introduced: TaintSource) -> TurnTaintState:
+    """A turn whose own source the bound evicts behind untrusted carry-in."""
+    state = TurnTaintState.empty().add_source(introduced)
+    for index in range(DEFAULT_MAX_SOURCES):
+        state = state.add_source(
+            _source(SourceTrustTier.UNKNOWN_EXTERNAL, f"w{index}", inherited=True),
+            from_history=True,
+        )
+    assert introduced not in state.sources
+    return state
+
+
 def test_introduced_maximum_survives_eviction_from_the_source_bound() -> None:
+    state = _crowded_by_inherited_untrusted(
+        _source(SourceTrustTier.RECOGNIZED_MACHINE, "fetch_feed")
+    )
+    metadata = state.to_metadata()
+
+    assert metadata.get("introduced_max_tier") == "recognized_machine"
+    assert (
+        prompt_window_taint([_row(metadata)]).max_tier
+        is SourceTrustTier.RECOGNIZED_MACHINE
+    )
+
+
+def test_source_bound_evicts_clean_sources_before_the_untrusted_one() -> None:
     state = TurnTaintState.empty().add_source(
         _source(SourceTrustTier.UNKNOWN_EXTERNAL, "web_search")
     )
     for index in range(DEFAULT_MAX_SOURCES + 2):
         state = state.add_source(_source(SourceTrustTier.TRUSTED_INTERNAL, f"t{index}"))
-    metadata = state.to_metadata()
-    assert all(s["source_id"] != "web_search" for s in metadata.get("sources", []))
 
-    assert (
-        prompt_window_taint([_row(metadata)]).max_tier
-        is SourceTrustTier.UNKNOWN_EXTERNAL
-    )
+    assert len(state.sources) == DEFAULT_MAX_SOURCES
+    assert state.sources[0].source_id == "web_search"
+    assert [s.source_id for s in state.sources[1:]] == [
+        f"t{index}" for index in range(3, DEFAULT_MAX_SOURCES + 2)
+    ]
+    metadata = state.to_metadata()
+    assert "web_search" in [s["source_id"] for s in metadata.get("sources", [])]
+
+
+def test_retained_source_is_deduplicated_after_its_index_key_ages_out() -> None:
+    web = _source(SourceTrustTier.UNKNOWN_EXTERNAL, "web_search")
+    state = TurnTaintState.empty().add_source(web)
+    for index in range(DEFAULT_MAX_SEEN_KEYS + 1):
+        state = state.add_source(_source(SourceTrustTier.TRUSTED_INTERNAL, f"t{index}"))
+    distinct = state.distinct_source_count
+
+    state = state.add_source(web)
+
+    assert [s.source_id for s in state.sources].count("web_search") == 1
+    assert state.distinct_source_count == distinct
 
 
 def test_legacy_row_contributes_attributed_sources_not_its_merged_maximum() -> None:
@@ -162,6 +202,37 @@ def test_legacy_row_contributes_attributed_sources_not_its_merged_maximum() -> N
         prompt_window_taint([_row(follow_up)]).max_tier
         is SourceTrustTier.TRUSTED_INTERNAL
     )
+
+
+def test_legacy_row_whose_capped_sources_dropped_its_tier_still_taints() -> None:
+    """A runtime_v2 row evicted oldest-first, so its untrusted source may be gone."""
+    capped: TaintMetadata = {
+        "version": PRE_ORIGIN_TAINT_METADATA_VERSION,
+        "max_tier": "unknown_external",
+        "history_high_taint_present": False,
+        "fresh_high_taint_seen_at_sequence": 1,
+        "sources": [
+            {
+                "source_type": "tool_output",
+                "source_id": f"t{index}",
+                "tier": "trusted_internal",
+                "labels": [],
+                "reason": f"t{index} output",
+            }
+            for index in range(DEFAULT_MAX_SOURCES)
+        ],
+        "approved_sinks": [],
+        "total_source_count": DEFAULT_MAX_SOURCES + 1,
+        "distinct_source_count": DEFAULT_MAX_SOURCES + 1,
+        "omitted_source_count": 1,
+    }
+
+    state = prompt_window_taint([_row(capped)])
+    assert state.max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    assert state.history_high_taint_present
+
+    follow_up = _next_turn_row([_row(capped)])
+    assert follow_up.get("max_tier") == "unknown_external"
 
 
 def test_legacy_row_with_unreadable_tier_stays_conservative() -> None:
@@ -280,11 +351,11 @@ def test_confirmed_continuation_keeps_the_turns_carry_in_inherited() -> None:
 def test_evicted_carry_in_is_not_promoted_to_introduced() -> None:
     state = prompt_window_taint([_row(_web_search_row())])
     for index in range(DEFAULT_MAX_SOURCES + 2):
-        state = state.add_source(_source(SourceTrustTier.TRUSTED_INTERNAL, f"t{index}"))
+        state = state.add_source(_source(SourceTrustTier.UNKNOWN_EXTERNAL, f"u{index}"))
     assert not any(source.inherited for source in state.sources)
 
     assert state.max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
-    assert state.introduced_max_tier is SourceTrustTier.TRUSTED_INTERNAL
+    assert state.history_high_taint_present
 
 
 def test_stripping_an_inherited_echo_keeps_the_rows_introduced_maximum() -> None:
@@ -311,14 +382,12 @@ def test_stripping_an_inherited_echo_keeps_the_rows_introduced_maximum() -> None
 
 
 def test_replayed_sources_keep_a_maximum_whose_source_was_evicted() -> None:
-    state = TurnTaintState.empty().add_source(
-        _source(SourceTrustTier.UNKNOWN_EXTERNAL, "web_search")
+    state = _crowded_by_inherited_untrusted(
+        _source(SourceTrustTier.RECOGNIZED_MACHINE, "fetch_feed")
     )
-    for index in range(DEFAULT_MAX_SOURCES + 2):
-        state = state.add_source(_source(SourceTrustTier.TRUSTED_INTERNAL, f"t{index}"))
 
     replayed = TurnTaintState.empty()
     for source in sources_explaining_state(state, reason="Replayed."):
         replayed = replayed.add_source(source)
 
-    assert replayed.introduced_max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    assert replayed.introduced_max_tier is SourceTrustTier.RECOGNIZED_MACHINE

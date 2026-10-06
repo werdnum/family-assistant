@@ -486,7 +486,11 @@ provenance, a searched message, a definition trigger) enters the reading turn as
 the paths that continue a turn keep the stamp's split: a delegation handoff and its folded-back
 result, and a turn's own rows. A row stamped before origin tracking (`runtime_v2`) contributes under
 the amnesty rule while it is in the window: its attributed sources, and nothing synthesized from its
-merged maximum. The accepted residual is paraphrase beyond the window, recorded in
+merged maximum, unless the stamp records omitted sources. `runtime_v2` bounded its sources
+oldest-first, so a capped row may have lost the untrusted source that tainted it; such a row
+contributes its merged maximum instead, accepting that taint it only inherited lasts while it is in
+the window. The bound now evicts the lowest tier first, so current stamps keep the source that
+explains their maximum. The accepted residual is paraphrase beyond the window, recorded in
 [prompt-injection-assessment-2026-10.md](prompt-injection-assessment-2026-10.md).
 
 This creates an important usability problem: if an old unknown-external email remains in the history
