@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from collections.abc import Mapping
 from datetime import UTC, datetime
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
@@ -12,6 +15,8 @@ import caldav
 import httpx
 import pytest
 
+from family_assistant.config_models import JevFilterConfig, TypeSafeConfig
+from family_assistant.llm.typesafe import ChoiceQuestion, JevAnswers, NoulQuestion
 from family_assistant.security.taint import (
     InMemoryTurnTaintTracker,
     SourceTrustTier,
@@ -45,6 +50,10 @@ from family_assistant.tools.types import (
     CalendarEvent,
     ToolExecutionContext,
 )
+from tests.mocks.fake_jev import FakeJevClient
+
+if TYPE_CHECKING:
+    from family_assistant.processing.service import ProcessingService
 
 
 async def _get_radicale_event_by_summary(
@@ -1043,3 +1052,172 @@ async def test_search_calendar_events_chronological_sorting(
     assert pos_later != -1
     assert pos_caldav != -1
     assert pos_earlier < pos_later < pos_caldav
+
+
+def _jev_context(
+    respond: dict[str, float],
+    *,
+    calendar_duplicates: JevFilterConfig | None = None,
+    calendar_search: JevFilterConfig | None = None,
+) -> ToolExecutionContext:
+    """A context whose deployment runs Jev, answering by candidate summary."""
+
+    def answer(
+        state: str | Mapping[str, object],
+        questions: Mapping[str, NoulQuestion | ChoiceQuestion],
+    ) -> JevAnswers:
+        assert isinstance(state, Mapping)
+        candidates = state["candidates"]
+        assert isinstance(candidates, Mapping)
+        nouls = {}
+        for label in questions:
+            candidate = candidates[label]
+            assert isinstance(candidate, Mapping)
+            nouls[label] = respond.get(str(candidate["summary"]), 0.0)
+        return JevAnswers("jev-test", nouls, {}, 10)
+
+    ctx = _create_mock_context()
+    ctx.taint_tracker = InMemoryTurnTaintTracker()
+    ctx.processing_service = cast(
+        "ProcessingService",
+        SimpleNamespace(
+            jev_client=FakeJevClient(respond=answer),
+            app_config=SimpleNamespace(
+                typesafe=TypeSafeConfig(
+                    calendar_duplicates=calendar_duplicates or JevFilterConfig(),
+                    calendar_search=calendar_search or JevFilterConfig(),
+                )
+            ),
+        ),
+    )
+    return ctx
+
+
+def _serve_ics(monkeypatch: pytest.MonkeyPatch, *events: tuple[str, str, str]) -> None:
+    """Serve one iCal feed holding (uid, start, summary) hour-long events."""
+    lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Test//EN"]
+    for uid, start, summary in events:
+        lines += [
+            "BEGIN:VEVENT",
+            f"UID:{uid}",
+            f"DTSTART:{start}",
+            f"DTEND:{start[:9]}{int(start[9:11]) + 1:02d}{start[11:]}",
+            f"SUMMARY:{summary}",
+            "END:VEVENT",
+        ]
+    ics_content = "\r\n".join([*lines, "END:VCALENDAR", ""])
+
+    async def fake_get(
+        self: httpx.AsyncClient, url: str, **kwargs: object
+    ) -> httpx.Response:
+        return httpx.Response(200, text=ics_content)
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+
+
+_FUZZY_FEED_CONFIG: CalendarConfig = {
+    "ical": {
+        "urls": [{"id": "family", "name": "Family", "url": "https://x.example/f.ics"}]
+    },
+    "duplicate_detection": {
+        "similarity_strategy": "fuzzy",
+        "similarity_threshold": 0.5,
+        "time_window_hours": 2,
+    },
+}
+
+
+@pytest.mark.asyncio
+async def test_active_jev_duplicate_check_catches_differently_worded_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _serve_ics(monkeypatch, ("dentist-1", "20260410T143000Z", "Dr Lee checkup"))
+    ctx = _jev_context(
+        {"Dr Lee checkup": 0.9},
+        calendar_duplicates=JevFilterConfig(mode="active", threshold=0.6),
+    )
+
+    warning = await check_for_duplicate_events(
+        exec_context=ctx,
+        calendar_config=_FUZZY_FEED_CONFIG,
+        summary="Dentist",
+        start_time="2026-04-10T14:00:00Z",
+        end_time="2026-04-10T15:00:00Z",
+        all_day=False,
+    )
+
+    assert warning is not None
+    assert "'Dr Lee checkup' at" in warning
+    assert "(match: 0.90)" in warning
+
+
+@pytest.mark.asyncio
+async def test_active_jev_duplicate_check_clears_similar_but_different_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _serve_ics(monkeypatch, ("swim-1", "20260410T140000Z", "Swimming - Mia"))
+    ctx = _jev_context(
+        {"Swimming - Mia": 0.1},
+        calendar_duplicates=JevFilterConfig(mode="active", threshold=0.6),
+    )
+
+    warning = await check_for_duplicate_events(
+        exec_context=ctx,
+        calendar_config=_FUZZY_FEED_CONFIG,
+        summary="Swimming - Leo",
+        start_time="2026-04-10T14:00:00Z",
+        end_time="2026-04-10T15:00:00Z",
+        all_day=False,
+    )
+
+    assert warning is None
+
+
+@pytest.mark.asyncio
+async def test_shadow_jev_duplicate_check_keeps_title_similarity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _serve_ics(monkeypatch, ("swim-1", "20260410T140000Z", "Swimming - Mia"))
+    ctx = _jev_context(
+        {"Swimming - Mia": 0.1},
+        calendar_duplicates=JevFilterConfig(mode="shadow"),
+    )
+
+    warning = await check_for_duplicate_events(
+        exec_context=ctx,
+        calendar_config=_FUZZY_FEED_CONFIG,
+        summary="Swimming - Leo",
+        start_time="2026-04-10T14:00:00Z",
+        end_time="2026-04-10T15:00:00Z",
+        all_day=False,
+    )
+
+    assert warning is not None
+    assert "(similarity:" in warning
+
+
+@pytest.mark.asyncio
+async def test_active_jev_calendar_search_returns_jev_matches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _serve_ics(
+        monkeypatch,
+        ("gp-1", "20260410T090000Z", "Dr Smith checkup"),
+        ("swim-1", "20260411T090000Z", "Swimming"),
+    )
+    ctx = _jev_context(
+        {"Dr Smith checkup": 0.85, "Swimming": 0.05},
+        calendar_search=JevFilterConfig(mode="active"),
+    )
+
+    result = await search_calendar_events_tool(
+        ctx,
+        _FUZZY_FEED_CONFIG,
+        search_text="doctor",
+        start_date="2026-04-09",
+        end_date="2026-04-12",
+    )
+
+    assert "Found 1 event(s):" in result
+    assert "Dr Smith checkup (match: 0.85)" in result
+    assert "Swimming" not in result

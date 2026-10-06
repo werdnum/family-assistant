@@ -307,6 +307,19 @@ nothing can tell the two apart. Treat a tool error rate as counting executions t
 not tasks that went wrong. Turn `outcome` is `success`, `error`, or `cancelled` — a browser that
 navigated away mid-turn is not a failure.
 
+### Jev filtering
+
+| Metric                                         | Type      | Labels                                 |
+| ---------------------------------------------- | --------- | -------------------------------------- |
+| `family_assistant_jev_filter_decisions_total`  | Counter   | `surface`, `mode`, `outcome`, `change` |
+| `family_assistant_jev_filter_latency_seconds`  | Histogram | `surface`, `outcome`                   |
+
+One run of [Jev as a search filter](CONFIGURATION_REFERENCE.md#typesafe-jev). `outcome` is
+`decided`, `timeout` or `error`. `change` compares the set Jev keeps with what the surface's own
+scoring keeps: `same`, `narrowed`, `widened`, `different`, or `none` without an answer. In shadow
+mode it is the evaluation signal; each run also logs one `Jev <surface> filter` line with the
+probabilities and both sets.
+
 ### Task queue
 
 The background task queue's health, from the two chokepoints every task passes through: the
