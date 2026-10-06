@@ -34,7 +34,7 @@ from family_assistant.storage.vector_search import (
     query_vector_store,
 )
 from family_assistant.tools.taint_helpers import (
-    merge_artifact_taint_into_context,
+    inherit_stored_artifact_taint,
     record_sensitive_read,
 )
 from family_assistant.tools.types import (
@@ -412,13 +412,13 @@ async def search_documents_tool(
                 title=str(res.get("title") or doc_id),
                 reason="Indexed note search result provenance.",
             )
-        elif metadata:
-            merge_artifact_taint_into_context(
+        else:
+            inherit_stored_artifact_taint(
                 exec_context,
                 provenance_metadata=metadata,
-                fallback_source_type=TaintSourceType.DOCUMENT,
-                fallback_source_id=str(doc_id) if doc_id is not None else None,
-                fallback_reason="Indexed document search result provenance.",
+                source_type=TaintSourceType.DOCUMENT,
+                source_id=str(doc_id) if doc_id is not None else None,
+                reason="Indexed document search result provenance.",
             )
 
     formatted_results = ["Found relevant documents:"]
@@ -524,21 +524,20 @@ async def get_full_document_content_tool(
                 title=str(title or document_id),
                 reason="Full indexed note read provenance.",
             )
-        if isinstance(doc_metadata, dict):
-            record_sensitive_read(
+        else:
+            inherit_stored_artifact_taint(
                 exec_context,
-                kind="documents",
-                qualifier=f"full:{document_id}",
-                surfaced_ids=[str(document_id)],
+                provenance_metadata=doc_metadata,
+                source_type=TaintSourceType.DOCUMENT,
+                source_id=str(document_id),
+                reason="Full indexed document read provenance.",
             )
-            if source_type != "note":
-                merge_artifact_taint_into_context(
-                    exec_context,
-                    provenance_metadata=doc_metadata,
-                    fallback_source_type=TaintSourceType.DOCUMENT,
-                    fallback_source_id=str(document_id),
-                    fallback_reason="Full indexed document read provenance.",
-                )
+        record_sensitive_read(
+            exec_context,
+            kind="documents",
+            qualifier=f"full:{document_id}",
+            surfaced_ids=[str(document_id)],
+        )
 
         email_attachments_summary: list[EmailAttachmentSummary] | None = None
         if source_type == "email" and source_id:

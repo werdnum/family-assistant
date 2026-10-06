@@ -112,31 +112,51 @@ def inherit_attachment_taint(
     """Raise the turn's taint by the stored provenance of an attachment read.
 
     For tools that return an attachment's own content and are therefore graded
-    by the attachment rather than by a static output tag. An attachment stored
-    without any provenance stamp is treated as unknown_external, so an unstamped
-    registration path cannot read as trusted.
+    by the attachment rather than by a static output tag.
+    """
+    inherit_stored_artifact_taint(
+        exec_context,
+        provenance_metadata=attachment_metadata,
+        source_type=TaintSourceType.ATTACHMENT,
+        source_id=attachment_id,
+        reason="Attachment read provenance.",
+    )
+
+
+def inherit_stored_artifact_taint(
+    exec_context: ToolExecutionContext,
+    *,
+    provenance_metadata: Mapping[str, object] | None,
+    source_type: TaintSourceType,
+    source_id: str | None,
+    reason: str,
+) -> None:
+    """Raise the turn's taint by a stored artifact's provenance stamp.
+
+    An artifact stored without any provenance stamp is treated as
+    unknown_external, so an unstamped write path cannot read as trusted.
     """
     tracker = exec_context.taint_tracker
     if tracker is None:
         return
-    if attachment_metadata is None or (
-        "taint_metadata" not in attachment_metadata
-        and "source_trust_tier" not in attachment_metadata
+    if provenance_metadata is None or (
+        "taint_metadata" not in provenance_metadata
+        and "source_trust_tier" not in provenance_metadata
     ):
         tracker.add_source(
             TaintSource(
-                source_type=TaintSourceType.ATTACHMENT,
-                source_id=attachment_id,
+                source_type=source_type,
+                source_id=source_id,
                 tier=SourceTrustTier.UNKNOWN_EXTERNAL,
                 labels=frozenset(),
-                reason="Attachment has no stored provenance.",
+                reason=f"{reason} No stored provenance.",
             )
         )
         return
     merge_artifact_taint_into_context(
         exec_context,
-        provenance_metadata=attachment_metadata,
-        fallback_source_type=TaintSourceType.ATTACHMENT,
-        fallback_source_id=attachment_id,
-        fallback_reason="Attachment read provenance.",
+        provenance_metadata=provenance_metadata,
+        fallback_source_type=source_type,
+        fallback_source_id=source_id,
+        fallback_reason=reason,
     )

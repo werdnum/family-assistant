@@ -20,7 +20,10 @@ from family_assistant.llm.messages import AssistantMessage, ToolMessage, UserMes
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.scripting.monty_engine import MontyEngine
-from family_assistant.security.note_provenance import NoteProvenanceStamp
+from family_assistant.security.note_provenance import (
+    NoteProvenanceStamp,
+    note_provenance_metadata,
+)
 from family_assistant.security.taint import (
     DEFAULT_MAX_SEEN_KEYS,
     DEFAULT_MAX_SOURCES,
@@ -2667,6 +2670,73 @@ async def test_full_document_read_restores_stored_provenance_taint(
     assert read_state.sensitive_reads
     assert read_state.sensitive_reads[-1].scope.kind == "documents"
     assert str(document_id) in read_state.sensitive_reads[-1].scope.surfaced_ids
+
+
+@pytest.mark.parametrize("name", ["search_documents", "get_full_document_content"])
+def test_document_tools_are_graded_by_document_provenance(name: str) -> None:
+    """The document tools carry no wholesale output tier of their own."""
+    metadata = LOCAL_TOOL_METADATA_BY_NAME[name]
+    descriptor = ToolDescriptor(
+        name=name,
+        definition=cast(
+            "ToolDefinition",
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": f"Run {name}.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+        ),
+        tags=metadata.tags,
+        origin="local",
+    )
+    assert (
+        derive_tool_result_taint_source(descriptor=descriptor, call_id="call") is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_full_read_of_trusted_note_document_adds_no_taint(
+    db_engine: AsyncEngine,
+) -> None:
+    document = _DocumentFixture(
+        source_type="note",
+        source_id="note-1",
+        title="Shopping list",
+        metadata=dict(note_provenance_metadata(TurnTaintState.empty())),
+    )
+
+    read_tracker = InMemoryTurnTaintTracker()
+    db_context = Database(db_engine)
+    document_id = await db_context.vector.add_document(document)
+    read_context = _minimal_context(db_context, read_tracker)
+    await get_full_document_content_tool(read_context, document_id)
+
+    read_state = read_tracker.snapshot()
+    assert read_state.sources == ()
+    assert read_state.max_tier is not SourceTrustTier.UNKNOWN_EXTERNAL
+
+
+@pytest.mark.asyncio
+async def test_full_read_of_unstamped_document_is_unknown_external(
+    db_engine: AsyncEngine,
+) -> None:
+    document = _DocumentFixture(
+        source_type="manual_upload",
+        source_id="upload-1",
+        title="Unstamped upload",
+        metadata={"original_filename": "upload.txt"},
+    )
+
+    read_tracker = InMemoryTurnTaintTracker()
+    db_context = Database(db_engine)
+    document_id = await db_context.vector.add_document(document)
+    read_context = _minimal_context(db_context, read_tracker)
+    await get_full_document_content_tool(read_context, document_id)
+
+    assert read_tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
 
 
 @pytest.mark.asyncio
