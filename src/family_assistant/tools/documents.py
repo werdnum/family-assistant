@@ -19,6 +19,11 @@ import filetype  # type: ignore[import-untyped]
 from sqlalchemy import select, text, update
 
 from family_assistant.indexing.ingestion import process_document_ingestion_request
+from family_assistant.llm.candidate_filter import (
+    CandidateQuestion,
+    candidate_filter_for,
+)
+from family_assistant.llm.model_routing import bounded_text
 from family_assistant.security.note_provenance import note_read_taint
 from family_assistant.security.taint import (
     TaintSourceType,
@@ -47,6 +52,7 @@ from family_assistant.tools.types import (
 if TYPE_CHECKING:
     from family_assistant.config_models import AppConfig
     from family_assistant.embeddings import EmbeddingGenerator
+    from family_assistant.llm.candidate_filter import JevCandidateFilter
     from family_assistant.storage.database import Database
     from family_assistant.tools.types import ToolExecutionContext
 
@@ -365,6 +371,8 @@ async def search_documents_tool(
         return "Error: Failed to generate embedding for the query."
     query_embedding = embedding_result.embeddings[0]
 
+    jev_filter = candidate_filter_for(exec_context, "document_search")
+
     # 2. Construct the search query object
     search_query = VectorSearchQuery(
         search_type="hybrid",
@@ -374,7 +382,7 @@ async def search_documents_tool(
         source_types=source_types or [],  # Use empty list if None
         excluded_source_types=_SEARCH_DOCUMENTS_EXCLUDED_SOURCE_TYPES,
         embedding_types=embedding_types or [],  # Use empty list if None
-        limit=limit,
+        limit=max(limit, _JEV_DOCUMENT_CANDIDATES) if jev_filter else limit,
         read_policy=exec_context.note_read_policy(),
     )
 
@@ -389,9 +397,17 @@ async def search_documents_tool(
         logger.exception(f"Error executing search_documents_tool: {e}")
         return f"Error: Failed to execute document search. {e}"
 
+    filter_note = ""
+    if jev_filter is not None and results:
+        results, filter_note = await filter_documents_with_jev(
+            jev_filter, query, results, limit
+        )
+
     # 4. Format results for LLM
     if not results:
-        return "No relevant documents found matching the query and filters."
+        return (
+            "No relevant documents found matching the query and filters." + filter_note
+        )
 
     surfaced_ids = [
         str(res["document_id"]) for res in results if res.get("document_id")
@@ -468,7 +484,74 @@ async def search_documents_tool(
             f"{i + 1}. Title: {title} (Source: {source}, Document ID: {doc_id} - for retrieving full content){file_info}{metadata_text}{snippet_text}"
         )
 
-    return "\n".join(formatted_results)
+    return "\n".join(formatted_results) + filter_note
+
+
+# The deeper pool Jev chooses from: hybrid ranking puts relevant results below
+# the top few often enough to be worth one batch of candidates.
+_JEV_DOCUMENT_CANDIDATES = 30
+_JEV_SNIPPET_CHARS = 1_500
+
+_DOCUMENT_QUESTION = CandidateQuestion(
+    instructions=(
+        "Does the stored document excerpt `{candidate}` help answer `query`, or "
+        "is it the document `query` is looking for?"
+    ),
+    true_criteria=(
+        "It contains information the query asks about, or is the document, "
+        "message or note the query names or describes."
+    ),
+    false_criteria=("It is about something else, or only shares words with the query."),
+)
+
+
+async def filter_documents_with_jev(
+    jev_filter: JevCandidateFilter,
+    query: str,
+    # ast-grep-ignore: no-dict-any - search results contain dynamic fields from joined tables
+    results: list[dict[str, Any]],
+    limit: int,
+    # ast-grep-ignore: no-dict-any - search results contain dynamic fields from joined tables
+) -> tuple[list[dict[str, Any]], str]:
+    """The results to show, and a note on what the filter left out.
+
+    Without an applicable answer (shadow mode, a timeout, an error) these are
+    the top *limit* by hybrid rank, exactly as without Jev.
+    """
+    by_key = {str(index): result for index, result in enumerate(results)}
+    outcome = await jev_filter.assess(
+        query={"query": query},
+        candidates={
+            key: {
+                "title": result.get("title") or "Untitled Document",
+                "source": result.get("source_type"),
+                "excerpt": bounded_text(
+                    str(result.get("embedding_source_content") or ""),
+                    _JEV_SNIPPET_CHARS,
+                ),
+            }
+            for key, result in by_key.items()
+        },
+        question=_DOCUMENT_QUESTION,
+        baseline=list(by_key)[:limit],
+    )
+    if not outcome.applies:
+        return results[:limit], ""
+    kept = outcome.kept()
+    notes: list[str] = []
+    if len(kept) > limit:
+        notes.append(
+            f"{len(kept) - limit} more relevant match(es) beyond the limit; "
+            "raise `limit` to see them."
+        )
+    if len(kept) < len(results):
+        notes.append(
+            f"{len(results) - len(kept)} weaker match(es) judged not relevant "
+            "were left out; search with different wording if something is "
+            "missing."
+        )
+    note = "\n\n" + " ".join(notes) if notes else ""
+    return [by_key[key] for key in kept[:limit]], note
 
 
 async def get_full_document_content_tool(

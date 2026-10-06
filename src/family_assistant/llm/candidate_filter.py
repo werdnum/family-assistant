@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-FilterSurface = Literal["calendar_duplicates", "calendar_search"]
+FilterSurface = Literal["calendar_duplicates", "calendar_search", "document_search"]
 FilterOutcomeKind = Literal["decided", "timeout", "error"]
 
 _BATCH_SIZE = 30
@@ -236,11 +236,13 @@ def candidate_filter_for(
     if service is None or service.jev_client is None:
         return None
     typesafe = service.app_config.typesafe
-    config = (
-        typesafe.calendar_duplicates
-        if surface == "calendar_duplicates"
-        else typesafe.calendar_search
-    )
+    match surface:
+        case "calendar_duplicates":
+            config = typesafe.calendar_duplicates
+        case "calendar_search":
+            config = typesafe.calendar_search
+        case "document_search":
+            config = typesafe.document_search
     if config.mode == "off":
         return None
     return JevCandidateFilter(service.jev_client, surface=surface, config=config)

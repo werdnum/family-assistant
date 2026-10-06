@@ -1131,6 +1131,7 @@ typesafe:
   relevance_threshold: 0.5
   calendar_duplicates: { mode: "shadow", threshold: 0.6, timeout_seconds: 1.0 }
   calendar_search: { mode: "shadow", threshold: 0.5, timeout_seconds: 1.0 }
+  document_search: { mode: "shadow", threshold: 0.5, timeout_seconds: 2.5 }
 ```
 
 | Property  | Value                                               |
@@ -1159,6 +1160,14 @@ typesafe:
   asks. A timeout or error falls back to the similarity filter. The duplicate threshold sits above
   an even chance because a match blocks the write until the model retries with
   `bypass_duplicate_check`. Sends event titles and calendar names to TypeSafe.
+- **Document search.** With `document_search` not `off`, `search_documents` retrieves 30 candidates
+  by hybrid rank instead of `limit`, and Jev is asked of each whether it helps answer the query
+  (title, source and a 1,500-character excerpt). `active` shows those at or above `threshold`,
+  most probable first and at most `limit`, and tells the model how many were left out as not
+  relevant or beyond the limit, so a search with nothing relevant returns nothing rather than the
+  five nearest. `shadow` (shipped) shows the top `limit` by rank and logs what Jev would have
+  shown. The longer timeout covers 30 excerpts' worth of state. Sends excerpts of indexed
+  documents, notes and emails to TypeSafe.
 - **Scripts.** `classify()` and `classify_yes_no()` in scripts call Jev (see
   [scripting.md](../user/scripting.md)); without a key they raise, pointing the script at
   `llm_json()`.

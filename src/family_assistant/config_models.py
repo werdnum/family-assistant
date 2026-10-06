@@ -221,9 +221,10 @@ class TypeSafeConfig(BaseModel):
     Enabled by setting ``api_key`` (``TYPESAFE_API_KEY``). Jev then ranks which
     turns a new message continues at each history compaction event, classifies
     the Auto tier in place of the ``model_routing`` classifier, and filters
-    calendar search and duplicate-check candidates. A deployment without it
-    compacts oldest-first, keeps its configured Auto classifier and filters
-    calendar events by title similarity alone. All of these send household
+    calendar search, duplicate-check and document search candidates. A
+    deployment without it compacts oldest-first, keeps its configured Auto
+    classifier, filters calendar events by title similarity alone and returns
+    document search's top results by rank. All of these send household
     text to TypeSafe. See docs/design/history-compaction.md and
     docs/design/jev-search-filtering.md.
     """
@@ -251,6 +252,12 @@ class TypeSafeConfig(BaseModel):
     an even chance because a match blocks the write until the model retries."""
     calendar_search: JevFilterConfig = Field(default_factory=JevFilterConfig)
     """Which events in the searched range match ``search_text``."""
+    document_search: JevFilterConfig = Field(
+        default_factory=lambda: JevFilterConfig(timeout_seconds=2.5)
+    )
+    """Which of ``search_documents``' deeper candidate pool answer the query.
+    Thirty candidates take several requests' worth of state, hence the longer
+    timeout."""
 
     @property
     def enabled(self) -> bool:
