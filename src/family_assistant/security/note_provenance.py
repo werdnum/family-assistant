@@ -162,6 +162,18 @@ class NoteWriter(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class NoteWriteOrigin:
+    """The turn and tool behind a note write, recorded when it lowers a stamp."""
+
+    conversation_id: str
+    turn_id: str | None
+    processing_profile_id: str | None
+    subconversation_id: str | None
+    tool_name: str
+    tool_call_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class NoteProvenanceStamp:
     """The provenance a writer supplies for one note write.
 
@@ -172,6 +184,8 @@ class NoteProvenanceStamp:
     writer: NoteWriter
     state: TurnTaintState
     floor: SourceTrustTier | None = None
+    origin: NoteWriteOrigin | None = None
+    """Who wrote it, when a turn did; None for writes with no turn behind them."""
 
     @classmethod
     def user_edit(cls) -> NoteProvenanceStamp:
@@ -184,9 +198,10 @@ class NoteProvenanceStamp:
         state: TurnTaintState,
         *,
         floor: SourceTrustTier | None = None,
+        origin: NoteWriteOrigin | None = None,
     ) -> NoteProvenanceStamp:
         """Content the system composed, from a turn (or process) at ``state``."""
-        return cls(writer=NoteWriter.MACHINE, state=state, floor=floor)
+        return cls(writer=NoteWriter.MACHINE, state=state, floor=floor, origin=origin)
 
     @classmethod
     def internal(cls) -> NoteProvenanceStamp:
@@ -227,10 +242,17 @@ class NoteProvenanceStamp:
         )
 
     @classmethod
-    def admitted(cls, *, title: str, decided_by: str) -> NoteProvenanceStamp:
+    def admitted(
+        cls,
+        *,
+        title: str,
+        decided_by: str,
+        origin: NoteWriteOrigin | None = None,
+    ) -> NoteProvenanceStamp:
         """A candidate admitted for unasked reuse; replaces the stored envelope."""
         return cls(
             writer=NoteWriter.ADMITTED,
+            origin=origin,
             state=TurnTaintState.empty().add_source(
                 TaintSource(
                     source_type=TaintSourceType.NOTE,

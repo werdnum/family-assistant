@@ -21,6 +21,7 @@ from family_assistant.security.ambient_admission import (
 )
 from family_assistant.security.note_provenance import (
     NoteProvenanceStamp,
+    NoteWriteOrigin,
     note_read_taint,
     stored_note_state,
 )
@@ -85,7 +86,23 @@ async def _load_note_attachment(
     )
 
 
-def note_stamp_from_context(exec_context: ToolExecutionContext) -> NoteProvenanceStamp:
+def note_write_origin(
+    exec_context: ToolExecutionContext, *, tool_name: str
+) -> NoteWriteOrigin:
+    """The turn and tool a note write from ``exec_context`` is attributed to."""
+    return NoteWriteOrigin(
+        conversation_id=exec_context.conversation_id,
+        turn_id=exec_context.turn_id,
+        processing_profile_id=exec_context.processing_profile_id,
+        subconversation_id=exec_context.subconversation_id,
+        tool_name=tool_name,
+        tool_call_id=exec_context.tool_call_id,
+    )
+
+
+def note_stamp_from_context(
+    exec_context: ToolExecutionContext, *, tool_name: str
+) -> NoteProvenanceStamp:
     """The provenance stamp for a note the model composed in this turn.
 
     Shared with the memory apply path. The repository floors it at
@@ -97,7 +114,9 @@ def note_stamp_from_context(exec_context: ToolExecutionContext) -> NoteProvenanc
         if exec_context.taint_tracker is not None
         else TurnTaintState.empty()
     )
-    return NoteProvenanceStamp.machine(state)
+    return NoteProvenanceStamp.machine(
+        state, origin=note_write_origin(exec_context, tool_name=tool_name)
+    )
 
 
 async def add_or_update_note_tool(
@@ -352,6 +371,8 @@ def _stamp_for(
     resolved: _ResolvedWrite,
     decision: AmbientAdmissionDecision,
     exec_context: ToolExecutionContext,
+    *,
+    tool_name: str,
 ) -> NoteProvenanceStamp:
     """The stamp a gated (or ungated) write persists with.
 
@@ -361,19 +382,21 @@ def _stamp_for(
     was. A trusted-pole candidate keeps its trusted stamp either way: no stamp
     can record non-admission of the user's own words without falsifying them.
     """
+    origin = note_write_origin(exec_context, tool_name=tool_name)
     external = is_external_candidate(resolved.gate_state.max_tier)
     if not resolved.ambient:
-        return note_stamp_from_context(exec_context)
+        return note_stamp_from_context(exec_context, tool_name=tool_name)
     if external and decision.outcome is AdmissionOutcome.ADMITTED:
         return NoteProvenanceStamp.admitted(
             title=resolved.candidate.title,
             decided_by=decision.decided_by or "the admission gate",
+            origin=origin,
         )
     if external:
         return NoteProvenanceStamp.machine(
-            resolved.gate_state, floor=SourceTrustTier.KNOWN_CONTACT
+            resolved.gate_state, floor=SourceTrustTier.KNOWN_CONTACT, origin=origin
         )
-    return NoteProvenanceStamp.machine(resolved.gate_state)
+    return NoteProvenanceStamp.machine(resolved.gate_state, origin=origin)
 
 
 def _admission_note(
@@ -452,7 +475,9 @@ async def write_note_through_admission(
                 ),
                 visibility_labels=visibility_labels,
                 write_policy=exec_context.note_write_policy(),
-                provenance=_stamp_for(resolved, decision, exec_context),
+                provenance=_stamp_for(
+                    resolved, decision, exec_context, tool_name=tool_name
+                ),
                 expected_revision=resolved.revision,
             )
         except NoteChangedError:

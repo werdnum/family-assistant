@@ -24,6 +24,7 @@ from family_assistant.security.taint import SourceTrustTier
 from family_assistant.storage.database import Database
 from family_assistant.storage.notes import notes_table
 from family_assistant.storage.repositories.notes import (
+    NOTE_TIER_LOWERED_EVENT_TYPE,
     NoteChangedError,
     NoteWritePolicy,
     note_revision,
@@ -45,6 +46,8 @@ from tests.functional.notes.ambient_helpers import (
 if TYPE_CHECKING:
     import httpx
     from sqlalchemy.ext.asyncio import AsyncEngine
+
+    from family_assistant.storage.types import TaintAuditEventRow
 
 
 @pytest.mark.asyncio
@@ -107,6 +110,100 @@ async def test_a_clean_turn_tool_write_never_lowers_a_stored_stamp(
     )
 
     assert await stored_tier(db, "Research") is SourceTrustTier.UNKNOWN_EXTERNAL
+
+
+async def _tier_lowered_events(db: Database) -> list[TaintAuditEventRow]:
+    events = await db.taint_audit_events.list_since(
+        datetime(2000, 1, 1, tzinfo=UTC), limit=100
+    )
+    return [e for e in events if e["event_type"] == NOTE_TIER_LOWERED_EVENT_TYPE]
+
+
+async def _confirm(db: Database, title: str) -> None:
+    """Stamp ``title`` as the review UI's confirmation does."""
+    await write_note(
+        db,
+        title,
+        "reviewed body",
+        include_in_prompt=False,
+        provenance=NoteProvenanceStamp.user_confirmed(
+            content_hash="hash", current_tier=SourceTrustTier.UNKNOWN_EXTERNAL
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_overwriting_a_confirmed_note_from_a_tainted_turn_is_audited(
+    db_engine: AsyncEngine,
+) -> None:
+    """The demotion is correct; the record makes it visible."""
+    db = Database(db_engine)
+    await _confirm(db, "Error digest")
+    note_id = await db.fetch_value(
+        select(notes_table.c.id).where(notes_table.c.title == "Error digest")
+    )
+
+    await add_or_update_note_tool(
+        tool_context(db, tracker_at(SourceTrustTier.UNKNOWN_EXTERNAL)),
+        title="Error digest",
+        content="rebuilt from error logs",
+        include_in_prompt=False,
+    )
+
+    assert await stored_tier(db, "Error digest") is SourceTrustTier.UNKNOWN_EXTERNAL
+    [event] = await _tier_lowered_events(db)
+    assert event["previous_tier"] == SourceTrustTier.MACHINE_REVIEWED.config_value
+    assert event["max_tier"] == SourceTrustTier.UNKNOWN_EXTERNAL.config_value
+    assert event["artifact_id"] == f"note:{note_id}"
+    assert event["turn_id"] == "turn-ambient"
+    assert event["conversation_id"] == "ambient-notes"
+    assert event["tool_name"] == "add_or_update_note"
+
+
+@pytest.mark.asyncio
+async def test_a_write_with_no_turn_that_lowers_a_note_is_audited(
+    db_engine: AsyncEngine,
+) -> None:
+    db = Database(db_engine)
+    await _confirm(db, "Call notes")
+
+    await write_note(
+        db,
+        "Call notes",
+        "transcript",
+        include_in_prompt=False,
+        provenance=NoteProvenanceStamp.external(source_id="call", reason="test"),
+    )
+
+    [event] = await _tier_lowered_events(db)
+    assert event["previous_tier"] == SourceTrustTier.MACHINE_REVIEWED.config_value
+    assert event["turn_id"] is None
+    assert event["tool_name"] == "machine write"
+
+
+@pytest.mark.asyncio
+async def test_writes_that_keep_or_raise_a_notes_tier_are_not_audited(
+    db_engine: AsyncEngine,
+) -> None:
+    db = Database(db_engine)
+    await write_note(
+        db,
+        "Research",
+        "copied from a web page",
+        include_in_prompt=False,
+        provenance=NoteProvenanceStamp.machine(
+            state_at(SourceTrustTier.UNKNOWN_EXTERNAL)
+        ),
+    )
+    await add_or_update_note_tool(
+        tool_context(db, tracker_at(SourceTrustTier.UNKNOWN_EXTERNAL)),
+        title="Research",
+        content="still external",
+        include_in_prompt=False,
+    )
+    await _confirm(db, "Research")
+
+    assert await _tier_lowered_events(db) == []
 
 
 # ---------------------------------------------------------------------------
