@@ -663,6 +663,36 @@ async def delegation_run_result_taint_metadata(
     )
 
 
+async def _merge_delegation_runs_taint(
+    exec_context: ToolExecutionContext, runs: Iterable[DelegationRunDict]
+) -> None:
+    """Raise this turn's taint by what each run's summary carries.
+
+    A terminal run's summary carries delegate output (``result_text`` or
+    ``error``), so it is graded as its delivered notification is: polling a run
+    carries the same taint as being told its result. A queued or running run
+    shows only the request, which the caller composed under the taint recorded
+    on the run.
+    """
+    if exec_context.taint_tracker is None:
+        return
+    for run in runs:
+        if run["status"] in TERMINAL_DELEGATION_STATUSES:
+            metadata = await delegation_run_result_taint_metadata(
+                exec_context.db_context, run
+            )
+        elif run["taint_state_json"] is not None:
+            metadata = run["taint_state_json"]
+        else:
+            continue
+        merge_taint_state_into_tracker(
+            exec_context.taint_tracker,
+            TurnTaintState.from_metadata(
+                metadata, preserve_origin=True
+            ).with_sensitive_reads_from(metadata),
+        )
+
+
 async def _merge_delegated_result_taint(
     exec_context: ToolExecutionContext,
     *,
@@ -1828,6 +1858,7 @@ async def get_delegation_status_tool(
             attachments=None,
         )
 
+    await _merge_delegation_runs_taint(exec_context, [run])
     summary = exec_context.db_context.delegation_runs.summarize_run(run)
     text = _format_delegation_summary(summary)
     if _has_pending_delegation([summary]):
@@ -1858,6 +1889,7 @@ async def list_delegations_tool(
         status=status,
         limit=limit,
     )
+    await _merge_delegation_runs_taint(exec_context, runs)
     summaries = [
         exec_context.db_context.delegation_runs.summarize_run(run) for run in runs
     ]

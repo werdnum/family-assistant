@@ -491,6 +491,8 @@ ENGINEER_TRUSTED_OUTPUT_ALLOWLIST = {
     "read_text_attachment": "merges the attachment's stored provenance on read",
     "jq_query": "merges the queried attachment's stored provenance on read",
     "delegate_to_service": "merges the delegated turn's own taint on return",
+    "get_delegation_status": "merges the run's own result or request taint on read",
+    "list_delegations": "merges each listed run's result or request taint on read",
     "create_github_issue": (
         "issue number and URL, plus the title the call itself supplied"
     ),
@@ -581,8 +583,6 @@ def test_engineer_reads_that_return_external_content_are_untrusted() -> None:
         "query_database",
         "read_error_logs",
         "get_llm_request_history",
-        "get_delegation_status",
-        "list_delegations",
         "list_worker_tasks",
         "list_pending_callbacks",
         "list_automations",

@@ -2468,6 +2468,104 @@ async def test_status_tools_omit_nudge_once_terminal(
     assert "do not poll in a loop" not in (list_result.text or "").lower()
 
 
+_STATUS_TOOLS = {
+    "get_delegation_status": lambda context, delegation_id: get_delegation_status_tool(
+        context, delegation_id=delegation_id
+    ),
+    "list_delegations": lambda context, _delegation_id: list_delegations_tool(context),
+}
+
+
+async def _persist_delegate_row(
+    db_context: Database, delegation_id: str, row_taint: TaintMetadata
+) -> None:
+    await db_context.message_history.add_message(
+        AssistantMessage(content="delegate output", taint_metadata=row_taint),
+        interface_type=TEST_INTERFACE_TYPE,
+        conversation_id=TEST_CONVERSATION_ID,
+        timestamp=SystemClock().now(),
+        turn_id="delegated_turn",
+        processing_profile_id="target_profile",
+        subconversation_id=f"sub_{delegation_id}",
+        user_id="async-delegation-user",
+    )
+
+
+@pytest.mark.parametrize("tool_name", sorted(_STATUS_TOOLS))
+@pytest.mark.parametrize(
+    ("run_outcome", "delegate_row_taint", "expected_tier"),
+    [
+        ("queued", None, None),
+        # A pending run shows only its request, graded by the taint it was
+        # composed under.
+        ("queued-from-external", None, SourceTrustTier.UNKNOWN_EXTERNAL),
+        (
+            "completed",
+            TurnTaintState.empty().to_metadata(),
+            SourceTrustTier.TRUSTED_INTERNAL,
+        ),
+        (
+            "completed",
+            unknown_external_taint_metadata("delegate read an email"),
+            SourceTrustTier.UNKNOWN_EXTERNAL,
+        ),
+        # No stamped row: a remote or provider-hosted agent's reads happened
+        # elsewhere, so its output is unknown external whether it succeeded or
+        # failed with its own error text.
+        ("completed", None, SourceTrustTier.UNKNOWN_EXTERNAL),
+        ("failed", None, SourceTrustTier.UNKNOWN_EXTERNAL),
+    ],
+    ids=["pending", "pending-external", "clean", "external", "remote", "remote-failed"],
+)
+@pytest.mark.asyncio
+async def test_status_tools_grade_each_run_by_its_own_result_taint(
+    db_engine: AsyncEngine,
+    tool_name: str,
+    run_outcome: str,
+    delegate_row_taint: TaintMetadata | None,
+    expected_tier: SourceTrustTier | None,
+) -> None:
+    """Polling a run raises the turn only by what that run's output carries."""
+    processing_service = _source_processing_service(FakeDelegatableService())
+    clock = SystemClock()
+    db_context = Database(engine=db_engine)
+    delegation_id = await _create_run(
+        db_context,
+        delegation_id="delegation_graded",
+        taint_state_json=(
+            unknown_external_taint_metadata("caller read an email")
+            if run_outcome == "queued-from-external"
+            else None
+        ),
+    )
+    if delegate_row_taint is not None:
+        await _persist_delegate_row(db_context, delegation_id, delegate_row_taint)
+    if run_outcome == "completed":
+        await db_context.delegation_runs.mark_completed(
+            delegation_id=delegation_id,
+            result_text="delegate output",
+            result_attachment_ids=[],
+            completed_at=clock.now(),
+        )
+    elif run_outcome == "failed":
+        await db_context.delegation_runs.mark_failed(
+            delegation_id=delegation_id,
+            error="A2A task failed: remote error text",
+            completed_at=clock.now(),
+        )
+    tracker = InMemoryTurnTaintTracker()
+
+    await _STATUS_TOOLS[tool_name](
+        _tool_context(db_context, processing_service, taint_tracker=tracker),
+        delegation_id,
+    )
+
+    if expected_tier is None:
+        assert tracker.snapshot() == TurnTaintState.empty()
+    else:
+        assert tracker.snapshot().max_tier is expected_tier
+
+
 @pytest.mark.asyncio
 async def test_api_delegation_completion_stored_in_history(
     db_engine: AsyncEngine,
