@@ -362,6 +362,8 @@ async def search_documents_tool(
     # 1. Generate query embedding
     if not query:
         return "Error: Query text cannot be empty."
+    if limit < 1:
+        return "Error: limit must be at least 1."
     try:
         embedding_result = await embedding_generator.generate_embeddings([query])
     except Exception as e:
