@@ -71,6 +71,7 @@ from family_assistant.security.taint import (
     derive_tool_result_taint_source,
     merge_taint_state_into_tracker,
     resolve_tool_sink_class,
+    tier_merged_by_executing_tool,
 )
 from family_assistant.security.taint_audit import taint_audit_sources
 from family_assistant.services.tool_call_review import (
@@ -4053,18 +4054,31 @@ class TaintTrackingToolsProvider(ToolsProvider):
             context.tool_result_taint_metadata[call_id or descriptor.name] = (
                 state.to_metadata()
             )
-            if (
-                state_before_execution is None
-                or state.sources == state_before_execution.sources
-            ):
+            if state_before_execution is None:
                 return None
+            # A re-read adds nothing to the turn's sources, but it is still this
+            # call's output, so its tier is reported whenever it is external.
+            merged_tier = tier_merged_by_executing_tool()
+            remerged_external = (
+                merged_tier is not None
+                and merged_tier > SourceTrustTier.TRUSTED_INTERNAL
+            )
+            sources_changed = state.sources != state_before_execution.sources
+            if not sources_changed and not remerged_external:
+                return None
+            result_tier = max(
+                _tier_added_since(state_before_execution, state)
+                if sources_changed
+                else SourceTrustTier.TRUSTED_INTERNAL,
+                merged_tier or SourceTrustTier.TRUSTED_INTERNAL,
+            )
             logger.info(
                 "Tool result inherited dynamic taint: tool=%s call_id=%s max_tier=%s",
                 descriptor.name,
                 call_id,
                 state.max_tier.config_value,
             )
-            return state, _tier_added_since(state_before_execution, state)
+            return state, result_tier
 
         state = context.taint_tracker.add_source(source)
         metadata = state.to_metadata()

@@ -142,6 +142,23 @@ async def _dynamic_taint_read_tool(exec_context: ToolExecutionContext) -> ToolRe
     return ToolResult(text="tainted note content")
 
 
+async def _merged_taint_read_tool(exec_context: ToolExecutionContext) -> ToolResult:
+    assert exec_context.taint_tracker is not None
+    merge_taint_state_into_tracker(
+        exec_context.taint_tracker,
+        TurnTaintState.empty().add_source(
+            TaintSource(
+                source_type=TaintSourceType.NOTE,
+                source_id="tainted-note",
+                tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+                labels=frozenset({"source_unknown_external"}),
+                reason="Stored note provenance.",
+            )
+        ),
+    )
+    return ToolResult(text="tainted note content")
+
+
 def _registration(
     name: str,
     implementation: ToolImplementation,
@@ -3293,6 +3310,76 @@ async def test_result_taint_records_the_tools_own_tier_not_the_turns(
     sources = result_events[0]["sources_json"]
     assert [source.get("tool_name") for source in sources] == [None, "machine_tool"]
     assert tracker.snapshot().sources[0].tool_name is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "implementation",
+    [_dynamic_taint_read_tool, _merged_taint_read_tool],
+    ids=["add_source", "merge_state"],
+)
+async def test_rereading_a_tainted_source_records_a_result_taint_row_each_time(
+    db_engine: AsyncEngine,
+    implementation: ToolImplementation,
+) -> None:
+    """A second read of a source the turn already holds still reports its tier."""
+    provider = TaintTrackingToolsProvider(
+        LocalToolsProvider(
+            registrations=[
+                _registration("read_note", implementation, ToolTag.OUTPUT_TRUSTED)
+            ]
+        )
+    )
+    tracker = InMemoryTurnTaintTracker()
+    db_context = Database(db_engine)
+    context = _minimal_context(db_context, tracker)
+
+    await provider.execute_tool("read_note", {}, context, "call_first")
+    await provider.execute_tool("read_note", {}, context, "call_second")
+    audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
+
+    result_events = [
+        event for event in audit_events if event["event_type"] == "result_taint"
+    ]
+    assert [event["tool_call_id"] for event in result_events] == [
+        "call_first",
+        "call_second",
+    ]
+    assert [event["result_tier"] for event in result_events] == [
+        "unknown_external",
+        "unknown_external",
+    ]
+    assert len(tracker.snapshot().sources) == 1
+
+
+@pytest.mark.asyncio
+async def test_trusted_tool_after_a_tainted_read_records_no_result_taint_row(
+    db_engine: AsyncEngine,
+) -> None:
+    """Re-read reporting is per call: a later clean call inherits nothing."""
+    provider = TaintTrackingToolsProvider(
+        LocalToolsProvider(
+            registrations=[
+                _registration(
+                    "read_note", _dynamic_taint_read_tool, ToolTag.OUTPUT_TRUSTED
+                ),
+                _registration("trusted_tool", _trusted_tool, ToolTag.OUTPUT_TRUSTED),
+            ]
+        )
+    )
+    tracker = InMemoryTurnTaintTracker()
+    db_context = Database(db_engine)
+    context = _minimal_context(db_context, tracker)
+
+    await provider.execute_tool("read_note", {}, context, "call_read")
+    await provider.execute_tool("trusted_tool", {}, context, "call_trusted")
+    audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
+
+    assert [
+        event["tool_call_id"]
+        for event in audit_events
+        if event["event_type"] == "result_taint"
+    ] == ["call_read"]
 
 
 def test_taint_source_semantic_identity_and_repeated_duplicates() -> None:
