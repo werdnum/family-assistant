@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import func, insert, select
+from sqlalchemy import func, insert, select, update
 
 from family_assistant.storage.repositories.base import BaseRepository
 from family_assistant.storage.taint_audit import taint_audit_events_table
@@ -69,6 +69,15 @@ class TaintAuditEventsRepository(BaseRepository):
             artifact_id=artifact_id,
         )
         await self._execute_with_logging("add_taint_audit_event", stmt)
+
+    async def set_artifact_id(self, event_id: str, artifact_id: str) -> None:
+        """Attach the artifact a call wrote to the audit event recorded for it."""
+        stmt = (
+            update(taint_audit_events_table)
+            .where(taint_audit_events_table.c.event_id == event_id)
+            .values(artifact_id=artifact_id)
+        )
+        await self._execute_with_logging("set_taint_audit_artifact_id", stmt)
 
     async def list_for_turn(self, turn_id: str) -> list[TaintAuditEventRow]:
         """Return audit events for a processing turn in creation order."""

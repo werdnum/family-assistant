@@ -472,12 +472,36 @@ async def write_note_through_admission(
         except Exception as e:
             logger.exception(f"Error adding/updating note '{title}': {e}")
             return NoteWriteOutcome(error=f"Failed to add/update note '{title}'. {e}")
+        await _attach_note_to_policy_audit(exec_context, title)
         return NoteWriteOutcome(
             created=resolved.revision == note_revision(None),
             admission=decision.outcome,
             admission_note=_admission_note(resolved, decision),
         )
     raise AssertionError("unreachable: the write loop always returns")
+
+
+async def _attach_note_to_policy_audit(
+    exec_context: ToolExecutionContext, title: str
+) -> None:
+    """Record which note this call wrote on its ``policy_evaluation`` audit row.
+
+    The row is written before the call runs, when a new note has no id yet, so
+    the id is attached once the write has committed. Without it an audit search
+    by ``note:<id>`` misses the write.
+    """
+    event_id = exec_context.policy_audit_event_id
+    if event_id is None:
+        return
+    db_context = exec_context.db_context
+    note_id = await db_context.notes.get_id_by_title(title)
+    if note_id is None:
+        # Deleted between the write and this read; the write itself stands.
+        logger.warning(
+            "Note %r was gone before its id reached audit event %s", title, event_id
+        )
+        return
+    await db_context.taint_audit_events.set_artifact_id(event_id, f"note:{note_id}")
 
 
 # Tool Definitions
