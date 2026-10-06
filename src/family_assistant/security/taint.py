@@ -422,6 +422,29 @@ def order_taint_sources(sources: Iterable[TaintSource]) -> tuple[TaintSource, ..
     return tuple(sorted(sources, key=taint_source_sort_key))
 
 
+def retain_taint_sources(
+    sources: Sequence[TaintSource],
+    max_sources: int = DEFAULT_MAX_SOURCES,
+) -> tuple[TaintSource, ...]:
+    """Bound *sources* to ``max_sources``, evicting the least-tainted first.
+
+    Every tool call adds a distinct source, so a long turn overflows the bound
+    with clean ones; evicting by age would drop the untrusted source that is
+    the reason the turn is tainted, and with it the audit and reviewer detail
+    that says why. Eviction takes the lowest tier first and, within a tier,
+    the oldest. Retained sources keep their relative order.
+    """
+    excess = len(sources) - max(max_sources, 0)
+    if excess <= 0:
+        return tuple(sources)
+    evicted = set(
+        sorted(range(len(sources)), key=lambda index: (sources[index].tier, index))[
+            :excess
+        ]
+    )
+    return tuple(source for index, source in enumerate(sources) if index not in evicted)
+
+
 def canonicalize_taint_sources(
     sources: Iterable[TaintSource],
     *,
@@ -435,9 +458,7 @@ def canonicalize_taint_sources(
         if key not in seen_keys:
             seen_keys.add(key)
             distinct.append(source)
-    if len(distinct) > max_sources:
-        distinct = distinct[-max_sources:]
-    return order_taint_sources(distinct)
+    return order_taint_sources(retain_taint_sources(distinct, max_sources))
 
 
 @dataclass(frozen=True, slots=True)
@@ -482,8 +503,7 @@ class TurnTaintState:
                 if h not in seen_hashes:
                     seen_hashes.append(h)
                     distinct.append(s)
-            retained_fifo = tuple(distinct[-DEFAULT_MAX_SOURCES:])
-            object.__setattr__(self, "sources", retained_fifo)
+            object.__setattr__(self, "sources", retain_taint_sources(distinct))
             # Bound and compact deduplication index to 64-bit integer hashes of recent distinct sources
             object.__setattr__(
                 self,
@@ -555,7 +575,7 @@ class TurnTaintState:
         rather than fresh reads; the source's own ``inherited`` flag records
         whether this turn introduced it. A retained source held as inherited
         and now introduced is upgraded and moved to the tail of the retained
-        sources, so introductions are the last thing the bound evicts.
+        sources, so within its tier it is the last thing the bound evicts.
         """
         next_sequence = self.sequence + 1
         max_tier = max(self.max_tier, source.tier)
@@ -583,14 +603,14 @@ class TurnTaintState:
                     if taint_source_semantic_key(existing) == source_key
                 ]
                 # An evicted copy stays evicted: introduced_max_tier already
-                # carries its tier, and the retained detail stays FIFO.
+                # carries its tier.
                 if held and all(existing.inherited for existing in held):
                     others = tuple(
                         existing
                         for existing in self.sources
                         if taint_source_semantic_key(existing) != source_key
                     )
-                    sources = (*others, source)[-DEFAULT_MAX_SOURCES:]
+                    sources = retain_taint_sources((*others, source))
             return replace(
                 self,
                 max_tier=max_tier,
@@ -605,10 +625,7 @@ class TurnTaintState:
         new_total = self.total_source_count + 1
         new_distinct = self.distinct_source_count + 1
 
-        if len(self.sources) >= DEFAULT_MAX_SOURCES:
-            new_sources = (*self.sources[-(DEFAULT_MAX_SOURCES - 1) :], source)
-        else:
-            new_sources = (*self.sources, source)
+        new_sources = retain_taint_sources((*self.sources, source))
 
         if len(self._seen_keys) >= DEFAULT_MAX_SEEN_KEYS:
             new_seen_keys = (
@@ -709,7 +726,7 @@ class TurnTaintState:
         include_counts: bool | None = None,
     ) -> TaintMetadata:
         """Serialize a compact metadata representation for persistence."""
-        retained = self.sources[-max_sources:]
+        retained = retain_taint_sources(self.sources, max_sources)
         metadata: TaintMetadata = {
             "version": TAINT_METADATA_VERSION,
             "max_tier": self.max_tier.config_value,
@@ -2447,10 +2464,25 @@ def _row_window_contribution(metadata: object) -> TurnTaintState:
     version = _metadata_version(metadata)
     if version in _PRE_ORIGIN_TAINT_METADATA_VERSIONS:
         try:
-            SourceTrustTier.from_value(metadata.get("max_tier"))
+            max_tier = SourceTrustTier.from_value(metadata.get("max_tier"))
         except (TypeError, ValueError):
             return TurnTaintState.malformed_history_state()
-        return TurnTaintState.from_metadata(amnestied_history_taint_metadata(metadata))
+        contribution = TurnTaintState.from_metadata(
+            amnestied_history_taint_metadata(metadata)
+        )
+        if version == PRE_ORIGIN_TAINT_METADATA_VERSION and _stamp_omitted_sources(
+            metadata
+        ):
+            # runtime_v2 bounded its sources oldest-first, so a long turn's
+            # untrusted source may be the one evicted. Without the source there
+            # is no telling whether the turn introduced or inherited that tier,
+            # so the merged maximum counts.
+            return raise_taint_state_to(
+                contribution,
+                max_tier,
+                reason="runtime_v2 row's max_tier exceeded its capped sources.",
+            )
+        return contribution
     if version != TAINT_METADATA_VERSION:
         # A version this code does not know records an origin split it cannot
         # read, so the whole stamp counts, exactly as before origin existed.
@@ -2465,6 +2497,17 @@ def _row_window_contribution(metadata: object) -> TurnTaintState:
         stamp.introduced_max_tier,
         reason="History row introduced_max_tier exceeded retained source summaries.",
     )
+
+
+def _stamp_omitted_sources(metadata: Mapping[str, object]) -> bool:
+    """Whether a stamp records evicting sources from its retained summaries."""
+    raw_sources = metadata.get("sources")
+    retained = (
+        len(cast("list[object]", raw_sources)) if isinstance(raw_sources, list) else 0
+    )
+    omitted = _parse_nonnegative_int(metadata.get("omitted_source_count"))
+    distinct = _parse_nonnegative_int(metadata.get("distinct_source_count"))
+    return bool(omitted) or (distinct is not None and distinct > retained)
 
 
 def _metadata_version(metadata: Mapping[str, object]) -> str | None:

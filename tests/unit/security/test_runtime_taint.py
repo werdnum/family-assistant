@@ -815,14 +815,14 @@ def test_documented_legacy_pin_reproduces_previous_matrix_cell_for_cell() -> Non
                 assert evaluation.verdict_floor is expected[tier][sink_class]
 
 
-def test_taint_metadata_round_trip_preserves_compacted_max_tier() -> None:
+def test_taint_metadata_cap_evicts_lower_tiers_before_the_untrusted_source() -> None:
     state = TurnTaintState.empty().add_source(
         TaintSource(
             source_type=TaintSourceType.TOOL_OUTPUT,
-            source_id="dropped-high-source",
+            source_id="high-source",
             tier=SourceTrustTier.UNKNOWN_EXTERNAL,
             labels=frozenset(),
-            reason="High-tier source compacted out of retained summaries.",
+            reason="The source that tainted the turn.",
         )
     )
     for index in range(12):
@@ -832,17 +832,36 @@ def test_taint_metadata_round_trip_preserves_compacted_max_tier() -> None:
                 source_id=f"low-source-{index}",
                 tier=SourceTrustTier.KNOWN_CONTACT,
                 labels=frozenset(),
-                reason="Lower-tier retained source.",
+                reason="Lower-tier source.",
             )
         )
 
     metadata = state.to_metadata(max_sources=12)
-    assert metadata.get("max_tier") == SourceTrustTier.UNKNOWN_EXTERNAL.config_value
     metadata_sources = metadata.get("sources")
     assert metadata_sources is not None
-    assert {source["tier"] for source in metadata_sources} == {
-        SourceTrustTier.KNOWN_CONTACT.config_value
-    }
+    assert len(metadata_sources) == 12
+    assert metadata_sources[0]["source_id"] == "high-source"
+    assert [source["source_id"] for source in metadata_sources[1:]] == [
+        f"low-source-{index}" for index in range(1, 12)
+    ]
+
+
+def test_taint_metadata_round_trip_preserves_max_tier_above_retained_sources() -> None:
+    metadata = (
+        TurnTaintState
+        .empty()
+        .add_source(
+            TaintSource(
+                source_type=TaintSourceType.USER_MESSAGE,
+                source_id="low-source",
+                tier=SourceTrustTier.KNOWN_CONTACT,
+                labels=frozenset(),
+                reason="Lower-tier retained source.",
+            )
+        )
+        .to_metadata()
+    )
+    metadata["max_tier"] = SourceTrustTier.UNKNOWN_EXTERNAL.config_value
 
     restored = TurnTaintState.from_metadata(metadata)
 
@@ -3278,15 +3297,15 @@ def test_preservation_of_max_tier_and_flags_across_truncation() -> None:
     assert state.max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
     assert state.history_high_taint_present is True
 
-    # Add 25 lower-tier sources so the original high taint source is compacted out of retained sources
+    # Add 25 same-tier sources so the original high taint source is compacted out of retained sources
     for i in range(25):
         state = state.add_source(
             TaintSource(
-                source_type=TaintSourceType.USER_MESSAGE,
-                source_id=f"user-msg-{i}",
-                tier=SourceTrustTier.KNOWN_CONTACT,
+                source_type=TaintSourceType.TOOL_OUTPUT,
+                source_id=f"fetch-{i}",
+                tier=SourceTrustTier.UNKNOWN_EXTERNAL,
                 labels=frozenset(),
-                reason=f"Lower tier message {i}.",
+                reason=f"Fetched page {i}.",
             )
         )
 
