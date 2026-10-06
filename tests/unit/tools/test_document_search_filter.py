@@ -80,3 +80,13 @@ async def test_shadow_filter_shows_the_top_results_by_rank() -> None:
 
     assert [result["title"] for result in shown] == ["A", "B"]
     assert not note
+
+
+@pytest.mark.asyncio
+async def test_active_filter_asks_about_one_batch_whatever_the_limit() -> None:
+    titles = [f"doc {index}" for index in range(45)]
+    jev_filter = _filter(dict.fromkeys(titles, 0.9))
+
+    shown, _ = await filter_documents_with_jev(jev_filter, "q", _results(*titles), 45)
+
+    assert len(shown) == 30

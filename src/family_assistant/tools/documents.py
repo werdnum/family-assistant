@@ -516,9 +516,15 @@ async def filter_documents_with_jev(
     """The results to show, and a note on what the filter left out.
 
     Without an applicable answer (shadow mode, a timeout, an error) these are
-    the top *limit* by hybrid rank, exactly as without Jev.
+    the top *limit* by hybrid rank, exactly as without Jev. With one, at most
+    ``_JEV_DOCUMENT_CANDIDATES`` results, so a limit above that is capped.
     """
-    by_key = {str(index): result for index, result in enumerate(results)}
+    # Jev sees one batch however large the caller's limit, so a big limit
+    # cannot fan out into many requests.
+    by_key = {
+        str(index): result
+        for index, result in enumerate(results[:_JEV_DOCUMENT_CANDIDATES])
+    }
     outcome = await jev_filter.assess(
         query={"query": query},
         candidates={
@@ -544,9 +550,9 @@ async def filter_documents_with_jev(
             f"{len(kept) - limit} more relevant match(es) beyond the limit; "
             "raise `limit` to see them."
         )
-    if len(kept) < len(results):
+    if len(kept) < len(by_key):
         notes.append(
-            f"{len(results) - len(kept)} weaker match(es) judged not relevant "
+            f"{len(by_key) - len(kept)} weaker match(es) judged not relevant "
             "were left out; search with different wording if something is "
             "missing."
         )

@@ -1316,7 +1316,14 @@ class Assistant:
         return JevClient(
             api_key=typesafe.api_key.get_secret_value(),
             model=typesafe.model,
-            timeout_seconds=typesafe.timeout_seconds,
+            # Callers enforce their own budgets; the transport must not cut
+            # the longest of them short.
+            timeout_seconds=max(
+                typesafe.timeout_seconds,
+                typesafe.calendar_duplicates.timeout_seconds,
+                typesafe.calendar_search.timeout_seconds,
+                typesafe.document_search.timeout_seconds,
+            ),
             base_url=typesafe.base_url,
         )
 
