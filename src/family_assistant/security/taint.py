@@ -330,8 +330,18 @@ def as_inherited(source: TaintSource) -> TaintSource:
     return replace(source, inherited=True)
 
 
-_executing_tool_name: ContextVar[str | None] = ContextVar(
-    "taint_executing_tool_name", default=None
+@dataclass(slots=True)
+class _ExecutingTool:
+    name: str
+    merged_max_tier: SourceTrustTier | None = None
+
+    def note_merged(self, tier: SourceTrustTier) -> None:
+        if self.merged_max_tier is None or tier > self.merged_max_tier:
+            self.merged_max_tier = tier
+
+
+_executing_tool: ContextVar[_ExecutingTool | None] = ContextVar(
+    "taint_executing_tool", default=None
 )
 
 
@@ -341,22 +351,45 @@ def attributing_sources_to_tool(tool_name: str) -> Iterator[None]:
 
     The tool-call chokepoint wraps execution in this, so a source a tool adds
     from inside -- a note it read, a calendar event, a delegate's folded-back
-    state -- is attributable without each tool naming itself.
+    state -- is attributable without each tool naming itself. It also notes the
+    tier of everything merged into a tracker meanwhile, including sources the
+    turn already held; see :func:`tier_merged_by_executing_tool`.
     """
-    token = _executing_tool_name.set(tool_name)
+    parent = _executing_tool.get()
+    executing = _ExecutingTool(name=tool_name)
+    token = _executing_tool.set(executing)
     try:
         yield
     finally:
-        _executing_tool_name.reset(token)
+        _executing_tool.reset(token)
+        if parent is not None and executing.merged_max_tier is not None:
+            parent.note_merged(executing.merged_max_tier)
+
+
+def tier_merged_by_executing_tool() -> SourceTrustTier | None:
+    """The most tainted tier merged into a tracker since the current tool started.
+
+    Unlike a diff of the turn's sources, this counts a re-read: a source the
+    turn already held, merged again, still reports its tier. ``None`` when no
+    tool is executing or nothing has been merged.
+    """
+    executing = _executing_tool.get()
+    return executing.merged_max_tier if executing is not None else None
+
+
+def _note_merged_by_executing_tool(tier: SourceTrustTier) -> None:
+    executing = _executing_tool.get()
+    if executing is not None:
+        executing.note_merged(tier)
 
 
 def _attributed_to_executing_tool(
     source: TaintSource, *, from_history: bool
 ) -> TaintSource:
-    executing_tool = _executing_tool_name.get()
-    if executing_tool is None or source.tool_name is not None or from_history:
+    executing = _executing_tool.get()
+    if executing is None or source.tool_name is not None or from_history:
         return source
-    return replace(source, tool_name=executing_tool)
+    return replace(source, tool_name=executing.name)
 
 
 SensitiveReadKind = Literal[
@@ -1016,6 +1049,7 @@ class InMemoryTurnTaintTracker:
         from_history: bool = False,
     ) -> TurnTaintState:
         """Synchronously merge a source into the tracker."""
+        _note_merged_by_executing_tool(source.tier)
         self._state = self._state.add_source(
             _attributed_to_executing_tool(source, from_history=from_history),
             from_history=from_history,
@@ -1086,6 +1120,7 @@ def merge_taint_state_into_tracker(
     from_history: bool = False,
 ) -> TurnTaintState:
     """Merge a deserialized taint state without losing persisted max_tier."""
+    _note_merged_by_executing_tool(state.max_tier)
     before = tracker.snapshot()
     merged = merge_taint_state_origins(
         before,
