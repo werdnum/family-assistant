@@ -29,6 +29,9 @@ taint_audit_events_table = Table(
     Column("max_tier", String(64), nullable=False, index=True),
     # The result_taint row's own tool tier; max_tier there is the turn's.
     Column("result_tier", String(64), nullable=True, index=True),
+    # The stored tier a note_tier_lowered row's write replaced; max_tier there
+    # is the tier it stored.
+    Column("previous_tier", String(64), nullable=True, index=True),
     Column(
         "sources_json",
         JSON().with_variant(postgresql.JSONB(astext_type=Text()), "postgresql"),

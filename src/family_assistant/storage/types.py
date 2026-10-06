@@ -190,6 +190,7 @@ class TaintAuditEventRow(TypedDict):
     sink_class: str | None
     max_tier: str
     result_tier: str | None
+    previous_tier: str | None
     sources_json: list[TaintAuditSourceSummary]
     requested_outcome: str | None
     effective_outcome: str | None

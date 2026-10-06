@@ -263,7 +263,9 @@ async def propose_memory_edits_tool(
         evidence_scope=scope,
         expected_revision=expected_revision,
         actor=_resolve_actor(exec_context),
-        provenance=note_stamp_from_context(exec_context),
+        provenance=note_stamp_from_context(
+            exec_context, tool_name="propose_memory_edits"
+        ),
         now=now,
         batch_id=batch_id,
         after_apply=after_apply,

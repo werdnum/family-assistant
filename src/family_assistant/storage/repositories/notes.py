@@ -32,11 +32,18 @@ from family_assistant.security.note_provenance import (
     stored_note_state,
 )
 from family_assistant.security.taint import TurnTaintState, merge_taint_states
+from family_assistant.security.taint_audit import taint_audit_sources
 from family_assistant.skills.frontmatter import parse_frontmatter
 from family_assistant.storage.database import DatabaseExecutor, DatabaseTransaction
 from family_assistant.storage.notes import notes_table
 from family_assistant.storage.repositories.base import BaseRepository
 from family_assistant.storage.tasks import TaskPriority
+
+NOTE_TIER_LOWERED_EVENT_TYPE = "note_tier_lowered"
+"""Audit event type for a write that leaves a note less trusted than it was."""
+
+NO_TURN_CONVERSATION = "no_turn"
+"""Conversation id recorded for a note write with no turn behind it."""
 
 
 class NoteModel(BaseModel):
@@ -710,6 +717,68 @@ class NotesRepository(BaseRepository):
             self._logger.exception(f"Database error in get_by_title({title}): {e}")
             raise
 
+    async def _record_tier_lowered(
+        self,
+        txn: DatabaseTransaction,
+        *,
+        title: str,
+        previous: TurnTaintState,
+        stored: TurnTaintState,
+        stamp: NoteProvenanceStamp,
+    ) -> None:
+        """Audit a write that leaves a note less trusted than it was.
+
+        Nothing else surfaces the change: a merge that outranks a confirmation
+        keeps the confirming source, so the row still looks reviewed unless its
+        tier is compared with what it was.
+        """
+        note_id = await txn.fetch_value(
+            select(notes_table.c.id).where(notes_table.c.title == title)
+        )
+        origin = stamp.origin
+        previous_tier = previous.max_tier.config_value
+        stored_tier = stored.max_tier.config_value
+        writer = origin.tool_name if origin is not None else f"{stamp.writer} write"
+        self._logger.warning(
+            "Note %s (%r) lowered from %s to %s by %s (turn %s, profile %s).",
+            note_id,
+            title,
+            previous_tier,
+            stored_tier,
+            writer,
+            origin.turn_id if origin is not None else None,
+            origin.processing_profile_id if origin is not None else None,
+        )
+        await txn.taint_audit_events.add(
+            event_id=str(uuid.uuid4()),
+            event_type=NOTE_TIER_LOWERED_EVENT_TYPE,
+            conversation_id=(
+                origin.conversation_id if origin is not None else NO_TURN_CONVERSATION
+            ),
+            turn_id=origin.turn_id if origin is not None else None,
+            processing_profile_id=(
+                origin.processing_profile_id if origin is not None else None
+            ),
+            subconversation_id=(
+                origin.subconversation_id if origin is not None else None
+            ),
+            tool_name=writer,
+            tool_call_id=origin.tool_call_id if origin is not None else None,
+            sink_class=None,
+            max_tier=stored_tier,
+            previous_tier=previous_tier,
+            sources=taint_audit_sources(stored),
+            requested_outcome=None,
+            effective_outcome=None,
+            mode=None,
+            reason=(
+                f"A {stamp.writer} write lowered note {note_id} from "
+                f"{previous_tier} to {stored_tier}."
+            ),
+            arguments_summary=None,
+            artifact_id=f"note:{note_id}",
+        )
+
     async def add_or_update(
         self,
         title: str,
@@ -824,19 +893,31 @@ class NotesRepository(BaseRepository):
                     else [],
                 )
 
-            provenance_metadata_to_use = note_provenance_metadata(
-                resolve_note_stamp(
-                    provenance,
-                    retained=(
-                        stored_note_state(
-                            existing_note.provenance_metadata, title=title
-                        )
-                        if existing_note is not None
-                        and provenance.writer is NoteWriter.MACHINE
-                        else None
-                    ),
-                )
+            existing_state = (
+                stored_note_state(existing_note.provenance_metadata, title=title)
+                if existing_note is not None
+                else None
             )
+            resolved_state = resolve_note_stamp(
+                provenance,
+                retained=(
+                    existing_state if provenance.writer is NoteWriter.MACHINE else None
+                ),
+            )
+            provenance_metadata_to_use = note_provenance_metadata(resolved_state)
+            if (
+                existing_state is not None
+                and resolved_state.max_tier > existing_state.max_tier
+            ):
+                # Recorded before the upsert so a write that is then refused
+                # rolls its record back with it.
+                await self._record_tier_lowered(
+                    txn,
+                    title=title,
+                    previous=existing_state,
+                    stored=resolved_state,
+                    stamp=provenance,
+                )
 
             # Serialize to JSON strings
             attachment_ids_json = json.dumps(attachment_ids_to_use)
