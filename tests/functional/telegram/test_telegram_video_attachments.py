@@ -43,7 +43,7 @@ async def test_video_attachment_sent_as_video(
 
     updates = await wait_for_bot_response(fixture.telegram_client)
     messages = [u.get("message", {}) for u in updates]
-    message = next((m for m in messages if "video" in m), {})
+    message = next((m for m in messages if m.get("video")), {})
     assert message.get("video") is not None, (
         f"Expected a video message, got: {messages}"
     )
@@ -81,7 +81,7 @@ async def test_document_attachment_uses_original_filename(
 
     updates = await wait_for_bot_response(fixture.telegram_client)
     messages = [u.get("message", {}) for u in updates]
-    message = next((m for m in messages if "document" in m), {})
+    message = next((m for m in messages if m.get("document")), {})
     document = message.get("document")
     assert document is not None, f"Expected a document message, got: {messages}"
 
