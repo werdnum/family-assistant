@@ -198,15 +198,34 @@ class ModelTierConfig(BaseModel):
         return v
 
 
+class JevFilterConfig(BaseModel):
+    """Jev as a relevance filter over one search surface's candidates.
+
+    Each candidate gets its own yes/no question; those answering yes with
+    probability at or above ``threshold`` survive, highest first. ``shadow``
+    asks and records what the filter would have kept while the surface keeps
+    its own scoring; ``active`` uses the answers; ``off`` never asks. A
+    timeout or failure always falls back to the surface's own scoring.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["off", "shadow", "active"] = "shadow"
+    threshold: float = Field(default=0.5, ge=0, le=1)
+    timeout_seconds: float = Field(default=1.0, gt=0)
+
+
 class TypeSafeConfig(BaseModel):
     """TypeSafe's Jev classifier, an operator-configured external processor.
 
     Enabled by setting ``api_key`` (``TYPESAFE_API_KEY``). Jev then ranks which
-    turns a new message continues at each history compaction event, and
-    classifies the Auto tier in place of the ``model_routing`` classifier. A
-    deployment without it compacts oldest-first and keeps its configured Auto
-    classifier. Both send conversation text to TypeSafe. See
-    docs/design/history-compaction.md.
+    turns a new message continues at each history compaction event, classifies
+    the Auto tier in place of the ``model_routing`` classifier, and filters
+    calendar search and duplicate-check candidates. A deployment without it
+    compacts oldest-first, keeps its configured Auto classifier and filters
+    calendar events by title similarity alone. All of these send household
+    text to TypeSafe. See docs/design/history-compaction.md and
+    docs/design/jev-search-filtering.md.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -225,6 +244,13 @@ class TypeSafeConfig(BaseModel):
     keeps the turns Jev judges relevant verbatim in preference to the rest."""
     relevance_threshold: float = Field(default=0.5, ge=0, le=1)
     """The probability at which a turn counts as continued by the new message."""
+    calendar_duplicates: JevFilterConfig = Field(
+        default_factory=lambda: JevFilterConfig(threshold=0.6)
+    )
+    """Which events near a new one are the same occurrence. The bar sits above
+    an even chance because a match blocks the write until the model retries."""
+    calendar_search: JevFilterConfig = Field(default_factory=JevFilterConfig)
+    """Which events in the searched range match ``search_text``."""
 
     @property
     def enabled(self) -> bool:

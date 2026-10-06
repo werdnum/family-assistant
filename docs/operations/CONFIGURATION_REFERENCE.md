@@ -1129,6 +1129,8 @@ typesafe:
   timeout_seconds: 1.0
   relevance_mode: "shadow" # off | shadow | active
   relevance_threshold: 0.5
+  calendar_duplicates: { mode: "shadow", threshold: 0.6, timeout_seconds: 1.0 }
+  calendar_search: { mode: "shadow", threshold: 0.5, timeout_seconds: 1.0 }
 ```
 
 | Property  | Value                                               |
@@ -1146,6 +1148,17 @@ typesafe:
   rest; the budget is still enforced in code. In `shadow` mode (shipped) the window compacts
   oldest-first and the answers, with what the window would have kept, are recorded in the event's
   `details` in `history_compaction_events` for evaluation. `off` never asks.
+- **Calendar filtering.** `calendar_duplicates` and `calendar_search` put Jev in front of the
+  title-similarity filter used by the duplicate check on new events and by `search_calendar_events`
+  with `search_text`. The closest events by title similarity (up to 30 for a duplicate check, 90
+  for a search) each get one yes/no question — "the same occurrence as the new event?" or "what
+  the search is looking for?" — and those at or above `threshold` are kept, most probable first.
+  `active` uses that set and shows Jev's probability as the result's `match` score; `shadow`
+  (shipped) keeps the similarity filter and logs what Jev would have kept (one
+  `Jev <surface> filter` line per call, plus `family_assistant_jev_filter_decisions`); `off` never
+  asks. A timeout or error falls back to the similarity filter. The duplicate threshold sits above
+  an even chance because a match blocks the write until the model retries with
+  `bypass_duplicate_check`. Sends event titles and calendar names to TypeSafe.
 - **Scripts.** `classify()` and `classify_yes_no()` in scripts call Jev (see
   [scripting.md](../user/scripting.md)); without a key they raise, pointing the script at
   `llm_json()`.

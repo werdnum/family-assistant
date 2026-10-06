@@ -281,6 +281,28 @@ MODEL_ROUTING_LATENCY = Histogram(
 )
 
 
+JEV_FILTER_DECISIONS = Counter(
+    "family_assistant_jev_filter_decisions",
+    (
+        "Jev relevance-filter runs over a search surface's candidates, by "
+        "outcome and by how the set Jev keeps compares with the surface's own "
+        "scoring (`same`, `narrowed`, `widened`, `different`; `none` when Jev "
+        "gave no answer). In shadow mode that comparison is the evaluation "
+        "signal: a surface that is mostly `same` gains little from going active."
+    ),
+    ("surface", "mode", "outcome", "change"),
+)
+
+JEV_FILTER_LATENCY = Histogram(
+    "family_assistant_jev_filter_latency_seconds",
+    (
+        "Wall-clock for one Jev filter run, timeouts included: latency added "
+        "to the tool call that asked."
+    ),
+    ("surface", "outcome"),
+    buckets=_ROUTING_LATENCY_BUCKETS,
+)
+
 # A task handler runs anything from a single row insert to a multi-minute
 # embedding batch, and the interesting question is which types hold a worker
 # long enough to delay everything behind them, so the buckets reach past the
@@ -583,6 +605,22 @@ def record_model_routing(
         MODEL_ROUTING_LATENCY.labels(profile, outcome).observe(latency_seconds)
     except Exception:
         logger.debug("Failed to record model routing metrics", exc_info=True)
+
+
+def record_jev_filter(
+    *,
+    surface: str,
+    mode: str,
+    outcome: str,
+    change: str,
+    latency_seconds: float,
+) -> None:
+    """Count one Jev filter run. Never raises."""
+    try:
+        JEV_FILTER_DECISIONS.labels(surface, mode, outcome, change).inc()
+        JEV_FILTER_LATENCY.labels(surface, outcome).observe(latency_seconds)
+    except Exception:
+        logger.debug("Failed to record Jev filter metrics", exc_info=True)
 
 
 def record_tool_call(
