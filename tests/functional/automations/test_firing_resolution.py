@@ -6,7 +6,7 @@ tool-call reviewer as intent, which stay stubs, and what the woken turn is
 seeded with either way.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, cast
 from zoneinfo import ZoneInfo
 
@@ -638,6 +638,119 @@ async def test_a_clean_script_does_not_cure_the_tainted_automation_running_it(
     }
 
     assert (await _fire_script(db_engine, payload)).definition_taint_metadata is None
+
+
+def _taint_capturing_service(captured: list[TurnTaintState]) -> ProcessingService:
+    """A profile whose ``capture_trigger`` tool records the run's taint state."""
+
+    async def capture_trigger(exec_context: ToolExecutionContext) -> str:
+        assert exec_context.taint_tracker is not None
+        captured.append(exec_context.taint_tracker.snapshot())
+        return "captured"
+
+    service = _capturing_service([])
+    service.tools_provider = CompositeToolsProvider(
+        providers=[
+            LocalToolsProvider(
+                definitions=[_CAPTURE_TOOL],
+                implementations={"capture_trigger": capture_trigger},
+            )
+        ]
+    )
+    return service
+
+
+async def _script_run_taint(
+    db_engine: AsyncEngine, payload: ScriptExecutionPayload
+) -> TurnTaintState:
+    """Run the script handler as the worker does, with a fresh turn tracker.
+
+    Returns the taint the script's first tool call sees: what the firing seeded
+    the run with before any tool raised it.
+    """
+    captured: list[TurnTaintState] = []
+    context = replace(
+        _firing_context(db_engine, _taint_capturing_service(captured)),
+        taint_tracker=InMemoryTurnTaintTracker(),
+    )
+    await handle_script_execution(context, payload)
+    assert len(captured) == 1, captured
+    return captured[0]
+
+
+async def _scheduled_script_payload(
+    db_engine: AsyncEngine,
+    *,
+    tracker: InMemoryTurnTaintTracker,
+    gate_outcome: DefinitionGateOutcome | None = None,
+) -> ScriptExecutionPayload:
+    await Database(engine=db_engine).scripts.save(
+        name="summarize_errors",
+        description="Summarize recent errors",
+        script_code="capture_trigger()",
+        definition_taint_state=TurnTaintState.empty(),
+    )
+    automation_id = await _create_schedule(
+        db_engine,
+        tracker=tracker,
+        action_type="script",
+        action_config={"script_name": "summarize_errors"},
+        gate_outcome=gate_outcome,
+        tools_provider=_capture_tools([]),
+    )
+    return {
+        "script_name": "summarize_errors",
+        "automation_id": str(automation_id),
+        "automation_type": "schedule",
+        "conversation_id": "test_conv",
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_clean_scheduled_script_run_starts_untainted(
+    db_engine: AsyncEngine,
+) -> None:
+    """An unattended run starts at its definition's tier, not a blanket floor."""
+    payload = await _scheduled_script_payload(db_engine, tracker=_clean_tracker())
+
+    state = await _script_run_taint(db_engine, payload)
+
+    assert state.sources == ()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "disposition",
+    [CreationDisposition.JUDGE_ALLOWED, CreationDisposition.HUMAN_CONFIRMED],
+)
+async def test_an_admitted_scheduled_script_run_starts_at_machine_reviewed(
+    db_engine: AsyncEngine, disposition: CreationDisposition
+) -> None:
+    """A definition written in a tainted turn and admitted by the gate starts reusable."""
+    payload = await _scheduled_script_payload(
+        db_engine,
+        tracker=_tainted_tracker(),
+        gate_outcome=_gate_outcome(disposition),
+    )
+
+    state = await _script_run_taint(db_engine, payload)
+
+    assert state.max_tier is SourceTrustTier.MACHINE_REVIEWED
+    assert all("unattended_callback" not in s.labels for s in state.sources)
+
+
+@pytest.mark.asyncio
+async def test_an_unadmitted_scheduled_script_run_starts_unknown_external(
+    db_engine: AsyncEngine,
+) -> None:
+    payload = await _scheduled_script_payload(db_engine, tracker=_tainted_tracker())
+
+    state = await _script_run_taint(db_engine, payload)
+
+    assert state.max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    (source,) = state.sources
+    assert source.labels == frozenset({"unattended_callback"})
+    assert source.source_id == f"automation:{payload.get('automation_id')}"
 
 
 @pytest.mark.asyncio
