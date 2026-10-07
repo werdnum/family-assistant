@@ -22,6 +22,7 @@ from family_assistant.config_models import AppConfig, MCPAdapterConfig
 from family_assistant.llm import LLMOutput
 from family_assistant.llm.messages import AssistantMessage, UserMessage
 from family_assistant.processing import ProcessingService
+from family_assistant.security.taint import agent_request_source
 from family_assistant.storage.database import Database
 from family_assistant.web.mcp_adapter import MCPAdapter, install_mcp_adapter
 from family_assistant.web.web_chat_interface import WebChatInterface
@@ -157,6 +158,30 @@ async def test_question_is_answered_and_persisted_as_mcp(
         ("assistant", "test_user"),
     ]
     assert rows[0]["content"] == "Is milk on the shopping list?"
+
+
+@pytest.mark.asyncio
+async def test_question_is_stored_as_a_request_the_mcp_client_relayed(
+    mcp_app: FastAPI,
+    api_db_context: Database,
+) -> None:
+    """The tool-call reviewer reads the question as the client's relayed request."""
+    async with mcp_session(mcp_app) as session:
+        result = await session.call_tool(
+            "ask_family_assistant", {"question": "Is milk on the shopping list?"}
+        )
+
+    assert result.structuredContent is not None
+    history = await api_db_context.message_history.get_recent(
+        interface_type="mcp",
+        conversation_id=result.structuredContent["conversation_id"],
+        limit=5,
+    )
+    question = next(m for m in history if isinstance(m, UserMessage))
+    relayed_by = agent_request_source(question.taint_metadata)
+    assert relayed_by is not None
+    assert relayed_by.source_id is not None
+    assert relayed_by.source_id.startswith("mcp")
 
 
 @pytest.mark.asyncio

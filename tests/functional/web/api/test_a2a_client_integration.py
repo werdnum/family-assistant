@@ -263,7 +263,7 @@ async def test_remote_a2a_preserves_runtime_taint_metadata(
     assert _initial_taint_sources_from_message(message) == (source,)
 
 
-def test_inbound_a2a_without_taint_metadata_defaults_to_peer_floor() -> None:
+def test_inbound_a2a_without_taint_metadata_is_a_request_the_peer_relayed() -> None:
     message = Message(
         role=Role.user,
         parts=[Part(root=TextPart(text="hello from peer"))],
@@ -274,9 +274,9 @@ def test_inbound_a2a_without_taint_metadata_defaults_to_peer_floor() -> None:
     sources = _initial_taint_sources_from_message(message)
 
     assert len(sources) == 1
-    assert sources[0].source_id == "peer-message-123"
+    assert sources[0].source_id == "a2a:peer-message-123"
     assert sources[0].tier is SourceTrustTier.RECOGNIZED_MACHINE
-    assert sources[0].source_type is TaintSourceType.MANUAL
+    assert sources[0].source_type is TaintSourceType.AGENT_REQUEST
 
 
 @pytest.mark.asyncio

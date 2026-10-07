@@ -224,6 +224,46 @@ def is_human_direct_metadata(metadata: object) -> bool:
     return tier is SourceTrustTier.TRUSTED_USER
 
 
+def agent_request_taint_source(source_id: str, reason: str) -> TaintSource:
+    """The trust a request relayed by an authenticated agent arrives with.
+
+    The user connected the agent and it authenticates as them, but the text is
+    its model's rather than the user's own, so it enters at the recognized
+    machine tier. The distinct source type is what lets the tool-call reviewer
+    still read it as the request the turn answers -- see
+    :func:`agent_request_source`.
+    """
+    return TaintSource(
+        source_type=TaintSourceType.AGENT_REQUEST,
+        source_id=source_id,
+        tier=SourceTrustTier.RECOGNIZED_MACHINE,
+        labels=frozenset({"source_recognized_machine"}),
+        reason=reason,
+    )
+
+
+def agent_request_source(metadata: object) -> TaintSource | None:
+    """The agent that relayed this text, when that is all its provenance says.
+
+    A stamp qualifies only when every source in it is an agent request and the
+    stamp's tier is that request's own. A row that also carries anything else
+    -- an email, a tool result, a stamp from before sources were recorded --
+    is not a relayed request and stays withheld from the reviewer.
+    """
+    if not isinstance(metadata, dict):
+        return None
+    if metadata.get("version") not in HUMAN_DIRECT_TAINT_METADATA_VERSIONS:
+        return None
+    state = TurnTaintState.from_metadata(metadata)
+    if not state.sources or any(
+        source.source_type is not TaintSourceType.AGENT_REQUEST
+        or source.tier is not state.max_tier
+        for source in state.sources
+    ):
+        return None
+    return state.sources[0]
+
+
 class SinkClass(StrEnum):
     """Operation class used by runtime taint policy."""
 
@@ -286,6 +326,9 @@ class TaintSourceType(StrEnum):
     AUTOMATION_TRIGGER = "automation_trigger"
     EVENT = "event"
     SANDBOX_OUTPUT = "sandbox_output"
+    AGENT_REQUEST = "agent_request"
+    """A request an authenticated agent relayed for the user: an MCP client or
+    an A2A peer. See :func:`agent_request_source`."""
     MANUAL = "manual"
 
 

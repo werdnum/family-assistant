@@ -21,11 +21,7 @@ from pydantic import BaseModel, Field
 from starlette.requests import Request
 
 from family_assistant.processing import ProcessingService
-from family_assistant.security.taint import (
-    SourceTrustTier,
-    TaintSource,
-    TaintSourceType,
-)
+from family_assistant.security.taint import TaintSource, agent_request_taint_source
 from family_assistant.storage.database import Database
 from family_assistant.web.dependencies import get_current_user
 from family_assistant.web.mcp_adapter.turns import RunningTurns, wait_for_turn
@@ -71,16 +67,14 @@ def mcp_caller_taint_source(current_user: Mapping[str, object]) -> TaintSource:
     """The trust a question arriving over MCP carries.
 
     The text comes from a machine acting for the authenticated user rather than
-    from the user directly, so it enters the turn at the tier the A2A endpoints
-    give a peer's message: a recognized machine, not direct user input.
+    from the user directly, so it enters the turn as a relayed agent request:
+    the recognized-machine tier for policy, and still the request the tool-call
+    reviewer judges the turn's calls against.
     """
     token_name = current_user.get("token_name")
-    return TaintSource(
-        source_type=TaintSourceType.MANUAL,
-        source_id=f"mcp:{token_name}" if token_name else "mcp",
-        tier=SourceTrustTier.RECOGNIZED_MACHINE,
-        labels=frozenset({"source_recognized_machine"}),
-        reason="Question relayed by an MCP client acting for the user.",
+    return agent_request_taint_source(
+        f"mcp:{token_name}" if token_name else "mcp",
+        "Question relayed by an MCP client acting for the user.",
     )
 
 
