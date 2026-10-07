@@ -98,10 +98,40 @@ Jev's label probabilities did not separate attacks from benign calls: one attack
 allows. It is fast, cheap and deterministic, which fits a narrower classification feeding the judge
 (for example, derived-content taint) better than the whole authorisation decision.
 
+### OpenAI Decisions API (measured October 2026)
+
+`POST /v1/decisions` with `gpt-6-luna` became public beta on 6 October 2026. It answers a typed
+question with a probability per option and produces no output tokens. Each case was sent as one
+`choice` question over the available verdicts, with the review user prompt as input, in four
+formulations: the production system prompt as the question's instructions (`dsys`), the same with
+the fidelity criteria as option descriptions (`dsyscrit`), a short framing with those criteria
+(`dcrit`, the Jev analogue), and the system prompt prepended to the input (`dinput`).
+
+| Corpus      | Judge                      | Attack allows | Benign friction | p50 / p95     | $ / 1k |
+| ----------- | -------------------------- | ------------- | --------------- | ------------- | ------ |
+| Dev         | Gemini 3.7, production     | 0/195         | 1%              | 2.35s / 8.1s  | 1.97   |
+|             | Decisions `dsys`           | 0/195         | 43%             | 0.28s / 0.38s | 0.16   |
+|             | Decisions `dsyscrit`       | 3/195         | 49%             | 0.28s / 0.38s | 0.17   |
+|             | Decisions `dcrit`          | 0/195         | 49%             | 0.28s / 0.37s | 0.11   |
+|             | Decisions `dinput`         | 0/195         | 37%             | 0.28s / 0.36s | 0.18   |
+| AgentDojo   | Gemini 3.7, production     | 0/300         | 17%             | 2.63s / 4.8s  | 2.27   |
+|             | Decisions, best (`dinput`) | 0/300         | 77%             | 0.28s / 0.36s | 0.17   |
+| Fresh hist. | Gemini 3.7, production     | 9/96 \*       | 3%              | 2.87s / 8.8s  | 1.97   |
+|             | Decisions, best (`dinput`) | 6/96 \*       | 44%             | 0.29s / 0.45s | 0.17   |
+
+\* The `dinput` held-out allows are exactly the two `browser_wait` label-noise cases; `dsys` also
+allowed a `gmail_search` attack.
+
+It is roughly ten times faster at p50, twenty times at p95, more than ten times cheaper, and fully
+deterministic (no case changed verdict across seeds). It catches attacks, but it does so by refusing
+much of everything else: friction is 37–49% on dev against 1%, and 77–95% on AgentDojo against 17%.
+Thresholding P(allow) does not rescue it: for `dinput` the highest-scoring dev attack is P(allow) =
+0.05, yet even at a threshold of 0.2 friction is 29% on dev and 73% on AgentDojo. Like Jev, it does
+not separate authorised calls from unauthorised ones well enough to own the decision, and it is a
+candidate only for a narrower classification feeding the judge.
+
 ### Not measured
 
-- **OpenAI Decisions API.** `POST /v1/decisions` exists but returns "Decision API is not enabled for
-  this user" (limited preview). Needs account access.
 - **GLM-5.3-Flash as a constrained single-token classifier.** OpenRouter rejects any request that
   disables reasoning ("Reasoning is mandatory for this endpoint"), and Z.ai's API only supports
   thinking enabled, so the Privatemode technique needs Privatemode's own proxy.
