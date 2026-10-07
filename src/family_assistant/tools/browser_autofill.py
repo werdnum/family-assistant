@@ -44,10 +44,11 @@ _AUTOFILL_WAIT_SECONDS = 25
 
 _REFUSAL_GUIDANCE: dict[str, str] = {
     "no_alias": (
-        "No credential was selected. Retry with secret_name set to a plausible "
-        "name derived from the site or service (e.g. 'octoprint'); the user can "
-        "redirect it to the right stored secret when approving in Keychute. "
-        "Never ask for the password itself."
+        "This configured site has no credential pinned, so there is nothing to "
+        "fill and a different secret_name will be refused. Stop and tell the "
+        "user; they can sign in themselves, or the task can be redone in the "
+        "credential browser profile with a Keychute secret name. Never ask for "
+        "the password itself."
     ),
     "bad_password_recorded": (
         "A wrong password was already recorded for this session, so no further "
@@ -297,8 +298,9 @@ BROWSER_AUTOFILL_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "in tool results. Keychute approves release for the actual page origin. "
                 "No configured site or standing grant is required. If you encounter "
                 "a login wall, request the secret the user named, derive a plausible "
-                "name from the target site or service (e.g. 'octoprint'), or ask for "
-                "its name (never its value). Returns filled, "
+                "name from the target site or service (e.g. 'octoprint') rather "
+                "than asking; the user redirects a wrong guess when approving. "
+                "Never ask for the secret's value. Returns filled, "
                 "approval_pending (the household must approve the release — "
                 "stop and say so), or refused with a reason."
             ),
