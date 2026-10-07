@@ -84,6 +84,12 @@ values are lists), and `body` (bytes). `json_decode()` accepts the byte body dir
 arguments include `headers`, `body`, `ttl_seconds`, `max_uses`, `approval_timeout_seconds`, and
 `request_timeout_seconds`.
 
+If you do not know what the secret is called in Keychute, pick a plausible, descriptive name from
+the service (`weather-api-token`, `github-token`, `octoprint`) and make the call rather than asking
+first. When nothing is stored under that name, the approval page lets the user pick the stored
+secret the call actually needs, or enter a new one, so a wrong guess is redirected as part of
+approving.
+
 Keychute decides whether the call is allowed or needs operator approval. The approval includes the
 exact script source, destination, method, and requested access constraints. Redirects are not
 followed, and the credential is attached inside Keychute rather than handed to Family Assistant. The

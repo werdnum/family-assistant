@@ -44,8 +44,10 @@ _AUTOFILL_WAIT_SECONDS = 25
 
 _REFUSAL_GUIDANCE: dict[str, str] = {
     "no_alias": (
-        "No credential was selected. Ask the user for the Keychute secret name, "
-        "never the password itself."
+        "No credential was selected. Retry with secret_name set to a plausible "
+        "name derived from the site or service (e.g. 'octoprint'); the user can "
+        "redirect it to the right stored secret when approving in Keychute. "
+        "Never ask for the password itself."
     ),
     "bad_password_recorded": (
         "A wrong password was already recorded for this session, so no further "
@@ -195,8 +197,9 @@ async def browser_autofill_tool(
         raise ValueError(
             "Name the Keychute secret with secret_name. If you do not know "
             "which secret to use, derive a plausible name from the target site "
-            "or service (e.g. 'octoprint') or ask the user for its name, "
-            "never its value."
+            "or service (e.g. 'octoprint') rather than asking; the user can "
+            "redirect it to the right stored secret when approving. Never ask "
+            "for its value."
         )
     fields: list[JsonDict] | None = None
     if field_refs:
@@ -307,6 +310,8 @@ BROWSER_AUTOFILL_TOOLS_DEFINITION: list[ToolDefinition] = [
                         "description": (
                             "Keychute secret name supplied by the user or derived "
                             "from the target site or service (e.g. 'octoprint'). "
+                            "A guess is fine: when nothing is stored under it, the "
+                            "user picks the right secret on the approval page. "
                             "Required for the credential browser profile; optional for "
                             "a configured site's pinned login. This requests access, "
                             "it does not grant it."
