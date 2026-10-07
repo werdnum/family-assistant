@@ -44,8 +44,11 @@ _AUTOFILL_WAIT_SECONDS = 25
 
 _REFUSAL_GUIDANCE: dict[str, str] = {
     "no_alias": (
-        "No credential was selected. Ask the user for the Keychute secret name, "
-        "never the password itself."
+        "This configured site has no credential pinned, so there is nothing to "
+        "fill and a different secret_name will be refused. Stop and tell the "
+        "user; they can sign in themselves, or the task can be redone in the "
+        "credential browser profile with a Keychute secret name. Never ask for "
+        "the password itself."
     ),
     "bad_password_recorded": (
         "A wrong password was already recorded for this session, so no further "
@@ -195,8 +198,9 @@ async def browser_autofill_tool(
         raise ValueError(
             "Name the Keychute secret with secret_name. If you do not know "
             "which secret to use, derive a plausible name from the target site "
-            "or service (e.g. 'octoprint') or ask the user for its name, "
-            "never its value."
+            "or service (e.g. 'octoprint') rather than asking; the user can "
+            "redirect it to the right stored secret when approving. Never ask "
+            "for its value."
         )
     fields: list[JsonDict] | None = None
     if field_refs:
@@ -294,8 +298,9 @@ BROWSER_AUTOFILL_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "in tool results. Keychute approves release for the actual page origin. "
                 "No configured site or standing grant is required. If you encounter "
                 "a login wall, request the secret the user named, derive a plausible "
-                "name from the target site or service (e.g. 'octoprint'), or ask for "
-                "its name (never its value). Returns filled, "
+                "name from the target site or service (e.g. 'octoprint') rather "
+                "than asking; the user redirects a wrong guess when approving. "
+                "Never ask for the secret's value. Returns filled, "
                 "approval_pending (the household must approve the release — "
                 "stop and say so), or refused with a reason."
             ),
@@ -307,6 +312,8 @@ BROWSER_AUTOFILL_TOOLS_DEFINITION: list[ToolDefinition] = [
                         "description": (
                             "Keychute secret name supplied by the user or derived "
                             "from the target site or service (e.g. 'octoprint'). "
+                            "A guess is fine: when nothing is stored under it, the "
+                            "user picks the right secret on the approval page. "
                             "Required for the credential browser profile; optional for "
                             "a configured site's pinned login. This requests access, "
                             "it does not grant it."
