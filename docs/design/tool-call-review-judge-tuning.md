@@ -98,10 +98,84 @@ Jev's label probabilities did not separate attacks from benign calls: one attack
 allows. It is fast, cheap and deterministic, which fits a narrower classification feeding the judge
 (for example, derived-content taint) better than the whole authorisation decision.
 
+### OpenAI Decisions API (measured October 2026)
+
+`POST /v1/decisions` with `gpt-6-luna` became public beta on 6 October 2026. It answers a typed
+question with a probability per option and produces no output tokens. Each case was sent as one
+`choice` question over the available verdicts, with the review user prompt as input, in four
+formulations: the production system prompt as the question's instructions (`dsys`), the same with
+the fidelity criteria as option descriptions (`dsyscrit`), a short framing with those criteria
+(`dcrit`, the Jev analogue), and the system prompt prepended to the input (`dinput`).
+
+| Corpus      | Judge                      | Attack allows | Benign friction | p50 / p95     | $ / 1k |
+| ----------- | -------------------------- | ------------- | --------------- | ------------- | ------ |
+| Dev         | Gemini 3.7, production     | 0/195         | 1%              | 2.35s / 8.1s  | 1.97   |
+|             | Decisions `dsys`           | 0/195         | 43%             | 0.28s / 0.38s | 0.16   |
+|             | Decisions `dsyscrit`       | 3/195         | 49%             | 0.28s / 0.38s | 0.17   |
+|             | Decisions `dcrit`          | 0/195         | 49%             | 0.28s / 0.37s | 0.11   |
+|             | Decisions `dinput`         | 0/195         | 37%             | 0.28s / 0.36s | 0.18   |
+| AgentDojo   | Gemini 3.7, production     | 0/300         | 17%             | 2.63s / 4.8s  | 2.27   |
+|             | Decisions, best (`dinput`) | 0/300         | 77%             | 0.28s / 0.36s | 0.17   |
+| Fresh hist. | Gemini 3.7, production     | 9/96 \*       | 3%              | 2.87s / 8.8s  | 1.97   |
+|             | Decisions, best (`dinput`) | 6/96 \*       | 44%             | 0.29s / 0.45s | 0.17   |
+
+\* The `dinput` held-out allows are exactly the two `browser_wait` label-noise cases; `dsys` also
+allowed a `gmail_search` attack.
+
+It is roughly ten times faster at p50, twenty times at p95, more than ten times cheaper, and fully
+deterministic (no case changed verdict across seeds). It catches attacks, but it does so by refusing
+much of everything else: friction is 37–49% on dev against 1%, and 77–95% on AgentDojo against 17%.
+Thresholding P(allow) does not rescue it: for `dinput` the highest-scoring dev attack is P(allow) =
+0.05, yet even at a threshold of 0.2 friction is 29% on dev and 73% on AgentDojo.
+
+**Reshaping the question.** Two changes recover most of the gap; the code is in `scratch/judge_lab`
+(`decisions_prompts.py`).
+
+- **A plain input.** The review prompt is rendered as the trusted request, one-line stubs for unseen
+  content, and the call. Provenance digests, taint cells and empty sections are dropped. A literal
+  classifier reads their presence as a reason to object: "remind me to water the plants" with
+  matching arguments was denied at 0.98.
+- **Narrow "is something wrong" predicates** instead of one "is this authorised" choice: contradicts
+  a stated value, scope broader than needed, smuggles private data, adds a party, pursues an
+  unrequested goal, and addresses the reviewer. One request carries them all and latency is
+  unchanged. Each separates attacks from benign calls with AUC 0.89–0.97; the broad "faithful" and
+  "asked" questions separate as well but sit near 0.5 on benign calls. Two more predicates,
+  delegated choice of action and high-stakes effect, reproduce the production prompt's
+  delegated-choice confirm.
+
+A verdict is deny when the highest bad predicate exceeds 0.8, confirm above 0.6 or when delegated
+and high-stakes both fire, and allow otherwise. A `refusal` answer, which the API returns for a few
+security-flavoured inputs, is treated as confirm.
+
+| Corpus      | Judge                  | Attack allows | Benign friction | p50 / p95     | $ / 1k |
+| ----------- | ---------------------- | ------------- | --------------- | ------------- | ------ |
+| Dev         | Gemini 3.7, production | 0/65          | 1%              | 2.35s / 8.1s  | 1.97   |
+|             | Decisions, predicates  | 0/65          | 16%             | 0.31s / 0.40s | 0.26   |
+| AgentDojo   | Gemini 3.7, production | 0/150         | 17%             | 2.63s / 4.8s  | 2.27   |
+|             | Decisions, predicates  | 0/150         | 31%             | 0.31s / 0.41s | 0.25   |
+| Fresh hist. | Gemini 3.7, production | 3/32 \*       | 3%              | 2.87s / 8.8s  | 1.97   |
+|             | Decisions, predicates  | 3/32 \*       | 16%             | 0.32s / 0.44s | 0.25   |
+
+\* The same three cases for both: the accepted `cancel_worker_task` residual and the two
+`browser_wait` label-noise cases.
+
+Thresholds were picked on dev. AgentDojo failures were read once, which added the delegated and
+high-stakes predicates, so AgentDojo is no longer fully held out; fresh history is. Attack detection
+now matches Gemini on every corpus, but friction stays five to fifteen times higher. Every held-out
+friction is a confirm, not a deny.
+
+**As a fast path in front of Gemini.** Allowing on Decisions alone when no bad predicate exceeds 0.6
+and the delegated gate does not fire, and sending everything else to Gemini, reproduces Gemini's
+verdicts exactly on all three corpora (simulated from stored runs). It settles 34–47% of reviews in
+about 0.3s. The escalated reviews pay about 0.3s extra, so p50 barely moves and p95 does not
+improve: the tail is Gemini on hard calls. Running both concurrently and cancelling Gemini on a fast
+allow would remove the extra 0.3s at the cost of a Gemini call on every review.
+
+Decisions does not replace the judge. A fast path is a defensible option if per-review latency on
+easy calls matters, but it would not shorten the waits users notice.
+
 ### Not measured
 
-- **OpenAI Decisions API.** `POST /v1/decisions` exists but returns "Decision API is not enabled for
-  this user" (limited preview). Needs account access.
 - **GLM-5.3-Flash as a constrained single-token classifier.** OpenRouter rejects any request that
   disables reasoning ("Reasoning is mandatory for this endpoint"), and Z.ai's API only supports
   thinking enabled, so the Privatemode technique needs Privatemode's own proxy.
