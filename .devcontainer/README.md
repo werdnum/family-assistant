@@ -239,6 +239,30 @@ podman build -t family-assistant-devcontainer .
 **Important**: Always build from the `.devcontainer` directory to use the development Dockerfile.
 The root directory contains a production Dockerfile that builds frontend assets.
 
+## Remote Control
+
+The `claude` container can serve its workspace to claude.ai/code and the Claude mobile app by
+running `claude remote-control` as its main process instead of `sleep infinity`. Enable it with a
+`docker-compose.override.yml` next to `docker-compose.yml`:
+
+```yaml
+services:
+  claude:
+    command: ["/usr/local/bin/remote-control-daemon.sh"]
+    environment:
+      - REMOTE_CONTROL_NAME=devcontainer-main # defaults to devcontainer-$WORKTREE_NAME
+      - REMOTE_CONTROL_PERMISSION_MODE=bypassPermissions # defaults to default
+```
+
+The Claude Code account must already be logged in inside the container (`claude auth login`), and
+the workspace directory must have been trusted once by running `claude` there interactively.
+
+Claude Code lives in the persistent home directory and self-updates there, so rebuilding or pulling
+the image does not update it. The script runs `claude update` before starting the server, which
+makes restarting the container the way to move the server to a new release. Sessions survive a
+restart: a new server in the same directory picks up the previous one's sessions for about four
+hours, and only a turn in progress at the moment of the restart is cut off.
+
 ## Troubleshooting
 
 ### Container Issues

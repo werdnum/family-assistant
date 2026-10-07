@@ -194,6 +194,7 @@ COPY .devcontainer/setup-git-auth.sh /usr/local/bin/
 COPY .devcontainer/gh-wrapper /usr/local/bin/gh
 COPY .devcontainer/wrapper-common.sh /usr/local/bin/wrapper-common.sh
 COPY .devcontainer/claude-wrapper.sh /usr/local/bin/claude-wrapper
+COPY .devcontainer/remote-control-daemon.sh /usr/local/bin/remote-control-daemon.sh
 COPY .devcontainer/codex-wrapper.sh /usr/local/bin/codex-wrapper
 COPY .devcontainer/throttle_backspaces.py /usr/local/bin/
 COPY .devcontainer/merge-settings.py /usr/local/bin/
@@ -202,6 +203,7 @@ RUN chmod +x /usr/local/bin/setup-workspace.sh \
                /usr/local/bin/gh \
                /usr/local/bin/wrapper-common.sh \
                /usr/local/bin/claude-wrapper \
+               /usr/local/bin/remote-control-daemon.sh \
                /usr/local/bin/codex-wrapper \
                /usr/local/bin/throttle_backspaces.py \
                /usr/local/bin/merge-settings.py && \
