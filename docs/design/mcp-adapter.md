@@ -99,9 +99,20 @@ The tool runs as the authenticated user, under the profile the operator configur
 (the default profile unless `mcp_adapter.profile_id` says otherwise; remote delegation-only profiles
 are refused). The question text arrives from a machine acting for that user, so the turn starts with
 the same taint the A2A endpoints give a peer's message — recognized machine, not direct user input —
-and the existing taint policy decides what that means for each tool. In Rule of Two terms the
-profile keeps its own properties; the adapter adds no data access and no side effects beyond what
-the profile already has.
+and the existing taint policy decides what that means for each tool.
+
+The question is still the request the turn answers, so the tool-call reviewer must see it: a
+reviewer with no request to weigh a call against can only refuse it. The question is stamped with an
+`agent_request` source naming the client, and the reviewer renders a row whose provenance is only
+that as an `agent_relayed_request`, labelled with the agent. The reviewer is told the text is the
+agent model's rather than the user's own words, that the agent may have read content it cannot see,
+and that any confirmation the client showed its user is not reported to us. No MCP client sends such
+a confirmation, and elicitation, the protocol's way to ask the client's user something, is
+unsupported in claude.ai and ChatGPT, so FA's own deferred confirmations remain the approval
+channel. Work the turn delegates carries the relayed request down as its originating request. It
+never feeds the destination echo, which only a human's own words do. Inbound A2A messages that carry
+no FA taint metadata get the same treatment. In Rule of Two terms the profile keeps its own
+properties; the adapter adds no data access and no side effects beyond what the profile already has.
 
 The whole adapter is off unless `mcp_adapter.enabled` is set. Dynamic client registration is an
 unauthenticated write, and an operator who does not use the feature should not carry that surface.

@@ -25,7 +25,6 @@ from starlette.responses import Response
 from family_assistant.a2a.attachments import (
     A2AAttachmentError,
     A2AAttachmentTransfer,
-    default_a2a_peer_taint_source,
 )
 from family_assistant.a2a.converters import error_to_artifact, text_to_a2a_part
 from family_assistant.a2a.types import (
@@ -55,6 +54,7 @@ from family_assistant.security.taint import (
     TaintMetadata,
     TaintSource,
     TurnTaintState,
+    agent_request_taint_source,
     coerce_taint_metadata,
 )
 from family_assistant.storage.database import Database
@@ -1186,19 +1186,19 @@ def _resolve_service(request: Request, message: Message) -> ProcessingService | 
 def _initial_taint_sources_from_message(message: Message) -> tuple[TaintSource, ...]:
     """Restore FA runtime taint from A2A message metadata, when present."""
     if not message.metadata:
-        return (_default_a2a_peer_taint_source(message),)
+        return (_peer_request_taint_source(message),)
     raw_taint = message.metadata.get(A2A_TAINT_METADATA_KEY)
     taint_metadata: TaintMetadata | None = coerce_taint_metadata(raw_taint)
     if taint_metadata is None:
-        return (_default_a2a_peer_taint_source(message),)
+        return (_peer_request_taint_source(message),)
     return TurnTaintState.from_metadata(taint_metadata).sources
 
 
-def _default_a2a_peer_taint_source(message: Message) -> TaintSource:
-    return default_a2a_peer_taint_source(
-        message.message_id,
+def _peer_request_taint_source(message: Message) -> TaintSource:
+    return agent_request_taint_source(
+        f"a2a:{message.message_id}",
         "Inbound A2A message did not include Family Assistant runtime taint "
-        "metadata; defaulting peer content to recognized_machine.",
+        "metadata; treating it as a request the authenticated peer relayed.",
     )
 
 
