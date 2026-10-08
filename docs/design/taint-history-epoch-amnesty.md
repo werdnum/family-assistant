@@ -219,8 +219,14 @@ later, as prescribed below.
    `post_epoch_missing_required_metadata_rows` must be zero (any nonzero value or
    `post_epoch_missing_taint_metadata` ERROR log means a write path regressed — fix before
    proceeding).
-3. **Flip `taint_policy.mode: enforce`** and remove the
-   `google_integration.require_taint_enforcement: false` waiver if one was set.
+3. **Flip `taint_policy.mode: enforce`**, leaving
+   `google_integration.require_taint_enforcement: false` in place. Andrew decided on 6 Oct 2026 to
+   keep the waiver through the switch and the first 30 days of enforce: because shipped defaults use
+   unfloored `adjudicate` cells (and `audit` on `sensitive_read_broadening`), removing the waiver
+   would cause the Google integration taint-floor startup check to fail and prevent Gmail/Drive
+   tools from registering. Removal of `require_taint_enforcement` is already covered by milestone 5
+   of `docs/design/prompt-injection-assessment-2026-10.md` (which deletes the observe/enforce mode
+   and `require_taint_enforcement` together after 30 days of enforce).
 4. **Add the Gmail/Drive write scopes** (`gmail.compose`, `drive.file`), which the enforcement floor
    was gating.
 

@@ -2158,8 +2158,10 @@ minima. That is a reminder-compatible exception to the old posture, not a cell-f
 the entry from `operator_minimum` to choose the shipped `audit` behavior; a weaker matrix override
 cannot relax an operator minimum.
 
-Keep production in `observe` until the audit data shows near-zero false allows on adversarial
-replays, acceptable projected confirmation volume, and acceptable p95 reviewer latency.
+The 300-unit eval gate and the one-prompt-a-day budget were withdrawn (see
+[docs/design/prompt-injection-assessment-2026-10.md](../design/prompt-injection-assessment-2026-10.md));
+the switch criterion is now the recorded would-prompt ceiling under milestone 4 of that doc. Keep
+production in `observe` until shadow audit data lands within that ceiling.
 
 ______________________________________________________________________
 
