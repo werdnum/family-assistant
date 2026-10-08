@@ -148,7 +148,7 @@ from family_assistant.indexing.tasks import (
     document_ready_after_task_done,
     emit_document_ready_event,
 )
-from family_assistant.interfaces import ChatDeliveryError
+from family_assistant.interfaces import ChatDeliveryError, HistoryBackedChatInterface
 from family_assistant.processing.quiet_turn import QUIET_END_TRIGGER_HINT
 from family_assistant.processing.utils import get_file_extension_from_mime_type
 from family_assistant.services.deferred_tool_confirmation import (
@@ -1264,7 +1264,7 @@ def _attachment_ids_from_row(row: MessageHistoryRow) -> list[str]:
     ]
 
 
-async def _deliver_llm_callback_reply(
+async def _send_llm_callback_reply(
     *,
     db_context: Database,
     chat_interface: ChatInterface,
@@ -1274,22 +1274,7 @@ async def _deliver_llm_callback_reply(
     assistant_message_internal_id: int | None,
     attachment_ids: list[str] | None,
     owner_user_id: str | None,
-) -> str | None:
-    """Send a callback's reply and record that it was delivered.
-
-    Sending happens before the recording transaction: interfaces resolve
-    targets and fetch attachment payloads from their own handle while sending,
-    which the ambient-transaction guard rejects. Recording the delivered id is
-    also what closes the checkpoint -- until it lands, a retry treats the reply
-    as undelivered and comes back here rather than regenerating it.
-    """
-    if not (content or attachment_ids):
-        logger.warning(
-            f"LLM turn completed for callback in {interface_type}:{conversation_id}, "
-            "but final message had no content or attachments."
-        )
-        return None
-
+) -> str:
     # This delivery copy repeats an LLM-derived reply, so it must carry the
     # turn's authoritative taint rather than the trusted-empty baseline a
     # metadata-less copy would otherwise get.
@@ -1298,7 +1283,7 @@ async def _deliver_llm_callback_reply(
         assistant_message_internal_id,
     )
     try:
-        sent_message_id = await chat_interface.send_message(
+        return await chat_interface.send_message(
             conversation_id=conversation_id,
             text=content or "",
             parse_mode="MarkdownV2",
@@ -1325,6 +1310,54 @@ async def _deliver_llm_callback_reply(
         raise RuntimeError(
             f"Failed to send LLM callback response to {interface_type}:{conversation_id} via chat interface."
         ) from e
+
+
+async def _deliver_llm_callback_reply(
+    *,
+    db_context: Database,
+    chat_interface: ChatInterface,
+    interface_type: str,
+    conversation_id: str,
+    content: str | None,
+    assistant_message_internal_id: int | None,
+    attachment_ids: list[str] | None,
+    owner_user_id: str | None,
+) -> str | None:
+    """Deliver a callback's reply and record that it was delivered.
+
+    Sending happens before the recording transaction: interfaces resolve
+    targets and fetch attachment payloads from their own handle while sending,
+    which the ambient-transaction guard rejects. Recording the delivered id is
+    also what closes the checkpoint -- until it lands, a retry treats the reply
+    as undelivered and comes back here rather than regenerating it.
+    """
+    if not (content or attachment_ids):
+        logger.warning(
+            f"LLM turn completed for callback in {interface_type}:{conversation_id}, "
+            "but final message had no content or attachments."
+        )
+        return None
+
+    if (
+        isinstance(chat_interface, HistoryBackedChatInterface)
+        and assistant_message_internal_id is not None
+    ):
+        # The turn already saved this reply where these clients read it, so
+        # sending would save it again and show it twice. The row's own id is
+        # what send_message would have returned for a fresh save.
+        await chat_interface.announce_persisted_message(conversation_id, content or "")
+        sent_message_id = str(assistant_message_internal_id)
+    else:
+        sent_message_id = await _send_llm_callback_reply(
+            db_context=db_context,
+            chat_interface=chat_interface,
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            content=content,
+            assistant_message_internal_id=assistant_message_internal_id,
+            attachment_ids=attachment_ids,
+            owner_user_id=owner_user_id,
+        )
 
     logger.info(
         f"Sent LLM response for callback to {interface_type}:{conversation_id}."
