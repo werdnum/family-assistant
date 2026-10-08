@@ -6,6 +6,7 @@ the scripting interface correctly.
 """
 
 import asyncio
+import logging
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -161,15 +162,24 @@ while i < 5000:
 
     @pytest.mark.asyncio
     async def test_script_exceeding_execution_time_times_out(
-        self, engine_class: type
+        self, engine_class: type, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """A script running past max_execution_time raises ScriptTimeoutError."""
+        """A script running past max_execution_time raises ScriptTimeoutError without ERROR logging."""
         engine = engine_class(config=ScriptConfig(max_execution_time=0.3))
 
-        with pytest.raises(ScriptTimeoutError) as exc_info:
+        with (
+            caplog.at_level(logging.INFO),
+            pytest.raises(ScriptTimeoutError) as exc_info,
+        ):
             await engine.evaluate_async("while True:\n    pass")
 
         assert exc_info.value.timeout_seconds == 0.3
+        error_records = [
+            r
+            for r in caplog.records
+            if r.levelno >= logging.ERROR and "monty_engine" in r.name
+        ]
+        assert not error_records
 
     @pytest.mark.asyncio
     async def test_concurrent_execution(self, engine_class: type) -> None:

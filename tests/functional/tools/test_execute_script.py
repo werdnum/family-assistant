@@ -1,7 +1,8 @@
 """Tests for the execute_script tool."""
 
+import logging
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -9,6 +10,7 @@ from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import AppConfig, KeychuteConfig
+from family_assistant.scripting.errors import ScriptSyntaxError, ScriptTimeoutError
 from family_assistant.security.taint import TurnTaintState
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
@@ -685,3 +687,156 @@ while i < 5000:
     assert "... [output truncated] ..." in result.text
     # The surfaced text stays bounded rather than echoing all 5000 lines.
     assert len(result.text) < 32 * 1024
+
+
+@pytest.mark.asyncio
+async def test_execute_script_user_script_errors_do_not_log_at_error(
+    db_engine: AsyncEngine,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """User script runtime/syntax errors log at INFO without ERROR noise; host exceptions log at ERROR."""
+    db = Database(engine=db_engine)
+    ctx = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test-conv",
+        user_name="test",
+        turn_id=None,
+        db_context=db,
+        clock=None,
+        plugins=None,
+        event_sources=None,
+        attachment_registry=None,
+        processing_service=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
+
+    with caplog.at_level(logging.INFO):
+        # 1. TypeError in user script (runtime error)
+        result = await execute_script_tool(ctx, "a + b", globals={"a": "hello", "b": 1})
+        assert result.text is not None
+        assert "Error: Script execution failed: TypeError" in result.text
+        assert "Script execution failed: Script execution failed:" not in result.text
+        assert isinstance(result.data, dict)
+        assert result.data["status"] == "error"
+        assert result.data["error_type"] == "execution_error"
+        assert "TypeError" in result.data["error"]
+        assert not result.data["error"].startswith(
+            "Script execution failed: Script execution failed:"
+        )
+
+        # 2. Syntax error in user script
+        syntax_result = await execute_script_tool(ctx, "if True")
+        assert syntax_result.text is not None
+        assert "syntax error" in syntax_result.text.lower()
+        assert isinstance(syntax_result.data, dict)
+        assert syntax_result.data["status"] == "error"
+        assert syntax_result.data["error_type"] == "syntax_error"
+
+        # 3. Direct ScriptSyntaxError from engine
+        with patch(
+            "family_assistant.tools.execute_script.MontyEngine.evaluate_async",
+            side_effect=ScriptSyntaxError("unexpected EOF", line=1),
+        ):
+            syntax_engine_result = await execute_script_tool(ctx, "1 + 1")
+            assert syntax_engine_result.text is not None
+            assert "Syntax error in script at line 1" in syntax_engine_result.text
+            assert isinstance(syntax_engine_result.data, dict)
+            assert syntax_engine_result.data["error_type"] == "syntax_error"
+
+    # Verify no ERROR-level logs were emitted for user script failures
+    error_records = [
+        r
+        for r in caplog.records
+        if r.levelno >= logging.ERROR
+        and r.name == "family_assistant.tools.execute_script"
+    ]
+    assert not error_records
+
+    # Verify user script records were logged at INFO with extra={"error_category": "user_script"}
+    script_log_records = [
+        r
+        for r in caplog.records
+        if r.name == "family_assistant.tools.execute_script"
+        and getattr(r, "error_category", None) == "user_script"
+    ]
+    assert len(script_log_records) == 2
+    assert all(r.levelno == logging.INFO for r in script_log_records)
+
+    caplog.clear()
+
+    # 3. Unexpected host-level exception DOES log at ERROR with traceback
+    with (
+        patch(
+            "family_assistant.tools.execute_script.MontyEngine.evaluate_async",
+            side_effect=RuntimeError("Unexpected host failure"),
+        ),
+        caplog.at_level(logging.INFO),
+    ):
+        host_err_result = await execute_script_tool(ctx, "1 + 1")
+        assert host_err_result.text is not None
+        assert (
+            "Unexpected error executing script: Unexpected host failure"
+            in host_err_result.text
+        )
+
+    host_error_records = [
+        r
+        for r in caplog.records
+        if r.levelno >= logging.ERROR
+        and r.name == "family_assistant.tools.execute_script"
+    ]
+    assert len(host_error_records) == 1
+    assert (
+        "Unexpected error executing script: Unexpected host failure"
+        in host_error_records[0].getMessage()
+    )
+
+
+@pytest.mark.asyncio
+async def test_execute_script_timeout_downgraded_to_warning(
+    db_engine: AsyncEngine,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Script timeouts log at WARNING with user_script category, not ERROR."""
+    db = Database(engine=db_engine)
+    ctx = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test-conv",
+        user_name="test",
+        turn_id=None,
+        db_context=db,
+        clock=None,
+        plugins=None,
+        event_sources=None,
+        attachment_registry=None,
+        processing_service=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
+
+    with (
+        patch(
+            "family_assistant.tools.execute_script.MontyEngine.evaluate_async",
+            side_effect=ScriptTimeoutError(
+                "Script execution timed out after 5.0 seconds", 5.0
+            ),
+        ),
+        caplog.at_level(logging.INFO),
+    ):
+        result = await execute_script_tool(ctx, "while True: pass")
+        assert result.text is not None
+        assert "timed out after 5.0 seconds" in result.text
+        assert isinstance(result.data, dict)
+        assert result.data["error_type"] == "timeout_error"
+
+    timeout_records = [
+        r
+        for r in caplog.records
+        if r.name == "family_assistant.tools.execute_script"
+        and getattr(r, "error_category", None) == "user_script"
+    ]
+    assert len(timeout_records) == 1
+    assert timeout_records[0].levelno == logging.WARNING

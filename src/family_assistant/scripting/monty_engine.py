@@ -238,7 +238,6 @@ class MontyEngine:
                 f"Script execution timed out after "
                 f"{self.config.max_execution_time} seconds"
             )
-            logger.error(error_msg)
             raise ScriptTimeoutError(error_msg, self.config.max_execution_time) from e
 
     async def _evaluate_async_impl(
@@ -264,10 +263,10 @@ class MontyEngine:
             raise ScriptSyntaxError(error_str, line=line) from e
 
         except pydantic_monty.MontyRuntimeError as e:
-            raise ScriptExecutionError(f"Script execution failed: {e}") from e
+            raise ScriptExecutionError(str(e)) from e
 
         except pydantic_monty.MontyError as e:
-            raise ScriptExecutionError(f"Script execution failed: {e}") from e
+            raise ScriptExecutionError(str(e)) from e
 
         except (ScriptSyntaxError, ScriptExecutionError, ScriptTimeoutError):
             raise
@@ -275,7 +274,7 @@ class MontyEngine:
         except Exception as e:
             error_msg = f"Script execution failed: {e}"
             logger.exception(error_msg)
-            raise ScriptExecutionError(error_msg) from e
+            raise ScriptExecutionError(str(e)) from e
 
     async def _run_monty_evaluation(
         self,
