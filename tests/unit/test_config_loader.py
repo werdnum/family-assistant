@@ -21,7 +21,8 @@ import logging
 import os
 import subprocess
 import sys
-from typing import TYPE_CHECKING, Any, get_args, get_origin
+from pathlib import Path
+from typing import Any, get_args, get_origin
 from unittest import mock
 
 import pytest
@@ -69,9 +70,6 @@ from family_assistant.security.taint import (
 )
 from family_assistant.tools.metadata import ToolDescriptor
 from family_assistant.tools.policy import PolicyEngine, ToolPolicyDecision
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 @functools.cache
@@ -1737,6 +1735,39 @@ class TestLoadConfig:
             "internal": False,
             "operator_added": False,
         }
+
+    def test_reviewer_model_override_is_not_shadowed_by_shipped_retry(
+        self, tmp_path: Path
+    ) -> None:
+        """The shipped review fallback chain leaves its primary to provider/model.
+
+        The reviewer fills an unset retry primary from ``provider`` and
+        ``model``, so naming one in defaults.yaml would silently win over a
+        deployment that sets its own reviewer model.
+        """
+        shipped_defaults = Path(__file__).resolve().parents[2] / "defaults.yaml"
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            yaml.dump({
+                "tool_call_review": {"provider": "openai", "model": "gpt-5.6-terra"}
+            })
+        )
+        prompts_file = tmp_path / "prompts.yaml"
+        prompts_file.write_text(yaml.dump({"system_prompt": "Test prompt"}))
+
+        config = load_config(
+            defaults_file_path=str(shipped_defaults),
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
+
+        review = config.tool_call_review
+        assert review is not None
+        assert review.model == "gpt-5.6-terra"
+        assert review.retry_config is not None
+        assert review.retry_config.primary.provider is None
+        assert review.retry_config.primary.model is None
 
     def test_defaults_yaml_overrides_field_defaults(self, tmp_path: Path) -> None:
         """Test that defaults.yaml overrides pydantic field defaults."""

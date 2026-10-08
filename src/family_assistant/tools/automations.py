@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, cast
 from family_assistant.actions import (
     WakeLlmProfileError,
     assert_wake_llm_allowed,
+    validate_wake_destination,
 )
 from family_assistant.scripting.apis.keychute import (
     get_keychute_config,
@@ -133,6 +134,7 @@ For schedule automations:
                         "description": """Configuration for the action.
 For wake_llm:
   - context: string with optional context for the LLM
+  - conversation: 'source' (default) wakes this conversation; 'new' starts a fresh conversation each time it fires. 'new' only works in the web app, and the new conversation has no history, so the context must say everything the woken turn needs.
 
 For script:
   - script_code: Python code to execute (inline), OR
@@ -519,6 +521,13 @@ async def create_automation_tool(
                 assert_wake_llm_allowed(action_type, exec_context.allow_wake_llm)
             except WakeLlmProfileError as err:
                 return ToolResult(text=f"Error: {err}", data={"error": str(err)})
+
+        validate_wake_destination(
+            action_type,
+            action_config,
+            interface_type=exec_context.interface_type,
+            owner_user_id=exec_context.user_id,
+        )
 
         # Validate script action_config
         if action_type == "script":
@@ -932,6 +941,12 @@ async def update_automation_tool(
         if action_config is not None:
             restamp_profile_id = exec_context.processing_profile_id
             restamp_user_id = exec_context.user_id
+            validate_wake_destination(
+                existing.action_type,
+                action_config,
+                interface_type=existing.interface_type,
+                owner_user_id=restamp_user_id or existing.created_by_user_id,
+            )
             if existing.action_type == "script":
                 script_error = await validate_script_action_config(
                     exec_context.db_context, action_config

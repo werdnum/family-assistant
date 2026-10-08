@@ -111,7 +111,6 @@ def _response_line(key: str) -> bytes:
                                     "text": json.dumps({
                                         "verdict": "deny",
                                         "reason": "reviewed",
-                                        "safer_alternative": None,
                                     })
                                 }
                             ]

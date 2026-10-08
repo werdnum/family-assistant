@@ -5,7 +5,7 @@ Web ChatInterface implementation for delivering messages via Server-Sent Events.
 import logging
 from typing import TYPE_CHECKING
 
-from family_assistant.interfaces import ChatDeliveryError, ChatInterface
+from family_assistant.interfaces import ChatDeliveryError, HistoryBackedChatInterface
 from family_assistant.llm.messages import AssistantMessage, MessageAttachmentMetadata
 from family_assistant.security.taint import TaintMetadata, TurnTaintState
 from family_assistant.services.notification_targets import notify_conversation
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class WebChatInterface(ChatInterface):
+class WebChatInterface(HistoryBackedChatInterface):
     """
     ChatInterface implementation for web UI.
 
@@ -32,9 +32,11 @@ class WebChatInterface(ChatInterface):
     configured, delivers a push notification to the conversation owner. It also
     publishes a lightweight ``message`` event to the ConversationStreamHub so
     that clients with an open follow-stream reload — this covers assistant
-    messages produced *outside* the ``/turns`` streaming path (scheduled
-    callbacks, task-worker flows, cross-interface delegation), which the turn
-    producer never publishes for.
+    messages produced *outside* the ``/turns`` streaming path (task-worker
+    flows, cross-interface delegation), which the turn producer never
+    publishes for. A reply a turn has already persisted (a scheduled
+    callback's) goes through ``announce_persisted_message`` instead, which
+    notifies without saving a second copy.
     """
 
     def __init__(
@@ -83,11 +85,7 @@ class WebChatInterface(ChatInterface):
     ) -> tuple[int | None, set[str]]:
         clock = SystemClock()
         db_context = Database(engine=self.database_engine)
-        owner_ids: set[str] = set()
-        if self.stream_hub is not None:
-            owner_ids = await db_context.message_history.get_conversation_owner_ids(
-                conversation_id
-            )
+        owner_ids = await self._owner_ids(db_context, conversation_id)
 
         attachments: list[MessageAttachmentMetadata] | None = None
         if attachment_ids:
@@ -115,23 +113,118 @@ class WebChatInterface(ChatInterface):
             processing_profile_id=processing_profile_id,
         )
 
-        if saved_message is not None and self.notifier is not None:
-            try:
-                await notify_conversation(
-                    self.notifier,
-                    db_context,
-                    interface_type=self.interface_type,
-                    conversation_id=conversation_id,
-                    title=notification_title,
-                    body=text[:100],
-                    metadata=notification_metadata,
-                )
-            except Exception as exc:
-                logger.warning(
-                    f"Failed to send push notification: {exc}", exc_info=True
-                )
+        if saved_message is not None:
+            await self._push_notify(
+                db_context,
+                conversation_id,
+                text,
+                notification_title,
+                notification_metadata,
+            )
 
         return saved_message, owner_ids
+
+    async def _owner_ids(self, db_context: Database, conversation_id: str) -> set[str]:
+        if self.stream_hub is None:
+            return set()
+        return await db_context.message_history.get_conversation_owner_ids(
+            conversation_id
+        )
+
+    async def _push_notify(
+        self,
+        db_context: Database,
+        conversation_id: str,
+        text: str,
+        notification_title: str,
+        notification_metadata: NotificationMetadata,
+    ) -> None:
+        if self.notifier is None:
+            return
+        try:
+            await notify_conversation(
+                self.notifier,
+                db_context,
+                interface_type=self.interface_type,
+                conversation_id=conversation_id,
+                title=notification_title,
+                body=text[:100],
+                metadata=notification_metadata,
+            )
+        except Exception as exc:
+            logger.warning(f"Failed to send push notification: {exc}", exc_info=True)
+
+    async def _publish_new_message(
+        self, conversation_id: str, owner_ids: set[str]
+    ) -> None:
+        # Nudge any open follow-stream to reload. The hub stream doesn't carry
+        # full message rows, so this is a content-free signal; the web/iOS
+        # live-update hooks refetch conversation history on it. This is an
+        # in-memory publish: a failure here is a programming error, so let it
+        # propagate (fail fast) rather than swallow it — see send_message on
+        # why a post-commit publish failure must not look like a failed send.
+        #
+        # NOTE: this hub tickle replaces the old MessageNotifier on_commit
+        # hook, which fired for EVERY message_history write. The hub is only
+        # nudged here, on WebChatInterface saves. Messages written by other
+        # interfaces (Telegram, email intake) land in their own conversations,
+        # which the web UI doesn't surface and whose multi-owner streams the
+        # auth layer 404s — so no live-update is owed there. If a future
+        # surface lets the web UI watch a conversation that receives writes
+        # from a non-web path, that path must publish its own hub tickle.
+        if self.stream_hub is None:
+            return
+        await self.stream_hub.publish(
+            conversation_id,
+            "message",
+            turn_id=None,
+            payload={
+                "conversation_id": conversation_id,
+                "new_messages": True,
+            },
+        )
+        # Also ping the account-global activity stream so this out-of-band
+        # reply (scheduled/reminder callback, tool-initiated message) surfaces
+        # and bumps the conversation in the owner's list on a client sitting
+        # on another thread — the per-conversation tickle above only reaches a
+        # client already following THIS conversation. Canonicalize owner ids
+        # first: the activity stream subscribes under the caller's canonical
+        # id, so a conversation stored under an alias (e.g. a Telegram numeric
+        # id) would otherwise ping an id no subscriber matches.
+        activity_user_ids = {
+            self.identity_resolver.canonicalize_owner_id(owner_id)
+            if self.identity_resolver is not None
+            else owner_id
+            for owner_id in owner_ids
+        }
+        for user_id in activity_user_ids:
+            await self.stream_hub.publish_activity(
+                conversation_id,
+                user_id=user_id,
+                reason="message",
+            )
+
+    async def announce_persisted_message(self, conversation_id: str, text: str) -> None:
+        """Notify clients of an assistant message already saved to history.
+
+        A scheduled callback's turn persists its own reply, so delivering it
+        through ``send_message`` would save it a second time and the
+        conversation would show it twice. This sends the same push
+        notification and live-update ping without writing anything.
+        """
+        db_context = Database(engine=self.database_engine)
+        owner_ids = await self._owner_ids(db_context, conversation_id)
+        await self._push_notify(
+            db_context,
+            conversation_id,
+            text,
+            "New message",
+            NotificationMetadata(
+                category=MESSAGE_CATEGORY,
+                conversation_id=conversation_id,
+            ),
+        )
+        await self._publish_new_message(conversation_id, owner_ids)
 
     async def send_message(
         self,
@@ -222,51 +315,7 @@ class WebChatInterface(ChatInterface):
                 transient=False,
             )
 
-        # Nudge any open follow-stream to reload. The hub stream doesn't carry
-        # full message rows, so this is a content-free signal; the web/iOS
-        # live-update hooks refetch conversation history on it. This is an
-        # in-memory publish: a failure here is a programming error, so let it
-        # propagate (fail fast) rather than swallow it — see the note above on
-        # why a post-commit publish failure must not look like a failed send.
-        #
-        # NOTE: this hub tickle replaces the old MessageNotifier on_commit
-        # hook, which fired for EVERY message_history write. The hub is only
-        # nudged here, on WebChatInterface saves. Messages written by other
-        # interfaces (Telegram, email intake) land in their own conversations,
-        # which the web UI doesn't surface and whose multi-owner streams the
-        # auth layer 404s — so no live-update is owed there. If a future
-        # surface lets the web UI watch a conversation that receives writes
-        # from a non-web path, that path must publish its own hub tickle.
-        if self.stream_hub is not None:
-            await self.stream_hub.publish(
-                conversation_id,
-                "message",
-                turn_id=None,
-                payload={
-                    "conversation_id": conversation_id,
-                    "new_messages": True,
-                },
-            )
-            # Also ping the account-global activity stream so this out-of-band
-            # reply (scheduled/reminder callback, tool-initiated message) surfaces
-            # and bumps the conversation in the owner's list on a client sitting
-            # on another thread — the per-conversation tickle above only reaches a
-            # client already following THIS conversation. Canonicalize owner ids
-            # first: the activity stream subscribes under the caller's canonical
-            # id, so a conversation stored under an alias (e.g. a Telegram numeric
-            # id) would otherwise ping an id no subscriber matches.
-            activity_user_ids = {
-                self.identity_resolver.canonicalize_owner_id(owner_id)
-                if self.identity_resolver is not None
-                else owner_id
-                for owner_id in owner_ids
-            }
-            for user_id in activity_user_ids:
-                await self.stream_hub.publish_activity(
-                    conversation_id,
-                    user_id=user_id,
-                    reason="message",
-                )
+        await self._publish_new_message(conversation_id, owner_ids)
 
         logger.info(
             f"WebChatInterface: Saved message to conversation {conversation_id}, "

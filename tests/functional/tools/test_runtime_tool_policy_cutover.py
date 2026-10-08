@@ -208,6 +208,45 @@ async def test_enabled_reviewer_does_not_construct_provider_during_startup(
 
 
 @pytest.mark.asyncio
+async def test_reviewer_model_override_becomes_the_retry_primary(
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A deployment's own provider and model lead the shipped fallback chain."""
+    config = _build_test_config(db_engine, include_tools_policy=True)
+    config.tool_call_review = ToolCallReviewConfig.model_validate({
+        "provider": "openai",
+        "model": "gpt-5.6-terra",
+        "retry_config": {
+            "fallback": {"provider": "google", "model": "gemini-3.8-flash"}
+        },
+    })
+    created_configs: list[dict[str, object]] = []
+
+    def create_client(config: dict[str, object]) -> RuleBasedMockLLMClient:
+        created_configs.append(config)
+        return RuleBasedMockLLMClient(rules=[])
+
+    monkeypatch.setattr(LLMClientFactory, "create_client", create_client)
+    reviewer = Assistant(
+        config=config, database_engine=db_engine
+    )._create_tool_call_reviewer()
+    assert reviewer is not None
+
+    try:
+        await reviewer._get_llm_client()
+    finally:
+        await reviewer.close()
+
+    assert len(created_configs) == 1
+    retry = created_configs[0]["retry_config"]
+    assert isinstance(retry, dict)
+    assert retry["primary"]["provider"] == "openai"
+    assert retry["primary"]["model"] == "gpt-5.6-terra"
+    assert retry["fallback"]["model"] == "gemini-3.8-flash"
+
+
+@pytest.mark.asyncio
 async def test_assistant_requires_explicit_tools_policy(
     db_engine: AsyncEngine,
 ) -> None:

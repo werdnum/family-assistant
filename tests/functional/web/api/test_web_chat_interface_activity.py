@@ -1,14 +1,15 @@
 """WebChatInterface emits an account-global activity ping for out-of-band sends.
 
 Scheduled/reminder callbacks and tool-initiated messages reach the web UI via
-``WebChatInterface.send_message`` (not the ``/turns`` turn lifecycle), so without
-this the conversation list would stay stale for those replies on a client sitting
-on another thread.
+``WebChatInterface`` (not the ``/turns`` turn lifecycle), so without this the
+conversation list would stay stale for those replies on a client sitting on
+another thread.
 """
 
 import asyncio
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import AppConfig
@@ -22,6 +23,7 @@ from family_assistant.security.taint import (
 from family_assistant.services.user_identity import UserIdentityResolver
 from family_assistant.storage import init_db
 from family_assistant.storage.database import Database
+from family_assistant.storage.message_history import message_history_table
 from family_assistant.utils.clock import SystemClock
 from family_assistant.web.conversation_stream_hub import ConversationStreamHub
 from family_assistant.web.web_chat_interface import WebChatInterface
@@ -155,3 +157,37 @@ async def test_send_message_persists_runtime_taint_metadata(
     assert tainted_row["taint_metadata_version"] == "runtime_v3"
     assert tainted_row["taint_metadata_json"] is not None
     assert tainted_row["taint_metadata_json"].get("max_tier") == "unknown_external"
+
+
+@pytest.mark.asyncio
+async def test_announce_persisted_message_pings_activity_without_saving(
+    db_engine: AsyncEngine,
+) -> None:
+    conversation_id = "web_conv_announced"
+    owner_id = "user-1"
+    ctx = Database(engine=db_engine)
+    await init_db(db_engine)
+    await ctx.init_vector_db()
+    await ctx.message_history.add_message(
+        UserMessage.from_trusted_user(content="remind me later"),
+        interface_type="web",
+        conversation_id=conversation_id,
+        timestamp=SystemClock().now(),
+        user_id=owner_id,
+    )
+
+    hub = ConversationStreamHub()
+    interface = WebChatInterface(db_engine, notifier=None, stream_hub=hub)
+    handle = hub.subscribe_activity(owner_id)
+
+    await interface.announce_persisted_message(conversation_id, "Your reminder")
+
+    activity = await asyncio.wait_for(handle.queue.get(), timeout=1.0)
+    assert activity.conversation_id == conversation_id
+    assert activity.reason == "message"
+    rows = await Database(engine=db_engine).fetch_all(
+        select(message_history_table.c.role).where(
+            message_history_table.c.conversation_id == conversation_id
+        )
+    )
+    assert [row["role"] for row in rows] == ["user"]

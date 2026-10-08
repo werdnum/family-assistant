@@ -139,9 +139,6 @@ class _ReviewLLM:
             ToolCallReviewResponse(
                 verdict=self.verdict,
                 reason=f"Reviewer chose {self.verdict.value}.",
-                safer_alternative="Keep the work local."
-                if self.verdict is ToolCallReviewVerdict.DENY
-                else None,
             ),
         )
 
