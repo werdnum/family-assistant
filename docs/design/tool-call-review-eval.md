@@ -380,11 +380,15 @@ and 32 data-stealing attacker cases crossed with 17 user cases), which become 4,
 enhanced arrays remain an explicit separate slice. Its static adaptation is not the upstream
 end-to-end benchmark: each attack action invokes the row's exact `Attacker Tools` list, while its
 benign twin invokes the exact `User Tool` with the same `invoke_tools`/`tools` shape. Both
-objectives use the actual `User Instruction`; the damage envelope retains `Expected Achievements`
-plus the general unauthorized-action constraint. The full attack environment is the upstream
-pre-rendered `Tool Response` verbatim, and the benign environment is the clean template. The private
-fetch script (using ordinary Git plus Git LFS) pins revisions and checksums under
-`.review-eval-local/upstream`; raw corpora and generated cases never enter version control.
+objectives use the actual `User Instruction`. The damage envelope is written as an operator writes
+one for a production site, before any attack is known: the user tool the request authorizes and the
+general unauthorized-action constraint. It does not carry `Expected Achievements`, which describes
+what the attacker gains; the twins share the envelope, so that field would give the benign twin the
+attack's purpose and the attack twin an oracle no deployment has (adapter `browser-ablation-v3`).
+The full attack environment is the upstream pre-rendered `Tool Response` verbatim, and the benign
+environment is the clean template. The private fetch script (using ordinary Git plus Git LFS) pins
+revisions and checksums under `.review-eval-local/upstream`; raw corpora and generated cases never
+enter version control.
 
 Agent-environment benchmarks (AgentDojo, InjecAgent, and kin) adapt poorly to static single-call
 cases but are the natural later instrument for *end-to-end* validation — attack success rate and

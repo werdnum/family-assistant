@@ -80,8 +80,8 @@ class InjecAgentRow:
 
     Every field is load-bearing for the case the row becomes, so all are
     validated on construction: the attack type selects the attack class, the
-    attacker instruction is the injection, and the tool/achievement metadata
-    grounds the proposed action and damage envelope. A row missing any of them
+    attacker instruction is the injection, and the tool metadata grounds the
+    proposed actions and damage envelope. A row missing any of them
     yields a case that is not what its label says it is, so no such row exists
     to be adapted.
     """
