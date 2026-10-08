@@ -1,12 +1,9 @@
-"""Scheduled/reminder web callbacks must not under-taint their delivery copy.
+"""Scheduled/reminder callbacks delivered to web conversations.
 
-``handle_llm_callback`` runs a turn (which may read tainted tool output) and then
-delivers the reply through ``ChatInterface.send_message``. For the web interface
-that send persists a *second* assistant row (the delivery copy). If the callback
-omits taint metadata, ``WebChatInterface`` falls back to a trusted-empty
-baseline — which would falsely mark an LLM-derived, tool-tainted reply as
-``trusted_user`` and let it be egressed without a runtime-taint confirmation. The
-callback must therefore hand the turn's authoritative taint to ``send_message``.
+``handle_llm_callback`` runs a turn (which may read tainted tool output) that
+persists its own reply. For the web interface, ``send_message`` would persist a
+*second* assistant row, so the reply is announced instead of sent, and the
+turn's row -- carrying the turn's authoritative taint -- is the only copy.
 """
 
 from __future__ import annotations
@@ -149,14 +146,13 @@ def _payload() -> LlmCallbackPayload:
 
 
 @pytest.mark.asyncio
-async def test_web_callback_delivery_copy_inherits_turn_taint(
+async def test_web_callback_reply_is_stored_once_with_turn_taint(
     db_engine: AsyncEngine,
 ) -> None:
-    """The web delivery copy of a tool-tainted callback reply is unknown_external.
+    """A web callback reply appears once in history, keeping the turn's taint.
 
-    Without threading the turn's taint, ``WebChatInterface`` would persist the
-    delivery copy with the trusted-empty baseline even though the reply derives
-    from tainted tool output.
+    Delivering through ``send_message`` would save a second, duplicate row that
+    the chat UI shows alongside the turn's own.
     """
     ctx = Database(engine=db_engine)
     await init_db(db_engine)
@@ -218,16 +214,11 @@ async def test_web_callback_delivery_copy_inherits_turn_taint(
         .order_by(message_history_table.c.internal_id)
     )
 
-    # Two assistant rows: the turn's canonical reply and the web delivery copy.
-    assert len(assistant_rows) == 2
-    canonical_row, delivery_row = assistant_rows
-
-    # Both must carry runtime taint metadata; crucially the delivery copy is NOT
-    # downgraded to the trusted-empty baseline.
-    assert canonical_row["taint_metadata_json"]["max_tier"] == "unknown_external"
-    assert delivery_row["taint_metadata_version"] == "runtime_v3"
-    assert delivery_row["taint_metadata_json"] is not None
-    assert delivery_row["taint_metadata_json"]["max_tier"] == "unknown_external"
+    assert len(assistant_rows) == 1
+    reply_row = assistant_rows[0]
+    assert reply_row["taint_metadata_json"]["max_tier"] == "unknown_external"
+    # Stamped as delivered, which closes the retry checkpoint.
+    assert reply_row["interface_message_id"] == str(reply_row["internal_id"])
 
 
 @pytest.mark.asyncio
@@ -414,32 +405,18 @@ async def test_reminder_without_provenance_is_tainted_user_role(
     assert source.tier is SourceTrustTier.UNKNOWN_EXTERNAL
 
 
-class _FailingDeliveryInterface(WebChatInterface):
-    """A web interface whose send fails once, then succeeds."""
+class _TransportInterface:
+    """A transport-only interface (like Telegram): sending writes no history."""
 
-    def __init__(self, db_engine: AsyncEngine) -> None:
-        super().__init__(db_engine, notifier=None, stream_hub=None)
+    def __init__(self, first_failure: Exception) -> None:
+        self.first_failure = first_failure
         self.send_attempts = 0
 
     async def send_message(self, *args: object, **kwargs: object) -> str:
         self.send_attempts += 1
         if self.send_attempts == 1:
-            raise RuntimeError("transient delivery failure")
-        return await super().send_message(*args, **kwargs)  # type: ignore[arg-type] # passthrough of the interface signature
-
-
-class _NoDeliveryIdInterface(WebChatInterface):
-    """A web interface that reports its first send as undelivered."""
-
-    def __init__(self, db_engine: AsyncEngine) -> None:
-        super().__init__(db_engine, notifier=None, stream_hub=None)
-        self.send_attempts = 0
-
-    async def send_message(self, *args: object, **kwargs: object) -> str:
-        self.send_attempts += 1
-        if self.send_attempts == 1:
-            raise ChatDeliveryError("no delivery id", transient=True)
-        return await super().send_message(*args, **kwargs)  # type: ignore[arg-type] # passthrough of the interface signature
+            raise self.first_failure
+        return f"sent-{self.send_attempts}"
 
 
 @pytest.mark.asyncio
@@ -456,7 +433,9 @@ async def test_callback_treats_a_failed_delivery_as_a_failed_send(
     await ctx.init_vector_db()
 
     processing_service = TaintedReplyService()
-    chat_interface = _NoDeliveryIdInterface(db_engine)
+    chat_interface = _TransportInterface(
+        ChatDeliveryError("no delivery id", transient=True)
+    )
 
     with pytest.raises(RuntimeError, match="Failed to send LLM callback response"):
         await handle_llm_callback(
@@ -507,7 +486,7 @@ async def test_callback_retry_resumes_at_delivery_without_rerunning_the_turn(
     await ctx.init_vector_db()
 
     processing_service = TaintedReplyService()
-    chat_interface = _FailingDeliveryInterface(db_engine)
+    chat_interface = _TransportInterface(RuntimeError("transient delivery failure"))
 
     # First attempt: generation succeeds, delivery fails.
     with pytest.raises(RuntimeError, match="Failed to send LLM callback response"):

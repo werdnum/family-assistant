@@ -133,9 +133,6 @@ class _ReviewLLM:
             ToolCallReviewResponse(
                 verdict=self.verdict,
                 reason=self.reason or f"Reviewer chose {self.verdict.value}.",
-                safer_alternative="Use a local-only operation."
-                if self.verdict is ToolCallReviewVerdict.DENY
-                else None,
             ),
         )
 
@@ -570,7 +567,6 @@ async def test_static_review_and_taint_adjudicate_share_one_judgment(
         assert isinstance(result, ToolResult)
         assert "Action blocked by automatic review" in result.get_text()
         assert "Reviewer chose deny." in result.get_text()
-        assert "Safer alternative" in result.get_text()
     else:
         assert isinstance(result, ToolResult)
         assert result.get_text() == "executed"

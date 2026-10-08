@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import BaseModel, ConfigDict
 
-from family_assistant.llm import UserMessage
+from family_assistant.llm import StructuredOutputError, UserMessage
 from family_assistant.llm.providers.anthropic_client import AnthropicClient
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.llm.providers.openai_client import OpenAIClient
@@ -106,17 +106,16 @@ async def test_openai_drops_the_openrouter_routing_prefix_on_the_wire() -> None:
 
 @pytest.mark.no_db
 @pytest.mark.asyncio
-async def test_anthropic_generate_structured_uses_native_tool_schema() -> None:
-    """Anthropic structured output asks for its native output tool."""
+async def test_anthropic_generate_structured_uses_native_json_schema() -> None:
+    """Anthropic structured output is constrained by output_config.format.
+
+    The schema goes through the SDK's transform, which drops what the API cannot
+    enforce; pydantic still validates the full model on the way back.
+    """
     client = AnthropicClient(api_key="test", model="claude-sonnet-4-5")
     response = MagicMock()
-    response.content = [
-        SimpleNamespace(
-            type="tool_use",
-            name="return_structured_response",
-            input={"answer": "ok"},
-        )
-    ]
+    response.stop_reason = "end_turn"
+    response.content = [SimpleNamespace(type="text", text='{"answer": "ok"}')]
 
     with patch.object(
         client.client.messages, "create", new_callable=AsyncMock
@@ -130,9 +129,36 @@ async def test_anthropic_generate_structured_uses_native_tool_schema() -> None:
 
     assert result == SampleResponse(answer="ok")
     assert mock_create.await_args is not None
-    tools = mock_create.await_args.kwargs["tools"]
-    assert tools[0]["name"] == "return_structured_response"
-    assert mock_create.await_args.kwargs["tool_choice"] == {"type": "auto"}
+    sent = mock_create.await_args.kwargs
+    assert "tools" not in sent
+    output_format = sent["output_config"]["format"]
+    assert output_format["type"] == "json_schema"
+    assert output_format["schema"]["additionalProperties"] is False
+
+
+@pytest.mark.no_db
+@pytest.mark.asyncio
+async def test_anthropic_generate_structured_retries_a_refusal() -> None:
+    """A refusal is not the object asked for, so it is retried, then raised."""
+    client = AnthropicClient(api_key="test", model="claude-sonnet-4-5")
+    response = MagicMock()
+    response.stop_reason = "refusal"
+    response.content = []
+
+    with (
+        patch.object(
+            client.client.messages, "create", new_callable=AsyncMock
+        ) as mock_create,
+        pytest.raises(StructuredOutputError),
+    ):
+        mock_create.return_value = response
+        await client.generate_structured(
+            messages=[UserMessage(content="Return structured output")],
+            response_model=SampleResponse,
+            max_retries=1,
+        )
+
+    assert mock_create.await_count == 2
 
 
 @pytest.mark.no_db

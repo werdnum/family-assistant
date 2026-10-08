@@ -2,7 +2,7 @@
 Defines abstract interfaces for communication channels.
 """
 
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from family_assistant.security.taint import TaintMetadata
@@ -68,3 +68,21 @@ class ChatInterface(Protocol):
         ...
 
     # Add other methods if tools/tasks need other interactions.
+
+
+@runtime_checkable
+class HistoryBackedChatInterface(ChatInterface, Protocol):
+    """A chat interface whose clients read the conversation from message history.
+
+    For these, ``send_message`` delivers by saving a new assistant row. A reply
+    a processing turn has already persisted must not go through it, or the
+    conversation shows the reply twice; announce the existing row instead.
+    """
+
+    async def announce_persisted_message(self, conversation_id: str, text: str) -> None:
+        """Tell the conversation's clients about an already-saved assistant message.
+
+        Sends the push notification and live-update ping ``send_message`` would,
+        without writing to history.
+        """
+        ...
