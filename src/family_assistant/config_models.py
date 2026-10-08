@@ -287,6 +287,30 @@ class ModelRoutingConfig(BaseModel):
     """How many recent messages of the conversation the classifier sees."""
 
 
+class ConversationSummaryConfig(BaseModel):
+    """Generated one-line summaries shown in the web and iOS conversation lists.
+
+    A recurring sweep summarizes conversations once they have gone quiet, on a
+    model of their own rather than a profile's: a list label must cost far
+    less than the conversation it labels.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    model: RetryModelConfig = Field(default_factory=RetryModelConfig)
+    sweep_interval_minutes: int = Field(default=2, ge=1)
+    idle_seconds: int = Field(default=60, ge=0)
+    """How long a conversation must be quiet before it is summarized, so a turn
+    in progress is not summarized halfway."""
+    lookback_days: int = Field(default=30, ge=1)
+    """Only conversations active within this window are summarized; older ones
+    keep showing their latest message."""
+    batch_size: int = Field(default=10, ge=1)
+    """Summaries generated per sweep, bounding the sweep's run time."""
+    timeout_seconds: float = Field(default=20.0, gt=0)
+
+
 class ToolCallReviewEscalationConfig(BaseModel):
     """Turn-local thresholds used by tool-call review escalation."""
 
@@ -2205,6 +2229,25 @@ class AppConfig(BaseSettings):
     # `processing_config.model_selection` is `auto`.
     model_routing: ModelRoutingConfig = Field(default_factory=ModelRoutingConfig)
     typesafe: TypeSafeConfig = Field(default_factory=TypeSafeConfig)
+
+    conversation_summaries: ConversationSummaryConfig = Field(
+        default_factory=ConversationSummaryConfig
+    )
+
+    @model_validator(mode="after")
+    def validate_conversation_summaries_name_a_model(self) -> AppConfig:
+        """Enabled summaries need a model, or every sweep fails the same way."""
+        if (
+            self.conversation_summaries.enabled
+            and not self.conversation_summaries.model.model
+        ):
+            msg = (
+                "conversation_summaries.enabled is true but "
+                "conversation_summaries.model names no model. Set its provider "
+                "and model, or disable it."
+            )
+            raise ValueError(msg)
+        return self
 
     @model_validator(mode="after")
     def validate_model_routing_names_a_classifier(self) -> AppConfig:

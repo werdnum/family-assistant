@@ -57,6 +57,33 @@ final class ChatAPIClientTests: XCTestCase {
 
         XCTAssertEqual(conversations.map(\.conversationID), ["web_conv_1"])
         XCTAssertEqual(conversations.first?.messageCount, 2)
+        XCTAssertNil(conversations.first?.summary)
+        XCTAssertEqual(conversations.first?.displayTitle, "Hello")
+    }
+
+    func testListConversationsLabelsASummarizedConversationWithItsSummary() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .json(
+                """
+                {
+                  "conversations": [
+                    {
+                      "conversation_id": "web_conv_1",
+                      "last_message": "Thanks!",
+                      "summary": "Dentist moved to Thursday 3pm",
+                      "last_timestamp": "2026-06-08T12:00:00Z",
+                      "message_count": 4
+                    }
+                  ],
+                  "count": 1
+                }
+                """
+            )
+        }
+
+        let conversations = try await makeClient().listConversations()
+
+        XCTAssertEqual(conversations.first?.displayTitle, "Dentist moved to Thursday 3pm")
     }
 
     func testListConversationsPaginatesUntilAllHistoryIsLoaded() async throws {

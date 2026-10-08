@@ -473,6 +473,14 @@ class ConversationSummary(BaseModel):
 
     conversation_id: str = Field(..., description="Unique conversation identifier")
     last_message: str = Field(..., description="Preview of the last message")
+    summary: str | None = Field(
+        None,
+        description=(
+            "Generated one-line summary of the conversation, shown in place of "
+            "the last-message preview. Absent until the conversation has been "
+            "summarized"
+        ),
+    )
     last_timestamp: datetime = Field(..., description="Timestamp of the last message")
     message_count: int = Field(..., description="Total number of messages")
     match_excerpt: str | None = Field(
@@ -2805,6 +2813,7 @@ async def get_conversations(
         ConversationSummary(
             conversation_id=summary["conversation_id"],
             last_message=summary["last_message"],
+            summary=summary["summary"],
             last_timestamp=summary["last_timestamp"],
             message_count=summary["message_count"],
             match_excerpt=summary["match_excerpt"],

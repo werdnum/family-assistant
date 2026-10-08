@@ -1336,6 +1336,31 @@ These replace `max_history_messages` and `web_max_history_messages`, which count
 configuration that still sets them is rejected at startup. See
 [history-compaction.md](../design/history-compaction.md).
 
+### conversation_summaries
+
+The one-line labels the web sidebar, the History page and the iOS conversation list show in place of
+the latest message. A background sweep summarizes a conversation once it has been quiet for
+`idle_seconds`, and again after new messages; until then, and wherever summarizing failed, the list
+shows the latest message.
+
+| Key                      | Default (shipped)  | Meaning                                                                 |
+| ------------------------ | ------------------ | ----------------------------------------------------------------------- |
+| `enabled`                | `true`             | `false` stops new summaries; stored ones keep being shown.              |
+| `model`                  | `gemini-3.8-flash` | `provider` / `model` (and optional `llm_parameters`) of the summarizer. |
+| `sweep_interval_minutes` | `2`                | How often the sweep runs.                                               |
+| `idle_seconds`           | `60`               | Quiet time before a conversation is summarized.                         |
+| `lookback_days`          | `30`               | Conversations quiet for longer than this are not summarized.            |
+| `batch_size`             | `10`               | Summaries generated per sweep.                                          |
+| `timeout_seconds`        | `20`               | A summary not returned by then counts as failed.                        |
+
+The instructions are `conversation_summary_prompt` in `prompts.yaml`; enabling summaries without it
+is a startup error, as is a `model` whose provider has no credentials — a deployment without
+`GEMINI_API_KEY` points `model` at a provider it does have, or sets `enabled: false`, as it does for
+`model_routing`. A conversation whose turn is still running is not summarized until the turn ends.
+The summarizer has no tools, and its output is only displayed to the conversation's owner — it is
+never put into a prompt. See
+[conversation-list-summaries.md](../design/conversation-list-summaries.md).
+
 ______________________________________________________________________
 
 ## Calendar Integration
