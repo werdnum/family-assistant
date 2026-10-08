@@ -5,7 +5,7 @@ Callback delivery used to send an already-saved reply through
 then stamped with the copy's id as its ``interface_message_id``, which is what
 identifies the copy here.
 
-Revision ID: delete_duplicate_web_callback_replies
+Revision ID: delete_dup_web_callback_replies
 Revises: delete_orphaned_note_documents
 """
 
@@ -15,7 +15,7 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision: str = "delete_duplicate_web_callback_replies"
+revision: str = "delete_dup_web_callback_replies"
 down_revision: str | None = "delete_orphaned_note_documents"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
