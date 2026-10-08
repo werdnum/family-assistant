@@ -3638,10 +3638,10 @@ class TaintTrackingToolsProvider(ToolsProvider):
         name: str,
         result: ToolCallReviewResult,
     ) -> ToolResult:
-        text = f"{ACTION_BLOCKED_PREFIX} for tool '{name}': {result.reason}"
-        if result.safer_alternative:
-            text += f" Safer alternative: {result.safer_alternative}"
-        return ToolResult(text=text, attachments=None)
+        return ToolResult(
+            text=f"{ACTION_BLOCKED_PREFIX} for tool '{name}': {result.reason}",
+            attachments=None,
+        )
 
     async def _request_review_confirmation(
         self,
