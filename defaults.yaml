@@ -684,10 +684,9 @@ tool_call_review:
   # measured on both. See docs/design/tool-call-review-judge-tuning.md.
   provider: "anthropic"
   model: "claude-haiku-5-5"
+  # Only the fallback is named: the primary is filled from provider/model
+  # above, so a deployment that sets those still gets its own model first.
   retry_config:
-    primary:
-      provider: "anthropic"
-      model: "claude-haiku-5-5"
     fallback:
       provider: "google"
       model: "gemini-3.8-flash"

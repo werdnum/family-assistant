@@ -1983,9 +1983,6 @@ tool_call_review:
   provider: "anthropic"
   model: "claude-haiku-5-5"
   retry_config:
-    primary:
-      provider: "anthropic"
-      model: "claude-haiku-5-5"
     fallback:
       provider: "google"
       model: "gemini-3.8-flash"
@@ -1997,6 +1994,11 @@ tool_call_review:
   guidance: >-
     Optional deployment-wide trusted guidance about routine workflows.
 ```
+
+`retry_config` names only the fallback: its primary is filled from `provider` and `model`, so
+overriding those changes the judge without restating the chain. The shipped judge needs Anthropic
+credentials; a deployment without them should set `provider` and `model` to a configured provider,
+since a reviewer whose client cannot be created fails closed rather than falling back.
 
 `timeout_seconds` bounds a single review, which runs inline: the gated tool call waits on it, so the
 value trades a stalled turn against a fail-closed fallback. Reviews on `claude-haiku-5-5` typically
