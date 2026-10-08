@@ -678,12 +678,19 @@ email_intake:
 # resolve to each delegating rule's fail-closed fallback, never to allow.
 tool_call_review:
   enabled: true
-  provider: "google"
-  # Held at 3.7 while the rest of the deployment runs 3.8: with the current
-  # review prompt 3.7 has the lowest benign friction on every eval corpus
-  # (1% dev, 17% AgentDojo vs 3.8's 5% / 21%) at equal attack allows. See
-  # docs/design/tool-call-review-judge-tuning.md.
-  model: "gemini-3.7-flash"
+  # Haiku 5.5 matches Gemini 3.8's attack detection with less benign friction,
+  # a 2-4s p95 against Gemini's 7-13s, at about a sixth of the cost. Gemini 3.8
+  # is the availability fallback on another provider; the review prompt was
+  # measured on both. See docs/design/tool-call-review-judge-tuning.md.
+  provider: "anthropic"
+  model: "claude-haiku-5-5"
+  retry_config:
+    primary:
+      provider: "anthropic"
+      model: "claude-haiku-5-5"
+    fallback:
+      provider: "google"
+      model: "gemini-3.8-flash"
   timeout_seconds: 30.0
   max_reviews_per_turn: 25
   escalation:

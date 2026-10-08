@@ -1151,9 +1151,9 @@ typesafe:
   `details` in `history_compaction_events` for evaluation. `off` never asks.
 - **Calendar filtering.** `calendar_duplicates` and `calendar_search` put Jev in front of the
   title-similarity filter used by the duplicate check on new events and by `search_calendar_events`
-  with `search_text`. The closest events by title similarity (up to 30 for a duplicate check, 90
-  for a search) each get one yes/no question — "the same occurrence as the new event?" or "what
-  the search is looking for?" — and those at or above `threshold` are kept, most probable first.
+  with `search_text`. The closest events by title similarity (up to 30 for a duplicate check, 90 for
+  a search) each get one yes/no question — "the same occurrence as the new event?" or "what the
+  search is looking for?" — and those at or above `threshold` are kept, most probable first.
   `active` uses that set and shows Jev's probability as the result's `match` score; `shadow`
   (shipped) keeps the similarity filter and logs what Jev would have kept (one
   `Jev <surface> filter` line per call, plus `family_assistant_jev_filter_decisions`); `off` never
@@ -1162,12 +1162,12 @@ typesafe:
   `bypass_duplicate_check`. Sends event titles and calendar names to TypeSafe.
 - **Document search.** With `document_search` not `off`, `search_documents` retrieves 30 candidates
   by hybrid rank instead of `limit`, and Jev is asked of each whether it helps answer the query
-  (title, source and a 1,500-character excerpt). `active` shows those at or above `threshold`,
-  most probable first and at most `limit`, and tells the model how many were left out as not
-  relevant or beyond the limit, so a search with nothing relevant returns nothing rather than the
-  five nearest. `shadow` (shipped) shows the top `limit` by rank and logs what Jev would have
-  shown. The longer timeout covers 30 excerpts' worth of state. Sends excerpts of indexed
-  documents, notes and emails to TypeSafe.
+  (title, source and a 1,500-character excerpt). `active` shows those at or above `threshold`, most
+  probable first and at most `limit`, and tells the model how many were left out as not relevant or
+  beyond the limit, so a search with nothing relevant returns nothing rather than the five nearest.
+  `shadow` (shipped) shows the top `limit` by rank and logs what Jev would have shown. The longer
+  timeout covers 30 excerpts' worth of state. Sends excerpts of indexed documents, notes and emails
+  to TypeSafe.
 - **Scripts.** `classify()` and `classify_yes_no()` in scripts call Jev (see
   [scripting.md](../user/scripting.md)); without a key they raise, pointing the script at
   `llm_json()`.
@@ -1980,8 +1980,15 @@ tool-policy `review` rules.
 ```yaml
 tool_call_review:
   enabled: true
-  provider: "google"
-  model: "gemini-3.7-flash"
+  provider: "anthropic"
+  model: "claude-haiku-5-5"
+  retry_config:
+    primary:
+      provider: "anthropic"
+      model: "claude-haiku-5-5"
+    fallback:
+      provider: "google"
+      model: "gemini-3.8-flash"
   timeout_seconds: 30.0
   max_reviews_per_turn: 25
   escalation:
@@ -1992,11 +1999,12 @@ tool_call_review:
 ```
 
 `timeout_seconds` bounds a single review, which runs inline: the gated tool call waits on it, so the
-value trades a stalled turn against a fail-closed fallback. The default of 30 s suits a reasoning
-model on a long prompt — reviews on `gemini-3.7-flash` commonly take 4-10 s with a tail past 15 s,
-and a budget near that range turns ordinary reviews into fallbacks rather than judgements. Lower it
-only with evidence from `taint_audit_events` that the configured model returns sooner, and read it
-alongside `max_reviews_per_turn`, which bounds how many such waits one turn can incur.
+value trades a stalled turn against a fail-closed fallback. Reviews on `claude-haiku-5-5` typically
+take 1.5-2 s with a p95 under 4 s, but the fallback, `gemini-3.8-flash`, commonly takes 4-10 s with
+a tail past 15 s, and the 30 s default leaves room for a fallback review rather than turning it into
+a fail-closed verdict. Lower it only with evidence from `taint_audit_events` that the configured
+model returns sooner, and read it alongside `max_reviews_per_turn`, which bounds how many such waits
+one turn can incur.
 
 The reviewer gets no tools. It receives only explicitly trusted-tier conversation rows, an
 audit-safe provenance digest, the matched policy context, and the complete proposed arguments fenced
