@@ -87,6 +87,11 @@ profile's context stays separate — but anything you have already typed comes w
 draft a message and then decide who should handle it. If the chat is still empty, switching just
 changes the profile and keeps you where you are.
 
+**Conversation labels.** The conversation list in the sidebar, on the History page and in the iOS
+app labels each conversation with a short summary of what it is about, such as "Dentist moved to
+Thursday 3pm". The summary is written a minute or so after the conversation goes quiet and updated
+when it moves on; until then the list shows the latest message.
+
 **Share a conversation.** Open a conversation that already has messages and select the share icon in
 the chat header. In the web app, choose **Create and copy link**. The dialog shows a selectable URL
 and **Copy link**; if clipboard access fails, select the URL or use **Retry copy**. Copying again

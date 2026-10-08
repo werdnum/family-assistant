@@ -3,6 +3,8 @@ import type { TerminalToolOutcome } from './toolOutcome';
 export interface Conversation {
   conversation_id: string;
   last_message: string;
+  /** Generated one-line summary; absent until the conversation is summarized. */
+  summary?: string | null;
   last_timestamp: string;
   message_count: number;
   /** Present only on search results: a snippet of a message that matched. */

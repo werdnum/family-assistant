@@ -106,6 +106,41 @@ describe('ConversationSidebar', () => {
     expect(renderedConversationIds()).toEqual(['conv-1', 'conv-2']);
   });
 
+  it('labels a summarized conversation with its summary instead of the last message', async () => {
+    server.use(
+      http.get('/api/v1/chat/conversations', () =>
+        HttpResponse.json({
+          conversations: [
+            {
+              conversation_id: 'conv-1',
+              last_message: 'Thanks!',
+              summary: "Sam's birthday party: venue booked",
+              last_timestamp: '2025-01-01T10:00:00Z',
+              message_count: 6,
+            },
+            {
+              conversation_id: 'conv-2',
+              last_message: 'Not summarized yet',
+              summary: null,
+              last_timestamp: '2025-01-01T09:00:00Z',
+              message_count: 1,
+            },
+          ],
+          count: 2,
+        })
+      )
+    );
+
+    await renderChatApp({ waitForReady: true });
+
+    const summarized = await screen.findByTestId('conversation-item-conv-1');
+    expect(within(summarized).getByText("Sam's birthday party: venue booked")).toBeInTheDocument();
+    expect(within(summarized).queryByText('Thanks!')).not.toBeInTheDocument();
+    expect(
+      within(screen.getByTestId('conversation-item-conv-2')).getByText('Not summarized yet')
+    ).toBeInTheDocument();
+  });
+
   it('allows switching between conversations', async () => {
     const user = userEvent.setup();
     serveConversationHistories();

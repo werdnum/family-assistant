@@ -247,7 +247,9 @@ const ConversationsList = ({ onLoaded }) => {
                 </div>
 
                 <div className={styles.conversationPreview}>
-                  <p className={styles.lastMessage}>{truncateMessage(conversation.last_message)}</p>
+                  <p className={styles.lastMessage}>
+                    {truncateMessage(conversation.summary || conversation.last_message)}
+                  </p>
                 </div>
 
                 <div className={styles.conversationMeta}>

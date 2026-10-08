@@ -2520,6 +2520,9 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
         const optimisticRow: Conversation = {
           conversation_id: targetConversationId,
           last_message: optimisticPreview,
+          // Keep the existing label while the bump is pending; the sweep
+          // refreshes it once the conversation goes quiet.
+          summary: existing?.summary,
           last_timestamp: new Date().toISOString(),
           message_count: (existing?.message_count ?? 0) + 1,
         };

@@ -32,6 +32,29 @@ describe('ConversationsList', () => {
     expect(await screen.findByText('Found 45 conversations')).toBeInTheDocument();
     expect(screen.getByText('Page 1 of 3')).toBeInTheDocument();
   });
+  it('previews a summarized conversation with its summary', async () => {
+    server.use(
+      http.get('/api/v1/chat/conversations', () =>
+        HttpResponse.json({
+          conversations: [
+            { ...conversation(0), summary: 'Dentist moved to Thursday 3pm' },
+            conversation(1),
+          ],
+          count: 2,
+        })
+      )
+    );
+
+    render(
+      <MemoryRouter initialEntries={['/history']}>
+        <ConversationsList />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Dentist moved to Thursday 3pm')).toBeInTheDocument();
+    expect(screen.queryByText('Message 0')).not.toBeInTheDocument();
+    expect(screen.getByText('Message 1')).toBeInTheDocument();
+  });
   it('shows a retry action without claiming no conversations exist after a failure', async () => {
     server.use(
       http.get('/api/v1/chat/conversations', () => HttpResponse.json({}, { status: 503 }))
