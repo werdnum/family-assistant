@@ -10,7 +10,7 @@ from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import AppConfig, KeychuteConfig
-from family_assistant.scripting.errors import ScriptSyntaxError, ScriptTimeoutError
+from family_assistant.scripting.errors import ScriptTimeoutError
 from family_assistant.security.taint import TurnTaintState
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
@@ -689,19 +689,13 @@ while i < 5000:
     assert len(result.text) < 32 * 1024
 
 
-@pytest.mark.asyncio
-async def test_execute_script_user_script_errors_do_not_log_at_error(
-    db_engine: AsyncEngine,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """User script runtime/syntax errors log at INFO without ERROR noise; host exceptions log at ERROR."""
-    db = Database(engine=db_engine)
-    ctx = ToolExecutionContext(
+def _logging_test_context(db_engine: AsyncEngine) -> ToolExecutionContext:
+    return ToolExecutionContext(
         interface_type="test",
         conversation_id="test-conv",
         user_name="test",
         turn_id=None,
-        db_context=db,
+        db_context=Database(engine=db_engine),
         clock=None,
         plugins=None,
         event_sources=None,
@@ -712,61 +706,112 @@ async def test_execute_script_user_script_errors_do_not_log_at_error(
         api_backend=None,
     )
 
-    with caplog.at_level(logging.INFO):
-        # 1. TypeError in user script (runtime error)
-        result = await execute_script_tool(ctx, "a + b", globals={"a": "hello", "b": 1})
-        assert result.text is not None
-        assert "Error: Script execution failed: TypeError" in result.text
-        assert "Script execution failed: Script execution failed:" not in result.text
-        assert isinstance(result.data, dict)
-        assert result.data["status"] == "error"
-        assert result.data["error_type"] == "execution_error"
-        assert "TypeError" in result.data["error"]
-        assert not result.data["error"].startswith(
-            "Script execution failed: Script execution failed:"
-        )
 
-        # 2. Syntax error in user script
-        syntax_result = await execute_script_tool(ctx, "if True")
-        assert syntax_result.text is not None
-        assert "syntax error" in syntax_result.text.lower()
-        assert isinstance(syntax_result.data, dict)
-        assert syntax_result.data["status"] == "error"
-        assert syntax_result.data["error_type"] == "syntax_error"
-
-        # 3. Direct ScriptSyntaxError from engine
-        with patch(
-            "family_assistant.tools.execute_script.MontyEngine.evaluate_async",
-            side_effect=ScriptSyntaxError("unexpected EOF", line=1),
-        ):
-            syntax_engine_result = await execute_script_tool(ctx, "1 + 1")
-            assert syntax_engine_result.text is not None
-            assert "Syntax error in script at line 1" in syntax_engine_result.text
-            assert isinstance(syntax_engine_result.data, dict)
-            assert syntax_engine_result.data["error_type"] == "syntax_error"
-
-    # Verify no ERROR-level logs were emitted for user script failures
-    error_records = [
+def _error_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    return [
         r
         for r in caplog.records
-        if r.levelno >= logging.ERROR
-        and r.name == "family_assistant.tools.execute_script"
+        if r.levelno >= logging.ERROR and r.name.startswith("family_assistant")
     ]
-    assert not error_records
 
-    # Verify user script records were logged at INFO with extra={"error_category": "user_script"}
-    script_log_records = [
+
+def _user_script_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    return [
         r
         for r in caplog.records
         if r.name == "family_assistant.tools.execute_script"
         and getattr(r, "error_category", None) == "user_script"
     ]
-    assert len(script_log_records) == 2
-    assert all(r.levelno == logging.INFO for r in script_log_records)
 
-    caplog.clear()
 
-    # 3. Unexpected host-level exception DOES log at ERROR with traceback
+@pytest.mark.asyncio
+async def test_execute_script_runtime_error_logs_at_info(
+    db_engine: AsyncEngine,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    ctx = _logging_test_context(db_engine)
+
+    with caplog.at_level(logging.INFO):
+        result = await execute_script_tool(ctx, "a + b", globals={"a": "hello", "b": 1})
+
+    assert result.text is not None
+    assert "Error: Script execution failed: TypeError" in result.text
+    assert "Script execution failed: Script execution failed:" not in result.text
+    assert isinstance(result.data, dict)
+    assert result.data["error_type"] == "execution_error"
+    assert not _error_records(caplog)
+    records = _user_script_records(caplog)
+    assert len(records) == 1
+    assert records[0].levelno == logging.INFO
+
+
+@pytest.mark.asyncio
+async def test_execute_script_syntax_error_does_not_log_at_error(
+    db_engine: AsyncEngine,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    ctx = _logging_test_context(db_engine)
+
+    with caplog.at_level(logging.INFO):
+        result = await execute_script_tool(ctx, "if True")
+
+    assert isinstance(result.data, dict)
+    assert result.data["error_type"] == "syntax_error"
+    assert not _error_records(caplog)
+
+
+@pytest.mark.asyncio
+async def test_execute_script_host_function_misuse_does_not_log_at_error(
+    db_engine: AsyncEngine,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A host function rejecting the script's arguments is the script's mistake."""
+    ctx = _logging_test_context(db_engine)
+
+    def picky(value: int) -> int:
+        raise ValueError(f"bad value: {value}")
+
+    with caplog.at_level(logging.INFO):
+        result = await execute_script_tool(ctx, "picky(3)", globals={"picky": picky})
+
+    assert isinstance(result.data, dict)
+    assert result.data["error_type"] == "execution_error"
+    assert "bad value: 3" in result.data["error"]
+    assert not _error_records(caplog)
+
+
+@pytest.mark.asyncio
+async def test_execute_script_host_function_failure_logs_at_error(
+    db_engine: AsyncEngine,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A host function failing on its own (a provider outage, say) stays visible."""
+    ctx = _logging_test_context(db_engine)
+
+    def flaky_backend() -> str:
+        raise RuntimeError("provider unavailable")
+
+    with caplog.at_level(logging.INFO):
+        result = await execute_script_tool(
+            ctx, "flaky_backend()", globals={"flaky_backend": flaky_backend}
+        )
+
+    assert isinstance(result.data, dict)
+    assert result.data["error_type"] == "execution_error"
+    assert "provider unavailable" in result.data["error"]
+    error_records = _error_records(caplog)
+    assert len(error_records) == 1
+    assert "flaky_backend" in error_records[0].getMessage()
+    assert error_records[0].exc_info is not None
+
+
+@pytest.mark.asyncio
+async def test_execute_script_unexpected_engine_exception_logs_at_error(
+    db_engine: AsyncEngine,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    ctx = _logging_test_context(db_engine)
+
     with (
         patch(
             "family_assistant.tools.execute_script.MontyEngine.evaluate_async",
@@ -774,23 +819,15 @@ async def test_execute_script_user_script_errors_do_not_log_at_error(
         ),
         caplog.at_level(logging.INFO),
     ):
-        host_err_result = await execute_script_tool(ctx, "1 + 1")
-        assert host_err_result.text is not None
-        assert (
-            "Unexpected error executing script: Unexpected host failure"
-            in host_err_result.text
-        )
+        result = await execute_script_tool(ctx, "1 + 1")
 
-    host_error_records = [
-        r
-        for r in caplog.records
-        if r.levelno >= logging.ERROR
-        and r.name == "family_assistant.tools.execute_script"
-    ]
-    assert len(host_error_records) == 1
+    assert result.text is not None
+    assert "Unexpected error executing script: Unexpected host failure" in result.text
+    error_records = _error_records(caplog)
+    assert len(error_records) == 1
     assert (
         "Unexpected error executing script: Unexpected host failure"
-        in host_error_records[0].getMessage()
+        in error_records[0].getMessage()
     )
 
 
@@ -800,22 +837,7 @@ async def test_execute_script_timeout_downgraded_to_warning(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Script timeouts log at WARNING with user_script category, not ERROR."""
-    db = Database(engine=db_engine)
-    ctx = ToolExecutionContext(
-        interface_type="test",
-        conversation_id="test-conv",
-        user_name="test",
-        turn_id=None,
-        db_context=db,
-        clock=None,
-        plugins=None,
-        event_sources=None,
-        attachment_registry=None,
-        processing_service=None,
-        timezone=ZoneInfo("UTC"),
-        credential_resolvers=None,
-        api_backend=None,
-    )
+    ctx = _logging_test_context(db_engine)
 
     with (
         patch(

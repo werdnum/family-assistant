@@ -34,6 +34,7 @@ from family_assistant.tools.types import ToolParametersSchema, ToolResult
 
 from .apis import time as time_api
 from .apis.attachments import AttachmentInfoDict, create_attachment_api
+from .apis.keychute import KeychuteScriptError
 from .config import ScriptConfig
 from .errors import ScriptExecutionError, ScriptSyntaxError, ScriptTimeoutError
 
@@ -342,7 +343,24 @@ class MontyEngine:
             result = fn(*progress.args, **progress.kwargs)
             if asyncio.iscoroutine(result):
                 result = await result
+        except (
+            TypeError,
+            ValueError,
+            LookupError,
+            PermissionError,
+            KeychuteScriptError,
+        ) as e:
+            # The script called the function wrongly, or was refused (a denied
+            # Keychute request); it sees the error and the caller logs it as a
+            # user-script failure.
+            return await progress.resume({"exception": e})
         except Exception as e:
+            # Anything else is the host failing (a provider outage, a bug), which
+            # would otherwise reach the caller indistinguishable from a script error.
+            logger.exception(
+                "Host function %s failed during script execution",
+                progress.function_name,
+            )
             return await progress.resume({"exception": e})
         return await progress.resume({"return_value": result})
 
