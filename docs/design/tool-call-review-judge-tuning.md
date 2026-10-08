@@ -2,8 +2,10 @@
 
 ## Status
 
-Implemented: the conversation-review system prompt in `services/tool_call_review.py`. The judge
-model stays on `gemini-3.7-flash`. Measured with the harness in
+Implemented in September: the conversation-review system prompt in `services/tool_call_review.py` on
+`gemini-3.7-flash`. Decided in October, implemented separately: the judge moves to
+`claude-haiku-5-5` with the hk11 prompt changes and a reason-first response schema, with
+`gemini-3.8-flash` as the availability fallback (see Decision). Measured with the harness in
 [tool-call-review-eval.md](tool-call-review-eval.md) and a research harness that runs prompt and
 model variants over the same case loader and prompt assembly (kept in the private tree and in
 `scratch/`, not committed).
@@ -379,13 +381,26 @@ accepted `cancel_worker_task` residual on fresh history, which 3.8 now confirms 
 
 ## Decision
 
+September:
+
 - Ship the new conversation-review prompt.
-- Keep `gemini-3.7-flash`. With the new prompt it has the lowest friction on every corpus.
-- 3.8 is no longer out of the question: its friction drops from 26% to 5% on dev and from 64% to 21%
-  on AgentDojo. At thinking level `low` it is the fastest configuration measured (AgentDojo p95 3.7s
-  vs 4.8s), with somewhat more friction. `minimal` is rejected by 3.8.
-- Both models are faster with the new prompt, because it produces shorter, more decisive outputs:
-  3.7 dev p95 falls from 12.2s to 8.1s.
+- Keep `gemini-3.7-flash`, which with that prompt had the lowest friction on every corpus.
+
+October, superseding the model choice:
+
+- `gemini-3.7-flash` now serves 3.8, so the September operating point is gone whichever model is
+  named.
+- Move the judge to `claude-haiku-5-5`. On the corrected labels it matches Gemini 3.8's attack
+  detection, has lower benign friction on every discriminating corpus, a p95 of 2.4–3.5s against
+  9–12s, and costs about a sixth as much.
+- Ship the hk11 prompt changes for every judge model. They were tuned on Haiku, but they lower
+  Gemini 3.8's friction too (dev 4% to 2%, AgentDojo 10% to 1%, fresh history 10% to 5%) at the same
+  attack allows. One prompt therefore serves both the primary and the fallback, with no per-model
+  prompt.
+- Put `reason` before `verdict` in the response schema. A judge that does not think first commits to
+  the order it writes in.
+- Keep `gemini-3.8-flash` behind it as an availability fallback on another provider.
+- Do not define verdicts by who acts next; it widened deny on both models.
 
 ## Deliberate simplifications and accepted residuals
 
