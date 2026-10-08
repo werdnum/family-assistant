@@ -361,6 +361,108 @@ configuration line: if they slip beyond a few weeks, flip anyway and fix under e
    outcomes with `mode = enforce`, and by the median daily count in `confirmation_requests` over the
    first thirty days of enforce landing at or under the recorded post-fix figure.
 
+### Status as of 8 Oct 2026
+
+**Fixes merged 6 Oct 2026** (all on `main` and in running build `dff14d6`, built 7 Oct 22:35Z):
+
+- #1363: per-document grading for `search_documents`/`get_full_document_content`.
+- #1364: `artifact_id='note:<id>'` on note-write `policy_evaluation` rows.
+- #1365: `get_delegation_status`/`list_delegations` graded per run.
+- #1366: source cap evicts lowest tier first and capped `runtime_v2` rows propagate `max_tier`.
+- #1367: `note_tier_lowered` audit event.
+- #1369: `result_taint` row on re-read of an already-seen source.
+- #1370: `add_or_update_note` result reports when a write lands below the reusable tiers.
+- #1371: tests for unattended trigger taint sources.
+- Also #1375 (7 Oct 22:34Z): reviewer sees requests relayed by MCP/A2A clients.
+
+**Milestone 1 (ambient-write gate) — VERIFIED 8 Oct 2026 03:41:55Z.**
+
+- `taint_audit_events` row `b88843a0-81fe-4858-b5bb-7d134a574eeb`:
+  `event_type=ambient_note_admission`, `sink_class=ambient_prompt_write`, tool `add_or_update_note`,
+  `requested_outcome=adjudicate`, `effective_outcome=admitted`, `mode=observe`, review verdict
+  `allow` / `review_status model_verdict` (review row `00455a4a-0ab8-4e51-b78b-91b81f81b3a4`, 7,933
+  ms), turn tier `unknown_external`; the note was promoted to `machine_reviewed`.
+- *Known gaps, not blocking:* the admission row's `artifact_id` is `note:<title>` (built from
+  `candidate.title` at `src/family_assistant/tools/infrastructure.py:2181`) rather than `note:<id>`;
+  the `delete_note` audit row has `artifact_id` NULL; the enforce path of the gate (refuse / confirm
+  fallback) is unexercised in production.
+
+**Milestone 2 — MET.**
+
+- `result_tier` NULL on 0 of 417 tool result rows.
+- Turn ids NULL on 0 of 99 reviews.
+- 0 confirmation requests pending past `expires_at` (post-fix-2 window).
+
+**Milestone 3 — partial.**
+
+- Delegation introducer share fixed: `get_delegation_status` was the first untrusted introducer in 0
+  of 15 mid-turn-introduced turns post-fix-2 (vs 7 turns post-fix-1); `search_documents` first
+  untrusted introducer in 1 turn (vs 15).
+- Share of untrusted turns already untrusted before their first tool call: 81.5% baseline → 55.6%
+  post-fix-1 → 73.2% post-fix-2 (41 of 56); the genuine share needs window-level analysis and is
+  CAN'T TELL.
+- Telegram 2-hour healing and tainted-turn automation-creation cure: not exercised in the window.
+
+**Milestone 4 — the recorded ceiling.**
+
+- Post-fix-2 window: 2026-10-06 10:20Z → 2026-10-08 03:20Z (41 h, 1.71 days; 7 Oct AEDT the only
+  full day).
+- Measured: `adjudicate` evaluations 98 (57.3/day) across 19 turns (11.1/day); `allow` share of all
+  evaluations 25.3%.
+- `tool_call_review` (n=99): allow/confirm/deny 96.0/2.0/2.0%, all `model_verdict` (0 timeout/error
+  fallbacks), latency p50/p90/p99 6.0/11.3/27.4 s (`sandbox_network` n=89 p99 27.5 s; everything
+  else n=10 p99 7.0 s); 15.2% over 10 s, all `sandbox_network`; 0 at ≥29 s.
+- Projected approval episodes per day under enforce: judge-first ≈0.6/day taint-caused (1 turn with
+  a confirm verdict in 1.71 days), ≈1.8/day including the existing static confirms (1.2/day);
+  ≈11/day without the judge.
+- **RECORDED CEILING**: median daily taint-caused would-prompt count ≈0.6/day judge-first (≈1.8/day
+  including static confirms). The pre-fix 2.6/day remains the outer reference, not the ceiling.
+- *Caveat to state explicitly:* one full day of data and 89 of 99 reviews were `sandbox_network`
+  (browser egress, which produced 133 of 285 baseline confirms, is barely present), so the ceiling
+  should be re-read after ≥3 full days that include browser traffic.
+- *For comparison:* 30-day baseline (3 Sep–3 Oct) `adjudicate` 42.4/day, reviews 74.2/21.8/4.0
+  (n=1,305), latency 3.3/10.0/22.3 s; post-fix-1 (3 Oct 14:00Z–6 Oct 01:00Z) `adjudicate` 47.4/day,
+  `allow` share 24.4%.
+
+**Other status:**
+
+- Untrusted notes: 2 (ids 289 and 125), neither loaded into prompts; 46 notes total, 5 loaded (4
+  `trusted_internal`, 1 `trusted_user`).
+- User rows untrusted: 37.0% (34/92), 0 rows with NULL/JSON-null taint metadata.
+- Automations #6, #8, #111 and schedule #112 definitions now resolve to `machine_reviewed` /
+  `human_confirmed` (no longer start untrusted).
+- `taint_policy_reason` and `static_policy_reason` are NULL on all 95 `confirmation_requests` rows
+  ever (expected in observe mode for the former; the latter is a gap).
+- Script-woken follow-up turns carry no `automation:<id>` source label, so the audit cannot
+  attribute them.
+- `known_contact` tier unused.
+- Issue #1087 open (not a precondition in any doc).
+
+**Remaining before the switch:**
+
+1. Enforce-mode functional test — escalation after consecutive denies, `taint_policy_reason`
+   populated, reviewer timeout→confirm fallback (PR in progress).
+2. Runbook step 3 corrected (this PR, Edit A).
+3. This ceiling recorded (this PR).
+
+**Proposed rollback triggers (NOT in the original plan; proposed 8 Oct 2026, config-only rollback to
+observe):**
+
+- Taint-caused prompts median >3/day over 3 days, or any day >7.
+- Reviewer fallbacks >5% or p99 >30 s.
+- An escalation fires in an interactive turn judged a false positive.
+- A household automation fails closed on 2 consecutive days.
+- The Gmail/Drive tools stop registering.
+
+*First week watch-list:*
+
+- Daily `confirmation_requests` with `taint_policy_reason` set, by sink class.
+- Browser-egress confirms.
+- Sandbox denies and whether the agent routes around them.
+- Escalations and fallbacks.
+- The 19:00Z script-woken turn (starts untrusted and makes tool calls, so an unattended confirm
+  becomes a denial).
+
 5. **Cut the framework back to what discriminates.** After thirty days of enforce. Delete the policy
    matrix evaluator and its outcome lattice, tighten-only profile merging, `operator_minimum`,
    `matrix_overrides`, the `redact` outcome, the observe-versus-enforce mode and
