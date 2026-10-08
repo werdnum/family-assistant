@@ -126,6 +126,13 @@ attention. Do not do this in an event automation — see above.
 
 Prefer a script where a script suffices.
 
+A `wake_llm` wakes this conversation by default. When the user wants each run to stand on its own —
+"start a new conversation every morning with the briefing" — set `conversation: "new"` in
+`action_config` (or pass `new_conversation=True` to a script's `wake_llm()`), and each run opens a
+fresh web conversation. Only do this when they ask for it: the reply then lands somewhere other than
+where they are talking to you. It works only in the web app, not from Telegram, and the new
+conversation has no history, so the context must be self-contained.
+
 ### 4. Test the action before you attach it
 
 For scripts, test the code in isolation first: `test_script_with_simulated_tools` when you want tool

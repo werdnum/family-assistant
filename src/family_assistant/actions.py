@@ -5,6 +5,7 @@ Shared action execution logic for both event listeners and scheduled tasks.
 import logging
 import time
 import uuid
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
@@ -71,6 +72,72 @@ def assert_wake_llm_allowed(
             "disabled). A woken turn would not stay inside this profile's "
             'confinement. Use action_type="script" and keep results in data '
             "(notes) instead of waking the assistant."
+        )
+
+
+# Values of a wake_llm action config's ``conversation`` key: wake the
+# conversation the automation was created in, or start a fresh one per firing.
+WAKE_CONVERSATION_SOURCE = "source"
+WAKE_CONVERSATION_NEW = "new"
+
+
+class NewConversationError(ValueError):
+    """Raised when a wake asks for a new conversation it cannot have.
+
+    Only web conversations exist as separate threads: a Telegram chat is one
+    conversation, so there is nothing new to open there. A new conversation
+    also needs an owner, because a conversation with no owning user row is
+    listed for every user.
+    """
+
+
+def wants_new_conversation(action_config: Mapping[str, object]) -> bool:
+    """Whether a wake_llm action config asks for a new conversation per firing."""
+    destination = action_config.get("conversation", WAKE_CONVERSATION_SOURCE)
+    if not isinstance(destination, str) or destination not in {
+        WAKE_CONVERSATION_SOURCE,
+        WAKE_CONVERSATION_NEW,
+    }:
+        raise NewConversationError(
+            f"action_config.conversation must be '{WAKE_CONVERSATION_SOURCE}' or "
+            f"'{WAKE_CONVERSATION_NEW}', got {destination!r}."
+        )
+    return destination == WAKE_CONVERSATION_NEW
+
+
+def assert_new_conversation_allowed(
+    *, interface_type: str, owner_user_id: str | None
+) -> None:
+    """Refuse a new-conversation wake outside the web interface or without an owner."""
+    if interface_type != "web":
+        raise NewConversationError(
+            "Starting a new conversation is only supported for automations "
+            f"created in the web app, not from {interface_type}."
+        )
+    if owner_user_id is None:
+        raise NewConversationError(
+            "Starting a new conversation needs a recorded owner, and this "
+            "automation has none."
+        )
+
+
+def validate_wake_destination(
+    action_type: ActionType | str,
+    action_config: Mapping[str, object],
+    *,
+    interface_type: str,
+    owner_user_id: str | None,
+) -> None:
+    """Check a wake_llm action's conversation choice at creation or update.
+
+    The worker enforces the same rule when the wake fires; this gives the
+    author the error while they can still fix it.
+    """
+    if ActionType(action_type) != ActionType.WAKE_LLM:
+        return
+    if wants_new_conversation(action_config):
+        assert_new_conversation_allowed(
+            interface_type=interface_type, owner_user_id=owner_user_id
         )
 
 
@@ -187,6 +254,8 @@ async def execute_action(
         # event_handler; one-time schedules carry their originating profile).
         if processing_profile_id is not None:
             payload["processing_profile_id"] = processing_profile_id
+        if wants_new_conversation(action_config):
+            payload["new_conversation"] = True
 
         register_definition_write(
             definition_gate,

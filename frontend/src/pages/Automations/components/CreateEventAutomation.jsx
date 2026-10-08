@@ -5,6 +5,7 @@ import { PageContainer, PageHeader } from '@/components/layout/PageHeader';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -31,6 +32,7 @@ const CreateEventAutomation = ({ onSuccess, onCancel }) => {
     script_code: '',
     timeout: 600,
     context: '',
+    new_conversation: false,
   });
 
   const handleInputChange = (e) => {
@@ -122,8 +124,13 @@ const CreateEventAutomation = ({ onSuccess, onCancel }) => {
           script_code: formData.script_code,
           timeout: Number(formData.timeout) || 600,
         };
-      } else if (formData.context) {
-        requestData.action_config.context = formData.context;
+      } else {
+        if (formData.context) {
+          requestData.action_config.context = formData.context;
+        }
+        if (formData.new_conversation) {
+          requestData.action_config.conversation = 'new';
+        }
       }
 
       const response = await fetch('/api/automations/event?conversation_id=web', {
@@ -312,17 +319,37 @@ const CreateEventAutomation = ({ onSuccess, onCancel }) => {
             )}
 
             {formData.action_type === 'wake_llm' && (
-              <div className="space-y-2">
-                <Label htmlFor="context">LLM Callback Prompt</Label>
-                <Textarea
-                  id="context"
-                  name="context"
-                  value={formData.context}
-                  onChange={handleInputChange}
-                  rows={3}
-                  placeholder="Optional custom prompt for the LLM"
-                />
-              </div>
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="context">LLM Callback Prompt</Label>
+                  <Textarea
+                    id="context"
+                    name="context"
+                    value={formData.context}
+                    onChange={handleInputChange}
+                    rows={3}
+                    placeholder="Optional custom prompt for the LLM"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="new_conversation"
+                      checked={formData.new_conversation}
+                      onCheckedChange={(checked) =>
+                        setFormData({ ...formData, new_conversation: checked === true })
+                      }
+                    />
+                    <Label htmlFor="new_conversation" className="font-normal">
+                      Start a new conversation each time
+                    </Label>
+                  </div>
+                  <p className="text-sm text-muted-foreground pl-6">
+                    Each run opens its own conversation instead of continuing an existing one, so
+                    the prompt should say everything the assistant needs.
+                  </p>
+                </div>
+              </>
             )}
 
             <div className="flex flex-wrap justify-end gap-2 border-t pt-6">

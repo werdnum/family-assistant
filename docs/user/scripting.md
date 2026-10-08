@@ -1137,6 +1137,11 @@ wake_llm(context, include_event=True)
   - **Dictionary**: For structured data with multiple fields
 - `include_event` (bool, optional): Whether to include the original event data in the wake context
   (default: True)
+- `new_conversation` (bool, optional): Start a new web conversation for the woken assistant instead
+  of waking the conversation the script belongs to (default: False). Only works for scripts that
+  belong to a web conversation. The new conversation has no history, so put everything the assistant
+  needs in `context`. Within one run, the calls that set it share one new conversation and the rest
+  wake the usual one.
 
 **Usage in Event Scripts:**
 

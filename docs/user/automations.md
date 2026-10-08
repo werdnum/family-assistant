@@ -64,6 +64,20 @@ Scheduling supports arbitrary recurrence rules — daily, weekly, monthly, and m
 See [scheduling.md](scheduling.md) for the full picture, including one-off reminders and callbacks,
 which are simpler than automations and often what you actually want.
 
+## Where the assistant replies
+
+By default an automation that wakes the assistant does so in the conversation where you created it,
+so the reply arrives alongside what you were already discussing.
+
+In the web app you can ask for each run to start a **new conversation** instead: "every morning at
+7am, start a new conversation with my daily briefing." Each run then appears as its own conversation
+in the sidebar, and you get a notification as with any other reply. On the Automations page this is
+the "Start a new conversation each time" checkbox.
+
+A new conversation has no earlier history, so the automation's prompt has to say everything the
+assistant needs. This option isn't available for automations created in Telegram, where a chat is a
+single conversation.
+
 ## Managing automations
 
 By conversation:
@@ -112,7 +126,8 @@ If a script calls an action that would normally need your approval — deleting 
 
 A script can also call `wake_llm()` to hand off to the assistant conditionally, with context you
 choose. That's a good middle ground: cheap filtering in the script, judgement only when it's
-actually needed.
+actually needed. Pass `new_conversation=True` to have that hand-off start a new web conversation
+rather than continue the current one.
 
 ## Events from outside your household
 

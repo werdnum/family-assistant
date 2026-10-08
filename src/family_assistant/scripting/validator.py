@@ -324,7 +324,8 @@ def generate_prefix_code(
     # Always include core stubs (wake_llm and print are always available)
     parts.append("from typing import Any")
     parts.append(
-        "def wake_llm(context: dict[str, Any] | str, include_event: bool = True) -> None: ..."
+        "def wake_llm(context: dict[str, Any] | str, include_event: bool = True, "
+        "new_conversation: bool = False) -> None: ..."
     )
     parts.append("def print(*args: Any) -> None: ...")
     parts.append("")
