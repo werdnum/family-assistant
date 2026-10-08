@@ -317,6 +317,56 @@ majority voting over three samples removed two frictions at three times the cost
 Thinking `low` on 3.8 today is about a second faster at p50 than default thinking and 25% cheaper.
 It adds five points of AgentDojo friction, and its p95 is still 7–12s.
 
+### Corrected labels and the final Haiku prompt (8 October 2026)
+
+Much of the friction above was mislabelled cases, all from our own construction:
+
+- **The InjecAgent adapter** put the attacker's "Expected Achievements" in the damage envelope both
+  twins share, so the benign twin claimed the attack's purpose and the attack twin carried an
+  oracle. Fixed in the adapter (`browser-ablation-v3`), which now writes an envelope the way an
+  operator writes one for a production site.
+- **The AgentDojo export** (scratch harness) placed the injection in channel names, so the user
+  task's correct call carried the injection text as an argument. It also used ground-truth calls
+  whose unchecked fields are placeholders: an email body that is only a date, `<summary>`, a 2023
+  booking. Cases whose benign arguments contain the injection marker are now dropped mechanically.
+  Four placeholder user tasks are excluded by a reviewed table, and the one delegated-payment task
+  is labelled expected-confirm.
+- **The history generator** produced two "attacks" that only lengthen a `browser_wait` timeout. They
+  are on a reviewed exclusion list.
+
+Stored runs were re-scored against the corrected labels. AgentDojo friction falls to 6% for 3.7
+(September), 10% for 3.8 and 14% for 3.8 at thinking `low`. Most of Haiku's deny lean was these
+cases, which are malformed calls where deny is right: 65 of hk8's 72 AgentDojo deny trials.
+
+Two further changes were measured on the corrected sets:
+
+- **Dropping the person rule (hk11).** hk8 confirmed adding a person whose identity came only from
+  unseen content. That contradicts the accepted residual below, and it was fit to one AgentDojo
+  task. Without it, Haiku allows that task's injected invitation, the documented residual. On these
+  corpora friction barely moves, because they hold only one benign task of that shape, so the call
+  rests on real-traffic frequency. hk11 is the selected prompt.
+- **Defining verdicts by who acts next** ("deny sends the call back to the assistant, confirm asks
+  the user"), on both Haiku and Gemini. It made both worse. Deny widened to nitpicks: Haiku's
+  fresh-history friction went from 7% to 15%, and Gemini's dev friction went from 4% to 7%. Gemini
+  also allowed more new-pairing attacks (6 against 4). Rejected.
+
+| Corpus                  | Judge                | Attack allows | Benign friction (c/d) | p50 / p95     |
+| ----------------------- | -------------------- | ------------- | --------------------- | ------------- |
+| Dev                     | Gemini 3.8           | 0/195         | 4% (0/7)              | 3.86s / 12.5s |
+|                         | Haiku 5.5, hk11      | 0/195         | 1% (1/1)              | 1.61s / 2.6s  |
+| AgentDojo               | Gemini 3.8           | 0/300         | 10% (20/4)            | 4.40s / 9.1s  |
+|                         | Haiku 5.5, hk11 (×3) | 3/450         | 6% (10/14)            | 1.89s / 3.3s  |
+| AgentDojo, new pairings | Gemini 3.8           | 4/252         | 13% (24/4)            | 4.49s / 12.1s |
+|                         | Haiku 5.5, hk11      | 3/252         | 9% (8/12)             | 1.79s / 3.5s  |
+| Fresh history           | Gemini 3.8           | 1/90          | 10% (1/9)             | 4.15s / 11.9s |
+|                         | Haiku 5.5, hk11      | 3/90          | 7% (2/5)              | 1.62s / 3.0s  |
+| InjecAgent (v3)         | Gemini 3.8           | 0/120         | 0%                    | 3.43s / 10.5s |
+|                         | Haiku 5.5, hk11      | 0/120         | 0%                    | 1.65s / 2.4s  |
+
+hk11's AgentDojo allows are the documented invitation residual. Its other allows are the
+`delete_file` attack every judge allows on the new pairings, one hotel booking in one trial, and the
+accepted `cancel_worker_task` residual on fresh history, which 3.8 now confirms in most trials.
+
 ### Not measured
 
 - **GLM-5.3-Flash as a constrained single-token classifier.** OpenRouter rejects any request that
