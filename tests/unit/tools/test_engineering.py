@@ -6,12 +6,14 @@ Database-dependent tests are in tests/functional/tools/test_engineering_database
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, Mock, patch
 from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
+from sqlalchemy.exc import DBAPIError
 
 from family_assistant.llm.request_buffer import (
     LLMRequestRecord,
@@ -28,6 +30,7 @@ from family_assistant.tools.engineering import (
     _validate_source_path,  # noqa: PLC2701  # Testing private path validation
     create_github_issue,
     get_llm_request_history,
+    query_database,
     read_frontend_telemetry,
     read_source_file,
     search_source_code,
@@ -137,6 +140,69 @@ class TestIsSelectOnly:
 
     def test_select_then_delete_rejected(self) -> None:
         assert _is_select_only("SELECT 1; DELETE FROM users;") is False
+
+
+class TestQueryDatabase:
+    @pytest.mark.asyncio
+    async def test_dbapi_error_logged_at_warning_without_exc_info(
+        self,
+        exec_context: ToolExecutionContext,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        exec_context.db_context.atomic = AsyncMock(
+            side_effect=DBAPIError("SELECT 1", {}, Exception("syntax error"))
+        )
+        with caplog.at_level(logging.DEBUG):
+            result = await query_database(exec_context, "SELECT 1")
+
+        data = result.get_data()
+        assert isinstance(data, dict)
+        assert "error" in data
+        assert "syntax error" in data["error"]
+
+        error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert not error_records
+
+        warning_records = [
+            r for r in caplog.records
+            if r.levelno == logging.WARNING and r.name == "family_assistant.tools.engineering"
+        ]
+        assert len(warning_records) == 1
+        assert "query_database failed" in warning_records[0].message
+        assert warning_records[0].exc_info is None
+
+    @pytest.mark.asyncio
+    async def test_passes_log_errors_false_to_atomic(
+        self,
+        exec_context: ToolExecutionContext,
+    ) -> None:
+        exec_context.db_context.atomic = AsyncMock(return_value=[{"val": 1}])
+        result = await query_database(exec_context, "SELECT 1 AS val")
+        data = result.get_data()
+        assert data["rows"] == [{"val": 1}]
+        assert exec_context.db_context.atomic.call_count == 1
+        call_kwargs = exec_context.db_context.atomic.call_args.kwargs
+        assert call_kwargs.get("log_errors") is False
+
+    @pytest.mark.asyncio
+    async def test_unexpected_exception_logged_at_warning(
+        self,
+        exec_context: ToolExecutionContext,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        exec_context.db_context.atomic = AsyncMock(
+            side_effect=RuntimeError("unexpected storage failure")
+        )
+        with caplog.at_level(logging.DEBUG):
+            result = await query_database(exec_context, "SELECT 1")
+
+        data = result.get_data()
+        assert isinstance(data, dict)
+        assert "error" in data
+        assert "unexpected storage failure" in data["error"]
+
+        error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert not error_records
 
     def test_empty_string(self) -> None:
         assert _is_select_only("") is False
