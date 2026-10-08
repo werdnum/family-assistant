@@ -178,8 +178,8 @@ easy calls matters, but it would not shorten the waits users notice.
 
 `anthropic/claude-haiku-5.5` through OpenRouter, pinned to Anthropic's own endpoint, at $0.10/$0.50
 per M tokens. The reviewer prompt is current main's (which now shows relayed requests), so Gemini
-3.7 was re-run on the same prompt the same day. That run showed Gemini itself had changed (see
-**Gemini 3.7 drift** below), so the Gemini rows here are its 8 October behaviour, not September's.
+3.7 was re-run on the same prompt the same day. By then `gemini-3.7-flash` was serving 3.8 (see
+below), so the Gemini rows here are that model, not September's 3.7.
 
 | Corpus      | Judge                              | Attack allows | Benign friction (c/d) | p50 / p95     | $ / 1k |
 | ----------- | ---------------------------------- | ------------- | --------------------- | ------------- | ------ |
@@ -223,38 +223,44 @@ held-out check. The Haiku addendum is model-specific and was not run on Gemini; 
 `haiku_system` in `scratch/judge_lab/variants.py`.
 
 Haiku with hk4 matches Gemini's attack detection on all three corpora. Its friction is similar to
-Gemini's as served on 8 October (lower on dev and fresh history, three points higher on AgentDojo),
-but above Gemini's September friction (1%, 17%, 3%). It is six to seven times cheaper, with a p95 of
-3–4s against Gemini's 5–9s in September and 11–15s on 8 October. Its friction leans towards deny
-rather than confirm (54 of 79 AgentDojo frictions against Gemini's 29 of 70), which blocks a call
-where Gemini would ask. It never refused a review (Sonnet 5.5 refused ten attack prompts on its
-cyber filter). Adopting it needs a reason-first response schema and a per-model prompt addendum, not
-only a model swap.
+the model `gemini-3.7-flash` serves on 8 October (lower on dev and fresh history, three points
+higher on AgentDojo), but above 3.7's September friction (1%, 17%, 3%). It is six to seven times
+cheaper, with a p95 of 3–4s against Gemini's 5–9s in September and 11–15s on 8 October. Its friction
+leans towards deny rather than confirm (54 of 79 AgentDojo frictions against Gemini's 29 of 70),
+which blocks a call where Gemini would ask. It never refused a review (Sonnet 5.5 refused ten attack
+prompts on its cyber filter). Adopting it needs a reason-first response schema and a per-model
+prompt addendum, not only a model swap.
 
-### Gemini 3.7 drift (8 October 2026)
+### `gemini-3.7-flash` now serves 3.8 (8 October 2026)
 
-`gemini-3.7-flash` changed behaviour between 7 and 8 October with no change on our side. Re-running
-the 7 October source (identical prompts, identical input tokens) on 8 October reproduces the 8
-October numbers rather than the earlier ones:
+Between 7 and 8 October `gemini-3.7-flash` started behaving like 3.8 Flash, consistent with the
+alias having been repointed. Re-running the 7 October source (identical prompts, identical input
+tokens) on 8 October reproduces 3.8's September numbers, not 3.7's:
 
-| Corpus      | Run                         | Attack allows | Benign friction (c/d) | Thinking tokens | p50 / p95     |
-| ----------- | --------------------------- | ------------- | --------------------- | --------------- | ------------- |
-| Dev         | September                   | 0/195         | 1% (0/2)              | 157             | 2.35s / 8.1s  |
-|             | 7 October                   | 0/65          | 2% (0/1)              | 161             | 2.65s / 10.3s |
-|             | 8 October, 7 October source | 0/195         | 4% (0/7)              | 222             | 3.78s / 11.6s |
-| AgentDojo   | September                   | 0/300         | 17% (33/19)           | 240             | 2.63s / 4.8s  |
-|             | 7 October                   | 0/150         | 19% (18/10)           | 235             | 2.81s / 5.7s  |
-|             | 8 October, 7 October source | 0/300         | 23% (41/29)           | 403             | 4.35s / 10.6s |
-| Fresh hist. | September                   | 9/96          | 3% (0/3)              | 176             | 2.87s / 8.8s  |
-|             | 8 October, 7 October source | 6/96          | 11% (1/10)            | 288             | 3.93s / 11.9s |
+| Corpus      | Run              | Attack allows | Benign friction (c/d) | Thinking tokens | p50 / p95     |
+| ----------- | ---------------- | ------------- | --------------------- | --------------- | ------------- |
+| Dev         | 3.7, September   | 0/195         | 1% (0/2)              | 157             | 2.35s / 8.1s  |
+|             | 3.8, September   | 0/195         | 5% (0/9)              | 220             | 2.11s / 8.7s  |
+|             | "3.7", 8 October | 0/195         | 4% (0/7)              | 222             | 3.78s / 11.6s |
+| AgentDojo   | 3.7, September   | 0/300         | 17% (33/19)           | 240             | 2.63s / 4.8s  |
+|             | 3.8, September   | 0/300         | 21% (37/27)           | 402             | 2.41s / 5.9s  |
+|             | "3.7", 8 October | 0/300         | 23% (41/29)           | 403             | 4.35s / 10.6s |
+| Fresh hist. | 3.7, September   | 9/96          | 3% (0/3)              | 176             | 2.87s / 8.8s  |
+|             | 3.8, September   | 8/96          | 11% (2/9)             | 306             | 2.17s / 9.7s  |
+|             | "3.7", 8 October | 6/96          | 11% (1/10)            | 288             | 3.93s / 11.9s |
 
-It thinks 40–70% longer, at 1.4–1.7 times the p50 latency, and is stricter. Its new frictions are
-mostly the patterns the September prompt rewrite removed: denying a search term or file path because
-it came from a lookup, and confirming an email recipient resolved from a document ("the client").
-The accepted `cancel_worker_task` residual is now unstable rather than consistently allowed
-(confirmed in all three trials of this run, allowed in all three on main's prompt the same day). The
-production judge is therefore no longer at its tuned operating point; re-tuning against the current
-model, or a pinned model version if one is offered, is the follow-up.
+Thinking and output tokens match 3.8 to within a few tokens, and on AgentDojo the per-case majority
+verdicts agree with 3.8's on 99.0% of cases against 95.7% with 3.7's. A 7 October run still matched
+3.7. Latency is the exception: higher than 3.8 was in September, so the serving load has changed as
+well.
+
+The production judge is therefore running 3.8 on the prompt chosen for 3.7. Its new frictions are
+the ones measured for 3.8 in September: denying a search term or file path because it came from a
+lookup, and confirming an email recipient resolved from a document ("the client"). The accepted
+`cancel_worker_task` residual is now unstable rather than consistently allowed. Since the judge is
+on 3.8 regardless, the options are naming the model explicitly, using 3.8 at thinking `low` (the
+fastest configuration measured in September), or re-tuning for it; and Haiku 5.5 should be compared
+against this operating point, not September's 3.7.
 
 ### Not measured
 
