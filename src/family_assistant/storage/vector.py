@@ -853,24 +853,16 @@ async def delete_document_embeddings(
 async def delete_documents_by_source(
     db_context: DatabaseExecutor, source_type: str, source_id: str
 ) -> int:
-    """Delete the index record for a source and its embeddings.
+    """Delete the index record for a source.
 
-    Embeddings are deleted explicitly rather than through the foreign key's
-    ``ON DELETE CASCADE``, which SQLite does not enforce.
+    Embeddings go with it through ``ON DELETE CASCADE`` on PostgreSQL. SQLite
+    does not enforce the cascade and may not have the embeddings table at all;
+    any embeddings left there are unreachable, because search joins through
+    ``documents``.
 
     Returns:
         The number of document records deleted.
     """
-    document_ids = (
-        select(DocumentRecord.id)
-        .where(DocumentRecord.source_type == source_type)
-        .where(DocumentRecord.source_id == source_id)
-    )
-    await db_context.execute(
-        delete(DocumentEmbeddingRecord).where(
-            DocumentEmbeddingRecord.document_id.in_(document_ids)
-        )
-    )
     result = await db_context.execute(
         delete(DocumentRecord)
         .where(DocumentRecord.source_type == source_type)

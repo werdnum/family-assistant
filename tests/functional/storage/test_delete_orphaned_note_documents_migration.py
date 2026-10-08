@@ -1,8 +1,4 @@
-"""Data migration: delete index records whose note no longer exists.
-
-The migration-built SQLite schema has no embeddings table (it needs pgvector),
-so this covers the document records only.
-"""
+"""Data migration: delete index records whose note no longer exists."""
 
 from datetime import UTC, datetime
 from pathlib import Path

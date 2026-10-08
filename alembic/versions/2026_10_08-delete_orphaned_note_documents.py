@@ -18,29 +18,23 @@ depends_on: str | Sequence[str] | None = None
 notes = sa.table("notes", sa.column("title", sa.Text))
 documents = sa.table(
     "documents",
-    sa.column("id", sa.Integer),
     sa.column("source_type", sa.String),
     sa.column("source_id", sa.Text),
-)
-document_embeddings = sa.table(
-    "document_embeddings", sa.column("document_id", sa.Integer)
 )
 
 
 def upgrade() -> None:
-    """Delete note index records whose note no longer exists, with their embeddings."""
-    orphaned_ids = sa.select(documents.c.id).where(
-        documents.c.source_type == "note",
-        ~documents.c.source_id.in_(sa.select(notes.c.title)),
-    )
-    # SQLite deployments have no embeddings table; it needs pgvector.
-    if sa.inspect(op.get_bind()).has_table("document_embeddings"):
-        op.execute(
-            sa.delete(document_embeddings).where(
-                document_embeddings.c.document_id.in_(orphaned_ids)
-            )
+    """Delete note index records whose note no longer exists.
+
+    Their embeddings go with them through ``ON DELETE CASCADE`` on PostgreSQL;
+    search joins through ``documents``, so any left on SQLite are unreachable.
+    """
+    op.execute(
+        sa.delete(documents).where(
+            documents.c.source_type == "note",
+            ~documents.c.source_id.in_(sa.select(notes.c.title)),
         )
-    op.execute(sa.delete(documents).where(documents.c.id.in_(orphaned_ids)))
+    )
 
 
 def downgrade() -> None:
