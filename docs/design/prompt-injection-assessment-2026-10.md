@@ -361,6 +361,15 @@ configuration line: if they slip beyond a few weeks, flip anyway and fix under e
    outcomes with `mode = enforce`, and by the median daily count in `confirmation_requests` over the
    first thirty days of enforce landing at or under the recorded post-fix figure.
 
+   Two zeros in the observe-mode audit are expected and say nothing about whether the paths behind
+   them work: `tool_call_review_escalation` events, and `taint_policy_reason` on confirmation rows.
+   Observe-mode reviews run off the critical path, so they neither count toward the denial streak
+   nor create confirmations. `tests/functional/tools/test_enforce_review_escalation.py` is the
+   evidence instead: it drives an enforce-mode turn through the chat API to a durable escalation
+   after three model denials, and shows a reviewer timeout falling back to confirm rather than
+   allow. One week after the flip, read the escalation events and the confirmation rows' policy
+   reasons to check that the first real escalations look like that test.
+
 5. **Cut the framework back to what discriminates.** After thirty days of enforce. Delete the policy
    matrix evaluator and its outcome lattice, tighten-only profile merging, `operator_minimum`,
    `matrix_overrides`, the `redact` outcome, the observe-versus-enforce mode and
