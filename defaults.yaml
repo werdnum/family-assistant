@@ -680,8 +680,9 @@ tool_call_review:
   enabled: true
   # Haiku 5.5 matches Gemini 3.8's attack detection with less benign friction,
   # a 2-4s p95 against Gemini's 7-13s, at about a sixth of the cost. Gemini 3.8
-  # is the availability fallback on another provider; the review prompt was
-  # measured on both. See docs/design/tool-call-review-judge-tuning.md.
+  # on another provider takes over when Haiku returns an error; a request that
+  # stalls instead runs into timeout_seconds and fails closed. The review prompt
+  # was measured on both. See docs/design/tool-call-review-judge-tuning.md.
   provider: "anthropic"
   model: "claude-haiku-5-5"
   # Only the fallback is named: the primary is filled from provider/model

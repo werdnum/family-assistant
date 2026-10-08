@@ -1998,7 +1998,10 @@ tool_call_review:
 `retry_config` names only the fallback: its primary is filled from `provider` and `model`, so
 overriding those changes the judge without restating the chain. The shipped judge needs Anthropic
 credentials; a deployment without them should set `provider` and `model` to a configured provider,
-since a reviewer whose client cannot be created fails closed rather than falling back.
+since a reviewer whose client cannot be created fails closed rather than falling back. The fallback
+covers a primary that returns an error (an outage, rate limiting, a refusal). It does not cover a
+primary that stalls: `timeout_seconds` bounds the whole chain, so a stalled request ends in the
+caller's fail-closed verdict rather than a fallback review.
 
 `timeout_seconds` bounds a single review, which runs inline: the gated tool call waits on it, so the
 value trades a stalled turn against a fail-closed fallback. Reviews on `claude-haiku-5-5` typically
