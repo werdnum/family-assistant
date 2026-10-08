@@ -235,10 +235,42 @@ async def test_script_wakes_split_by_destination(
     assert len(set(sent_to)) == 2
 
 
+@pytest.mark.asyncio
+async def test_script_new_conversation_wake_from_telegram_is_not_retried(
+    db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
+) -> None:
+    db = Database(engine=db_engine)
+    _, new_task_event = await _start_worker(task_worker_manager)
+
+    await execute_action(
+        db_ctx=db,
+        action_type=ActionType.SCRIPT,
+        action_config={
+            "script_code": 'wake_llm("start fresh", new_conversation=True)\n'
+        },
+        conversation_id=SOURCE_CONVERSATION_ID,
+        interface_type="telegram",
+        created_by_user_id=OWNER,
+    )
+    new_task_event.set()
+    await wait_for_tasks_to_complete(
+        db_engine, task_types={"script_execution"}, allow_failures=True
+    )
+
+    rows = await db.fetch_all(
+        select(tasks_table.c.status, tasks_table.c.retry_count).where(
+            tasks_table.c.task_type == "script_execution"
+        )
+    )
+    assert [(row["status"], row["retry_count"]) for row in rows] == [("failed", 0)]
+
+
 @pytest.mark.parametrize(
     ("action_config", "interface_type", "owner"),
     [
         pytest.param({"conversation": "elsewhere"}, "web", OWNER, id="unknown-value"),
+        pytest.param({"conversation": ["new"]}, "web", OWNER, id="non-string"),
         pytest.param({"conversation": "new"}, "telegram", OWNER, id="telegram"),
         pytest.param({"conversation": "new"}, "web", None, id="no-owner"),
     ],

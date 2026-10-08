@@ -94,7 +94,10 @@ class NewConversationError(ValueError):
 def wants_new_conversation(action_config: Mapping[str, object]) -> bool:
     """Whether a wake_llm action config asks for a new conversation per firing."""
     destination = action_config.get("conversation", WAKE_CONVERSATION_SOURCE)
-    if destination not in {WAKE_CONVERSATION_SOURCE, WAKE_CONVERSATION_NEW}:
+    if not isinstance(destination, str) or destination not in {
+        WAKE_CONVERSATION_SOURCE,
+        WAKE_CONVERSATION_NEW,
+    }:
         raise NewConversationError(
             f"action_config.conversation must be '{WAKE_CONVERSATION_SOURCE}' or "
             f"'{WAKE_CONVERSATION_NEW}', got {destination!r}."

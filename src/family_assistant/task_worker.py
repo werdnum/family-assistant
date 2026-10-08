@@ -5973,11 +5973,16 @@ async def _process_script_wake_llm(
     to_new = [ctx for ctx in wake_contexts if ctx.get("new_conversation")]
     if to_new:
         # The worker re-checks this when the wake fires, but failing here puts
-        # the error on the script run that asked for it.
-        assert_new_conversation_allowed(
-            interface_type=exec_context.interface_type,
-            owner_user_id=exec_context.user_id,
-        )
+        # the error on the script run that asked for it. The script's own
+        # effects have already happened by now, and no retry can change the
+        # destination, so retrying would only repeat them.
+        try:
+            assert_new_conversation_allowed(
+                interface_type=exec_context.interface_type,
+                owner_user_id=exec_context.user_id,
+            )
+        except NewConversationError as err:
+            raise NonRetryableTaskError(str(err)) from err
     if to_source:
         await _enqueue_script_wake(
             exec_context, to_source, event_data, listener_id, new_conversation=False
@@ -6549,6 +6554,9 @@ async def handle_script_execution(
     except ScriptError as e:
         logger.exception(f"Script error for listener {listener_id}: {e}")
         # Re-raise to trigger task retry
+        raise
+
+    except NonRetryableTaskError:
         raise
 
     except Exception as e:
