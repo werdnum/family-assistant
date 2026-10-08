@@ -468,8 +468,8 @@ def test_auto_tool_choice_keeps_thinking() -> None:
     assert params["output_config"] == {"effort": "high"}
 
 
-async def test_structured_output_requests_its_tool_in_words() -> None:
-    """`generate_structured` asks for its output tool rather than forcing it.
+async def test_structured_output_keeps_thinking_and_the_configured_effort() -> None:
+    """`generate_structured` adds its format beside the model's own output_config.
 
     Asserted on the request the client actually builds rather than on the helper,
     because this path assembles its params inline instead of going through
@@ -481,29 +481,22 @@ async def test_structured_output_requests_its_tool_in_words() -> None:
 
     client = _shipped_client()
     response = SimpleNamespace(
-        content=[
-            SimpleNamespace(
-                type="tool_use",
-                name="return_structured_response",
-                input={"answer": "42"},
-            )
-        ],
+        content=[SimpleNamespace(type="text", text='{"answer": "42"}')],
         usage=SimpleNamespace(input_tokens=1, output_tokens=1),
-        stop_reason="tool_use",
+        stop_reason="end_turn",
     )
     create = AsyncMock(return_value=response)
 
     with patch.object(client.client.messages, "create", new=create):
-        await client.generate_structured([UserMessage(content="hi")], _Model)
+        result = await client.generate_structured([UserMessage(content="hi")], _Model)
 
+    assert result == _Model(answer="42")
     assert create.await_args is not None
     sent = create.await_args.kwargs
-    assert sent["tool_choice"] == {"type": "auto"}
-    assert sent["messages"][-1]["content"][-1] == {
-        "type": "text",
-        "text": "Respond by calling the `return_structured_response` tool.",
-    }
+    assert sent["output_config"]["effort"] == "high"
+    assert sent["output_config"]["format"]["type"] == "json_schema"
     assert sent["thinking"]["type"] == "adaptive"
+    assert "tools" not in sent
 
 
 def _text_only_response() -> SimpleNamespace:

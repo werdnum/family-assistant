@@ -110,4 +110,114 @@ interactions:
       status:
         code: 200
         message: OK
+  - request:
+      body: '{"max_tokens":8192,"messages":[{"role":"user","content":[{"type":"text","text":"What is the capital of France? Provide a one-word answer and your confidence level between 0 and 1.","cache_control":{"type":"ephemeral"}}]}],"model":"claude-haiku-4-5-20251001","output_config":{"format":{"type":"json_schema","schema":{"type":"object","description":"Simple response model for basic tests.","title":"SimpleResponse","properties":{"answer":{"type":"string","title":"Answer"},"confidence":{"type":"number","title":"Confidence","description":"{maximum: 1.0, minimum: 0.0}"}},"additionalProperties":false,"required":["answer","confidence"]}}}}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        anthropic-version:
+          - '2023-06-01'
+        connection:
+          - keep-alive
+        content-length:
+          - '635'
+        content-type:
+          - application/json
+        host:
+          - api.anthropic.com
+        user-agent:
+          - AsyncAnthropic/Python 0.79.0
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - MacOS
+        x-stainless-package-version:
+          - 0.79.0
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.13
+        x-stainless-timeout:
+          - '600'
+      method: POST
+      uri: https://api.anthropic.com/v1/messages
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAA/3WRTU/DMAyG/wryuUVttQqtVzixy06ARFEUGncNa52Sjw1U9b/jjFV8iVOs93nz
+          WrYnGIzCHipoehkUpp3U+5Cu0jItsqLMsyyHBLRiw+B2Isvz63a8tdv7l83xYUM3412r8lXBHv8+
+          YnShc3KHLFjTR0E6p52X5FlqDHnkqnqcFr/Ht0hOTwVTDZLcEW0N1UUNW2m1qyHhkr+2WiE1GFF2
+          uV7PMD99RkpNaKGi0PcJOG9GYVE6QxyIpIQPluAMHL6GGPLDrZAjerdo4TRANYGmMXjhzR6JYVGW
+          3E42HYqG8702JH46soUzVv+x5W9sgGOHA1rZi3L46/+iefebzgmY4L9L+RVPg/agGxRex31AXLuS
+          VsULUos2Di52aBiR8UIeeGr5zFfiNKXljozzujnvYf4Azj4ALhsCAAA=
+      headers:
+        CF-RAY:
+          - a47323115b6b150a-SYD
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Security-Policy:
+          - default-src 'none'; frame-ancestors 'none'
+        Content-Type:
+          - application/json
+        Date:
+          - Thu, 08 Oct 2026 06:37:29 GMT
+        Server:
+          - cloudflare
+        Transfer-Encoding:
+          - chunked
+        X-Robots-Tag:
+          - none
+        anthropic-organization-id:
+          - 47b93e1d-acf2-4be5-b32d-1716b0cff224
+        anthropic-ratelimit-input-tokens-limit:
+          - '10000000'
+        anthropic-ratelimit-input-tokens-remaining:
+          - '10000000'
+        anthropic-ratelimit-input-tokens-reset:
+          - '2026-10-08T06:37:28Z'
+        anthropic-ratelimit-output-tokens-limit:
+          - '2000000'
+        anthropic-ratelimit-output-tokens-remaining:
+          - '2000000'
+        anthropic-ratelimit-output-tokens-reset:
+          - '2026-10-08T06:37:28Z'
+        anthropic-ratelimit-requests-limit:
+          - '10000'
+        anthropic-ratelimit-requests-remaining:
+          - '9999'
+        anthropic-ratelimit-requests-reset:
+          - '2026-10-08T06:37:26Z'
+        anthropic-ratelimit-tokens-limit:
+          - '12000000'
+        anthropic-ratelimit-tokens-remaining:
+          - '12000000'
+        anthropic-ratelimit-tokens-reset:
+          - '2026-10-08T06:37:28Z'
+        anthropic-workspace-id:
+          - wrkspc_01TyX2k3iWProyRBoEVYPNGB
+        cf-cache-status:
+          - DYNAMIC
+        request-id:
+          - req_011CfpJrPBtK9zqfkybk9SuH
+        strict-transport-security:
+          - max-age=31536000; includeSubDomains; preload
+        traceresponse:
+          - 00-23d519adc1c8d0a7b4c06e68b87c20c2-55ec283610ecc775-01
+        vary:
+          - Accept-Encoding
+      status:
+        code: 200
+        message: OK
 version: 1
