@@ -50,6 +50,9 @@ from family_assistant.security.taint import (
     merge_history_taint,
     strip_legacy_labeled_echoes,
 )
+from family_assistant.storage.conversation_summaries import (
+    conversation_summaries_table,
+)
 from family_assistant.storage.database import DatabaseExecutor, DatabaseTransaction
 from family_assistant.storage.delegation_runs import (
     historical_delegation_wake_content,
@@ -3362,6 +3365,7 @@ class MessageHistoryRepository(BaseRepository):
                 message_history_table.c.timestamp,
                 message_history_table.c.interface_type,  # Include interface_type in results
                 msg_count_subq.c.msg_count.label("message_count"),
+                conversation_summaries_table.c.summary,
             )
             .join(
                 latest_id_subq,
@@ -3371,6 +3375,11 @@ class MessageHistoryRepository(BaseRepository):
                 msg_count_subq,
                 message_history_table.c.conversation_id
                 == msg_count_subq.c.conversation_id,
+            )
+            .outerjoin(
+                conversation_summaries_table,
+                message_history_table.c.conversation_id
+                == conversation_summaries_table.c.conversation_id,
             )
             .where(
                 message_history_table.c.content.isnot(None),
@@ -3412,6 +3421,7 @@ class MessageHistoryRepository(BaseRepository):
                 ConversationSummaryRow(
                     conversation_id=row["conversation_id"],
                     last_message=row["content"][:100] if row["content"] else "",
+                    summary=row["summary"],
                     last_timestamp=row["timestamp"],
                     message_count=row["message_count"],
                     interface_type=row["interface_type"],

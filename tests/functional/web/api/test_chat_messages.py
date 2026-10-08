@@ -616,3 +616,31 @@ async def test_history_reports_each_tool_calls_outcome(
         for message in messages
         if message["role"] != "tool"
     )
+
+
+@pytest.mark.asyncio
+async def test_conversation_list_carries_the_generated_summary(
+    test_client: AsyncClient,
+    db_context: Database,
+) -> None:
+    conversation_id = str(uuid.uuid4())
+    await db_context.message_history.add_message(
+        UserMessage.from_trusted_user(content="Can you scale this paella for 8?"),
+        interface_type="web",
+        conversation_id=conversation_id,
+        timestamp=datetime.now(UTC),
+        user_id="test_user",
+    )
+    await db_context.conversation_summaries.record(
+        conversation_id,
+        summary="Paella recipe scaled for 8",
+        through_id=1,
+        now=datetime.now(UTC),
+    )
+
+    response = await test_client.get("/api/v1/chat/conversations?interface_type=web")
+
+    assert response.status_code == 200
+    [listed] = response.json()["conversations"]
+    assert listed["summary"] == "Paella recipe scaled for 8"
+    assert listed["last_message"] == "Can you scale this paella for 8?"

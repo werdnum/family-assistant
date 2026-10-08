@@ -297,6 +297,25 @@ model_routing:
   # what the turn costs.
   history_messages: 6
 
+# One-line summaries shown in place of the last-message preview in the web and
+# iOS conversation lists. A background sweep summarizes each conversation once
+# it has been quiet for `idle_seconds`, and again after it moves on; until then
+# the list shows the latest message. The summarizer has no tools and its output
+# is only ever displayed, never read back into a prompt.
+conversation_summaries:
+  enabled: true
+  # Flash because a list label must cost far less than the conversation.
+  model:
+    provider: "google"
+    model: "gemini-3.8-flash"
+  sweep_interval_minutes: 2
+  idle_seconds: 60
+  # Conversations quiet for longer than this are not summarized, which also
+  # stops a first deployment from summarizing the whole history at once.
+  lookback_days: 30
+  batch_size: 10
+  timeout_seconds: 20
+
 # Gemini Live Voice API Configuration
 # See: https://ai.google.dev/gemini-api/docs/live
 gemini_live_config:

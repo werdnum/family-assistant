@@ -34,6 +34,13 @@ from family_assistant.context_providers import (
     KnownUsersContextProvider,
     NotesContextProvider,
 )
+from family_assistant.conversation_summaries import (
+    CONVERSATION_SUMMARY_PROMPT_KEY,
+    CONVERSATION_SUMMARY_SWEEP_TASK_ID,
+    CONVERSATION_SUMMARY_SWEEP_TASK_TYPE,
+    ConversationSummarizer,
+    make_conversation_summary_sweep_handler,
+)
 from family_assistant.email_intake.actions import (
     EMAIL_INTAKE_ACTION_TASK_TYPE,
     handle_email_intake_action,
@@ -616,6 +623,7 @@ class Assistant:
         self.plugin_startup_task: asyncio.Task | None = None
         self._tool_call_reviewer: ToolCallReviewer | None = None
         self._jev_client: JevClient | None = None
+        self._conversation_summarizer: ConversationSummarizer | None = None
         self._is_shutdown_complete = False
 
         # Event system
@@ -1222,6 +1230,7 @@ class Assistant:
         self._tool_call_reviewer = tool_call_reviewer
         self._jev_client = self._create_jev_client()
         model_router = self._create_model_router()
+        self._conversation_summarizer = self._create_conversation_summarizer()
         turn_relevance = self._create_turn_relevance()
         for profile_conf in resolved_profiles:
             await self._setup_processing_profile(
@@ -1411,6 +1420,42 @@ class Assistant:
             classifier_model=classifier_model,
             timeout_seconds=routing.timeout_seconds,
             history_messages=routing.history_messages,
+        )
+
+    def _create_conversation_summarizer(self) -> ConversationSummarizer | None:
+        """Build the conversation-list summarizer, if summaries are enabled.
+
+        Its client is its own, as the Auto classifier's is: a list label must
+        not cost what the conversation it labels cost.
+        """
+        summaries = self.config.conversation_summaries
+        if not summaries.enabled:
+            return None
+        prompt = self.config.default_profile_settings.processing_config.prompts.get(
+            CONVERSATION_SUMMARY_PROMPT_KEY
+        )
+        if not prompt:
+            raise SystemExit(
+                "conversation_summaries.enabled is true but prompts.yaml has no "
+                f"'{CONVERSATION_SUMMARY_PROMPT_KEY}'."
+            )
+        override = self.llm_client_overrides.get("__conversation_summarizer__")
+        if override is None and self.llm_client_overrides:
+            # As for the router: a test that overrides clients must not reach a
+            # real provider through a background sweep nobody named.
+            override = next(iter(self.llm_client_overrides.values()))
+        llm_client = override or LLMClientFactory.create_client(
+            config=resolve_entry_client_config(
+                summaries.model, self.config.llm_parameters
+            )
+        )
+        logger.info(
+            "Conversation summaries enabled, model %s via %s.",
+            summaries.model.model,
+            type(llm_client).__name__,
+        )
+        return ConversationSummarizer(
+            llm_client, prompt=prompt, timeout_seconds=summaries.timeout_seconds
         )
 
     async def _setup_processing_profile(
@@ -2235,6 +2280,7 @@ class Assistant:
 
         await self._record_memory_enablement()
         await self._seed_memory_review_sweep()
+        await self._seed_conversation_summary_sweep()
         await self._seed_egress_credential_rotation()
 
         if self.plugin_runtime is None:
@@ -2385,6 +2431,38 @@ class Assistant:
             # a sweep that failed to seed is re-seeded on the next restart, and
             # nothing else in startup depends on it.
             logger.exception("Memory review sweep task setup failed")
+
+    async def _seed_conversation_summary_sweep(self) -> None:
+        """Schedule the recurring conversation-summary sweep, when enabled.
+
+        Seeded from startup directly, like the memory review sweep, because the
+        task worker pool always runs. A sweep left queued by an earlier
+        configuration that enabled summaries finds no handler-side summarizer
+        and returns at once.
+        """
+        if self._conversation_summarizer is None:
+            return
+        assert self.database_engine is not None, (
+            "Database engine must be initialized before seeding the summary sweep"
+        )
+        interval = self.config.conversation_summaries.sweep_interval_minutes
+        try:
+            await Database(self.database_engine).tasks.enqueue(
+                task_id=CONVERSATION_SUMMARY_SWEEP_TASK_ID,
+                task_type=CONVERSATION_SUMMARY_SWEEP_TASK_TYPE,
+                payload={},
+                scheduled_at=datetime.now(UTC),
+                recurrence_rule=f"FREQ=MINUTELY;INTERVAL={interval}",
+                max_retries_override=5,
+                priority=TaskPriority.BACKGROUND,
+            )
+            logger.info(
+                f"Conversation summary sweep scheduled every {interval} minute(s)."
+            )
+        except Exception:
+            # Logged rather than raised, as the other system task setups are:
+            # a sweep that failed to seed is re-seeded on the next restart.
+            logger.exception("Conversation summary sweep task setup failed")
 
     def _stored_egress_credentials(self) -> StoredGitHubCredentials | None:
         """What the store must hold for every profile's sandbox, if anything."""
@@ -2741,6 +2819,14 @@ class Assistant:
             make_memory_review_sweep_handler(
                 settings=self.config.memory_config.to_review_settings(),
                 configured_contributors=self._memory_contributing_profiles(),
+            ),
+        )
+        worker.register_task_handler(
+            CONVERSATION_SUMMARY_SWEEP_TASK_TYPE,
+            make_conversation_summary_sweep_handler(
+                summarizer=self._conversation_summarizer,
+                config=self.config.conversation_summaries,
+                stream_hub=self.fastapi_app.state.conversation_stream_hub,
             ),
         )
         worker.register_task_handler(
