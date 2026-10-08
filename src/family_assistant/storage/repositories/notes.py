@@ -36,9 +36,10 @@ from family_assistant.security.taint import TurnTaintState, merge_taint_states
 from family_assistant.security.taint_audit import taint_audit_sources
 from family_assistant.skills.frontmatter import parse_frontmatter
 from family_assistant.storage.database import DatabaseExecutor, DatabaseTransaction
-from family_assistant.storage.notes import notes_table
+from family_assistant.storage.notes import NOTE_SOURCE_TYPE, notes_table
 from family_assistant.storage.repositories.base import BaseRepository
 from family_assistant.storage.tasks import TaskPriority
+from family_assistant.storage.vector import delete_documents_by_source
 
 NOTE_TIER_LOWERED_EVENT_TYPE = "note_tier_lowered"
 """Audit event type for a write that leaves a note less trusted than it was."""
@@ -1415,6 +1416,7 @@ class NotesRepository(BaseRepository):
             if result.rowcount == 0:
                 self._logger.warning(f"Note not found for deletion: {title}")
                 return False
+            await delete_documents_by_source(txn, NOTE_SOURCE_TYPE, title)
             if is_memory_note:
                 await txn.memory_store.bump_revision()
                 await self.refresh_core_memory_index(txn, now=datetime.now(UTC))
@@ -1585,6 +1587,10 @@ class NotesRepository(BaseRepository):
                     f"Note '{original_title}' not found (may have been deleted)"
                 )
             self._logger.info(f"Renamed note from '{original_title}' to '{new_title}'")
+            if new_title != original_title:
+                # The index record is keyed by title; the indexing task below
+                # creates the record under the new one.
+                await delete_documents_by_source(txn, NOTE_SOURCE_TYPE, original_title)
             await self._enqueue_indexing_task(txn, new_title)
             if memory_write:
                 await self.refresh_core_memory_index(txn, now=datetime.now(UTC))

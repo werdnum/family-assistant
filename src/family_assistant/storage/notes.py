@@ -28,6 +28,8 @@ from family_assistant.storage.vector import Document  # Import Document protocol
 
 logger = logging.getLogger(__name__)
 
+NOTE_SOURCE_TYPE = "note"
+
 # Define the notes table
 notes_table = Table(
     "notes",
@@ -96,7 +98,7 @@ class NoteDocument(Document):
 
     @property
     def source_type(self) -> str:
-        return "note"
+        return NOTE_SOURCE_TYPE
 
     @property
     def source_id(self) -> str:

@@ -850,6 +850,35 @@ async def delete_document_embeddings(
         raise
 
 
+async def delete_documents_by_source(
+    db_context: DatabaseExecutor, source_type: str, source_id: str
+) -> int:
+    """Delete the index record for a source and its embeddings.
+
+    Embeddings are deleted explicitly rather than through the foreign key's
+    ``ON DELETE CASCADE``, which SQLite does not enforce.
+
+    Returns:
+        The number of document records deleted.
+    """
+    document_ids = (
+        select(DocumentRecord.id)
+        .where(DocumentRecord.source_type == source_type)
+        .where(DocumentRecord.source_id == source_id)
+    )
+    await db_context.execute(
+        delete(DocumentEmbeddingRecord).where(
+            DocumentEmbeddingRecord.document_id.in_(document_ids)
+        )
+    )
+    result = await db_context.execute(
+        delete(DocumentRecord)
+        .where(DocumentRecord.source_type == source_type)
+        .where(DocumentRecord.source_id == source_id)
+    )
+    return result.rowcount
+
+
 # Export functions explicitly for clarity when importing elsewhere
 __all__ = [
     "Document",  # Export the protocol
@@ -859,6 +888,7 @@ __all__ = [
     "add_embedding",
     "delete_document",
     "delete_document_embeddings",  # Add new function
+    "delete_documents_by_source",
     "get_document_by_id",
     "get_document_by_source_id",
     "init_vector_db",
