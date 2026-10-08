@@ -175,7 +175,9 @@ async def test_query_database_invalid_table_returns_error(
     db = Database(engine=db_engine)
     exec_context = _make_exec_context(db)
     with caplog.at_level(logging.DEBUG):
-        result = await query_database(exec_context, "SELECT * FROM nonexistent_table_xyz")
+        result = await query_database(
+            exec_context, "SELECT * FROM nonexistent_table_xyz"
+        )
     data = result.get_data()
     assert isinstance(data, dict)
     assert "error" in data
@@ -186,8 +188,10 @@ async def test_query_database_invalid_table_returns_error(
 
     # Verify query_database logged at WARNING without exc_info
     warning_records = [
-        r for r in caplog.records
-        if r.levelno == logging.WARNING and r.name == "family_assistant.tools.engineering"
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING
+        and r.name == "family_assistant.tools.engineering"
     ]
     assert len(warning_records) == 1
     assert "query_database failed" in warning_records[0].message
@@ -223,7 +227,8 @@ async def test_normal_app_database_error_still_logs_error(
         await db.execute(text("SELECT * FROM nonexistent_table_app_code"))
 
     error_records = [
-        r for r in caplog.records
+        r
+        for r in caplog.records
         if r.levelno >= logging.ERROR and r.name == "family_assistant.storage.database"
     ]
     assert len(error_records) == 1
@@ -247,7 +252,9 @@ async def test_database_atomic_log_errors_control(
         await db.atomic(_failing_query, log_errors=False)
 
     error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
-    assert not error_records, f"Expected no ERROR logs when suppressed, got: {error_records}"
+    assert not error_records, (
+        f"Expected no ERROR logs when suppressed, got: {error_records}"
+    )
 
     caplog.clear()
 
@@ -256,7 +263,8 @@ async def test_database_atomic_log_errors_control(
         await db.atomic(_failing_query, log_errors=True)
 
     error_records = [
-        r for r in caplog.records
+        r
+        for r in caplog.records
         if r.levelno >= logging.ERROR and r.name == "family_assistant.storage.database"
     ]
     assert len(error_records) == 1

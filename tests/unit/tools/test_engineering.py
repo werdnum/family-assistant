@@ -164,8 +164,10 @@ class TestQueryDatabase:
         assert not error_records
 
         warning_records = [
-            r for r in caplog.records
-            if r.levelno == logging.WARNING and r.name == "family_assistant.tools.engineering"
+            r
+            for r in caplog.records
+            if r.levelno == logging.WARNING
+            and r.name == "family_assistant.tools.engineering"
         ]
         assert len(warning_records) == 1
         assert "query_database failed" in warning_records[0].message
@@ -179,13 +181,14 @@ class TestQueryDatabase:
         exec_context.db_context.atomic = AsyncMock(return_value=[{"val": 1}])
         result = await query_database(exec_context, "SELECT 1 AS val")
         data = result.get_data()
+        assert isinstance(data, dict)
         assert data["rows"] == [{"val": 1}]
         assert exec_context.db_context.atomic.call_count == 1
         call_kwargs = exec_context.db_context.atomic.call_args.kwargs
         assert call_kwargs.get("log_errors") is False
 
     @pytest.mark.asyncio
-    async def test_unexpected_exception_logged_at_warning(
+    async def test_unexpected_exception_logged_at_error(
         self,
         exec_context: ToolExecutionContext,
         caplog: pytest.LogCaptureFixture,
@@ -202,7 +205,8 @@ class TestQueryDatabase:
         assert "unexpected storage failure" in data["error"]
 
         error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
-        assert not error_records
+        assert len(error_records) == 1
+        assert error_records[0].exc_info is not None
 
     def test_empty_string(self) -> None:
         assert _is_select_only("") is False
