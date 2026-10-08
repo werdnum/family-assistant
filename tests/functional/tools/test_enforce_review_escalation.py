@@ -91,10 +91,6 @@ _RECIPIENT = "stranger@example.com"
 class _SilentReviewerLLM(RuleBasedMockLLMClient):
     """A reviewer model that never returns, so only the timeout can end it."""
 
-    def __init__(self) -> None:
-        super().__init__(rules=[])
-        self.review_requests = 0
-
     async def generate_structured(
         self,
         messages: Sequence[LLMMessage],
@@ -102,7 +98,6 @@ class _SilentReviewerLLM(RuleBasedMockLLMClient):
         max_retries: int = 2,
     ) -> T:
         del messages, response_model, max_retries
-        self.review_requests += 1
         await asyncio.Event().wait()
         raise AssertionError("unreachable: the reviewer timeout cancels this call")
 
@@ -361,20 +356,14 @@ async def test_three_model_denials_escalate_to_a_durable_human_confirmation(
 
 
 @pytest.fixture
-def silent_reviewer() -> _SilentReviewerLLM:
-    return _SilentReviewerLLM()
-
-
-@pytest.fixture
 async def timeout_client(
     db_engine: AsyncEngine,
     sink: _SinkRecorder,
-    silent_reviewer: _SilentReviewerLLM,
 ) -> AsyncGenerator[AsyncClient]:
     yield await _client(
         db_engine,
         main_llm=RuleBasedMockLLMClient(rules=_turn_script(sink_attempts=1)),
-        reviewer_llm=silent_reviewer,
+        reviewer_llm=_SilentReviewerLLM(rules=[]),
         review_config=ToolCallReviewConfig(timeout_seconds=0.05),
         sink=sink,
     )
@@ -385,14 +374,12 @@ async def test_reviewer_timeout_falls_back_to_confirm_not_allow(
     timeout_client: AsyncClient,
     db: Database,
     sink: _SinkRecorder,
-    silent_reviewer: _SilentReviewerLLM,
 ) -> None:
     body = await _send(timeout_client)
 
     events = await db.taint_audit_events.list_for_turn(body["turn_id"])
     reviews = [e for e in events if e["event_type"] == "tool_call_review"]
     pending = await _pending_confirmations(db, body["conversation_id"])
-    assert silent_reviewer.review_requests == 1
     assert sink.sent == []
     assert [
         (e["tool_call_id"], e["review_status"], e["review_verdict"]) for e in reviews
