@@ -1354,8 +1354,11 @@ shows the latest message.
 | `timeout_seconds`        | `20`               | A summary not returned by then counts as failed.                        |
 
 The instructions are `conversation_summary_prompt` in `prompts.yaml`; enabling summaries without it
-is a startup error. The summarizer has no tools, and its output is only displayed to the
-conversation's owner — it is never put into a prompt. See
+is a startup error, as is a `model` whose provider has no credentials — a deployment without
+`GEMINI_API_KEY` points `model` at a provider it does have, or sets `enabled: false`, as it does for
+`model_routing`. A conversation whose turn is still running is not summarized until the turn ends.
+The summarizer has no tools, and its output is only displayed to the conversation's owner — it is
+never put into a prompt. See
 [conversation-list-summaries.md](../design/conversation-list-summaries.md).
 
 ______________________________________________________________________

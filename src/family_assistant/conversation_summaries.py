@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 from family_assistant.llm.messages import SystemMessage, UserMessage
 from family_assistant.llm.model_routing import bounded_text
+from family_assistant.services.turn_resumption import TURN_RESUME_TASK_TYPE
 from family_assistant.utils.clock import SystemClock
 
 if TYPE_CHECKING:
@@ -118,6 +119,26 @@ class ConversationSummarizer:
         return clean_summary(output.content)
 
 
+async def _conversations_with_live_turns(db: Database) -> set[str]:
+    """Conversations whose turn still holds a lease, on any interface.
+
+    Every running web and Telegram turn holds one (a ``resume_interrupted_turn``
+    task) until it ends, and a lease being resumed after a restart is
+    ``processing``. There are only ever as many as there are turns in flight.
+    """
+    conversation_ids: set[str] = set()
+    for status in ("pending", "processing"):
+        leases = await db.tasks.get_all(
+            status=status, task_type=TURN_RESUME_TASK_TYPE, limit=1000
+        )
+        conversation_ids.update(
+            str(lease["payload"]["conversation_id"])
+            for lease in leases
+            if lease["payload"] and lease["payload"].get("conversation_id")
+        )
+    return conversation_ids
+
+
 async def run_conversation_summary_sweep(
     db: Database,
     *,
@@ -139,6 +160,7 @@ async def run_conversation_summary_sweep(
         settled_before=now - timedelta(seconds=config.idle_seconds),
         active_since=now - timedelta(days=config.lookback_days),
         limit=config.batch_size,
+        exclude_conversation_ids=await _conversations_with_live_turns(db),
     )
     changed = 0
     for conversation in due:

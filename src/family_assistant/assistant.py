@@ -1444,11 +1444,21 @@ class Assistant:
             # As for the router: a test that overrides clients must not reach a
             # real provider through a background sweep nobody named.
             override = next(iter(self.llm_client_overrides.values()))
-        llm_client = override or LLMClientFactory.create_client(
-            config=resolve_entry_client_config(
-                summaries.model, self.config.llm_parameters
+        try:
+            llm_client = override or LLMClientFactory.create_client(
+                config=resolve_entry_client_config(
+                    summaries.model, self.config.llm_parameters
+                )
             )
-        )
+        except ValueError as error:
+            # Summaries are on by default and the shipped model is Gemini, so a
+            # deployment without a Google key meets this at startup. Say which
+            # setting to change rather than surfacing a bare missing-key error.
+            raise SystemExit(
+                f"conversation_summaries could not create its client: {error}. "
+                "Set conversation_summaries.model to a provider this deployment "
+                "has credentials for, or set conversation_summaries.enabled: false."
+            ) from error
         logger.info(
             "Conversation summaries enabled, model %s via %s.",
             summaries.model.model,

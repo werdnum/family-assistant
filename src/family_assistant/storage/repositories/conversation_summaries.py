@@ -1,5 +1,6 @@
 """Repository for generated conversation-list summaries."""
 
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -56,6 +57,7 @@ class ConversationSummariesRepository(BaseRepository):
         settled_before: datetime,
         active_since: datetime,
         limit: int,
+        exclude_conversation_ids: Collection[str] = (),
     ) -> list[SummaryDueConversation]:
         """Conversations with unsummarized messages, most recently active first.
 
@@ -65,6 +67,10 @@ class ConversationSummariesRepository(BaseRepository):
         ``active_since``. The lower bound keeps the per-sweep scan to recent
         history and stops a fresh deployment from summarizing years of old
         conversations; those keep showing their latest message.
+
+        ``exclude_conversation_ids`` are conversations with a turn still
+        running: message age alone does not prove a turn has settled, since a
+        long tool-using turn leaves its request as the latest row for minutes.
         """
         latest = (
             select(
@@ -88,6 +94,7 @@ class ConversationSummariesRepository(BaseRepository):
             )
             .where(
                 latest.c.latest_at < settled_before,
+                latest.c.conversation_id.not_in(list(exclude_conversation_ids)),
                 or_(
                     conversation_summaries_table.c.summarized_through_id.is_(None),
                     conversation_summaries_table.c.summarized_through_id

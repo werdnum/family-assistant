@@ -21,6 +21,10 @@ from family_assistant.conversation_summaries import (
 )
 from family_assistant.llm import LLMOutput
 from family_assistant.llm.messages import AssistantMessage, UserMessage
+from family_assistant.services.turn_resumption import (
+    TurnLeaseRegistry,
+    TurnResumePayload,
+)
 from family_assistant.storage.database import Database
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
@@ -122,6 +126,41 @@ async def test_a_conversation_still_in_progress_is_not_summarized(
     db = Database(engine=db_engine)
     await _add_exchange(
         db, "conv-live", "What's for dinner?", "Pasta?", at=NOW - timedelta(seconds=10)
+    )
+    llm = RuleBasedMockLLMClient(rules=[], default_response=LLMOutput(content="x"))
+
+    await run_conversation_summary_sweep(
+        db, summarizer=_summarizer(llm), config=CONFIG, now_fn=lambda: NOW
+    )
+
+    assert llm.get_calls() == []
+
+
+@pytest.mark.asyncio
+async def test_a_conversation_whose_turn_is_still_running_is_not_summarized(
+    db_engine: AsyncEngine,
+) -> None:
+    db = Database(engine=db_engine)
+    await db.message_history.add_message(
+        UserMessage.from_trusted_user(content="Research flights to Tokyo in May"),
+        interface_type="web",
+        conversation_id="conv-running",
+        timestamp=NOW - timedelta(minutes=5),
+        turn_id="turn-running",
+        processing_profile_id="default_assistant",
+        user_id=OWNER,
+    )
+    await TurnLeaseRegistry().arm(
+        db.tasks,
+        TurnResumePayload(
+            resumer="web_stream",
+            interface_type="web",
+            conversation_id="conv-running",
+            turn_id="turn-running",
+            user_id=OWNER,
+            user_name="Alice",
+            processing_profile_id="default_assistant",
+        ),
     )
     llm = RuleBasedMockLLMClient(rules=[], default_response=LLMOutput(content="x"))
 
