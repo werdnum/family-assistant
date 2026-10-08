@@ -302,10 +302,9 @@ class ToolCallReviewConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = True
-    provider: str | None = "google"
-    # See docs/design/tool-call-review-judge-tuning.md: 3.7 has the lowest
-    # benign friction at equal attack allows, so the judge stays on it.
-    model: str = "gemini-3.7-flash"
+    provider: str | None = "anthropic"
+    # See docs/design/tool-call-review-judge-tuning.md for the evaluation.
+    model: str = "claude-haiku-5-5"
     retry_config: RetryConfig | None = None
     timeout_seconds: float = Field(default=30.0, gt=0)
     max_reviews_per_turn: int = Field(default=25, ge=1)

@@ -9,6 +9,7 @@ import os
 from collections.abc import (
     AsyncGenerator,
     AsyncIterator,
+    Awaitable,
     Callable,
     Mapping,
     Sequence,
@@ -515,18 +516,17 @@ class AnthropicClient(BaseLLMClient):
             f"Anthropic response did not include expected tool '{tool_name}'"
         )
 
-    async def _generate_with_native_output_tool(
+    async def _generate_native_output(
         self,
         *,
         messages: Sequence[LLMMessage],
-        tool_name: str,
-        description: str,
-        input_schema: dict[str, object],
+        request: Callable[[list[LLMMessage]], Awaitable[dict[str, object]]],
+        retry_instruction: str,
         max_retries: int,
         parse_output: Callable[[dict[str, object]], R],
         error_message_prefix: str,
     ) -> R:
-        """Run a native Anthropic tool-use round-trip for structured output."""
+        """Request a JSON object, feeding validation errors back for a retry."""
         self._validate_user_input(messages)
 
         attempt_messages = list(messages)
@@ -535,14 +535,9 @@ class AnthropicClient(BaseLLMClient):
 
         for attempt in range(max_retries + 1):
             try:
-                tool_input = await self._request_native_output_tool(
-                    attempt_messages=attempt_messages,
-                    tool_name=tool_name,
-                    description=description,
-                    input_schema=input_schema,
-                )
-                raw_response = json.dumps(tool_input)
-                return parse_output(tool_input)
+                output = await request(attempt_messages)
+                raw_response = json.dumps(output)
+                return parse_output(output)
 
             except (ValidationError, TypeError, ValueError) as e:
                 last_error = e
@@ -554,8 +549,8 @@ class AnthropicClient(BaseLLMClient):
                     attempt_messages.append(
                         UserMessage(
                             content=(
-                                f"Your previous tool input was invalid. Error: {e}\n\n"
-                                f"Please call the '{tool_name}' tool again with a corrected JSON object."
+                                f"Your previous output was invalid. Error: {e}\n\n"
+                                f"{retry_instruction}"
                             )
                         )
                     )
@@ -581,12 +576,7 @@ class AnthropicClient(BaseLLMClient):
         description: str,
         input_schema: dict[str, object],
     ) -> dict[str, object]:
-        """Request and extract one native-output tool call.
-
-        Instrumented per attempt rather than per ``generate_structured`` call:
-        a schema-validation retry is a second billed request, and rolling the
-        two together would report one call that cost twice what it looks like.
-        """
+        """Request a JSON object as the input of a tool the model is asked to call."""
         processed_messages = self._process_tool_messages(attempt_messages)
         system_blocks, api_messages = self._convert_messages_to_anthropic_format(
             processed_messages
@@ -609,6 +599,82 @@ class AnthropicClient(BaseLLMClient):
             **self.default_kwargs,
             **self._get_model_specific_params(self.model),
         }
+        response = await self._send_structured_request(
+            params,
+            system_blocks=system_blocks,
+            attempt_messages=attempt_messages,
+            output_label=tool_name,
+            response_schema=params["tools"],
+        )
+        # Outside the instrumented request: it succeeded and was billed, so a
+        # schema that fails to parse is the caller's retry to count, not this
+        # call's failure.
+        return self._extract_native_tool_input(response, tool_name)
+
+    async def _request_json_schema_output(
+        self,
+        *,
+        attempt_messages: list[LLMMessage],
+        schema: dict[str, object],
+    ) -> dict[str, object]:
+        """Request a JSON object constrained by ``output_config.format``.
+
+        Native structured output, rather than a tool the model is asked to
+        call: the reply is the object itself, so the model is not choosing
+        whether and how to call a tool while it answers.
+        """
+        processed_messages = self._process_tool_messages(attempt_messages)
+        system_blocks, api_messages = self._convert_messages_to_anthropic_format(
+            processed_messages
+        )
+        model_params = self._get_model_specific_params(self.model)
+        output_config = model_params.get("output_config") or {}
+        if not isinstance(output_config, dict):
+            raise TypeError("llm_parameters output_config must be a mapping")
+        # ast-grep-ignore: no-dict-any - kwargs dict for client.messages.create(**params) requires heterogeneous values
+        params: dict[str, Any] = {
+            "model": self.model,
+            "messages": api_messages,
+            "max_tokens": 8192,
+            **self.default_kwargs,
+            **model_params,
+            # Merged, not replaced: a model's configured effort lives here too.
+            "output_config": {
+                **output_config,
+                "format": {"type": "json_schema", "schema": schema},
+            },
+        }
+        response = await self._send_structured_request(
+            params,
+            system_blocks=system_blocks,
+            attempt_messages=attempt_messages,
+            output_label="json_schema",
+            response_schema=schema,
+        )
+        if response.stop_reason == "refusal":
+            raise ValueError("Anthropic declined to produce the structured output")
+        text = "".join(block.text for block in response.content if block.type == "text")
+        output = json.loads(text)
+        if not isinstance(output, dict):
+            raise TypeError("Anthropic structured output was not a JSON object")
+        return cast("dict[str, object]", output)
+
+    async def _send_structured_request(
+        self,
+        # ast-grep-ignore: no-dict-any - kwargs dict for client.messages.create(**params) requires heterogeneous values
+        params: dict[str, Any],
+        *,
+        system_blocks: str | list[TextBlockParam] | None,
+        attempt_messages: list[LLMMessage],
+        output_label: str,
+        response_schema: object,
+    ) -> Any:  # noqa: ANN401 - anthropic.types.Message, shape varies by SDK version
+        """Send one structured-output request, instrumented.
+
+        Instrumented per attempt rather than per ``generate_structured`` call:
+        a schema-validation retry is a second billed request, and rolling the
+        two together would report one call that cost twice what it looks like.
+        """
         self._validate_thinking_params(params)
         self._apply_thinking_binding(params)
         if system_blocks:
@@ -621,13 +687,13 @@ class AnthropicClient(BaseLLMClient):
             system="anthropic",
             requested_model=self.model,
             messages=attempt_messages,
-            # The output tool goes in as a schema, not as a tool: it
-            # shapes the reply rather than offering the model something to
-            # call, and counting it would make tool_count mean two things.
+            # An output tool goes in as a schema, not as a tool: it shapes the
+            # reply rather than offering the model something to call, and
+            # counting it would make tool_count mean two things.
             tools=None,
-            tool_choice=tool_name,
+            tool_choice=output_label,
             streaming=False,
-            response_schema=params["tools"],
+            response_schema=response_schema,
             operation="structured",
         )
         try:
@@ -643,11 +709,7 @@ class AnthropicClient(BaseLLMClient):
             # no counter at all. A no-op once a terminal path has run.
             telemetry.finish_abandoned()
             span.end()
-
-        # Outside the instrumented block: the request itself succeeded and was
-        # billed, so a schema that fails to parse is the caller's retry to
-        # count, not this call's failure.
-        return self._extract_native_tool_input(response, tool_name)
+        return response
 
     @staticmethod
     def _record_structured_response(
@@ -673,14 +735,21 @@ class AnthropicClient(BaseLLMClient):
         response_model: type[T],
         max_retries: int = 2,
     ) -> T:
-        """Generate structured output using Anthropic's native tool-use schema enforcement."""
-        return await self._generate_with_native_output_tool(
+        """Generate structured output using Anthropic's native structured outputs.
+
+        The SDK's ``transform_schema`` drops what the API cannot enforce (string
+        lengths, numeric bounds) and closes every object; pydantic still
+        validates the full model here, and a violation is fed back as a retry.
+        """
+        schema = cast("dict[str, object]", anthropic.transform_schema(response_model))
+        return await self._generate_native_output(
             messages=messages,
-            tool_name="return_structured_response",
-            description="Return the final response as a structured JSON object.",
-            input_schema=cast("dict[str, object]", response_model.model_json_schema()),
+            request=lambda attempt_messages: self._request_json_schema_output(
+                attempt_messages=attempt_messages, schema=schema
+            ),
+            retry_instruction="Respond again with a corrected JSON object.",
             max_retries=max_retries,
-            parse_output=lambda tool_input: response_model.model_validate(tool_input),
+            parse_output=response_model.model_validate,
             error_message_prefix="Anthropic structured output",
         )
 
@@ -690,7 +759,9 @@ class AnthropicClient(BaseLLMClient):
         max_retries: int = 2,
     ) -> JsonObject:
         """Generate a JSON object using Anthropic's native tool-use mode."""
-        return await self._generate_with_native_output_tool(
+        # Native structured outputs require a closed schema, and this object's
+        # shape is defined only by the conversation, so it stays a tool call.
+        return await self._generate_native_output(
             messages=self._add_system_instruction(
                 messages,
                 (
@@ -699,12 +770,19 @@ class AnthropicClient(BaseLLMClient):
                     "Do not omit requested keys."
                 ),
             ),
-            tool_name="return_json_object",
-            description="Return the final response as a JSON object.",
-            input_schema={
-                "type": "object",
-                "additionalProperties": True,
-            },
+            request=lambda attempt_messages: self._request_native_output_tool(
+                attempt_messages=attempt_messages,
+                tool_name="return_json_object",
+                description="Return the final response as a JSON object.",
+                input_schema={
+                    "type": "object",
+                    "additionalProperties": True,
+                },
+            ),
+            retry_instruction=(
+                "Please call the 'return_json_object' tool again with a corrected "
+                "JSON object."
+            ),
             max_retries=max_retries,
             parse_output=lambda tool_input: cast("JsonObject", tool_input),
             error_message_prefix="Anthropic JSON output",

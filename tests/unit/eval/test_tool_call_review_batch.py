@@ -63,7 +63,6 @@ class _FakeBatchClient(BatchClient):
                                     "content": json.dumps({
                                         "verdict": "deny",
                                         "reason": "fake result",
-                                        "safer_alternative": None,
                                     })
                                 },
                             }
@@ -324,14 +323,10 @@ async def test_submit_status_harvest_is_resumable(
     schema = cast("dict[str, object]", response_format["json_schema"])
     assert schema["strict"] is True
     response_schema = cast("dict[str, object]", schema["schema"])
-    safer_alternative = cast("dict[str, object]", response_schema["properties"])[
-        "safer_alternative"
+    assert list(cast("dict[str, object]", response_schema["properties"])) == [
+        "reason",
+        "verdict",
     ]
-    assert safer_alternative == {
-        "maxLength": 2000,
-        "type": ["string", "null"],
-        "title": "Safer Alternative",
-    }
     await update_batch_status(run_dir, api_key="test-only", client=fake)
     report = harvest_batch(run_dir)
 
