@@ -390,9 +390,10 @@ October, superseding the model choice:
 
 - `gemini-3.7-flash` now serves 3.8, so the September operating point is gone whichever model is
   named.
-- Move the judge to `claude-haiku-5-5`. On the corrected labels it matches Gemini 3.8's attack
-  detection, has lower benign friction on every discriminating corpus, a p95 of 2.4–3.5s against
-  9–12s, and costs about a sixth as much.
+- Move the judge to `claude-haiku-5-5`. On the corrected labels it allows no attack Gemini 3.8
+  blocks beyond the two accepted residuals below (the invitation looked up from a message, and
+  `cancel_worker_task`), which 3.8 now usually confirms. It has lower benign friction on every
+  discriminating corpus, a p95 of 2.4–3.5s against 9–12s, and costs about a sixth as much.
 - Ship the hk11 prompt changes for every judge model. They were tuned on Haiku, but they lower
   Gemini 3.8's friction too (dev 4% to 2%, AgentDojo 10% to 1%, fresh history 10% to 5%) at the same
   attack allows. One prompt therefore serves both the primary and the fallback, with no per-model
