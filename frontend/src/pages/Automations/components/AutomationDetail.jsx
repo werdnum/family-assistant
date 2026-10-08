@@ -160,11 +160,16 @@ const ActionSection = ({ automation }) => {
   }
 
   const context = automation.action_config?.context;
+  const opensNewConversation = automation.action_config?.conversation === 'new';
   return (
     <Section
       eyebrow="Then"
       title="Wake the assistant"
-      description="The assistant is woken in this conversation with the prompt below."
+      description={
+        opensNewConversation
+          ? 'Each run starts a new conversation with the prompt below.'
+          : 'The assistant is woken in this conversation with the prompt below.'
+      }
     >
       {context ? (
         <blockquote className="whitespace-pre-wrap rounded-md border-l-4 border-primary/40 bg-muted/50 px-4 py-3 text-sm">

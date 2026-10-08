@@ -56,6 +56,7 @@ class WakeRequest(TypedDict):
 
     context: dict[str, str | list[str]]
     include_event: bool
+    new_conversation: bool
 
 
 class AttachmentResultInfo(TypedDict):
@@ -1029,8 +1030,12 @@ class MontyEngine:
     def _create_wake_llm_function(self) -> Callable[..., None]:
         """Create a wake_llm function for scripts."""
 
-        # ast-grep-ignore: no-dict-any - Script wake context values are user-provided and vary by key
-        def wake_llm(context: dict[str, Any] | str, include_event: bool = True) -> None:
+        def wake_llm(
+            # ast-grep-ignore: no-dict-any - Script wake context values are user-provided and vary by key
+            context: dict[str, Any] | str,
+            include_event: bool = True,
+            new_conversation: bool = False,
+        ) -> None:
             if isinstance(context, str):
                 context_dict: dict[str, str | list[str]] = {"message": context}
             elif isinstance(context, dict):
@@ -1062,6 +1067,7 @@ class MontyEngine:
             wake_request = WakeRequest(
                 context=context_dict,
                 include_event=include_event,
+                new_conversation=bool(new_conversation),
             )
             self._wake_llm_contexts.append(wake_request)
             logger.debug(f"Script requested LLM wake with context: {context_dict}")

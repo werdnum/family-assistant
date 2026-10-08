@@ -11,6 +11,7 @@ from dateutil.parser import ParserError
 from sqlalchemy import delete, insert, null, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
+from family_assistant.actions import wants_new_conversation
 from family_assistant.security.definition_records import (
     CreationDisposition,
     DefinitionArtifactKind,
@@ -98,6 +99,35 @@ def _validate_rule(recurrence_rule: str) -> None:
             f"COUNT above {MAX_RECURRENCE_COUNT} is not supported; "
             "use UNTIL to end a long-running schedule"
         )
+
+
+def _build_wake_payload(
+    action_config: ActionConfig,
+    conversation_id: str,
+    interface_type: str,
+    automation_id: str,
+    processing_profile_id: str | None = None,
+    created_by_user_id: str | None = None,
+) -> LlmCallbackPayload:
+    """Build the LlmCallbackPayload a wake_llm schedule automation fires with."""
+    payload = LlmCallbackPayload(
+        conversation_id=conversation_id,
+        interface_type=interface_type,
+        automation_id=automation_id,
+        automation_type="schedule",
+        callback_context=action_config.get("context", ""),
+        scheduling_timestamp=datetime.now(UTC).isoformat(),
+        tool_call_review_trigger_type="schedule",
+        tool_call_review_trigger_definition=action_config.get("context", ""),
+        tool_call_review_trigger_payload_present=False,
+    )
+    if created_by_user_id is not None:
+        payload["created_by_user_id"] = created_by_user_id
+    if processing_profile_id is not None:
+        payload["processing_profile_id"] = processing_profile_id
+    if wants_new_conversation(action_config):
+        payload["new_conversation"] = True
+    return payload
 
 
 def _build_script_payload(
@@ -526,24 +556,15 @@ class ScheduleAutomationsRepository(BaseRepository):
 
             if action_type == "wake_llm":
                 payload: LlmCallbackPayload | ScriptExecutionPayload = (
-                    LlmCallbackPayload(
+                    _build_wake_payload(
+                        action_config=action_config,
                         conversation_id=conversation_id,
                         interface_type=interface_type,
                         automation_id=str(automation_id),
-                        automation_type="schedule",
-                        callback_context=action_config.get("context", ""),
-                        scheduling_timestamp=datetime.now(UTC).isoformat(),
-                        tool_call_review_trigger_type="schedule",
-                        tool_call_review_trigger_definition=action_config.get(
-                            "context", ""
-                        ),
-                        tool_call_review_trigger_payload_present=False,
+                        processing_profile_id=processing_profile_id,
+                        created_by_user_id=created_by_user_id,
                     )
                 )
-                if created_by_user_id is not None:
-                    payload["created_by_user_id"] = created_by_user_id
-                if processing_profile_id is not None:
-                    payload["processing_profile_id"] = processing_profile_id
             else:
                 payload = _build_script_payload(
                     action_config=action_config,
@@ -917,26 +938,17 @@ class ScheduleAutomationsRepository(BaseRepository):
                 action_config = automation["action_config"]
                 if action_type == "wake_llm":
                     enqueue_payload: LlmCallbackPayload | ScriptExecutionPayload = (
-                        LlmCallbackPayload(
+                        _build_wake_payload(
+                            action_config=action_config,
                             conversation_id=conversation_id,
                             interface_type=automation["interface_type"],
                             automation_id=str(automation_id),
-                            automation_type="schedule",
-                            callback_context=action_config.get("context", ""),
-                            scheduling_timestamp=datetime.now(UTC).isoformat(),
-                            tool_call_review_trigger_type="schedule",
-                            tool_call_review_trigger_definition=action_config.get(
-                                "context", ""
+                            processing_profile_id=automation.get(
+                                "processing_profile_id"
                             ),
-                            tool_call_review_trigger_payload_present=False,
+                            created_by_user_id=automation.get("created_by_user_id"),
                         )
                     )
-                    created_by = automation.get("created_by_user_id")
-                    if created_by is not None:
-                        enqueue_payload["created_by_user_id"] = created_by
-                    enable_profile_id = automation.get("processing_profile_id")
-                    if enable_profile_id is not None:
-                        enqueue_payload["processing_profile_id"] = enable_profile_id
                 else:
                     enqueue_payload = _build_script_payload(
                         action_config=action_config,
@@ -1474,25 +1486,14 @@ class ScheduleAutomationsRepository(BaseRepository):
         task_id = f"sched_auto_{automation_id}_{uuid.uuid4().hex[:8]}"
 
         if action_type == "wake_llm":
-            payload: LlmCallbackPayload | ScriptExecutionPayload = LlmCallbackPayload(
+            payload: LlmCallbackPayload | ScriptExecutionPayload = _build_wake_payload(
+                action_config=final_action_config,
                 conversation_id=automation["conversation_id"],
                 interface_type=automation["interface_type"],
                 automation_id=str(automation_id),
-                automation_type="schedule",
-                callback_context=final_action_config.get("context", ""),
-                scheduling_timestamp=datetime.now(UTC).isoformat(),
-                tool_call_review_trigger_type="schedule",
-                tool_call_review_trigger_definition=final_action_config.get(
-                    "context", ""
-                ),
-                tool_call_review_trigger_payload_present=False,
+                processing_profile_id=automation.get("processing_profile_id"),
+                created_by_user_id=automation.get("created_by_user_id"),
             )
-            created_by = automation.get("created_by_user_id")
-            if created_by is not None:
-                payload["created_by_user_id"] = created_by
-            reschedule_profile_id = automation.get("processing_profile_id")
-            if reschedule_profile_id is not None:
-                payload["processing_profile_id"] = reschedule_profile_id
         else:  # script
             payload = _build_script_payload(
                 action_config=final_action_config,
@@ -1625,26 +1626,15 @@ class ScheduleAutomationsRepository(BaseRepository):
             action_config = automation["action_config"]
             if action_type == "wake_llm":
                 recur_payload: LlmCallbackPayload | ScriptExecutionPayload = (
-                    LlmCallbackPayload(
+                    _build_wake_payload(
+                        action_config=action_config,
                         conversation_id=automation["conversation_id"],
                         interface_type=automation["interface_type"],
                         automation_id=str(automation_id),
-                        automation_type="schedule",
-                        callback_context=action_config.get("context", ""),
-                        scheduling_timestamp=datetime.now(UTC).isoformat(),
-                        tool_call_review_trigger_type="schedule",
-                        tool_call_review_trigger_definition=action_config.get(
-                            "context", ""
-                        ),
-                        tool_call_review_trigger_payload_present=False,
+                        processing_profile_id=automation.get("processing_profile_id"),
+                        created_by_user_id=automation.get("created_by_user_id"),
                     )
                 )
-                created_by = automation.get("created_by_user_id")
-                if created_by is not None:
-                    recur_payload["created_by_user_id"] = created_by
-                recur_profile_id = automation.get("processing_profile_id")
-                if recur_profile_id is not None:
-                    recur_payload["processing_profile_id"] = recur_profile_id
             else:  # script
                 recur_payload = _build_script_payload(
                     action_config=action_config,

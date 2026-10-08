@@ -25,7 +25,9 @@ from sqlalchemy import func, select, update
 # Removed storage import - using repository pattern
 from family_assistant.actions import (
     ActionType,
+    NewConversationError,
     WakeLlmProfileError,
+    assert_new_conversation_allowed,
     assert_wake_llm_allowed,
 )
 from family_assistant.llm.messages import (
@@ -349,6 +351,14 @@ def _turn_id_for_task(task_id: str) -> str:
     return str(uuid.uuid5(_TASK_TURN_NAMESPACE, task_id))
 
 
+_TASK_CONVERSATION_NAMESPACE = uuid.UUID("0d3c6a8e-5b2f-4e71-a9c4-3f8e1b7d6c52")
+
+
+def _new_conversation_id_for_task(task_id: str) -> str:
+    """The web conversation a new-conversation wake opens, shared by retries."""
+    return f"web_conv_{uuid.uuid5(_TASK_CONVERSATION_NAMESPACE, task_id).hex}"
+
+
 # Separate namespace so a delegation's wake turn can never collide with the
 # turn of the task that happens to be driving the notification.
 _DELEGATION_WAKE_TURN_NAMESPACE = uuid.UUID("2b6b7f52-0f8a-4a6f-9b3d-7c5e1a0d8f24")
@@ -480,6 +490,10 @@ class LlmCallbackPayload(TypedDict, total=False):
     # record rides the payload beside the definition it describes. Absent for
     # legacy tasks queued before this field existed, which resolve fail-closed.
     tool_call_review_definition_record: DefinitionRecordDict
+    # Run the wake in a fresh web conversation rather than conversation_id,
+    # which then only records where the wake was defined. The id is derived
+    # from the task id, so retries reuse it and each recurrence gets its own.
+    new_conversation: bool
 
 
 class ScriptExecutionPayload(TypedDict, total=False):
@@ -1542,6 +1556,12 @@ async def handle_llm_callback(
                 trigger_text = f"System: Follow-up reminder triggered (attempt {current_attempt} of {max_follow_ups + 1})\n\nThe time is now {current_time_str}.\nOriginal reminder: {callback_context}\nNote: User has not responded to previous reminder sent at {scheduling_timestamp_str}"
         else:
             trigger_text = f"System Callback Trigger:\n\nThe time is now {current_time_str}.\nYour scheduled context was:\n---\n{callback_context}\n---"
+            if payload.get("new_conversation"):
+                trigger_text = (
+                    f"{trigger_text}\n\nThis wake opened a new conversation, so "
+                    "there is no earlier history here: everything you need is in "
+                    "the context above."
+                )
 
         definition_resolution = await resolve_definition_closure(
             db_context,
@@ -4994,14 +5014,25 @@ class TaskWorker:
                 final_conversation_id: str
 
                 if task["task_type"] == "llm_callback":
+                    callback_target_error: str | None = None
                     if not raw_interface_type or not raw_conversation_id:
+                        callback_target_error = "Missing interface_type or conversation_id in payload for llm_callback"
+                    elif payload_dict.get("new_conversation"):
+                        try:
+                            assert_new_conversation_allowed(
+                                interface_type=raw_interface_type,
+                                owner_user_id=payload_dict.get("created_by_user_id"),
+                            )
+                        except NewConversationError as err:
+                            callback_target_error = str(err)
+                    if callback_target_error is not None:
                         logger.error(
-                            f"PROCESS ERROR: Task {task['task_id']} (llm_callback) missing interface_type or conversation_id in payload."
+                            f"PROCESS ERROR: Task {task['task_id']} (llm_callback): {callback_target_error}"
                         )
                         await db_context.tasks.update_status(
                             task_id=task["task_id"],
                             status="failed",
-                            error="Missing interface_type or conversation_id in payload for llm_callback",
+                            error=callback_target_error,
                         )
                         record_task_processed(
                             task_type=task["task_type"],
@@ -5010,8 +5041,13 @@ class TaskWorker:
                             duration_seconds=None,
                         )
                         return None  # Stop processing
+                    assert raw_interface_type and raw_conversation_id
                     final_interface_type = raw_interface_type
-                    final_conversation_id = raw_conversation_id
+                    final_conversation_id = (
+                        _new_conversation_id_for_task(task["task_id"])
+                        if payload_dict.get("new_conversation")
+                        else raw_conversation_id
+                    )
                 else:
                     # For other task types, provide defaults if None, to satisfy linter if it expects str
                     final_interface_type = (
@@ -5916,6 +5952,9 @@ async def _process_script_wake_llm(
 ) -> None:
     """Process wake_llm calls accumulated during script execution.
 
+    Calls are batched into one wake per destination: those that asked for a new
+    conversation share one fresh conversation, the rest wake the script's own.
+
     Args:
         exec_context: The execution context with DB access
         wake_contexts: List of wake context dictionaries from script
@@ -5930,6 +5969,35 @@ async def _process_script_wake_llm(
     # here, mirroring the create_automation/execute_action guard.
     assert_wake_llm_allowed(ActionType.WAKE_LLM, exec_context.allow_wake_llm)
 
+    to_source = [ctx for ctx in wake_contexts if not ctx.get("new_conversation")]
+    to_new = [ctx for ctx in wake_contexts if ctx.get("new_conversation")]
+    if to_new:
+        # The worker re-checks this when the wake fires, but failing here puts
+        # the error on the script run that asked for it.
+        assert_new_conversation_allowed(
+            interface_type=exec_context.interface_type,
+            owner_user_id=exec_context.user_id,
+        )
+    if to_source:
+        await _enqueue_script_wake(
+            exec_context, to_source, event_data, listener_id, new_conversation=False
+        )
+    if to_new:
+        await _enqueue_script_wake(
+            exec_context, to_new, event_data, listener_id, new_conversation=True
+        )
+
+
+async def _enqueue_script_wake(
+    exec_context: ToolExecutionContext,
+    wake_contexts: list[WakeRequest],
+    # ast-grep-ignore: no-dict-any - Event data from external sources (Home Assistant, webhooks) with arbitrary structure
+    event_data: dict[str, Any],
+    listener_id: str | None,
+    *,
+    new_conversation: bool,
+) -> None:
+    """Enqueue one llm_callback carrying a batch of a script's wake_llm calls."""
     listener_id = listener_id or "scheduled"
 
     # Extract attachment IDs from all wake contexts
@@ -6080,6 +6148,8 @@ async def _process_script_wake_llm(
     # The woken turn runs under the script's own (originating) profile.
     if exec_context.processing_profile_id is not None:
         payload["processing_profile_id"] = exec_context.processing_profile_id
+    if new_conversation:
+        payload["new_conversation"] = True
 
     # Add attachments to payload if any were found
     if trigger_attachments:

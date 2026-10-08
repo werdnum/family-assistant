@@ -372,6 +372,8 @@ async def execute_script_tool(
                 response_parts.append(
                     f"Include Event: {wake_context.get('include_event', True)}"
                 )
+                if wake_context.get("new_conversation"):
+                    response_parts.append("New conversation: True")
                 response_parts.append(
                     f"Context: {json.dumps(wake_context.get('context', {}), indent=2)}"
                 )

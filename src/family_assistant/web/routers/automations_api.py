@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Annotated, Any, cast
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from family_assistant.actions import NewConversationError, validate_wake_destination
 from family_assistant.processing import ProcessingService
 from family_assistant.security.taint import TurnTaintState
 from family_assistant.storage.database import Database
@@ -164,6 +165,25 @@ def _format_automation_response(automation: Automation) -> AutomationResponse:
         next_scheduled_at=automation.next_scheduled_at,
         execution_count=automation.execution_count,
     )
+
+
+def _check_wake_destination(
+    action_type: str,
+    # ast-grep-ignore: no-dict-any - Action config varies by action_type (wake_llm vs script) with different fields
+    action_config: dict[str, Any],
+    *,
+    interface_type: str,
+    current_user: dict,
+) -> None:
+    try:
+        validate_wake_destination(
+            action_type,
+            action_config,
+            interface_type=interface_type,
+            owner_user_id=str(current_user["user_identifier"]),
+        )
+    except NewConversationError as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
 
 
 async def _update_automation_record(
@@ -376,6 +396,13 @@ async def create_event_automation(
             detail=f"Invalid action_type. Must be one of: {', '.join(valid_actions)}",
         )
 
+    _check_wake_destination(
+        request.action_type,
+        request.action_config or {},
+        interface_type="web",
+        current_user=current_user,
+    )
+
     # Validate script requirements
     if request.action_type == "script":
         script_error = await validate_script_action_config(db, request.action_config)
@@ -463,6 +490,13 @@ async def create_schedule_automation(
             status_code=400,
             detail=f"Invalid action_type. Must be one of: {', '.join(valid_actions)}",
         )
+
+    _check_wake_destination(
+        request.action_type,
+        request.action_config or {},
+        interface_type="web",
+        current_user=current_user,
+    )
 
     # Validate script requirements
     if request.action_type == "script":
@@ -572,6 +606,14 @@ async def update_automation(
     )
     if not existing:
         raise HTTPException(status_code=404, detail="Automation not found")
+
+    if request.action_config is not _UNSET and request.action_config is not None:
+        _check_wake_destination(
+            existing.action_type,
+            cast("dict[str, Any]", request.action_config),
+            interface_type=existing.interface_type,
+            current_user=current_user,
+        )
 
     # When a script automation's action_config (and therefore its script)
     # changes, validate it against the acting profile's tools before it is
