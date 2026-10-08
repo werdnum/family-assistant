@@ -1,9 +1,10 @@
-"""End-to-end enforce-mode review paths that observe mode can never exercise.
+"""End-to-end enforce-mode review paths that observe mode leaves unexercised.
 
-Under ``taint_policy.mode: observe`` reviews run off the critical path: they do
-not count toward the denial-escalation streak and never create confirmation
-rows, so production has recorded zero ``tool_call_review_escalation`` events
-and no ``taint_policy_reason`` on any confirmation. These tests drive a whole
+Under ``taint_policy.mode: observe`` taint-only reviews run off the critical
+path: they do not count toward the denial-escalation streak and never create
+confirmation rows, so production has recorded zero
+``tool_call_review_escalation`` events and no ``taint_policy_reason`` on any
+confirmation. These tests drive a whole
 turn through the non-streaming chat API, the real ProcessingService, the real
 tool-call reviewer and the durable confirmation store, in enforce mode, to show
 that both paths work when enforcement is switched on:
