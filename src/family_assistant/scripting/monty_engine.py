@@ -324,9 +324,7 @@ class MontyEngine:
         if isinstance(progress, pydantic_monty.AsyncNameLookupSnapshot):
             return await progress.resume()
         if not isinstance(progress, pydantic_monty.AsyncFunctionSnapshot):
-            raise ScriptExecutionError(
-                f"Unexpected Monty progress type: {type(progress)}"
-            )
+            raise RuntimeError(f"Unexpected Monty progress type: {type(progress)}")
         if progress.is_os_function:
             return await progress.resume_not_handled()
 
