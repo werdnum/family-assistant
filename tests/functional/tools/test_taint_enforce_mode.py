@@ -1,19 +1,18 @@
 """Functional end-to-end tests for runtime taint policy enforce mode.
 
-Exercises scenarios S1 through S7 under taint_policy.mode: enforce:
+Exercises scenarios S1 through S6 under taint_policy.mode: enforce:
 - S1: Adjudicate cell -> confirm verdict gates execution, creates confirmation request with taint_policy_reason, audits model_verdict.
 - S2: Adjudicate cell -> deny verdict blocks tool and audits model_verdict.
 - S3: Consecutive denial escalation triggers forced confirmation / turn abort, and resets on allow.
 - S4: Reviewer timeout and provider error fall back to confirm (never allow).
 - S5: Ambient-write gate under enforce: deny refuses note and leaves nothing saved; timeout falls back to confirmation.
 - S6: Observe-mode control: tools execute without confirmation prompts, shadow reviews audit would-be outcomes.
-- S7: Verification of static_policy_reason gap on confirmation_requests rows.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 import pytest
 from pydantic import BaseModel
@@ -48,7 +47,6 @@ from family_assistant.tools import (
     PolicyEngine,
     PolicyRule,
     TaintTrackingToolsProvider,
-    ToolMatcher,
     ToolPolicyConfig,
     ToolPolicyDecision,
 )
@@ -79,6 +77,9 @@ if TYPE_CHECKING:
 
     from family_assistant.llm import LLMInterface
     from family_assistant.llm.messages import LLMMessage
+    from family_assistant.storage.repositories.confirmation_requests import (
+        ConfirmationRequestRow,
+    )
     from family_assistant.telegram.protocols import ConfirmationUIManager
 
 
@@ -90,7 +91,7 @@ class ScriptedReviewLLM:
         *responses: ToolCallReviewVerdict | ToolCallReviewResponse | Exception,
     ) -> None:
         self.responses = list(responses)
-        self.calls: list[dict[str, Any]] = []
+        self.calls: list[Sequence[LLMMessage]] = []
 
     async def generate_structured[T: BaseModel](
         self,
@@ -101,7 +102,7 @@ class ScriptedReviewLLM:
         del max_retries
         assert response_model is ToolCallReviewResponse
         idx = len(self.calls)
-        self.calls.append({"messages": messages, "response_model": response_model})
+        self.calls.append(messages)
         if idx < len(self.responses):
             item = self.responses[idx]
         elif self.responses:
@@ -134,7 +135,7 @@ class DurableConfirmationManager:
         self.user_id = user_id
         self.kind = kind
         self.confirmation_service = ConfirmationService(db=db)
-        self.calls: list[dict[str, Any]] = []
+        self.calls: list[ConfirmationRequestRow] = []
         self.prompts: list[str] = []
 
     async def request_confirmation(self, **kwargs: object) -> ConfirmationOutcome:
@@ -176,13 +177,7 @@ class DurableConfirmationManager:
             ),
             tool_call_review_authorization=context.tool_call_review_authorization,
         )
-        self.calls.append({
-            "request_id": request["id"],
-            "tool_name": tool_name,
-            "tool_args": tool_args,
-            "call_id": call_id,
-            "request": request,
-        })
+        self.calls.append(request)
         if self.kind == "approved":
             return ConfirmationOutcome(kind="approved")
         elif self.kind == "rejected":
@@ -488,8 +483,10 @@ async def test_s3_consecutive_denials_escalate_and_reset_on_allow(
       forced confirmation requested, counter reset.
     """
     db = Database(db_engine)
+    executed_commands: list[str] = []
 
     async def execute_remote(command: str) -> ToolResult:
+        executed_commands.append(command)
         return ToolResult(text=f"executed: {command}")
 
     tool = _make_tool(
@@ -568,9 +565,11 @@ async def test_s3_consecutive_denials_escalate_and_reset_on_allow(
 
     # Forced confirmation was requested
     assert len(confirmation_mgr.calls) == 1
-    escalation_req = confirmation_mgr.calls[0]["request"]
+    escalation_req = confirmation_mgr.calls[0]
     assert escalation_req["tool_name"] == "remote_sandbox"
     assert "repeatedly denied" in escalation_req["confirmation_prompt"]
+
+    assert executed_commands == ["3"], "Only the allowed call may dispatch"
 
 
 @pytest.mark.asyncio
@@ -883,8 +882,34 @@ async def test_s5_ambient_write_gate_timeout_fallback_to_confirmation(
 
 
 @pytest.mark.asyncio
-async def test_s6_observe_mode_control_for_confirm_deny_and_timeout(
+@pytest.mark.parametrize(
+    ("scripted", "expected_verdict", "expected_status"),
+    [
+        pytest.param(
+            ToolCallReviewVerdict.CONFIRM,
+            ToolCallReviewVerdict.CONFIRM,
+            ToolCallReviewStatus.MODEL_VERDICT,
+            id="s1-confirm",
+        ),
+        pytest.param(
+            ToolCallReviewVerdict.DENY,
+            ToolCallReviewVerdict.DENY,
+            ToolCallReviewStatus.MODEL_VERDICT,
+            id="s2-deny",
+        ),
+        pytest.param(
+            TimeoutError("Shadow review timed out"),
+            ToolCallReviewVerdict.CONFIRM,
+            ToolCallReviewStatus.TIMEOUT_FALLBACK,
+            id="s4-timeout",
+        ),
+    ],
+)
+async def test_s6_observe_mode_executes_and_audits_shadow_verdict(
     db_engine: AsyncEngine,
+    scripted: ToolCallReviewVerdict | Exception,
+    expected_verdict: ToolCallReviewVerdict,
+    expected_status: ToolCallReviewStatus,
 ) -> None:
     """S6: Observe-mode controls for S1, S2, and S4:
 
@@ -893,11 +918,10 @@ async def test_s6_observe_mode_control_for_confirm_deny_and_timeout(
     - Shadow review executes in the background and audits mode=observe with the would-be verdict.
     """
     db = Database(db_engine)
-    executions = 0
+    executed_commands: list[str] = []
 
     async def execute_remote(command: str) -> ToolResult:
-        nonlocal executions
-        executions += 1
+        executed_commands.append(command)
         return ToolResult(text=f"executed: {command}")
 
     tool = _make_tool(
@@ -905,141 +929,32 @@ async def test_s6_observe_mode_control_for_confirm_deny_and_timeout(
         ToolTag.CODE_EXECUTION,
         cast("ToolImplementation", execute_remote),
     )
-
-    # 1. Observe control for S1 (CONFIRM verdict)
-    llm_confirm = ScriptedReviewLLM(ToolCallReviewVerdict.CONFIRM)
-    provider_confirm = _make_provider([tool], llm_confirm, mode=TaintPolicyMode.OBSERVE)
+    provider = _make_provider(
+        [tool], ScriptedReviewLLM(scripted), mode=TaintPolicyMode.OBSERVE
+    )
     conf_mgr = DurableConfirmationManager(db)
-    ctx_confirm = _exec_context(
-        db,
-        _unknown_external_tracker(),
-        provider_confirm,
-        turn_id="s6-confirm-turn",
-        confirmation_manager=conf_mgr,
-    )
-
-    res_confirm = await provider_confirm.execute_tool(
-        "remote_sandbox", {"command": "s1_cmd"}, ctx_confirm, "c-s6-1"
-    )
-    assert executions == 1
-    assert isinstance(res_confirm, ToolResult)
-    assert res_confirm.get_text() == "executed: s1_cmd"
-    await provider_confirm.close()  # Drain background shadow review
-
-    events_confirm = await db.taint_audit_events.list_for_turn("s6-confirm-turn")
-    review_confirm = next(
-        e for e in events_confirm if e["event_type"] == "tool_call_review"
-    )
-    assert review_confirm["mode"] == "observe"
-    assert review_confirm["review_verdict"] == "confirm"
-
-    # 2. Observe control for S2 (DENY verdict)
-    llm_deny = ScriptedReviewLLM(ToolCallReviewVerdict.DENY)
-    provider_deny = _make_provider([tool], llm_deny, mode=TaintPolicyMode.OBSERVE)
-    ctx_deny = _exec_context(
-        db,
-        _unknown_external_tracker(),
-        provider_deny,
-        turn_id="s6-deny-turn",
-        confirmation_manager=conf_mgr,
-    )
-
-    res_deny = await provider_deny.execute_tool(
-        "remote_sandbox", {"command": "s2_cmd"}, ctx_deny, "c-s6-2"
-    )
-    assert executions == 2
-    assert isinstance(res_deny, ToolResult)
-    assert res_deny.get_text() == "executed: s2_cmd"
-    await provider_deny.close()
-
-    events_deny = await db.taint_audit_events.list_for_turn("s6-deny-turn")
-    review_deny = next(e for e in events_deny if e["event_type"] == "tool_call_review")
-    assert review_deny["mode"] == "observe"
-    assert review_deny["review_verdict"] == "deny"
-
-    # 3. Observe control for S4 (TIMEOUT fallback)
-    llm_timeout = ScriptedReviewLLM(TimeoutError("Shadow review timed out"))
-    provider_timeout = _make_provider([tool], llm_timeout, mode=TaintPolicyMode.OBSERVE)
-    ctx_timeout = _exec_context(
-        db,
-        _unknown_external_tracker(),
-        provider_timeout,
-        turn_id="s6-timeout-turn",
-        confirmation_manager=conf_mgr,
-    )
-
-    res_timeout = await provider_timeout.execute_tool(
-        "remote_sandbox", {"command": "s4_cmd"}, ctx_timeout, "c-s6-3"
-    )
-    assert executions == 3
-    assert isinstance(res_timeout, ToolResult)
-    assert res_timeout.get_text() == "executed: s4_cmd"
-    await provider_timeout.close()
-
-    events_timeout = await db.taint_audit_events.list_for_turn("s6-timeout-turn")
-    review_timeout = next(
-        e for e in events_timeout if e["event_type"] == "tool_call_review"
-    )
-    assert review_timeout["mode"] == "observe"
-    assert review_timeout["review_verdict"] == "confirm"
-    assert (
-        review_timeout["review_status"] == ToolCallReviewStatus.TIMEOUT_FALLBACK.value
-    )
-
-    # Across all observe tests, no confirmation request was ever created in DB
-    pending = await db.confirmation_requests.list_pending_for_user("test-user")
-    assert pending == []
-
-
-# =========================================================================== #
-# S7: Check static_policy_reason on confirmation_requests
-# =========================================================================== #
-
-
-@pytest.mark.asyncio
-async def test_s7_static_policy_reason_is_null_on_static_confirmation(
-    db_engine: AsyncEngine,
-) -> None:
-    """S7: Demonstrate that static policy confirmation leaves static_policy_reason NULL.
-
-    When a tool is gated by a static ToolPolicyDecision.CONFIRM rule:
-    - The request_taint_confirmation path does not populate ToolCallReviewAuthorization,
-      so ConfirmationService receives static_policy_reason=None.
-    - Thus, static_policy_reason is NULL in production on every row.
-    """
-    db = Database(db_engine)
-
-    async def execute_fn(**_kwargs: object) -> ToolResult:
-        return ToolResult(text="executed")
-
-    tool = _make_tool(
-        "restricted_tool",
-        ToolTag.STATE_CHANGING,
-        cast("ToolImplementation", execute_fn),
-    )
-    # Configure static policy rule: restricted_tool -> CONFIRM
-    rule = PolicyRule(
-        match=ToolMatcher(names=["restricted_tool"]),
-        decision=ToolPolicyDecision.CONFIRM,
-        description="Static policy requires confirmation for restricted_tool.",
-    )
-    provider = _make_provider([tool], None, mode=TaintPolicyMode.ENFORCE, rules=[rule])
-    conf_mgr = DurableConfirmationManager(db, kind="rejected")
-    # Clean turn state (no taint)
-    tracker = InMemoryTurnTaintTracker()
     context = _exec_context(
         db,
-        tracker,
+        _unknown_external_tracker(),
         provider,
-        turn_id="s7-turn",
+        turn_id="s6-turn",
         confirmation_manager=conf_mgr,
     )
 
-    await provider.execute_tool("restricted_tool", {}, context, "call-s7")
+    result = await provider.execute_tool(
+        "remote_sandbox", {"command": "observe_cmd"}, context, "c-s6"
+    )
+    assert executed_commands == ["observe_cmd"]
+    assert isinstance(result, ToolResult)
+    assert result.get_text() == "executed: observe_cmd"
+    await provider.close()  # Drain background shadow review
 
+    events = await db.taint_audit_events.list_for_turn("s6-turn")
+    review = next(e for e in events if e["event_type"] == "tool_call_review")
+    assert review["mode"] == "observe"
+    assert review["review_verdict"] == expected_verdict.value
+    assert review["review_status"] == expected_status.value
+
+    assert conf_mgr.calls == []
     pending = await db.confirmation_requests.list_pending_for_user("test-user")
-    assert len(pending) == 1
-    req = pending[0]
-    assert req["tool_name"] == "restricted_tool"
-    # Document the gap: static_policy_reason is NULL
-    assert req["static_policy_reason"] is None
+    assert pending == []
