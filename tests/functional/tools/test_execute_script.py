@@ -1,7 +1,8 @@
 """Tests for the execute_script tool."""
 
+import logging
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -9,6 +10,7 @@ from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import AppConfig, KeychuteConfig
+from family_assistant.scripting.errors import ScriptTimeoutError
 from family_assistant.security.taint import TurnTaintState
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
@@ -685,3 +687,158 @@ while i < 5000:
     assert "... [output truncated] ..." in result.text
     # The surfaced text stays bounded rather than echoing all 5000 lines.
     assert len(result.text) < 32 * 1024
+
+
+def _logging_test_context(db_engine: AsyncEngine) -> ToolExecutionContext:
+    return ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test-conv",
+        user_name="test",
+        turn_id=None,
+        db_context=Database(engine=db_engine),
+        clock=None,
+        plugins=None,
+        event_sources=None,
+        attachment_registry=None,
+        processing_service=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
+
+
+def _error_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    return [
+        r
+        for r in caplog.records
+        if r.levelno >= logging.ERROR and r.name.startswith("family_assistant")
+    ]
+
+
+def _user_script_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    return [
+        r
+        for r in caplog.records
+        if r.name == "family_assistant.tools.execute_script"
+        and getattr(r, "error_category", None) == "user_script"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_execute_script_runtime_error_logs_at_info(
+    db_engine: AsyncEngine,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    ctx = _logging_test_context(db_engine)
+
+    with caplog.at_level(logging.INFO):
+        result = await execute_script_tool(ctx, "a + b", globals={"a": "hello", "b": 1})
+
+    assert result.text is not None
+    assert "Error: Script execution failed: TypeError" in result.text
+    assert "Script execution failed: Script execution failed:" not in result.text
+    assert isinstance(result.data, dict)
+    assert result.data["error_type"] == "execution_error"
+    assert not _error_records(caplog)
+    records = _user_script_records(caplog)
+    assert len(records) == 1
+    assert records[0].levelno == logging.INFO
+
+
+@pytest.mark.asyncio
+async def test_execute_script_syntax_error_does_not_log_at_error(
+    db_engine: AsyncEngine,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    ctx = _logging_test_context(db_engine)
+
+    with caplog.at_level(logging.INFO):
+        result = await execute_script_tool(ctx, "if True")
+
+    assert isinstance(result.data, dict)
+    assert result.data["error_type"] == "syntax_error"
+    assert not _error_records(caplog)
+
+
+@pytest.mark.asyncio
+async def test_execute_script_host_function_failure_logs_at_error(
+    db_engine: AsyncEngine,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A host function failing on its own (a provider outage, say) stays visible."""
+    ctx = _logging_test_context(db_engine)
+
+    def flaky_backend() -> str:
+        raise RuntimeError("provider unavailable")
+
+    with caplog.at_level(logging.INFO):
+        result = await execute_script_tool(
+            ctx, "flaky_backend()", globals={"flaky_backend": flaky_backend}
+        )
+
+    assert isinstance(result.data, dict)
+    assert result.data["error_type"] == "execution_error"
+    assert "provider unavailable" in result.data["error"]
+    error_records = _error_records(caplog)
+    assert len(error_records) == 1
+    assert "flaky_backend" in error_records[0].getMessage()
+    assert error_records[0].exc_info is not None
+
+
+@pytest.mark.asyncio
+async def test_execute_script_unexpected_engine_exception_logs_at_error(
+    db_engine: AsyncEngine,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    ctx = _logging_test_context(db_engine)
+
+    with (
+        patch(
+            "family_assistant.tools.execute_script.MontyEngine.evaluate_async",
+            side_effect=RuntimeError("Unexpected host failure"),
+        ),
+        caplog.at_level(logging.INFO),
+    ):
+        result = await execute_script_tool(ctx, "1 + 1")
+
+    assert result.text is not None
+    assert "Unexpected error executing script: Unexpected host failure" in result.text
+    error_records = _error_records(caplog)
+    assert len(error_records) == 1
+    assert (
+        "Unexpected error executing script: Unexpected host failure"
+        in error_records[0].getMessage()
+    )
+
+
+@pytest.mark.asyncio
+async def test_execute_script_timeout_downgraded_to_warning(
+    db_engine: AsyncEngine,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Script timeouts log at WARNING with user_script category, not ERROR."""
+    ctx = _logging_test_context(db_engine)
+
+    with (
+        patch(
+            "family_assistant.tools.execute_script.MontyEngine.evaluate_async",
+            side_effect=ScriptTimeoutError(
+                "Script execution timed out after 5.0 seconds", 5.0
+            ),
+        ),
+        caplog.at_level(logging.INFO),
+    ):
+        result = await execute_script_tool(ctx, "while True: pass")
+        assert result.text is not None
+        assert "timed out after 5.0 seconds" in result.text
+        assert isinstance(result.data, dict)
+        assert result.data["error_type"] == "timeout_error"
+
+    timeout_records = [
+        r
+        for r in caplog.records
+        if r.name == "family_assistant.tools.execute_script"
+        and getattr(r, "error_category", None) == "user_script"
+    ]
+    assert len(timeout_records) == 1
+    assert timeout_records[0].levelno == logging.WARNING

@@ -414,7 +414,7 @@ async def execute_script_tool(
         if e.line:
             error_msg += f" at line {e.line}"
         error_msg += f": {e!s}"
-        logger.error(error_msg)
+        logger.info(error_msg, extra={"error_category": "user_script"})
         return ToolResult(
             text=f"Error: {error_msg}",
             data={
@@ -426,7 +426,7 @@ async def execute_script_tool(
 
     except ScriptTimeoutError as e:
         error_msg = f"Script execution timed out after {e.timeout_seconds} seconds"
-        logger.error(error_msg)
+        logger.warning(error_msg, extra={"error_category": "user_script"})
         return ToolResult(
             text=_prepend_captured_output(f"Error: {error_msg}", output_buffer),
             data={
@@ -437,8 +437,9 @@ async def execute_script_tool(
         )
 
     except ScriptExecutionError as e:
-        error_msg = f"Script execution failed: {e!s}"
-        logger.error(error_msg)
+        detail = str(e).removeprefix("Script execution failed: ")
+        error_msg = f"Script execution failed: {detail}"
+        logger.info(error_msg, extra={"error_category": "user_script"})
         return ToolResult(
             text=_prepend_captured_output(f"Error: {error_msg}", output_buffer),
             data={

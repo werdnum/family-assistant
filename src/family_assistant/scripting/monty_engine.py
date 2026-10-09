@@ -238,7 +238,6 @@ class MontyEngine:
                 f"Script execution timed out after "
                 f"{self.config.max_execution_time} seconds"
             )
-            logger.error(error_msg)
             raise ScriptTimeoutError(error_msg, self.config.max_execution_time) from e
 
     async def _evaluate_async_impl(
@@ -264,10 +263,10 @@ class MontyEngine:
             raise ScriptSyntaxError(error_str, line=line) from e
 
         except pydantic_monty.MontyRuntimeError as e:
-            raise ScriptExecutionError(f"Script execution failed: {e}") from e
+            raise ScriptExecutionError(str(e)) from e
 
         except pydantic_monty.MontyError as e:
-            raise ScriptExecutionError(f"Script execution failed: {e}") from e
+            raise ScriptExecutionError(str(e)) from e
 
         except (ScriptSyntaxError, ScriptExecutionError, ScriptTimeoutError):
             raise
@@ -275,7 +274,7 @@ class MontyEngine:
         except Exception as e:
             error_msg = f"Script execution failed: {e}"
             logger.exception(error_msg)
-            raise ScriptExecutionError(error_msg) from e
+            raise ScriptExecutionError(str(e)) from e
 
     async def _run_monty_evaluation(
         self,
@@ -325,9 +324,7 @@ class MontyEngine:
         if isinstance(progress, pydantic_monty.AsyncNameLookupSnapshot):
             return await progress.resume()
         if not isinstance(progress, pydantic_monty.AsyncFunctionSnapshot):
-            raise ScriptExecutionError(
-                f"Unexpected Monty progress type: {type(progress)}"
-            )
+            raise RuntimeError(f"Unexpected Monty progress type: {type(progress)}")
         if progress.is_os_function:
             return await progress.resume_not_handled()
 
@@ -344,6 +341,14 @@ class MontyEngine:
             if asyncio.iscoroutine(result):
                 result = await result
         except Exception as e:
+            # Logged here because once resumed into the sandbox it reaches the
+            # caller indistinguishable from a script's own error. Exception type
+            # does not tell a host outage from a script's bad arguments, so every
+            # host failure is treated as possibly ours.
+            logger.exception(
+                "Host function %s failed during script execution",
+                progress.function_name,
+            )
             return await progress.resume({"exception": e})
         return await progress.resume({"return_value": result})
 
