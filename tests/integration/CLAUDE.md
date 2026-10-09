@@ -92,12 +92,16 @@ query parameters, and neither records on exception.
 
 ## VCR Compatibility Patches
 
-VCR.py 5.x defines `MockClientResponse.content` as a read-only property, but aiohttp 3.12+ and
-`homeassistant_api` assign to it, giving
+VCR.py 8.3.0 and earlier define `MockClientResponse.content` as a read-only property, but
+`homeassistant_api`'s async client assigns to it (its aiohttp-client-cache session does, when it
+caches a response), giving
 `AttributeError: "property 'content' of 'MockClientResponse' object has no setter"`. A
 session-scoped autouse fixture in `tests/integration/home_assistant/vcr_patches.py` swaps in a
 property with a no-op setter (VCR reconstructs content from `_body` anyway) and restores the
-original at teardown.
+original at teardown. VCR.py releases that include
+[kevin1024/vcrpy#1055](https://github.com/kevin1024/vcrpy/pull/1055) make `content` a plain
+attribute, which can be assigned, so the fixture detects them and patches nothing. Delete the
+fixture (and its import in `conftest.py`) once `uv.lock` has such a release.
 
 `tests/integration/llm/streaming_mocks.py` carries a related workaround: VCR's MockStream lacks
 `readany()`, which aiohttp 3.12+ requires, so streaming tests use a custom stream reader. Tests that
