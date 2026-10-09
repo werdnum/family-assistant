@@ -10,7 +10,7 @@ from alembic import command
 from family_assistant.storage.message_history import message_history_table
 
 _ALEMBIC_INI = Path(__file__).resolve().parents[3] / "alembic.ini"
-_PRIOR_HEAD = "delete_orphaned_note_documents"
+_PRIOR_HEAD = "add_conversation_summaries"
 _CLEANUP_HEAD = "delete_dup_web_callback_replies"
 _NOW = datetime(2026, 10, 1, tzinfo=UTC)
 
