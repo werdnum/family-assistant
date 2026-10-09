@@ -303,7 +303,6 @@ async def test_s1_adjudicate_confirm_gates_execution_and_persists_reason(
     - Its taint_policy_reason is non-NULL (carries policy cell reason).
     - Audit records mode=enforce, requested_outcome=adjudicate, effective_outcome=confirm,
       review_status=model_verdict.
-    - Sighted human approval subsequently allows the tool to run.
     """
     db = Database(db_engine)
     executed = False
@@ -321,7 +320,6 @@ async def test_s1_adjudicate_confirm_gates_execution_and_persists_reason(
     llm = ScriptedReviewLLM(ToolCallReviewVerdict.CONFIRM)
     provider = _make_provider([tool], llm, mode=TaintPolicyMode.ENFORCE)
 
-    # 1. User has not approved (rejected outcome) -> tool must NOT execute
     confirmation_mgr = DurableConfirmationManager(db, kind="rejected")
     tracker = _unknown_external_tracker()
     context = _exec_context(
@@ -369,30 +367,49 @@ async def test_s1_adjudicate_confirm_gates_execution_and_persists_reason(
     assert review_eval["review_verdict"] == "confirm"
     assert review_eval["effective_outcome"] == "confirm"
 
-    # 2. Sighted human approval branch -> tool executes
-    llm_approved = ScriptedReviewLLM(ToolCallReviewVerdict.CONFIRM)
-    provider_approved = _make_provider(
-        [tool], llm_approved, mode=TaintPolicyMode.ENFORCE
+
+@pytest.mark.asyncio
+async def test_s1_adjudicate_confirm_executes_after_sighted_approval(
+    db_engine: AsyncEngine,
+) -> None:
+    """S1 approval branch: sighted human approval of a confirm verdict runs the tool."""
+    db = Database(db_engine)
+    executed_commands: list[str] = []
+
+    async def execute_remote(command: str) -> ToolResult:
+        executed_commands.append(command)
+        return ToolResult(text=f"executed: {command}")
+
+    tool = _make_tool(
+        "remote_sandbox",
+        ToolTag.CODE_EXECUTION,
+        cast("ToolImplementation", execute_remote),
+    )
+    provider = _make_provider(
+        [tool],
+        ScriptedReviewLLM(ToolCallReviewVerdict.CONFIRM),
+        mode=TaintPolicyMode.ENFORCE,
     )
     approval_mgr = DurableConfirmationManager(db, kind="approved")
-    context_approved = _exec_context(
+    context = _exec_context(
         db,
         _unknown_external_tracker(),
-        provider_approved,
+        provider,
         turn_id="s1-turn-approved",
         confirmation_manager=approval_mgr,
     )
 
-    result_approved = await provider_approved.execute_tool(
+    result = await provider.execute_tool(
         "remote_sandbox",
         {"command": "echo approved"},
-        context_approved,
+        context,
         "call-s1-2",
     )
 
-    assert executed is True, "Tool must execute after approval"
-    assert isinstance(result_approved, ToolResult)
-    assert result_approved.get_text() == "executed: echo approved"
+    assert len(approval_mgr.calls) == 1, "Approval must be requested before running"
+    assert executed_commands == ["echo approved"]
+    assert isinstance(result, ToolResult)
+    assert result.get_text() == "executed: echo approved"
 
 
 # =========================================================================== #
@@ -578,8 +595,10 @@ async def test_s3_escalation_turn_terminated_when_confirmation_unavailable(
 ) -> None:
     """S3 variant: When confirmation channel is unavailable, repeated denials terminate turn."""
     db = Database(db_engine)
+    executed_commands: list[str] = []
 
     async def execute_remote(command: str) -> ToolResult:
+        executed_commands.append(command)
         return ToolResult(text=f"executed: {command}")
 
     tool = _make_tool(
@@ -624,6 +643,7 @@ async def test_s3_escalation_turn_terminated_when_confirmation_unavailable(
     ]
     assert len(escalation_events) == 1
     assert escalation_events[0]["review_status"] == "escalation_turn_terminated"
+    assert executed_commands == [], "Denied calls must never dispatch"
 
 
 # =========================================================================== #
