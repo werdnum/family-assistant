@@ -8,15 +8,17 @@ failing on an active PostgreSQL transaction.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import insert, text
+from sqlalchemy.exc import DBAPIError
 
 from family_assistant.storage import error_logs_table
-from family_assistant.storage.database import Database
+from family_assistant.storage.database import Database, DatabaseTransaction
 from family_assistant.tools.engineering import query_database, read_error_logs
 from family_assistant.tools.types import ToolExecutionContext
 
@@ -167,14 +169,107 @@ async def test_query_database_returns_real_table_data(
 @pytest.mark.asyncio
 async def test_query_database_invalid_table_returns_error(
     db_engine: AsyncEngine,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Querying a non-existent table should return an error, not crash."""
+    """Querying a non-existent table should return an error, not crash, and not log as ERROR."""
     db = Database(engine=db_engine)
     exec_context = _make_exec_context(db)
-    result = await query_database(exec_context, "SELECT * FROM nonexistent_table_xyz")
+    with caplog.at_level(logging.DEBUG):
+        result = await query_database(
+            exec_context, "SELECT * FROM nonexistent_table_xyz"
+        )
     data = result.get_data()
     assert isinstance(data, dict)
     assert "error" in data
+
+    # Verify no ERROR logs were emitted (neither from Database.atomic nor query_database)
+    error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert not error_records, f"Expected no ERROR logs, got: {error_records}"
+
+    # Verify query_database logged at WARNING without exc_info
+    warning_records = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING
+        and r.name == "family_assistant.tools.engineering"
+    ]
+    assert len(warning_records) == 1
+    assert "query_database failed" in warning_records[0].message
+    assert warning_records[0].exc_info is None
+
+
+@pytest.mark.asyncio
+async def test_query_database_syntax_error_returns_error_without_error_log(
+    db_engine: AsyncEngine,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Ad-hoc SQL syntax mistakes should return an error without logging ERROR."""
+    db = Database(engine=db_engine)
+    exec_context = _make_exec_context(db)
+    with caplog.at_level(logging.DEBUG):
+        result = await query_database(exec_context, "SELECT FROM")
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert "error" in data
+
+    error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert not error_records, f"Expected no ERROR logs, got: {error_records}"
+
+
+@pytest.mark.asyncio
+async def test_normal_app_database_error_still_logs_error(
+    db_engine: AsyncEngine,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Normal application database errors must still log at ERROR level with exc_info."""
+    db = Database(engine=db_engine)
+    with caplog.at_level(logging.DEBUG), pytest.raises(DBAPIError):
+        await db.execute(text("SELECT * FROM nonexistent_table_app_code"))
+
+    error_records = [
+        r
+        for r in caplog.records
+        if r.levelno >= logging.ERROR and r.name == "family_assistant.storage.database"
+    ]
+    assert len(error_records) == 1
+    assert "Non-retryable database error" in error_records[0].message
+    assert error_records[0].exc_info is not None
+
+
+@pytest.mark.asyncio
+async def test_database_atomic_log_errors_control(
+    db_engine: AsyncEngine,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Database.atomic log_errors parameter controls whether errors are logged as ERROR."""
+    db = Database(engine=db_engine)
+
+    async def _failing_query(txn: DatabaseTransaction) -> None:
+        await txn.connection.execute(text("SELECT * FROM nonexistent_suppressed"))
+
+    # When log_errors=False, no ERROR log is emitted
+    with caplog.at_level(logging.DEBUG), pytest.raises(DBAPIError):
+        await db.atomic(_failing_query, log_errors=False)
+
+    error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert not error_records, (
+        f"Expected no ERROR logs when suppressed, got: {error_records}"
+    )
+
+    caplog.clear()
+
+    # When log_errors=True, ERROR log with traceback is emitted
+    with caplog.at_level(logging.DEBUG), pytest.raises(DBAPIError):
+        await db.atomic(_failing_query, log_errors=True)
+
+    error_records = [
+        r
+        for r in caplog.records
+        if r.levelno >= logging.ERROR and r.name == "family_assistant.storage.database"
+    ]
+    assert len(error_records) == 1
+    assert "Non-retryable database error" in error_records[0].message
+    assert error_records[0].exc_info is not None
 
 
 # --- read_error_logs tests ---

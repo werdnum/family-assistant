@@ -415,6 +415,8 @@ class DatabaseExecutor(ABC):
     async def atomic[T](
         self,
         body: Callable[[DatabaseTransaction], Awaitable[T]],
+        *,
+        log_errors: bool = True,
     ) -> T:
         """Run ``body`` as one atomic unit.
 
@@ -778,6 +780,8 @@ class Database(DatabaseExecutor):
     async def atomic[T](
         self,
         body: Callable[[DatabaseTransaction], Awaitable[T]],
+        *,
+        log_errors: bool = True,
     ) -> T:
         """Run ``body`` in its own transaction, replaying it on retryable failure."""
         _reject_ambient_transaction("Database.atomic()")
@@ -789,20 +793,34 @@ class Database(DatabaseExecutor):
                     return await body(txn)
             except DBAPIError as e:
                 if not _is_retryable(e):
-                    logger.exception(f"Non-retryable database error: {e}")
+                    if log_errors:
+                        logger.exception(f"Non-retryable database error: {e}")
+                    else:
+                        logger.debug(f"Non-retryable database error (suppressed): {e}")
                     raise
                 if attempt == self.max_retries - 1:
-                    logger.error(
-                        "Max retries exceeded for retryable database error. Raising."
-                    )
+                    if log_errors:
+                        logger.error(
+                            "Max retries exceeded for retryable database error. Raising."
+                        )
+                    else:
+                        logger.debug(
+                            "Max retries exceeded for retryable database error (suppressed). Raising."
+                        )
                     raise
                 delay = self.base_delay * (2**attempt) + random.uniform(
                     0, self.base_delay
                 )
-                logger.warning(
-                    f"Retryable DBAPIError (attempt {attempt + 1}/{self.max_retries}): "
-                    f"{e}. Retrying in {delay:.2f}s."
-                )
+                if log_errors:
+                    logger.warning(
+                        f"Retryable DBAPIError (attempt {attempt + 1}/{self.max_retries}): "
+                        f"{e}. Retrying in {delay:.2f}s."
+                    )
+                else:
+                    logger.debug(
+                        f"Retryable DBAPIError (attempt {attempt + 1}/{self.max_retries}): "
+                        f"{e}. Retrying in {delay:.2f}s."
+                    )
                 await asyncio.sleep(delay)
 
         raise RuntimeError("Database operation failed after multiple retries")
@@ -921,6 +939,8 @@ class DatabaseTransaction(DatabaseExecutor):
     async def atomic[T](
         self,
         body: Callable[[DatabaseTransaction], Awaitable[T]],
+        *,
+        log_errors: bool = True,
     ) -> T:
         """Join this transaction: run ``body`` once, with retry owned by its opener."""
         return await body(self)

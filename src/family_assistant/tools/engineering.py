@@ -21,6 +21,7 @@ import aiofiles
 import httpx
 import sqlparse
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 
 from family_assistant.build_info import get_build_date, get_git_commit
 from family_assistant.config_inspection import (
@@ -290,7 +291,7 @@ async def query_database(
         return [dict(row) for row in result.mappings().fetchmany(_MAX_QUERY_ROWS + 1)]
 
     try:
-        rows = await exec_context.db_context.atomic(_run)
+        rows = await exec_context.db_context.atomic(_run, log_errors=False)
 
         if len(rows) > _MAX_QUERY_ROWS:
             rows = rows[:_MAX_QUERY_ROWS]
@@ -310,6 +311,13 @@ async def query_database(
                 "truncated": False,
             }
         )
+    except DBAPIError as e:
+        if e.connection_invalidated:
+            # A dropped connection is the database failing, not the query.
+            logger.exception("query_database failed: %s", e)
+        else:
+            logger.warning("query_database failed: %s", e)
+        return ToolResult(data={"error": f"Query failed: {e}"})
     except Exception as e:
         logger.exception("query_database failed: %s", e)
         return ToolResult(data={"error": f"Query failed: {e}"})
