@@ -60,9 +60,7 @@ def mock_genai_client() -> Generator[MagicMock]:
 @pytest.mark.asyncio
 async def test_deep_research_stream_initiation(mock_genai_client: MagicMock) -> None:
     """Test that deep research interaction is correctly initiated."""
-    client = GoogleGenAIClient(
-        api_key="test", model="deep-research-pro-preview-12-2025"
-    )
+    client = GoogleGenAIClient(api_key="test", model="deep-research-preview-04-2026")
 
     # Mock stream response
     async def mock_stream_generator() -> AsyncGenerator[MagicMock]:
@@ -108,7 +106,7 @@ async def test_deep_research_stream_initiation(mock_genai_client: MagicMock) -> 
     # Check inputs
     assert "System: You are a helpful researcher." in call_kwargs["input"]
     assert "Research quantum computing." in call_kwargs["input"]
-    assert call_kwargs["agent"] == "deep-research-pro-preview-12-2025"
+    assert call_kwargs["agent"] == "deep-research-preview-04-2026"
     assert call_kwargs["background"] is True
     assert call_kwargs["stream"] is True
     # previous_interaction_id should be absent if not provided
@@ -209,9 +207,7 @@ async def test_deep_research_replays_interactions_2x_stream_schema(
 @pytest.mark.asyncio
 async def test_deep_research_continuation(mock_genai_client: MagicMock) -> None:
     """Test that deep research uses previous_interaction_id from history."""
-    client = GoogleGenAIClient(
-        api_key="test", model="deep-research-pro-preview-12-2025"
-    )
+    client = GoogleGenAIClient(api_key="test", model="deep-research-preview-04-2026")
 
     # Mock stream response (minimal)
     async def mock_stream_generator() -> AsyncGenerator[MagicMock]:
@@ -250,9 +246,7 @@ async def test_deep_research_pre_content_error_raises(
     mock_genai_client: MagicMock,
 ) -> None:
     """Pre-content errors should raise typed exceptions (enabling retry/fallback)."""
-    client = GoogleGenAIClient(
-        api_key="test", model="deep-research-pro-preview-12-2025"
-    )
+    client = GoogleGenAIClient(api_key="test", model="deep-research-preview-04-2026")
 
     mock_genai_client.aio.interactions.create = AsyncMock(
         side_effect=Exception("429 Resource has been exhausted")
@@ -270,9 +264,7 @@ async def test_deep_research_post_content_error_yields_error_and_done(
     mock_genai_client: MagicMock,
 ) -> None:
     """Post-content errors should yield error event with error_type, followed by done."""
-    client = GoogleGenAIClient(
-        api_key="test", model="deep-research-pro-preview-12-2025"
-    )
+    client = GoogleGenAIClient(api_key="test", model="deep-research-preview-04-2026")
 
     async def mock_stream_with_error() -> AsyncGenerator[MagicMock]:
         mock_start = MagicMock()
@@ -318,9 +310,7 @@ async def test_deep_research_stream_error_event_maps_code(
     mock_genai_client: MagicMock,
 ) -> None:
     """ErrorEvent with error.code should be mapped to the correct typed exception."""
-    client = GoogleGenAIClient(
-        api_key="test", model="deep-research-pro-preview-12-2025"
-    )
+    client = GoogleGenAIClient(api_key="test", model="deep-research-preview-04-2026")
 
     async def mock_stream_with_error_event() -> AsyncGenerator[MagicMock]:
         mock_start = MagicMock()
@@ -353,9 +343,7 @@ async def test_deep_research_stream_error_event_post_content(
     mock_genai_client: MagicMock,
 ) -> None:
     """ErrorEvent after content should yield error with error_type metadata."""
-    client = GoogleGenAIClient(
-        api_key="test", model="deep-research-pro-preview-12-2025"
-    )
+    client = GoogleGenAIClient(api_key="test", model="deep-research-preview-04-2026")
 
     async def mock_stream() -> AsyncGenerator[MagicMock]:
         mock_start = MagicMock()
@@ -406,9 +394,7 @@ async def test_deep_research_terminal_status_update_raises_before_content(
     status: str,
 ) -> None:
     """Terminal non-success status updates before content should raise."""
-    client = GoogleGenAIClient(
-        api_key="test", model="deep-research-pro-preview-12-2025"
-    )
+    client = GoogleGenAIClient(api_key="test", model="deep-research-preview-04-2026")
 
     async def mock_stream_failed() -> AsyncGenerator[MagicMock]:
         mock_start = MagicMock()
@@ -442,9 +428,7 @@ async def test_deep_research_terminal_status_update_yields_error_after_content(
     status: str,
 ) -> None:
     """Terminal non-success status updates after content should yield an error event."""
-    client = GoogleGenAIClient(
-        api_key="test", model="deep-research-pro-preview-12-2025"
-    )
+    client = GoogleGenAIClient(api_key="test", model="deep-research-preview-04-2026")
 
     async def mock_stream() -> AsyncGenerator[MagicMock]:
         mock_start = MagicMock()
@@ -485,9 +469,7 @@ async def test_deep_research_sdk_status_code_mapping(
     mock_genai_client: MagicMock,
 ) -> None:
     """SDK exceptions with status_code should be mapped to typed errors."""
-    client = GoogleGenAIClient(
-        api_key="test", model="deep-research-pro-preview-12-2025"
-    )
+    client = GoogleGenAIClient(api_key="test", model="deep-research-preview-04-2026")
 
     # Create an exception that looks like an SDK APIStatusError (has status_code)
     sdk_error = Exception("The model is not found")
@@ -507,9 +489,7 @@ async def test_deep_research_unknown_error_code_yields_generic(
     mock_genai_client: MagicMock,
 ) -> None:
     """Unknown error codes should produce LLMProviderError."""
-    client = GoogleGenAIClient(
-        api_key="test", model="deep-research-pro-preview-12-2025"
-    )
+    client = GoogleGenAIClient(api_key="test", model="deep-research-preview-04-2026")
 
     async def mock_stream() -> AsyncGenerator[MagicMock]:
         mock_start = MagicMock()
@@ -537,13 +517,12 @@ async def test_deep_research_unknown_error_code_yields_generic(
 @pytest.mark.parametrize(
     "model_id",
     [
-        "deep-research-pro-preview-12-2025",
         "deep-research-preview-04-2026",
         "deep-research-max-preview-04-2026",
     ],
 )
 def test_is_deep_research_model_matches_all_tiers(model_id: str) -> None:
-    """Both the legacy preview and the 04-2026 regular/max tiers should route to deep research."""
+    """Both the 04-2026 regular and max tiers should route to deep research."""
     assert is_deep_research_model(model_id) is True
     assert is_interactions_agent_model(model_id) is True
     assert is_antigravity_model(model_id) is False
