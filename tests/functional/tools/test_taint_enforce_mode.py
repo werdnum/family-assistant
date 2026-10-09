@@ -71,7 +71,7 @@ from tests.functional.notes.ambient_helpers import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Awaitable, Callable, Sequence
 
     from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -130,8 +130,10 @@ class DurableConfirmationManager:
         db: Database,
         user_id: str = "test-user",
         kind: Literal["approved", "rejected", "completed"] = "rejected",
+        on_prompt: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self.db = db
+        self.on_prompt = on_prompt
         self.user_id = user_id
         self.kind = kind
         self.confirmation_service = ConfirmationService(db=db)
@@ -142,6 +144,8 @@ class DurableConfirmationManager:
         """UI manager protocol for named sink confirmations (ambient admission)."""
         prompt_text = str(kwargs.get("prompt_text", ""))
         self.prompts.append(prompt_text)
+        if self.on_prompt is not None:
+            await self.on_prompt()
         return ConfirmationOutcome(
             kind=cast("Literal['approved', 'rejected', 'completed']", self.kind)
         )
@@ -848,7 +852,18 @@ async def test_s5_ambient_write_gate_timeout_fallback_to_confirmation(
     db = Database(db_engine)
     llm = ScriptedReviewLLM(TimeoutError("Admission reviewer timed out"))
     provider = _make_provider([], llm, mode=TaintPolicyMode.ENFORCE)
-    confirmation_mgr = DurableConfirmationManager(db, kind="approved")
+    prompt_text_at_confirmation: list[str] = []
+
+    async def capture_prompt_context() -> None:
+        prompt_text_at_confirmation.append(
+            "\n".join(
+                await notes_provider(db).get_context_fragments(acting_user_id=None)
+            )
+        )
+
+    confirmation_mgr = DurableConfirmationManager(
+        db, kind="approved", on_prompt=capture_prompt_context
+    )
     tracker = _unknown_external_tracker()
     context = _exec_context(
         db,
@@ -868,6 +883,10 @@ async def test_s5_ambient_write_gate_timeout_fallback_to_confirmation(
     assert "Packing List" in result
     assert len(confirmation_mgr.prompts) == 1
     assert "Passport, tickets" in confirmation_mgr.prompts[0]
+    assert len(prompt_text_at_confirmation) == 1
+    assert "Passport, tickets" not in prompt_text_at_confirmation[0], (
+        "Note must not reach prompts before approval"
+    )
 
     # Stored note has MACHINE_REVIEWED tier
     assert await stored_tier(db, "Packing List") is SourceTrustTier.MACHINE_REVIEWED
