@@ -1,13 +1,16 @@
 """Data migration: delete the second copies of web callback replies."""
 
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
 from alembic.config import Config
-from sqlalchemy import create_engine, select
+from sqlalchemy import Engine, create_engine, insert, select
 
 from alembic import command
 from family_assistant.storage.message_history import message_history_table
+from family_assistant.storage.vector import DocumentRecord
 
 _ALEMBIC_INI = Path(__file__).resolve().parents[3] / "alembic.ini"
 _PRIOR_HEAD = "add_conversation_summaries"
@@ -35,7 +38,8 @@ def _row(
     }
 
 
-def test_deletes_only_copies_their_canonical_row_points_at(tmp_path: Path) -> None:
+@pytest.fixture
+def migrated_engine(tmp_path: Path) -> Iterator[Engine]:
     engine = create_engine(f"sqlite:///{tmp_path / 'duplicates.db'}")
     try:
         config = Config(str(_ALEMBIC_INI))
@@ -68,16 +72,43 @@ def test_deletes_only_copies_their_canonical_row_points_at(tmp_path: Path) -> No
                     _row(7, content="tg", interface_type="telegram"),
                 ],
             )
+            conn.execute(
+                insert(DocumentRecord),
+                [
+                    {
+                        "id": 1,
+                        "source_type": "message_history",
+                        "source_id": "message_row:2",
+                    },
+                    {
+                        "id": 2,
+                        "source_type": "message_history",
+                        "source_id": "message_row:3",
+                    },
+                ],
+            )
 
         # ast-grep-ignore: no-raw-transaction-management - test fixture setup, outside the application transaction model
         with engine.begin() as conn:
             config.attributes["connection"] = conn
             command.upgrade(config, _CLEANUP_HEAD)
 
-        with engine.connect() as conn:
-            remaining = set(
-                conn.execute(select(message_history_table.c.internal_id)).scalars()
-            )
-        assert remaining == {1, 3, 4, 5, 6, 7}
+        yield engine
     finally:
         engine.dispose()
+
+
+def test_deletes_only_copies_their_canonical_row_points_at(
+    migrated_engine: Engine,
+) -> None:
+    with migrated_engine.connect() as conn:
+        remaining = set(
+            conn.execute(select(message_history_table.c.internal_id)).scalars()
+        )
+    assert remaining == {1, 3, 4, 5, 6, 7}
+
+
+def test_deletes_the_copies_search_documents(migrated_engine: Engine) -> None:
+    with migrated_engine.connect() as conn:
+        remaining = set(conn.execute(select(DocumentRecord.id)).scalars())
+    assert remaining == {2}

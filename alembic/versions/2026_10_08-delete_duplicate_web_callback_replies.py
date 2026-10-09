@@ -38,6 +38,11 @@ def _history() -> sa.TableClause:
 attachment_metadata = sa.table(
     "attachment_metadata", sa.column("message_id", sa.Integer)
 )
+documents = sa.table(
+    "documents",
+    sa.column("source_type", sa.String),
+    sa.column("source_id", sa.Text),
+)
 
 
 def upgrade() -> None:
@@ -65,6 +70,19 @@ def upgrade() -> None:
         ),
         ~sa.exists().where(attachment_metadata.c.message_id == copy.c.internal_id),
         ~sa.exists().where(other.c.thread_root_id == copy.c.internal_id),
+    )
+    # A row without a turn is indexed on its own, under ``message_row:<id>``.
+    # Its embeddings go with the document through ``ON DELETE CASCADE`` on
+    # PostgreSQL. Deleted first, while the copies still identify them.
+    indexed_ids = sa.select(
+        sa.literal("message_row:", sa.String)
+        + sa.cast(duplicate_ids.subquery().c.internal_id, sa.String)
+    )
+    op.execute(
+        sa.delete(documents).where(
+            documents.c.source_type == "message_history",
+            documents.c.source_id.in_(indexed_ids),
+        )
     )
     history = _history()
     op.execute(sa.delete(history).where(history.c.internal_id.in_(duplicate_ids)))
