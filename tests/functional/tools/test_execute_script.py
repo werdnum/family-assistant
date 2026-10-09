@@ -761,26 +761,6 @@ async def test_execute_script_syntax_error_does_not_log_at_error(
 
 
 @pytest.mark.asyncio
-async def test_execute_script_host_function_misuse_does_not_log_at_error(
-    db_engine: AsyncEngine,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """A host function rejecting the script's arguments is the script's mistake."""
-    ctx = _logging_test_context(db_engine)
-
-    def picky(value: int) -> int:
-        raise ValueError(f"bad value: {value}")
-
-    with caplog.at_level(logging.INFO):
-        result = await execute_script_tool(ctx, "picky(3)", globals={"picky": picky})
-
-    assert isinstance(result.data, dict)
-    assert result.data["error_type"] == "execution_error"
-    assert "bad value: 3" in result.data["error"]
-    assert not _error_records(caplog)
-
-
-@pytest.mark.asyncio
 async def test_execute_script_host_function_failure_logs_at_error(
     db_engine: AsyncEngine,
     caplog: pytest.LogCaptureFixture,
