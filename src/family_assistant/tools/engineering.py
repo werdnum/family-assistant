@@ -312,7 +312,11 @@ async def query_database(
             }
         )
     except DBAPIError as e:
-        logger.warning("query_database failed: %s", e)
+        if e.connection_invalidated:
+            # A dropped connection is the database failing, not the query.
+            logger.exception("query_database failed: %s", e)
+        else:
+            logger.warning("query_database failed: %s", e)
         return ToolResult(data={"error": f"Query failed: {e}"})
     except Exception as e:
         logger.exception("query_database failed: %s", e)

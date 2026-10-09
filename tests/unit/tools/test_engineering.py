@@ -174,6 +174,30 @@ class TestQueryDatabase:
         assert warning_records[0].exc_info is None
 
     @pytest.mark.asyncio
+    async def test_dropped_connection_logged_at_error(
+        self,
+        exec_context: ToolExecutionContext,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        exec_context.db_context.atomic = AsyncMock(
+            side_effect=DBAPIError(
+                "SELECT 1",
+                {},
+                Exception("server closed the connection"),
+                connection_invalidated=True,
+            )
+        )
+        with caplog.at_level(logging.DEBUG):
+            result = await query_database(exec_context, "SELECT 1")
+
+        data = result.get_data()
+        assert isinstance(data, dict)
+        assert "server closed the connection" in data["error"]
+        error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert len(error_records) == 1
+        assert error_records[0].exc_info is not None
+
+    @pytest.mark.asyncio
     async def test_passes_log_errors_false_to_atomic(
         self,
         exec_context: ToolExecutionContext,
