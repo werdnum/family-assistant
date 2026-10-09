@@ -22,13 +22,13 @@ async def test_deep_research_integration_simple_query() -> None:
     This test verifies that the client can successfully initiate a deep research session,
     stream events (including thoughts and content), and complete successfully.
 
-    This test uses a preview model (deep-research-pro-preview-12-2025).
+    This test uses a preview model (deep-research-preview-04-2026).
     """
     if not os.getenv("GEMINI_API_KEY"):
         pytest.skip("GEMINI_API_KEY not set")
 
     client = GoogleGenAIClient(
-        api_key=os.environ["GEMINI_API_KEY"], model="deep-research-pro-preview-12-2025"
+        api_key=os.environ["GEMINI_API_KEY"], model="deep-research-preview-04-2026"
     )
 
     messages = [
