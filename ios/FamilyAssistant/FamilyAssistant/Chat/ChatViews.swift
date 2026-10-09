@@ -351,7 +351,7 @@ private struct ConversationRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(conversation.lastMessage.isEmpty ? "New chat" : conversation.lastMessage)
+                Text(conversation.displayTitle)
                     .lineLimit(2)
                     .font(.headline)
                 Spacer()

@@ -848,7 +848,10 @@ final class ChatViewModel {
             conversationID: conversationID,
             lastMessage: preview,
             lastTimestamp: Date(),
-            messageCount: (existing?.messageCount ?? 0) + 1
+            messageCount: (existing?.messageCount ?? 0) + 1,
+            // Keep the existing label while the bump is pending; the server
+            // refreshes it once the conversation goes quiet.
+            summary: existing?.summary
         )
         conversations.removeAll { $0.conversationID == conversationID }
         conversations.insert(summary, at: 0)

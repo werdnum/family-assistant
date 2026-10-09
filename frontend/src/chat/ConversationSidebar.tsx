@@ -196,7 +196,7 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
                     data-conversation-id={conv.conversation_id}
                   >
                     <div className="text-sm leading-snug line-clamp-2 break-words mb-1">
-                      {conv.last_message}
+                      {conv.summary || conv.last_message}
                     </div>
                     {conv.match_excerpt && (
                       <div

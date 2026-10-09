@@ -52,14 +52,26 @@ struct ChatConversationSummary: Codable, Equatable, Identifiable {
     let lastMessage: String
     let lastTimestamp: Date
     let messageCount: Int
+    /// Generated one-line summary; absent until the server has summarized the
+    /// conversation, when the list falls back to the last message.
+    var summary: String?
     /// Present only on search results: a snippet of a message that matched.
     var matchExcerpt: String?
 
     var id: String { conversationID }
 
+    /// What the conversation list labels this row with.
+    var displayTitle: String {
+        if let summary, !summary.isEmpty {
+            return summary
+        }
+        return lastMessage.isEmpty ? "New chat" : lastMessage
+    }
+
     enum CodingKeys: String, CodingKey {
         case conversationID = "conversation_id"
         case lastMessage = "last_message"
+        case summary
         case lastTimestamp = "last_timestamp"
         case messageCount = "message_count"
         case matchExcerpt = "match_excerpt"
