@@ -168,7 +168,8 @@ The reviewer's context is a typed structure assembled deterministically:
 
 - **The arguments, rendered in full inside fenced data boundaries** with boundary neutralization
   (the `_neutralize_untrusted_evidence_boundaries` pattern). This is a deliberate divergence from
-  the risk document's provenance-filtered rendering, discussed below.
+  the risk document's provenance-filtered rendering, discussed below. The one exception is a string
+  value above a fixed size cap, which renders truncated (see Accepted residuals).
 
 - **A provenance digest of the turn**: which sources are present, their tiers, types, and ordering
   (the sensitive-read records and fresh-taint sequence, where available in the current context).
@@ -716,6 +717,16 @@ When this design is working:
   payload is possible until argument provenance matching lands; mitigations are template posture,
   boundary neutralization, and the fact that the injected call must still look benign against the
   trusted request.
+- **Very large string values are shown to the reviewer truncated.** Any string leaf of rendered
+  review data longer than `REVIEW_STRING_MAX_CHARS` (256,000 characters) is replaced by a marker
+  carrying its length, its SHA-256 and the first 2,000 characters, and the tool-call review audit
+  row names the arguments that were truncated, under the same redacted labels as its argument
+  summary. A model's output limit is far below the reviewer's input limit, so no LLM-authored
+  argument comes near the cap; only data a script computed does — a multi-megabyte upload body,
+  which once produced a 5.6M-token prompt that every reviewer model rejected, turning each large
+  upload into a fallback. The reviewer still sees the program that produced the value, which is the
+  thing it can actually judge. The cap is a fixed constant rather than derived from the configured
+  models' budgets, because the values it exists for sit far from the threshold in either direction.
 - **Escalation counters reset across delegation in v1.** Bounded-UX regression, not a security
   boundary; fixed by the serialization extension.
 - **The browser action reviewer reads the hostile page.** Bounded by the damage envelope and the

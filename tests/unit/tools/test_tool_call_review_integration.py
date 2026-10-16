@@ -42,6 +42,7 @@ from family_assistant.services.deferred_tool_confirmation import (
     build_deferred_confirmation_callback,
 )
 from family_assistant.services.tool_call_review import (
+    REVIEW_STRING_MAX_CHARS,
     ToolCallReviewer,
     ToolCallReviewResponse,
     ToolCallReviewStatus,
@@ -518,6 +519,39 @@ async def test_unattended_trigger_reaches_reviewer_as_provenance_stub(
     review_context = reviews[0]["review_context_json"]
     assert isinstance(review_context, dict)
     assert review_context["destination_echo"] is False
+
+
+async def test_review_audit_names_arguments_shown_truncated(
+    db_engine: AsyncEngine,
+) -> None:
+    async def execute(**_kwargs: object) -> ToolResult:
+        return ToolResult(text="executed")
+
+    llm = _ReviewLLM(ToolCallReviewVerdict.ALLOW)
+    provider = _provider(
+        cast("ToolImplementation", execute),
+        reviewer_llm=llm,
+        static_decision=ToolPolicyDecision.REVIEW,
+        taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
+    )
+    context = _context(db_engine, TurnTaintState.empty())
+
+    await provider.execute_tool(
+        "reviewed_tool",
+        {
+            "destination": "D" * (REVIEW_STRING_MAX_CHARS + 1),
+            "body": {"undeclared_key": "E" * (REVIEW_STRING_MAX_CHARS + 1)},
+            "note": "small",
+        },
+        context,
+        "upload-call",
+    )
+
+    reviews = await _review_events(context)
+    assert len(reviews) == 1
+    review_context = reviews[0]["review_context_json"]
+    assert isinstance(review_context, dict)
+    assert review_context["truncated_arguments"] == ["argument_1", "destination"]
 
 
 @pytest.mark.parametrize(

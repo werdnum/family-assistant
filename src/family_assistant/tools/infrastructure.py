@@ -86,6 +86,7 @@ from family_assistant.services.tool_call_review import (
     compute_trusted_destination_echo,
     human_decision_from_confirmation,
     review_prompt_revision,
+    truncated_review_paths,
 )
 from family_assistant.storage.database import spawn_detached
 from family_assistant.tools.argument_schema import check_parameter_schema
@@ -1517,21 +1518,41 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
         await self.wrapped_provider.close()
 
 
+def _audit_labelled_arguments(
+    arguments: Mapping[str, object],
+    *,
+    safe_keys: Collection[str],
+) -> list[tuple[str, object]]:
+    """Pair each argument with its audit label: its name if the trusted schema
+    declares it, otherwise a positional placeholder."""
+    allowed = set(safe_keys)
+    items = sorted(arguments.items(), key=lambda item: str(item[0]))
+    return [
+        (str(key) if str(key) in allowed else f"argument_{index}", value)
+        for index, (key, value) in enumerate(items, start=1)
+    ]
+
+
+def _review_truncated_argument_labels(
+    arguments: Mapping[str, object],
+    *,
+    safe_keys: Collection[str],
+) -> list[str]:
+    """Audit labels of the arguments the reviewer was shown truncated."""
+    return [
+        label
+        for label, value in _audit_labelled_arguments(arguments, safe_keys=safe_keys)
+        if truncated_review_paths(value)
+    ]
+
+
 def _summarize_tool_arguments(
     arguments: Mapping[str, object],
     *,
     safe_keys: Collection[str] = (),
 ) -> TaintAuditArgumentsSummary:
     """Return argument shape, naming only keys declared by trusted tool schema."""
-    allowed = set(safe_keys)
-    items = sorted(arguments.items(), key=lambda item: str(item[0]))
-    summarized: list[tuple[str, object]] = []
-    for index, (key, value) in enumerate(items, start=1):
-        raw_key = str(key)
-        summarized.append((
-            raw_key if raw_key in allowed else f"argument_{index}",
-            value,
-        ))
+    summarized = _audit_labelled_arguments(arguments, safe_keys=safe_keys)
     return {
         "keys": [key for key, _value in summarized],
         "value_types": {key: type(value).__name__ for key, value in summarized},
@@ -3609,6 +3630,10 @@ class TaintTrackingToolsProvider(ToolsProvider):
             "used_fallback": result.used_fallback,
             "destination_echo": destination_echo,
         }
+        if truncated := _review_truncated_argument_labels(
+            arguments, safe_keys=_descriptor_argument_keys(descriptor)
+        ):
+            review_context["truncated_arguments"] = truncated
         return await self._record_taint_audit_event(
             context=context,
             event_type="tool_call_review",

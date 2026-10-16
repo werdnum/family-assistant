@@ -389,10 +389,65 @@ def _neutralize_review_boundaries(text: str) -> str:
     return without_tags.replace("```", "[escaped code-fence boundary]")
 
 
+# A model's output limit is far below the reviewer's input limit, so an
+# LLM-authored argument cannot come near this; only data a reviewed script
+# computed (an uploaded file's body, say) reaches it. Such a value is the
+# program's output, and the program itself is what the reviewer judges.
+REVIEW_STRING_MAX_CHARS = 256_000
+_TRUNCATED_REVIEW_STRING_PREVIEW_CHARS = 2_000
+
+
+def _truncated_review_string(value: str) -> str:
+    digest = hashlib.sha256(value.encode("utf-8", "surrogatepass")).hexdigest()
+    return (
+        f"[truncated for review: {len(value)} chars, sha256 {digest}; "
+        f"first {_TRUNCATED_REVIEW_STRING_PREVIEW_CHARS} chars follow] "
+        + value[:_TRUNCATED_REVIEW_STRING_PREVIEW_CHARS]
+    )
+
+
+def _cap_review_strings(value: object, path: str, truncated: list[str]) -> object:
+    if isinstance(value, str):
+        if len(value) <= REVIEW_STRING_MAX_CHARS:
+            return value
+        truncated.append(path or "$")
+        return _truncated_review_string(value)
+    if isinstance(value, dict):
+        mapping = cast("Mapping[object, object]", value)
+        return {
+            key: _cap_review_strings(
+                item, f"{path}.{key}" if path else str(key), truncated
+            )
+            for key, item in mapping.items()
+        }
+    if isinstance(value, list | tuple):
+        sequence = cast("Sequence[object]", value)
+        return [
+            _cap_review_strings(item, f"{path}[{index}]", truncated)
+            for index, item in enumerate(sequence)
+        ]
+    return value
+
+
+def truncated_review_paths(value: object) -> list[str]:
+    """Paths of the string leaves the reviewer is shown truncated."""
+    truncated: list[str] = []
+    _cap_review_strings(value, "", truncated)
+    return truncated
+
+
 def _render_fenced_data(tag: str, value: object, *, language: str = "json") -> str:
-    """Render JSON or text inside neutralized, explicitly data-only boundaries."""
+    """Render JSON or text inside neutralized, explicitly data-only boundaries.
+
+    JSON string leaves over ``REVIEW_STRING_MAX_CHARS`` are rendered truncated.
+    """
     if language == "json":
-        rendered = json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True)
+        rendered = json.dumps(
+            _cap_review_strings(value, "", []),
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
     else:
         rendered = str(value)
     rendered = _neutralize_review_boundaries(rendered)
