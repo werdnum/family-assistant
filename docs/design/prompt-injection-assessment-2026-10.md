@@ -391,6 +391,148 @@ configuration line: if they slip beyond a few weeks, flip anyway and fix under e
    that the first real escalations look like that test, and that the would-be escalations recorded
    under observe predicted them.
 
+### Status as of 16 Oct 2026
+
+**Running build and merged fixes:**
+
+Running build is now `e1e74b5` (built 16 Oct 2026, was `dff14d6`), still running with
+`taint_policy.mode: observe` and `require_taint_enforcement: false`.
+
+Fixes merged 6 Oct 2026 (#1363–#1371, #1375):
+
+- #1363: per-document grading for `search_documents`/`get_full_document_content`.
+- #1364: `artifact_id='note:<id>'` on note-write `policy_evaluation` rows.
+- #1365: `get_delegation_status`/`list_delegations` graded per run.
+- #1366: source cap evicts lowest tier first and capped `runtime_v2` rows propagate `max_tier`.
+- #1367: `note_tier_lowered` audit event.
+- #1369: `result_taint` row on re-read of an already-seen source.
+- #1370: `add_or_update_note` result reports when a write lands below the reusable tiers.
+- #1371: tests for unattended trigger taint sources.
+- #1375: reviewer sees requests relayed by MCP/A2A clients.
+
+Relevant changes merged since 8 Oct 2026:
+
+- `8eec7fe`, #1379, #1380: enforce-mode functional test (`test_enforce_review_escalation.py`) and
+  propagation of taint policy reasons to confirmations and audit logs.
+- #1382: tool-call reviewer moved to Anthropic `claude-haiku-5-5` primary with `gemini-3.8-flash`
+  fallback, 30 s timeout, 25 reviews per turn max, and escalation after 3 consecutive denies.
+- #1392: stored-definition firings framed as "Originating request: not applicable" for reviewer
+  intent.
+- #1393: tool-call reviewer is shown the reply a human answered.
+- #1404: admission judge scoped to prompt injection only; in observe mode offers only allow/deny.
+  Fixed stale-content citations on trimmed retries, with evals improving from 5/36 misses to 60/60.
+  Under enforce, the admission judge can still return confirm (a new user-prompt path unexercised in
+  production), and admission reviews count against the 25-review budget.
+
+**Milestone 1 (ambient-write gate) — VERIFIED 8 Oct 2026 03:41:55Z.**
+
+- `taint_audit_events` row `b88843a0-81fe-4858-b5bb-7d134a574eeb`:
+  `event_type=ambient_note_admission`, `sink_class=ambient_prompt_write`, tool `add_or_update_note`,
+  `requested_outcome=adjudicate`, `effective_outcome=admitted`, `mode=observe`, review verdict
+  `allow` / `review_status model_verdict` (review row `00455a4a-0ab8-4e51-b78b-91b81f81b3a4`, 7,933
+  ms), turn tier `unknown_external`; the note was promoted to `machine_reviewed`.
+- *Known gaps, not blocking:* the admission row's `artifact_id` is `note:<title>` (built from
+  `candidate.title` at `src/family_assistant/tools/infrastructure.py:2181`) rather than `note:<id>`;
+  the `delete_note` audit row has `artifact_id` NULL; the enforce path of the gate (refuse / confirm
+  fallback) is unexercised in production.
+
+**Milestone 2 — MET.**
+
+- `result_tier` NULL on 0 of 417 tool result rows.
+- Turn ids NULL on 0 of 99 reviews.
+- 0 confirmation requests pending past `expires_at` (post-fix-2 window).
+
+**Milestone 3 — partial.**
+
+- Delegation introducer share fixed: `get_delegation_status` was the first untrusted introducer in 0
+  of 15 mid-turn-introduced turns post-fix-2 (vs 7 turns post-fix-1); `search_documents` first
+  untrusted introducer in 1 turn (vs 15).
+- Share of untrusted turns already untrusted before their first tool call: 81.5% baseline → 55.6%
+  post-fix-1 → 73.2% post-fix-2 (41 of 56); the genuine share needs window-level analysis and is
+  CAN'T TELL.
+- Telegram 2-hour healing and tainted-turn automation-creation cure: not exercised in the window.
+
+**Milestone 4 — the recorded ceiling (PROVISIONAL).**
+
+The earlier 0.6/day (1.8/day with static confirms, 1.7-day sample) figure is **SUPERSEDED**.
+
+- Tool-call reviewer is now Anthropic `claude-haiku-5-5` (PR #1382), with `gemini-3.8-flash` as
+  fallback, 30 s timeout, 25 reviews per turn max, and escalation after 3 consecutive denies.
+- Earlier 6–11 Oct sample (5.5 days): 240 reviews, allow/confirm/deny 89.6/3.8/6.7%, 0 fallbacks,
+  p99 latency 22.3 s. Median 1 would-prompt turn/day (max 3).
+- New window 12 Oct 00:00Z to 16 Oct 11:00Z: 612 verdicts, allow/confirm/deny 82.7/7.7/9.6%. Latency
+  p50/p90/p99 3.2/5.2/10.1 s, 0 timeouts. Fallbacks 24 (3.9%): 20 from the per-turn review budget in
+  3 long turns, 3 provider errors, 1 malformed reply.
+- Measured daily would-prompt rates:
+  - 6–11 Oct gave a median of 1 would-prompt turn/day (max 3).
+  - 13–15 Oct (full AEDT days) gave a median of 6 episode turns/day (max 10), or a median of 3
+    conversations/day (max 4).
+  - That rise is driven mostly by the 25-review per-turn budget falling back to confirm in long
+    `council`/`complex_tasks` turns, and by the admission judge bug fixed in #1404.
+- **Ceiling status:** PROVISIONAL, pending:
+  - (a) fixes for the per-turn review budget and for unbounded review prompt size, and
+  - (b) a re-measure over 3 or more clean full days after those fixes.
+- *Counting unit note:* the counting unit (turn vs conversation vs each confirmation) is to be
+  decided before the ceiling is final.
+
+**Automation fail-closed findings and resolution:**
+
+- Automation #8 (hourly e-ink briefing → `update_eink_display` → `inkplate-deploy-image`) received
+  confirm verdicts on 9–11 Oct, which would fail closed under enforce mode.
+- Fixed by: PR #1392 (stored-definition firings framed as "Originating request: not applicable"); a
+  human re-approval of #8 and `update_eink_display` on 13 Oct; and `inkplate-deploy-image` rewritten
+  to use `fridge_deploy_app` instead of sandbox `curl`.
+- Since then there have been 7 runs, all allow. Each run's taint level is still `unknown_external`,
+  so it still relies on the judge.
+- Open item: an unattended `email_intake` turn on 13 Oct got a deny and a malformed-fallback confirm
+  on `ingest_document_from_url`. Unattended `email_intake` behaviour under enforce is undecided.
+
+**Other status:**
+
+- Untrusted notes: 2 (ids 289 and 125), neither loaded into prompts; 46 notes total, 5 loaded (4
+  `trusted_internal`, 1 `trusted_user`).
+- User rows untrusted: 37.0% (34/92), 0 rows with NULL/JSON-null taint metadata.
+- Automations #6, #8, #111 and schedule #112 definitions now resolve to `machine_reviewed` /
+  `human_confirmed` (no longer start untrusted).
+- `taint_policy_reason` and `static_policy_reason` are NULL on all 95 `confirmation_requests` rows
+  ever (expected in observe mode for the former; the latter is a gap).
+- Script-woken follow-up turns carry no `automation:<id>` source label, so the audit cannot
+  attribute them.
+- `known_contact` tier unused.
+- Issue #1087 (event script `wake_llm` escaping its restricted profile) is still open; it is not a
+  precondition, but is tracked as related.
+
+**Remaining before the switch:**
+
+1. Enforce-mode functional test — **DONE**: `8eec7fe` (`test_enforce_review_escalation.py`), #1379,
+   #1380.
+2. Runbook step 3 corrected (this PR, Edit A) and step 4 updated.
+3. This ceiling recorded (this PR).
+4. Open blockers:
+   - (i) per-turn review budget fallback-to-confirm in long turns;
+   - (ii) unbounded review prompt size: on 14 Oct, 3.5–5.6M-token review prompts exceeded both
+     models' context and failed closed to confirm;
+   - (iii) `email_intake` unattended policy;
+   - (iv) re-measure Milestone 4 over ≥3 clean full days.
+
+**Proposed rollback triggers (NOT in the original plan; proposed 8 Oct 2026, config-only rollback to
+observe; counting unit to be fixed when M4 is re-measured):**
+
+- Taint-caused prompts median >3/day over 3 days, or any day >7.
+- Reviewer fallbacks >5% or p99 >30 s (0 timeouts in latest window).
+- An escalation fires in an interactive turn judged a false positive.
+- A household automation fails closed on 2 consecutive days.
+- The Gmail/Drive tools stop registering.
+
+*First week watch-list:*
+
+- Daily `confirmation_requests` with `taint_policy_reason` set, by sink class.
+- Browser-egress confirms.
+- Sandbox denies and whether the agent routes around them.
+- Escalations and fallbacks (especially long turns hitting review budgets).
+- The 19:00Z script-woken turn (starts untrusted and makes tool calls, so an unattended confirm
+  becomes a denial) and unattended `email_intake` runs.
+
 5. **Cut the framework back to what discriminates.** After thirty days of enforce. Delete the policy
    matrix evaluator and its outcome lattice, tighten-only profile merging, `operator_minimum`,
    `matrix_overrides`, the `redact` outcome, the observe-versus-enforce mode and
