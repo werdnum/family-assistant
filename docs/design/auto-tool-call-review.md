@@ -541,6 +541,12 @@ instead of building one.
 
 ## Integration 4: script-execution review boundary
 
+> **Revision proposed.** [script-execution-review-boundary.md](script-execution-review-boundary.md)
+> proposes reviewing every program once, before it runs, with the program reviewer naming any tools
+> whose calls still need their own review. That replaces the model-result re-review, the
+> code-execution literal rule and the first-nested-review program decision described below, which
+> remain the shipped behaviour until it lands.
+
 The script boundary in [script-execution-review-boundary.md](script-execution-review-boundary.md)
 extends the review input with the resolved program: complete executable source, effective inputs,
 enabled capabilities, and stored-definition provenance. It is carried in the `.script` and
