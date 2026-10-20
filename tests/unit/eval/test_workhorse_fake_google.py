@@ -78,6 +78,8 @@ def _file(**overrides: object) -> WorldFile:
         ("newer_than:7d", False),
         ("has:attachment", False),
         ("in:inbox label:important dermatology", True),
+        ("dermatology -label:spam", True),
+        ("dermatology -in:trash -category:promotions", True),
     ],
 )
 def test_gmail_query_approximation(query: str, expected: bool) -> None:
@@ -251,6 +253,38 @@ def test_world_keeps_drive_text_but_not_attachment_stubs() -> None:
     by_id = {f.id: f for f in world.files}
     assert by_id["f1"].content == "Cleaned the cell."
     assert by_id["f2"].content is None
+
+
+def test_reconstruction_does_not_depend_on_which_was_recorded_first() -> None:
+    """A fetch recorded before the listing still gets the listing's metadata."""
+    listing = json.dumps({
+        "files": [
+            {
+                "id": "f1",
+                "name": "Pool maintenance log",
+                "mime_type": "application/vnd.google-apps.document",
+                "owner": {"display_name": "Andrew", "email": "andrew@example.com"},
+                "modified_time": "2026-08-01T00:00:00Z",
+                "web_view_link": None,
+            }
+        ]
+    })
+    world = build_google_world(
+        _rows([
+            ("c1", "gmail_get_message", {"message_id": "m1"}, _RENDERED),
+            ("c2", "gmail_search", {"query": "dermatology"}, _LISTING),
+            ("c3", "drive_get_file", {"file_id": "f1"}, "Cleaned the cell."),
+            ("c4", "drive_search", {"query": "pool"}, listing),
+        ])
+    )
+
+    message = next(m for m in world.messages if m.id == "m1")
+    assert message.thread_id == "t1"
+    assert message.body == "Level 5, Acute Services Building, St Leonards."
+    (file,) = world.files
+    assert file.name == "Pool maintenance log"
+    assert file.modified_time == datetime(2026, 8, 1, tzinfo=UTC)
+    assert file.content == "Cleaned the cell."
 
 
 def test_a_case_sees_only_what_existed_when_it_was_asked() -> None:

@@ -28,6 +28,9 @@ import re
 import shlex
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, tzinfo
+from email.message import Message
+from email.parser import BytesParser
+from email.policy import default as default_policy
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
@@ -52,6 +55,9 @@ _GOOGLE_DOC_TYPES = frozenset({
     "application/vnd.google-apps.spreadsheet",
     "application/vnd.google-apps.presentation",
 })
+_DRIVE_FOLDER_MIME = "application/vnd.google-apps.folder"
+_APP_QUERY = "appProperties has"
+_APP_FILE_NAME = re.compile(r"\bname\s*=\s*'((?:[^'\\]|\\.)*)'")
 _RELATIVE_AGE = re.compile(r"^(\d+)([dmy])$")
 _DRIVE_CONTAINS = re.compile(
     r"\b(name|fullText)\s+contains\s+'((?:[^'\\]|\\.)*)'", re.IGNORECASE
@@ -96,8 +102,8 @@ def _gmail_date(value: str, tz: tzinfo | None) -> datetime | None:
         return None
 
 
-def _term_matches(message: WorldMessage, term: str, now: datetime) -> bool:
-    """Whether one query term holds for ``message``."""
+def _term_matches(message: WorldMessage, term: str, now: datetime) -> bool | None:
+    """Whether one query term holds for ``message``; ``None`` when not modelled."""
     if ":" in term:
         operator, _, value = term.partition(":")
         operator = operator.lower()
@@ -112,12 +118,12 @@ def _term_matches(message: WorldMessage, term: str, now: datetime) -> bool:
         if operator in {"after", "before"}:
             bound = _gmail_date(value, sent.tzinfo)
             if bound is None:
-                return True
+                return None
             return sent >= bound if operator == "after" else sent < bound
         if operator in {"newer_than", "older_than"}:
             match = _RELATIVE_AGE.match(value)
             if match is None:
-                return True
+                return None
             days = int(match[1]) * {"d": 1, "m": 30, "y": 365}[match[2]]
             cutoff = now - timedelta(days=days)
             return sent >= cutoff if operator == "newer_than" else sent < cutoff
@@ -125,8 +131,9 @@ def _term_matches(message: WorldMessage, term: str, now: datetime) -> bool:
             return bool(message.attachments)
         if operator == "filename":
             return any(value in a.filename.lower() for a in message.attachments)
-        # in:, is:, label:, category: and the rest are not modelled.
-        return True
+        # in:, is:, label:, category: and the rest are not modelled, and are
+        # skipped whether or not they are negated.
+        return None
     return term.strip('"').lower() in _message_text(message)
 
 
@@ -143,12 +150,14 @@ def gmail_query_matches(message: WorldMessage, query: str, now: datetime) -> boo
         elif token and token not in {"AND", "{", "}"}:
             groups[-1].append(token.strip("{}"))
     for group in groups:
-        if all(
-            not _term_matches(message, term[1:], now)
-            if term.startswith("-") and len(term) > 1
-            else _term_matches(message, term, now)
-            for term in group
-        ):
+        holds = True
+        for term in group:
+            negated = term.startswith("-") and len(term) > 1
+            result = _term_matches(message, term[1:] if negated else term, now)
+            if result is not None and result == negated:
+                holds = False
+                break
+        if holds:
             return True
     return False
 
@@ -176,6 +185,35 @@ def _sent_sort_key(message: WorldMessage) -> datetime:
 
 
 @dataclass
+class _AppItem:
+    """A folder or file the Drive write tool created during the trial."""
+
+    id: str
+    name: str
+    mime_type: str
+    content: str | None = None
+
+
+def _multipart_parts(content: bytes, content_type: str | None) -> tuple[dict, str]:
+    """Split a Drive multipart/related upload into its metadata and media."""
+    message = BytesParser(policy=default_policy).parsebytes(
+        f"Content-Type: {content_type or 'multipart/related'}\r\n\r\n".encode()
+        + content
+    )
+    parts = list(message.iter_parts()) if message.is_multipart() else []
+    if len(parts) < 2:
+        return {}, content.decode("utf-8", "replace")
+    metadata = json.loads(_part_bytes(parts[0]) or b"{}")
+    media = _part_bytes(parts[1]).decode("utf-8", "replace")
+    return metadata, media
+
+
+def _part_bytes(part: object) -> bytes:
+    payload = part.get_payload(decode=True) if isinstance(part, Message) else None
+    return payload if isinstance(payload, bytes) else b""
+
+
+@dataclass
 class FakeGoogleBackend:
     """Serves ``world`` as Gmail and Drive, at the moment ``now``."""
 
@@ -189,6 +227,7 @@ class FakeGoogleBackend:
         visible = self.world.as_of(self.now)
         self._messages = {m.id: m for m in visible.messages}
         self._files = {f.id: f for f in visible.files}
+        self._app_items: dict[str, _AppItem] = {}
 
     async def request(
         self,
@@ -208,7 +247,7 @@ class FakeGoogleBackend:
         elif path.startswith(_UPLOAD_PREFIX):
             response = self._drive_upload(method, path, content, content_type)
         elif path.startswith(_DRIVE_PREFIX):
-            response = self._drive(method, path[len(_DRIVE_PREFIX) :], query)
+            response = self._drive(method, path[len(_DRIVE_PREFIX) :], query, content)
         else:
             response = None
         if response is None:
@@ -307,13 +346,31 @@ class FakeGoogleBackend:
         )
 
     def _drive(
-        self, method: str, rest: str, query: Mapping[str, str]
+        self,
+        method: str,
+        rest: str,
+        query: Mapping[str, str],
+        content: bytes | None,
     ) -> ApiResponse | None:
         parts = [part for part in rest.strip("/").split("/") if part]
+        if method == "POST" and not parts:
+            # Metadata-only create: the write tool making its app folder.
+            metadata = json.loads(content or b"{}")
+            item = self._create_app_item(
+                str(metadata.get("name", "untitled")),
+                str(metadata.get("mimeType", _DRIVE_FOLDER_MIME)),
+                None,
+            )
+            return _json(200, self._app_resource(item))
         if method != "GET":
             return None
         if not parts:
+            if _APP_QUERY in query.get("q", ""):
+                return self._drive_app_list(query.get("q", ""))
             return self._drive_list(query)
+        app_item = self._app_items.get(parts[0])
+        if app_item is not None:
+            return self._drive_app_get(app_item, parts, query)
         file = self._files.get(parts[0])
         if file is None:
             return None
@@ -365,20 +422,85 @@ class FakeGoogleBackend:
             payload["nextPageToken"] = "eval-more"
         return _json(200, payload)
 
+    def _create_app_item(
+        self, name: str, mime_type: str, content: str | None
+    ) -> _AppItem:
+        item = _AppItem(
+            id=f"eval-drive-{len(self._app_items) + 1}",
+            name=name,
+            mime_type=mime_type,
+            content=content,
+        )
+        self._app_items[item.id] = item
+        self.writes.append({
+            "kind": "drive_create",
+            "id": item.id,
+            "name": name,
+            "mime_type": mime_type,
+            "content": content,
+        })
+        return item
+
+    @staticmethod
+    def _app_resource(item: _AppItem) -> dict[str, object]:
+        return {
+            "id": item.id,
+            "name": item.name,
+            "mimeType": item.mime_type,
+            "webViewLink": f"https://drive.google.com/eval/{item.id}",
+        }
+
+    def _drive_app_list(self, q: str) -> ApiResponse:
+        """The write tool's lookups: its folder, or a named file inside it."""
+        if _DRIVE_FOLDER_MIME in q:
+            items = [
+                i for i in self._app_items.values() if i.mime_type == _DRIVE_FOLDER_MIME
+            ]
+        else:
+            match = _APP_FILE_NAME.search(q)
+            name = match[1].replace("\\'", "'") if match else None
+            items = [
+                i
+                for i in self._app_items.values()
+                if i.mime_type != _DRIVE_FOLDER_MIME and i.name == name
+            ]
+        return _json(200, {"files": [self._app_resource(i) for i in items]})
+
+    def _drive_app_get(
+        self, item: _AppItem, parts: list[str], query: Mapping[str, str]
+    ) -> ApiResponse | None:
+        if len(parts) == 2 and parts[1] == "export" or query.get("alt") == "media":
+            if item.content is None:
+                return None
+            return ApiResponse(status_code=200, content=item.content.encode("utf-8"))
+        if len(parts) != 1:
+            return None
+        return _json(200, self._app_resource(item))
+
     def _drive_upload(
         self,
         method: str,
         path: str,
         content: bytes | None,
         content_type: str | None,
-    ) -> ApiResponse:
-        file_id = path.rsplit("/", 1)[-1] if path != _UPLOAD_PREFIX else None
-        new_id = file_id or f"eval-file-{len(self.writes) + 1}"
-        self.writes.append({
-            "kind": "drive_upload",
-            "method": method,
-            "id": new_id,
-            "content_type": content_type,
-            "bytes": len(content or b""),
-        })
-        return _json(200, {"id": new_id, "name": new_id, "mimeType": "text/plain"})
+    ) -> ApiResponse | None:
+        metadata, media = _multipart_parts(content or b"", content_type)
+        if method == "POST" and path.rstrip("/") == _UPLOAD_PREFIX:
+            item = self._create_app_item(
+                str(metadata.get("name", "untitled")),
+                str(metadata.get("mimeType", "text/plain")),
+                media,
+            )
+            return _json(200, self._app_resource(item))
+        if method == "PATCH":
+            item = self._app_items.get(path.rsplit("/", 1)[-1])
+            if item is None:
+                return None
+            item.content = media
+            self.writes.append({
+                "kind": "drive_replace",
+                "id": item.id,
+                "content": media,
+            })
+            return _json(200, self._app_resource(item))
+        return None

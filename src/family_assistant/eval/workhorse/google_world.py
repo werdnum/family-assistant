@@ -206,9 +206,14 @@ class _Builder:
             if existing is None:
                 self.messages[message_id] = summary
             else:
-                self.messages[message_id] = existing.model_copy(
+                # Whichever was recorded first, the listing owns the summary
+                # fields (a fetched message alone has no thread id) and a fetch
+                # owns the body and attachments.
+                self.messages[message_id] = summary.model_copy(
                     update={
-                        "snippet": existing.snippet or summary.snippet,
+                        "snippet": summary.snippet or existing.snippet,
+                        "body": existing.body,
+                        "attachments": existing.attachments,
                         "first_seen_at": min(existing.first_seen_at, seen),
                     }
                 )
@@ -263,8 +268,13 @@ class _Builder:
             if existing is None:
                 self.files[file_id] = listed
             else:
-                self.files[file_id] = existing.model_copy(
-                    update={"first_seen_at": min(existing.first_seen_at, seen)}
+                # The listing owns the metadata even when the content was
+                # recorded first; the content is kept.
+                self.files[file_id] = listed.model_copy(
+                    update={
+                        "content": existing.content,
+                        "first_seen_at": min(existing.first_seen_at, seen),
+                    }
                 )
 
     def add_file_content(self, file_id: str, content: str, seen: datetime) -> None:

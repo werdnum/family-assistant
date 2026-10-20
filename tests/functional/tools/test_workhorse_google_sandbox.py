@@ -34,6 +34,7 @@ from family_assistant.storage.types import MessageHistoryRow
 from family_assistant.tools.google_data import (
     drive_get_file_tool,
     drive_search_tool,
+    drive_write_file_tool,
     gmail_get_message_tool,
     gmail_search_tool,
 )
@@ -157,6 +158,25 @@ async def test_drive_search_and_export_through_the_real_chain(
     assert [f["id"] for f in json.loads(listing.get_text())["files"]] == ["f1"]
     assert document.get_text() == "Cleaned the chlorinator cell."
     assert backend.unbacked == []
+
+
+async def test_drive_writes_are_captured_and_readable_back(
+    db_engine: AsyncEngine,
+) -> None:
+    """The write tool's own folder lookup, creation and upload all reach the fake."""
+    context, backend = await _sandbox(db_engine)
+
+    written = await drive_write_file_tool(
+        context, name="Packing list", content="Passports\nChargers"
+    )
+
+    assert backend.unbacked == []
+    assert [w["kind"] for w in backend.writes] == ["drive_create", "drive_create"]
+    assert backend.writes[1]["content"] == "Passports\nChargers"
+    file_id = str(backend.writes[1]["id"])
+    assert file_id in written.get_text()
+    document = await drive_get_file_tool(context, file_id)
+    assert document.get_text() == "Passports\nChargers"
 
 
 def _recorded(
