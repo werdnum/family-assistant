@@ -451,6 +451,10 @@ async def _create_web_assistant(
                     "history_max_age_hours": 1,
                     "llm_model": "mock-research-model-for-testing",
                     "delegation_security_level": "none",
+                    # Receives household context, so Home turns may be
+                    # continued or moved into its threads; test_browser
+                    # receives none and stays the incompatible destination.
+                    "include_aggregated_context": True,
                 },
                 "tools_config": {
                     "confirmation_timeout_seconds": 10.0,

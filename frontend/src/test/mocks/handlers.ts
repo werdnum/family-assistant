@@ -39,6 +39,8 @@ export const handlers = [
           // Provider-coupled profile: its model is pinned, so no tier choice.
           model_tiers: [],
           default_model_tier: null,
+          // Reads untrusted pages and acts, so Home's conversation stays out.
+          receives_household_context: false,
         },
         {
           id: 'default_assistant',
@@ -49,6 +51,7 @@ export const handlers = [
           enabled_mcp_servers: [],
           model_tiers: MOCK_MODEL_TIERS,
           default_model_tier: 'standard',
+          receives_household_context: true,
         },
         {
           id: 'research',
@@ -59,6 +62,7 @@ export const handlers = [
           enabled_mcp_servers: [],
           model_tiers: [],
           default_model_tier: null,
+          receives_household_context: true,
         },
       ],
       default_profile_id: 'default_assistant',

@@ -19,6 +19,10 @@ class HomePage(ChatPage):
     THREAD_CARD_STATE = '[data-testid="thread-card-state"]'
     THREAD_MARK_DONE = '[data-testid="thread-mark-done"]'
     THREAD_BANNER_STATE = '[data-testid="thread-banner-state"]'
+    THREAD_ANCHOR_QUOTE = '[data-testid="thread-anchor-quote"]'
+    MOVED_TURN_MARKER = '[data-testid="moved-turn-marker"]'
+    START_THREAD_DIALOG = '[data-testid="start-thread-dialog"]'
+    MOVE_TO_THREAD_DIALOG = '[data-testid="move-to-thread-dialog"]'
 
     def echo_of(self, thread_conversation_id: str) -> Locator:
         """The Home message echoing a thread's outcome."""
@@ -100,6 +104,44 @@ class HomePage(ChatPage):
             .pane(thread_conversation_id)
             .locator(self.THREAD_BANNER)
             .wait_for(state="visible", timeout=15000)
+        )
+
+    def side_pane(self) -> Locator:
+        """The pane in the right-hand panel, whichever thread it shows."""
+        return self.page.locator(f'{self.CONVERSATION_PANE}[data-presentation="side"]')
+
+    def reply_in(self, conversation_id: str, text: str) -> Locator:
+        """An assistant message in the pane showing a conversation."""
+        return (
+            self
+            .pane(conversation_id)
+            .locator('[data-testid="assistant-message"]')
+            .filter(has_text=text)
+        )
+
+    async def message_action(self, message: Locator, action_test_id: str) -> None:
+        """Click one of a message's actions, which show while it is hovered."""
+        await message.hover()
+        await message.get_by_test_id(action_test_id).click()
+
+    async def start_thread(
+        self, profile_id: str, prompt: str | None, *, with_context: bool | None = None
+    ) -> None:
+        """Fill and submit the open start-thread dialog, and wait for it to close."""
+        dialog = self.page.locator(self.START_THREAD_DIALOG)
+        await dialog.get_by_test_id("start-thread-profile").select_option(profile_id)
+        if with_context is not None:
+            await dialog.get_by_test_id("start-thread-with-context").set_checked(
+                with_context
+            )
+        if prompt is not None:
+            await dialog.get_by_test_id("start-thread-prompt").fill(prompt)
+        await dialog.get_by_test_id("start-thread-submit").click()
+        await expect(dialog).to_have_count(0, timeout=15000)
+
+    def move_option(self, thread_conversation_id: str) -> Locator:
+        return self.page.locator(self.MOVE_TO_THREAD_DIALOG).get_by_test_id(
+            f"move-option-{thread_conversation_id}"
         )
 
     async def back_to_home(self, home_conversation_id: str) -> None:

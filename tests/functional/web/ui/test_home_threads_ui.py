@@ -506,3 +506,238 @@ async def test_opening_a_thread_clears_its_badge_and_it_can_be_marked_done(
     )
     await expect(card.locator(chat.THREAD_UNREAD_BADGE)).to_have_count(0)
     await expect(chat.echo_of(seeded.thread)).to_have_count(0)
+
+
+GUTTER_QUESTION = "Is gutter guard worth it?"
+GUTTER_REPLY = "Probably, for a roof under gum trees."
+
+
+async def _seed_exchange(
+    db: Database,
+    conversation_id: str,
+    *,
+    profile_id: str,
+    question: str,
+    reply: str,
+    turn_id: str | None = None,
+) -> None:
+    """A finished turn the user started: their question and its reply."""
+    for message, user_id in (
+        (UserMessage.from_trusted_user(content=question), USER),
+        (AssistantMessage(content=reply), None),
+    ):
+        await db.message_history.add_message(
+            message,
+            interface_type="web",
+            conversation_id=conversation_id,
+            timestamp=datetime.now(UTC),
+            processing_profile_id=profile_id,
+            turn_id=turn_id,
+            user_id=user_id,
+        )
+
+
+async def _seed_home_exchange(db: Database, home: str) -> None:
+    await _seed_exchange(
+        db,
+        home,
+        profile_id="default_assistant",
+        question=GUTTER_QUESTION,
+        reply=GUTTER_REPLY,
+        turn_id=str(uuid.uuid4()),
+    )
+
+
+async def _seed_resting_thread(
+    db: Database, home: str, *, profile_id: str, title: str
+) -> str:
+    """A thread with no run, waiting on the user after one exchange.
+
+    The user's own message is what makes the thread theirs.
+    """
+    thread = f"web_conv_{uuid.uuid4()}"
+    await db.conversation_threads.create_thread(
+        conversation_id=thread,
+        home_conversation_id=home,
+        interface_type="web",
+        owner_user_id=USER,
+        profile_id=profile_id,
+        title=title,
+        title_taint=None,
+        anchor_message_id=None,
+        delegation_id=None,
+        now=datetime.now(UTC),
+    )
+    await _seed_exchange(
+        db,
+        thread,
+        profile_id=profile_id,
+        question=f"Let's sort out: {title}.",
+        reply=f"Ready when you are: {title}.",
+    )
+    return thread
+
+
+@pytest.mark.playwright
+@pytest.mark.asyncio
+async def test_a_new_thread_opens_in_the_panel_and_streams_its_first_reply(
+    web_test_fixture: WebTestFixture,
+    mock_llm_client: RuleBasedMockLLMClient,
+) -> None:
+    mock_llm_client.rules = [
+        (
+            lambda args: "Plan the veggie garden" in str(args.get("messages", [])),
+            LLMOutput(content="Start with tomatoes and basil along the north fence."),
+        ),
+    ]
+    home = await _home_conversation_id(web_test_fixture.base_url)
+    await web_test_fixture.page.set_viewport_size(WIDE_VIEWPORT)
+    chat = await _open_home(web_test_fixture, home)
+    page = web_test_fixture.page
+
+    await page.get_by_test_id("new-thread-button").click()
+    await chat.start_thread(THREAD_PROFILE, "Plan the veggie garden")
+
+    panel = chat.side_pane()
+    await expect(panel.get_by_text("Start with tomatoes and basil")).to_be_visible(
+        timeout=20000
+    )
+    await expect(
+        panel.locator(chat.MESSAGE_USER).filter(has_text="Plan the veggie garden")
+    ).to_be_visible()
+    await expect(panel.locator(chat.CONVERSATION_HEADING)).to_have_text(
+        "Plan the veggie garden"
+    )
+    await expect(chat.pane(home)).to_be_visible()
+    [started] = await _home_threads(web_test_fixture.base_url)
+    assert started["profile_id"] == THREAD_PROFILE
+    await expect(panel).to_have_attribute(
+        "data-pane-conversation-id", started["conversation_id"]
+    )
+    await expect(chat.sidebar_thread(started["conversation_id"])).to_be_visible()
+    await expect(
+        chat
+        .pane(home)
+        .locator(chat.MESSAGE_USER)
+        .filter(has_text="Plan the veggie garden")
+    ).to_have_count(0)
+
+
+@pytest.mark.playwright
+@pytest.mark.asyncio
+async def test_continue_in_a_thread_with_context_shows_the_copied_turn_and_where_it_started(
+    web_test_fixture: WebTestFixture,
+    db_engine: AsyncEngine,
+    mock_llm_client: RuleBasedMockLLMClient,
+) -> None:
+    mock_llm_client.rules = [
+        (
+            lambda args: "Which brand lasts longest?" in str(args.get("messages", [])),
+            LLMOutput(content="Aluminium mesh outlasts the plastic kinds."),
+        ),
+    ]
+    db = Database(engine=db_engine)
+    home = await _home_conversation_id(web_test_fixture.base_url)
+    await _seed_home_exchange(db, home)
+    await web_test_fixture.page.set_viewport_size(WIDE_VIEWPORT)
+    chat = await _open_home(web_test_fixture, home)
+
+    reply = chat.reply_in(home, GUTTER_REPLY)
+    await expect(reply).to_be_visible(timeout=15000)
+    await chat.message_action(reply, "continue-in-thread")
+    await chat.start_thread(
+        THREAD_PROFILE, "Which brand lasts longest?", with_context=True
+    )
+
+    panel = chat.side_pane()
+    await expect(
+        panel.get_by_text("Aluminium mesh outlasts the plastic kinds.")
+    ).to_be_visible(timeout=20000)
+    [started] = await _home_threads(web_test_fixture.base_url)
+    started_thread = started["conversation_id"]
+    assert started["anchor_message_id"] is not None
+    await expect(
+        panel.locator(chat.MESSAGE_USER).filter(has_text=GUTTER_QUESTION)
+    ).to_be_visible()
+    await expect(chat.reply_in(started_thread, GUTTER_REPLY)).to_be_visible()
+    await expect(panel.locator(chat.THREAD_ANCHOR_QUOTE)).to_have_text(
+        f"“{GUTTER_REPLY}”"
+    )
+    # Continuing copies; Home keeps its own exchange.
+    await expect(reply).to_be_visible()
+
+
+@pytest.mark.playwright
+@pytest.mark.asyncio
+async def test_a_home_turn_moves_into_a_thread_only_where_context_is_received(
+    web_test_fixture: WebTestFixture, db_engine: AsyncEngine
+) -> None:
+    db = Database(engine=db_engine)
+    home = await _home_conversation_id(web_test_fixture.base_url)
+    research = await _seed_resting_thread(
+        db, home, profile_id=THREAD_PROFILE, title="Roof maintenance"
+    )
+    browsing = await _seed_resting_thread(
+        db, home, profile_id="test_browser", title="Book the campsite"
+    )
+    await _seed_home_exchange(db, home)
+    await web_test_fixture.page.set_viewport_size(WIDE_VIEWPORT)
+    chat = await _open_home(web_test_fixture, home)
+
+    reply = chat.reply_in(home, GUTTER_REPLY)
+    await expect(reply).to_be_visible(timeout=15000)
+    await chat.message_action(reply, "move-to-thread")
+
+    incompatible = chat.move_option(browsing)
+    await expect(incompatible).to_be_disabled()
+    await expect(incompatible).to_contain_text(
+        "Test_browser doesn't receive household context"
+    )
+    compatible = chat.move_option(research)
+    await expect(compatible).to_be_enabled()
+    await compatible.click()
+    dialog = web_test_fixture.page.locator(chat.MOVE_TO_THREAD_DIALOG)
+    await dialog.get_by_test_id("move-to-thread-submit").click()
+    await expect(dialog).to_have_count(0, timeout=15000)
+
+    marker = chat.pane(home).locator(chat.MOVED_TURN_MARKER)
+    await expect(marker).to_have_text("Moved to Roof maintenance", timeout=15000)
+    await expect(reply).to_have_count(0)
+    await expect(
+        chat.pane(home).locator(chat.MESSAGE_USER).filter(has_text=GUTTER_QUESTION)
+    ).to_have_count(0)
+    # The sidebar picked the move up: the thread's latest message is the reply.
+    await expect(chat.sidebar_thread(research)).to_contain_text(
+        GUTTER_REPLY, timeout=15000
+    )
+
+    await marker.get_by_test_id("moved-turn-link").click()
+    panel = chat.pane(research)
+    await expect(panel).to_have_attribute("data-presentation", "side")
+    await expect(
+        panel.locator(chat.MESSAGE_USER).filter(has_text=GUTTER_QUESTION)
+    ).to_be_visible(timeout=15000)
+    await expect(chat.reply_in(research, GUTTER_REPLY)).to_be_visible()
+
+
+@pytest.mark.playwright
+@pytest.mark.asyncio
+async def test_a_move_is_not_offered_when_no_thread_receives_household_context(
+    web_test_fixture: WebTestFixture, db_engine: AsyncEngine
+) -> None:
+    db = Database(engine=db_engine)
+    home = await _home_conversation_id(web_test_fixture.base_url)
+    browsing = await _seed_resting_thread(
+        db, home, profile_id="test_browser", title="Book the campsite"
+    )
+    await _seed_home_exchange(db, home)
+    chat = await _open_home(web_test_fixture, home)
+
+    reply = chat.reply_in(home, GUTTER_REPLY)
+    await expect(reply).to_be_visible(timeout=15000)
+    await chat.message_action(reply, "move-to-thread")
+
+    dialog = web_test_fixture.page.locator(chat.MOVE_TO_THREAD_DIALOG)
+    await expect(chat.move_option(browsing)).to_be_disabled()
+    await expect(dialog.get_by_test_id("move-to-thread-unavailable")).to_be_visible()
+    await expect(dialog.get_by_test_id("move-to-thread-submit")).to_be_disabled()
