@@ -34,6 +34,7 @@ from email.policy import default as default_policy
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
+from family_assistant.eval.workhorse.google_world import WorldFile
 from family_assistant.services.api_backend import ApiResponse
 
 if TYPE_CHECKING:
@@ -41,7 +42,6 @@ if TYPE_CHECKING:
 
     from family_assistant.eval.workhorse.google_world import (
         GoogleWorld,
-        WorldFile,
         WorldMessage,
     )
 
@@ -127,6 +127,10 @@ def _term_matches(message: WorldMessage, term: str, now: datetime) -> bool | Non
             days = int(match[1]) * {"d": 1, "m": 30, "y": 365}[match[2]]
             cutoff = now - timedelta(days=days)
             return sent >= cutoff if operator == "newer_than" else sent < cutoff
+        if operator in {"has", "filename"} and message.body is None:
+            # Listings carry no attachment metadata, so for a message only ever
+            # listed whether it has one is unknown.
+            return None
         if operator == "has" and value == "attachment":
             return bool(message.attachments)
         if operator == "filename":
@@ -192,6 +196,10 @@ class _AppItem:
     name: str
     mime_type: str
     content: str | None = None
+
+
+def _app_link(item: _AppItem) -> str:
+    return f"https://drive.google.com/eval/{item.id}"
 
 
 def _multipart_parts(content: bytes, content_type: str | None) -> tuple[dict, str]:
@@ -396,8 +404,24 @@ class FakeGoogleBackend:
     def _drive_list(self, query: Mapping[str, str]) -> ApiResponse:
         limit = int(query.get("pageSize", "10"))
         q = query.get("q", "")
+        # Files the trial created are searchable like any other.
+        created = [
+            WorldFile(
+                id=item.id,
+                name=item.name,
+                mime_type=item.mime_type,
+                owner_name=None,
+                owner_email=None,
+                modified_time=self.now,
+                web_view_link=_app_link(item),
+                content=item.content,
+                first_seen_at=self.now,
+            )
+            for item in self._app_items.values()
+            if item.mime_type != _DRIVE_FOLDER_MIME
+        ]
         matches = sorted(
-            (f for f in self._files.values() if drive_query_matches(f, q)),
+            (f for f in [*self._files.values(), *created] if drive_query_matches(f, q)),
             key=lambda f: f.modified_time or f.first_seen_at,
             reverse=True,
         )
@@ -447,7 +471,7 @@ class FakeGoogleBackend:
             "id": item.id,
             "name": item.name,
             "mimeType": item.mime_type,
-            "webViewLink": f"https://drive.google.com/eval/{item.id}",
+            "webViewLink": _app_link(item),
         }
 
     def _drive_app_list(self, q: str) -> ApiResponse:

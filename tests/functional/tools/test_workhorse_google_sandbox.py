@@ -177,6 +177,8 @@ async def test_drive_writes_are_captured_and_readable_back(
     assert file_id in written.get_text()
     document = await drive_get_file_tool(context, file_id)
     assert document.get_text() == "Passports\nChargers"
+    found = await drive_search_tool(context, "name contains 'packing'")
+    assert [f["id"] for f in json.loads(found.get_text())["files"]] == [file_id]
 
 
 def _recorded(

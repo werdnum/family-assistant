@@ -86,6 +86,14 @@ def test_gmail_query_approximation(query: str, expected: bool) -> None:
     assert gmail_query_matches(_message(), query, _NOW) is expected
 
 
+def test_attachment_operators_are_unknown_for_listing_only_messages() -> None:
+    """A listing carries no attachment metadata, so it cannot rule a message out."""
+    listed = _message(body=None)
+
+    assert gmail_query_matches(listed, "dermatology has:attachment", _NOW)
+    assert gmail_query_matches(listed, "filename:pdf", _NOW)
+
+
 @pytest.mark.parametrize(
     ("query", "expected"),
     [
@@ -285,6 +293,31 @@ def test_reconstruction_does_not_depend_on_which_was_recorded_first() -> None:
     assert file.name == "Pool maintenance log"
     assert file.modified_time == datetime(2026, 8, 1, tzinfo=UTC)
     assert file.content == "Cleaned the cell."
+
+
+def test_a_file_edited_later_stays_visible_to_earlier_cases() -> None:
+    def listing(modified: str) -> str:
+        return json.dumps({
+            "files": [
+                {
+                    "id": "f1",
+                    "name": "Pool maintenance log",
+                    "mime_type": "text/plain",
+                    "owner": {},
+                    "modified_time": modified,
+                    "web_view_link": None,
+                }
+            ]
+        })
+
+    world = build_google_world(
+        _rows([
+            ("c1", "drive_search", {"query": "pool"}, listing("2026-08-01T00:00:00Z")),
+            ("c2", "drive_search", {"query": "pool"}, listing("2026-09-15T00:00:00Z")),
+        ])
+    )
+
+    assert [f.id for f in world.as_of(_NOW).files] == ["f1"]
 
 
 def test_a_case_sees_only_what_existed_when_it_was_asked() -> None:

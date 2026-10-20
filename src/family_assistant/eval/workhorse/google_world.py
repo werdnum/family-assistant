@@ -269,10 +269,14 @@ class _Builder:
                 self.files[file_id] = listed
             else:
                 # The listing owns the metadata even when the content was
-                # recorded first; the content is kept.
+                # recorded first; the content is kept. The earliest recorded
+                # modification time is kept too: it is what proves the file
+                # existed for a case asked before a later edit.
+                times = [t for t in (existing.modified_time, listed.modified_time) if t]
                 self.files[file_id] = listed.model_copy(
                     update={
                         "content": existing.content,
+                        "modified_time": min(times) if times else None,
                         "first_seen_at": min(existing.first_seen_at, seen),
                     }
                 )
