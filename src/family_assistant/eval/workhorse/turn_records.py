@@ -309,13 +309,15 @@ def _population(
 ) -> Literal["human", "templated", "delegated"]:
     """Who wrote the prompt: a person, a scheduled automation, or a model.
 
-    Automations run in subconversations too, so the template is checked
-    first; of the rest, only a delegated run's opening row -- the delegating
-    model's request -- carries a ``subconversation_id``.
+    Automations run in subconversations and some open with an internal row,
+    so the template is checked first. Of the rest, a delegated run's opening
+    row (the delegating model's request) carries a ``subconversation_id``,
+    and the wake that hands a delegation's result back opens with an
+    internal row; both belong to the delegation, not to a person.
     """
     if template_key(user_row["content"] or "", templated_prefixes) is not None:
         return "templated"
-    if user_row["subconversation_id"] is not None:
+    if user_row["subconversation_id"] is not None or user_row["is_internal"]:
         return "delegated"
     return "human"
 

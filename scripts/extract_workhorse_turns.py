@@ -183,7 +183,11 @@ async def _read_history(
     engine = open_read_only_engine(database_url)
     try:
         return await Database(engine).message_history.get_all_grouped(
-            date_from=since, include_subconversations=True
+            date_from=since,
+            include_subconversations=True,
+            # Scheduled callbacks and delegation wakes open their turns with
+            # an internal user row; without these they vanish from the record.
+            include_internal=True,
         )
     finally:
         await engine.dispose()

@@ -63,6 +63,7 @@ class _Conversation:
         reasoning_info: MessageReasoningInfo | None = None,
         error_traceback: str | None = None,
         subconversation_id: str | None = None,
+        is_internal: bool = False,
     ) -> None:
         self.rows.append(
             MessageHistoryRow(
@@ -88,7 +89,7 @@ class _Conversation:
                 taint_metadata_json=None,
                 taint_metadata_version=None,
                 taint_metadata=None,
-                is_internal=False,
+                is_internal=is_internal,
                 echoed_from_conversation_id=None,
                 moved_to_conversation_id=None,
             )
@@ -301,6 +302,32 @@ def test_an_automation_in_a_subconversation_is_templated_not_delegated() -> None
     assert _records(conversation)["auto"].population == "templated"
 
 
+def test_internal_openings_are_callbacks_or_delegation_wakes() -> None:
+    """A wake delivering a delegation's result is not the user coming back."""
+    conversation = _Conversation()
+    conversation.simple_turn("t1", "Research this", _T0, tools=("delegate_to_service",))
+    conversation.add(
+        turn_id="wake",
+        role="user",
+        at=_T0 + timedelta(minutes=2),
+        content="Delegated profile task completed data. Delegation id ...",
+        is_internal=True,
+    )
+    conversation.add(
+        turn_id="callback",
+        role="user",
+        at=_T0 + timedelta(hours=1),
+        content="System Callback Trigger: The time is now 10am",
+        is_internal=True,
+    )
+
+    records = _records(conversation)
+
+    assert records["wake"].population == "delegated"
+    assert records["callback"].population == "templated"
+    assert not records["t1"].followup_within_10m
+
+
 def test_re_asking_on_complex_tasks_marks_escalation_and_links_context() -> None:
     conversation = _Conversation()
     conversation.simple_turn("t1", "Plan the weekend", _T0)
@@ -417,6 +444,28 @@ def test_sample_prefers_negative_turns_up_to_the_share() -> None:
 
     assert len(sampled) == 6
     assert sum(pick.negative_signal for pick in sampled) == 3
+
+
+def test_negative_share_is_a_ceiling_when_other_turns_remain() -> None:
+    conversation = _Conversation()
+    for index in range(30):
+        at = _T0 + timedelta(hours=index)
+        conversation.add(turn_id=f"t{index:02}", role="user", at=at, content="Hi")
+        if index % 2 == 0:
+            conversation.add(
+                turn_id=f"t{index:02}",
+                role="error",
+                at=at + timedelta(seconds=1),
+                content="failed",
+            )
+    records = list(_records(conversation).values())
+
+    sampled = sample_candidates(
+        records, target=6, templated_per_template=0, negative_share=0, seed="s"
+    )
+
+    assert len(sampled) == 6
+    assert not any(pick.negative_signal for pick in sampled)
 
 
 def test_oversampled_negatives_are_weighted_back_to_their_share() -> None:

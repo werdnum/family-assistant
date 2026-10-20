@@ -310,11 +310,13 @@ def sample_candidates(
         ordered = _spread_by_size(turns, seed)
         negatives = [turn for turn in ordered if turn.negative_signal]
         negative_picks = min(len(negatives), math.floor(picks * negative_share))
-        chosen = negatives[:negative_picks]
-        chosen_ids = {turn.turn_id for turn in chosen}
-        chosen += [turn for turn in ordered if turn.turn_id not in chosen_ids][
-            : picks - negative_picks
-        ]
+        # The rest come from turns without a negative signal, so the share is
+        # a ceiling as well as a target; leftover negatives fill only a
+        # stratum that has too few other turns.
+        others = [turn for turn in ordered if not turn.negative_signal]
+        chosen = negatives[:negative_picks] + others
+        chosen += negatives[negative_picks:]
+        chosen = chosen[:picks]
         weights = _cell_weights(turns, chosen)
         sampled.extend(
             SampledTurn(
