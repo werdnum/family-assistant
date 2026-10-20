@@ -8,7 +8,12 @@ import json
 import logging
 from typing import Any, cast
 
-from family_assistant.llm.one_shot import DEFAULT_MODEL, one_shot, one_shot_json
+from family_assistant.llm.one_shot import (
+    DEFAULT_MODEL,
+    LLMParameters,
+    one_shot,
+    one_shot_json,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +25,7 @@ async def llm_call_async(
     prompt: str,
     system: str | None = None,
     model: str | None = None,
+    llm_parameters: LLMParameters | None = None,
 ) -> str:
     """Make a one-shot LLM call and return the text response.
 
@@ -27,6 +33,7 @@ async def llm_call_async(
         prompt: The user prompt to send.
         system: Optional system message.
         model: Model identifier (default: gemini-3.8-flash).
+        llm_parameters: The deployment's ``llm_parameters`` map.
 
     Returns:
         The text content of the LLM response.
@@ -34,7 +41,12 @@ async def llm_call_async(
     Raises:
         ValueError: If the LLM returns no content.
     """
-    return await one_shot(prompt, system=system, model=model or DEFAULT_MODEL)
+    return await one_shot(
+        prompt,
+        system=system,
+        model=model or DEFAULT_MODEL,
+        llm_parameters=llm_parameters,
+    )
 
 
 async def llm_call_json_async(
@@ -43,6 +55,7 @@ async def llm_call_json_async(
     schema: dict[str, Any] | None = None,
     system: str | None = None,
     model: str | None = None,
+    llm_parameters: LLMParameters | None = None,
     # ast-grep-ignore: no-dict-any - JSON output structure is determined by LLM
 ) -> dict[str, Any]:
     """Make a one-shot LLM call and return parsed JSON object.
@@ -55,6 +68,7 @@ async def llm_call_json_async(
         schema: Optional JSON schema to include in the system prompt.
         system: Optional additional system message.
         model: Model identifier (default: gemini-3.8-flash).
+        llm_parameters: The deployment's ``llm_parameters`` map.
 
     Returns:
         Parsed JSON object (dict).
@@ -72,6 +86,9 @@ async def llm_call_json_async(
         combined_system = "\n\n".join(parts)
 
     result = await one_shot_json(
-        prompt, system=combined_system, model=model or DEFAULT_MODEL
+        prompt,
+        system=combined_system,
+        model=model or DEFAULT_MODEL,
+        llm_parameters=llm_parameters,
     )
     return cast("dict[str, Any]", result)

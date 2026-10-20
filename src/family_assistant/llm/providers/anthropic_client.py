@@ -263,9 +263,10 @@ class AnthropicClient(BaseLLMClient):
         api_key: str,
         model: str,
         model_parameters: dict[str, dict[str, object]] | None = None,
+        base_url: str | None = None,
         **kwargs: Any,  # noqa: ANN401 # Accepts arbitrary Anthropic API parameters
     ) -> None:
-        self.client = anthropic.AsyncAnthropic(api_key=api_key)
+        self.client = anthropic.AsyncAnthropic(api_key=api_key, base_url=base_url)
         self.model = model
         self.model_parameters = model_parameters or {}
         self.default_kwargs = kwargs

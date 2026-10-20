@@ -62,6 +62,40 @@ final class GeminiLiveCodecTests: XCTestCase {
         XCTAssertNotNil(setup["outputAudioTranscription"])
     }
 
+    func testSetupMessageOmitsOptionalFeaturesByDefault() throws {
+        let message = try GeminiLiveCodec.setupMessage(for: makeToken(), activityDetection: VoiceActivityDetectionConfig())
+        let setup = try XCTUnwrap(try jsonObject(message)["setup"] as? [String: Any])
+        let generationConfig = try XCTUnwrap(setup["generationConfig"] as? [String: Any])
+        XCTAssertNil(generationConfig["enableAffectiveDialog"])
+        XCTAssertNil(generationConfig["thinkingConfig"])
+        XCTAssertNil(setup["proactivity"])
+    }
+
+    func testSetupMessageCarriesConfiguredLiveFeatures() throws {
+        let token = EphemeralToken(
+            token: "auth_tokens/abc",
+            expiresAt: nil,
+            model: "gemini-3.8-live",
+            systemInstruction: "You are helpful.",
+            tools: [],
+            config: VoiceLiveConfig(
+                voiceName: "Puck",
+                maxSessionMinutes: 15,
+                inputTranscriptionEnabled: true,
+                outputTranscriptionEnabled: true,
+                affectiveDialogEnabled: true,
+                proactiveAudio: true,
+                includeThoughts: true
+            )
+        )
+        let message = try GeminiLiveCodec.setupMessage(for: token, activityDetection: VoiceActivityDetectionConfig())
+        let setup = try XCTUnwrap(try jsonObject(message)["setup"] as? [String: Any])
+        let generationConfig = try XCTUnwrap(setup["generationConfig"] as? [String: Any])
+        XCTAssertEqual(generationConfig["enableAffectiveDialog"] as? Bool, true)
+        XCTAssertEqual((generationConfig["thinkingConfig"] as? [String: Any])?["includeThoughts"] as? Bool, true)
+        XCTAssertEqual((setup["proactivity"] as? [String: Any])?["proactiveAudio"] as? Bool, true)
+    }
+
     func testSetupMessageSpeechLanguageCode() throws {
         func languageCode(_ token: EphemeralToken) throws -> Any? {
             let message = try GeminiLiveCodec.setupMessage(for: token, activityDetection: VoiceActivityDetectionConfig())

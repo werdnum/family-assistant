@@ -42,7 +42,10 @@ final class EphemeralTokenTests: XCTestCase {
         "session": {"max_duration_minutes": 10},
         "transcription": {"input_enabled": true, "output_enabled": false, "language_codes": ["en-AU"]},
         "vad": {"automatic": true, "start_of_speech_sensitivity": "DEFAULT", "silence_duration_ms": 700},
-        "car_audio_vad": {"start_of_speech_sensitivity": "START_SENSITIVITY_LOW", "prefix_padding_ms": 300}
+        "car_audio_vad": {"start_of_speech_sensitivity": "START_SENSITIVITY_LOW", "prefix_padding_ms": 300},
+        "affective_dialog": {"enabled": true},
+        "proactivity": {"enabled": true, "proactive_audio": true},
+        "thinking": {"include_thoughts": true}
       },
       "profile_id": "default_assistant",
       "voice_reminder_key": "voice_mode_reminder",
@@ -70,6 +73,9 @@ final class EphemeralTokenTests: XCTestCase {
             token.config.carAudioActivityDetection,
             VoiceActivityDetectionConfig(startOfSpeechSensitivity: "START_SENSITIVITY_LOW", prefixPaddingMs: 300)
         )
+        XCTAssertTrue(token.config.affectiveDialogEnabled)
+        XCTAssertEqual(token.config.proactiveAudio, true)
+        XCTAssertTrue(token.config.includeThoughts)
         XCTAssertNotNil(token.expiresAt)
         XCTAssertEqual(token.profileID, "default_assistant")
         XCTAssertEqual(token.voiceReminderKey, "voice_mode_reminder")
@@ -95,6 +101,9 @@ final class EphemeralTokenTests: XCTestCase {
         XCTAssertTrue(token.config.outputTranscriptionEnabled)
         XCTAssertEqual(token.config.activityDetection, VoiceActivityDetectionConfig())
         XCTAssertEqual(token.config.carAudioActivityDetection, VoiceActivityDetectionConfig())
+        XCTAssertFalse(token.config.affectiveDialogEnabled)
+        XCTAssertNil(token.config.proactiveAudio)
+        XCTAssertFalse(token.config.includeThoughts)
         XCTAssertTrue(token.tools.isEmpty)
         // A server that predates the fields sends an instruction that never
         // mentions the reminder either, so the client must not invent one.

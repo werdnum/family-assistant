@@ -267,6 +267,7 @@ class ScriptTestingToolsProvider(ToolsProvider):
             tool_definition=tool_definition,
             examples=examples,
         )
+        service = self._execution_context.processing_service
         response = await one_shot_structured(
             prompt,
             system=(
@@ -276,6 +277,9 @@ class ScriptTestingToolsProvider(ToolsProvider):
                 "Preserve the real tool's style, field names, and return shape."
             ),
             response_model=SimulatedToolCallResponse,
+            llm_parameters=(
+                service.app_config.llm_parameters if service is not None else None
+            ),
         )
 
         try:

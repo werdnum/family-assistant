@@ -106,13 +106,9 @@ async def llm_client_factory() -> (  # type: ignore[misc]
             "api_key": api_key,
         }
 
-        # Add provider-specific configuration
-        if provider == "google":
-            # Use the v1beta endpoint for gemini
-            config["api_base"] = "https://generativelanguage.googleapis.com/v1beta"
-            # Add debug_config if provided (for record/replay)
-            if debug_config:
-                config["debug_config"] = debug_config
+        # Add debug_config if provided (for record/replay)
+        if provider == "google" and debug_config:
+            config["debug_config"] = debug_config
 
         client = LLMClientFactory.create_client(config)
         created_clients.append(client)

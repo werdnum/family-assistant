@@ -335,6 +335,82 @@ def convert_tools_to_genai_format(tools: list[ToolDefinition]) -> list[Any]:
     return []
 
 
+# `llm_parameters` keys that are spelled differently on GenerateContentConfig.
+# `max_tokens` is the name every other provider client takes.
+_GENERATION_PARAM_ALIASES = {"max_tokens": "max_output_tokens"}
+
+# GenerateContentConfig fields this client sets per request from the call it is
+# serving. A configured value would be silently overwritten, so it is refused.
+_CLIENT_OWNED_GENERATION_FIELDS = frozenset({
+    "automatic_function_calling",
+    "http_options",
+    "response_json_schema",
+    "response_mime_type",
+    "response_schema",
+    "should_return_http_response",
+    "system_instruction",
+    "tool_config",
+    "tools",
+})
+
+
+def _generation_config_fields(
+    params: Mapping[str, object], *, model: str
+) -> dict[str, object]:
+    """Map configured request parameters onto ``GenerateContentConfig`` fields.
+
+    Every field the SDK models is accepted under its own name, so
+    ``thinking_config``, ``safety_settings``, ``seed`` and the rest reach the
+    request without each needing a line here. A key that is not a field fails
+    at construction, naming the model, rather than being dropped from every
+    request that model serves. The result is validated once here so a bad
+    value fails at startup too.
+    """
+    fields: dict[str, object] = {
+        # HIGH for every request (affects images, PDFs, videos) unless configured.
+        "media_resolution": types.MediaResolution.MEDIA_RESOLUTION_HIGH,
+    }
+    for key, value in params.items():
+        field = _GENERATION_PARAM_ALIASES.get(key, key)
+        if field in _CLIENT_OWNED_GENERATION_FIELDS:
+            raise ValueError(
+                f"llm_parameters for Gemini model '{model}' set '{key}', which "
+                "the client sets itself on every request."
+            )
+        if field not in types.GenerateContentConfig.model_fields:
+            raise ValueError(
+                f"llm_parameters for Gemini model '{model}' set unknown "
+                f"parameter '{key}'. Use a google.genai GenerateContentConfig "
+                "field name, e.g. thinking_config: {thinking_level: high}."
+            )
+        fields[field] = value
+    try:
+        types.GenerateContentConfig.model_validate(fields)
+    except ValidationError as error:
+        raise ValueError(
+            f"Invalid llm_parameters for Gemini model '{model}': {error}"
+        ) from error
+    return fields
+
+
+_API_VERSION_SUFFIX = re.compile(r"/(v\d+(?:alpha|beta)?)/?$")
+
+
+def _http_options_for_base_url(base_url: str) -> types.HttpOptions:
+    """SDK HTTP options for a configured endpoint.
+
+    The SDK appends its own API version to ``base_url``, so a URL that already
+    ends in one (``.../v1beta``, the form LiteLLM-era configs used) is split
+    into the two rather than requesting ``/v1beta/v1beta/models/...``.
+    """
+    match = _API_VERSION_SUFFIX.search(base_url)
+    if match is None:
+        return types.HttpOptions(base_url=base_url)
+    return types.HttpOptions(
+        base_url=base_url[: match.start()] + "/", api_version=match.group(1)
+    )
+
+
 class GoogleGenAIClient(BaseLLMClient):
     """Direct Google Generative AI implementation."""
 
@@ -343,7 +419,7 @@ class GoogleGenAIClient(BaseLLMClient):
         api_key: str,
         model: str,
         model_parameters: dict[str, dict[str, object]] | None = None,
-        api_base: str | None = None,
+        base_url: str | None = None,
         enable_url_context: bool = False,
         enable_google_search: bool = False,
         enable_computer_use: bool = False,
@@ -363,7 +439,7 @@ class GoogleGenAIClient(BaseLLMClient):
             api_key: Google API key
             model: Model identifier (e.g., "gemini-2.0-flash-001", "gemini-1.5-pro")
             model_parameters: Pattern-based parameters matching existing config format
-            api_base: Optional API base URL for custom endpoints.
+            base_url: Optional API base URL for custom endpoints.
             enable_url_context: Enable URL understanding (supports up to 20 URLs per request)
             enable_google_search: Enable Google Search grounding for real-time information
             enable_computer_use: Enable native Gemini computer use tools (explicit opt-in)
@@ -376,27 +452,31 @@ class GoogleGenAIClient(BaseLLMClient):
                 primarily for tests; built from ``antigravity_environment`` when omitted
             debug_messages: Enable detailed message logging. If None, reads from DEBUG_LLM_MESSAGES env var.
             debug_config: SDK DebugConfig dict for record/replay in tests (client_mode, replay_id, replays_directory)
-            **kwargs: Default parameters for generation
+            **kwargs: Default parameters for generation, as for ``model_parameters``
         """
-        # Initialize the google-genai client
-        if api_base:
-            # For custom endpoints, we might need additional configuration
-            logger.info(f"Using custom API base: {api_base}")
-            # Note: The new API might handle this differently
-
+        http_options = _http_options_for_base_url(base_url) if base_url else None
         # Create client with optional debug_config for record/replay in tests
         if debug_config:
             self.client = genai.Client(
-                api_key=api_key, debug_config=DebugConfig(**debug_config)
+                api_key=api_key,
+                http_options=http_options,
+                debug_config=DebugConfig(**debug_config),
             )
         else:
-            self.client = genai.Client(api_key=api_key)
+            self.client = genai.Client(api_key=api_key, http_options=http_options)
         # Google API requires 'models/' prefix
         self.model_name = (
             f"models/{model}" if not model.startswith("models/") else model
         )
         self.model_parameters = model_parameters or {}
         self.default_kwargs = kwargs
+        self._generation_fields = _generation_config_fields(
+            {
+                **self.default_kwargs,
+                **self._get_model_specific_params(self.model_name),
+            },
+            model=model,
+        )
 
         # New configuration options
         self.enable_url_context = enable_url_context
@@ -482,25 +562,13 @@ class GoogleGenAIClient(BaseLLMClient):
         return params
 
     def _build_base_generation_config(self) -> types.GenerateContentConfig:
-        """Build common GenerateContentConfig fields shared by native output modes."""
-        config_params = {
-            **self.default_kwargs,
-            **self._get_model_specific_params(self.model_name),
-        }
+        """A fresh GenerateContentConfig carrying every configured request parameter.
 
-        generation_config = types.GenerateContentConfig()
-        generation_config.media_resolution = types.MediaResolution.MEDIA_RESOLUTION_HIGH
-
-        if "temperature" in config_params:
-            generation_config.temperature = float(config_params["temperature"])
-        if "max_tokens" in config_params:
-            generation_config.max_output_tokens = int(config_params["max_tokens"])
-        if "top_p" in config_params:
-            generation_config.top_p = float(config_params["top_p"])
-        if "top_k" in config_params:
-            generation_config.top_k = int(config_params["top_k"])
-
-        return generation_config
+        Every generateContent path starts here, so a parameter configured in
+        ``llm_parameters`` reaches chat, streaming and structured output alike.
+        Callers then set the fields the client owns (tools, response format).
+        """
+        return types.GenerateContentConfig.model_validate(self._generation_fields)
 
     def _extract_text_response(self, response: object) -> str | None:
         """Extract text content from a GenerateContent response."""
@@ -1282,29 +1350,7 @@ class GoogleGenAIClient(BaseLLMClient):
                         )
                     logger.info("\n".join(debug_lines))
 
-                # Build generation config
-                config_params = {
-                    **self.default_kwargs,
-                    **self._get_model_specific_params(self.model_name),
-                }
-
-                # Map common parameters
-                generation_config = types.GenerateContentConfig()
-                # Set media resolution to HIGH for all requests (affects images, PDFs, videos)
-                generation_config.media_resolution = (
-                    types.MediaResolution.MEDIA_RESOLUTION_HIGH
-                )
-
-                if "temperature" in config_params:
-                    generation_config.temperature = float(config_params["temperature"])
-                if "max_tokens" in config_params:
-                    generation_config.max_output_tokens = int(
-                        config_params["max_tokens"]
-                    )
-                if "top_p" in config_params:
-                    generation_config.top_p = float(config_params["top_p"])
-                if "top_k" in config_params:
-                    generation_config.top_k = int(config_params["top_k"])
+                generation_config = self._build_base_generation_config()
 
                 # Prepare all tools (function tools + grounding tools)
                 # Pass tool_choice to respect "none" mode which returns empty list
@@ -2421,27 +2467,7 @@ class GoogleGenAIClient(BaseLLMClient):
                     f"{_format_messages_for_debug(processed_typed_messages, None, None)}"
                 )
 
-            # Build generation config
-            config_params = {
-                **self.default_kwargs,
-                **self._get_model_specific_params(self.model_name),
-            }
-
-            # Map common parameters
-            generation_config = types.GenerateContentConfig()
-            # Set media resolution to HIGH for all requests (affects images, PDFs, videos)
-            generation_config.media_resolution = (
-                types.MediaResolution.MEDIA_RESOLUTION_HIGH
-            )
-
-            if "temperature" in config_params:
-                generation_config.temperature = float(config_params["temperature"])
-            if "max_tokens" in config_params:
-                generation_config.max_output_tokens = int(config_params["max_tokens"])
-            if "top_p" in config_params:
-                generation_config.top_p = float(config_params["top_p"])
-            if "top_k" in config_params:
-                generation_config.top_k = int(config_params["top_k"])
+            generation_config = self._build_base_generation_config()
 
             # Prepare all tools (function tools + grounding tools)
             # Pass tool_choice to respect "none" mode which returns empty list

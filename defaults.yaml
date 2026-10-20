@@ -71,6 +71,14 @@ llm_parameters:
   #     type: adaptive
   #   output_config:
   #     effort: high
+  # Gemini takes google-genai GenerateContentConfig field names; thinking is
+  # `thinking_config`. Gemini 3 and later take a level (minimal/low/medium/
+  # high); 2.5 takes `thinking_budget` in tokens instead. Unset, the model runs
+  # at its own default.
+  # "gemini-3.8-flash":
+  #   thinking_config:
+  #     thinking_level: low
+  #     include_thoughts: true
   # Direct OpenAI models use the Responses API by default. It is the only
   # OpenAI surface that returns encrypted reasoning items, which have to be
   # replayed for reasoning to survive a multi-step tool loop; Chat Completions

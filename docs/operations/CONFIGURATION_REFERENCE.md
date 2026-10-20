@@ -871,6 +871,35 @@ larger non-streaming requests.
 Enabling thinking is worthwhile mainly for long tool loops — the profile running Claude (`engineer`)
 is the candidate. Note that thinking is incompatible with a non-default `temperature`.
 
+#### Gemini thinking and other request fields
+
+Gemini parameters are `GenerateContentConfig` field names from the `google-genai` SDK, and any field
+it models is accepted — `thinking_config`, `safety_settings`, `seed`, `stop_sequences`,
+`media_resolution`, `service_tier` and so on. `max_tokens` is accepted as the name the other
+providers use for `max_output_tokens`. They apply to chat, streaming and structured output alike.
+
+```yaml
+llm_parameters:
+  "gemini-3.8-flash":
+    thinking_config:
+      thinking_level: low # minimal | low | medium | high; Gemini 3 and later
+      include_thoughts: true # thought summaries, recorded with the message's usage
+  "gemini-2.5-":
+    thinking_config:
+      thinking_budget: 2048 # Gemini 2.5 takes a token budget instead of a level
+```
+
+A key that is not a field, or one the client sets itself per request (`tools`, `tool_config`,
+`system_instruction`, the response format fields), fails at startup naming the model, rather than
+being dropped from every request. Media resolution defaults to high unless configured.
+
+#### OpenAI-compatible extensions
+
+An OpenAI-client parameter the installed SDK does not take as an argument — OpenRouter's `reasoning`
+object, say, or a field newer than the SDK — is sent in the request body as-is, merged over any
+configured `extra_body`. SDK parameters (`reasoning_effort`, `temperature`, `max_tokens`, ...) are
+sent as themselves.
+
 ______________________________________________________________________
 
 ### model_tiers

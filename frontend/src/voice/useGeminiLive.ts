@@ -12,6 +12,7 @@
 import { GoogleGenAI, Modality, type LiveServerMessage, type Session } from '@google/genai';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { arrayBufferToBase64, base64ToArrayBuffer, generateTranscriptId } from './audioUtils';
+import { configuredLiveOptions } from './liveConnectOptions';
 import type {
   EphemeralTokenResponse,
   GeminiLiveState,
@@ -458,7 +459,8 @@ export function useGeminiLive(): GeminiLiveState {
             if (part.inlineData?.data) {
               handleAudioResponse(part.inlineData.data);
             }
-            if (part.text) {
+            // Thought summaries (thinking.include_thoughts) are not speech.
+            if (part.text && !part.thought) {
               handleTranscription(part.text, 'assistant');
             }
           }
@@ -677,9 +679,7 @@ export function useGeminiLive(): GeminiLiveState {
               // Enable transcription for UI display (always on for frontend)
               inputAudioTranscription: {},
               outputAudioTranscription: {},
-              // Note: VAD and other advanced config options (tokenData.config.vad, etc.)
-              // are available but require RealtimeInputConfig which needs additional setup.
-              // The current implementation uses SDK defaults for VAD behavior.
+              ...configuredLiveOptions(tokenData.config),
             },
           });
         }

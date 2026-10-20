@@ -3,6 +3,7 @@ Direct OpenAI API implementation for LLM interactions.
 """
 
 import base64
+import inspect
 import json
 import logging
 import os
@@ -11,6 +12,7 @@ from collections.abc import (
     AsyncIterator,
     Awaitable,
     Callable,
+    Mapping,
     Sequence,
 )
 from dataclasses import asdict
@@ -21,6 +23,8 @@ if TYPE_CHECKING:
 
 import aiofiles
 from openai import AsyncOpenAI
+from openai.resources.chat.completions import AsyncCompletions
+from openai.resources.responses import AsyncResponses
 from openai.types.responses import Response
 from opentelemetry import trace
 from pydantic import BaseModel, ValidationError
@@ -80,6 +84,43 @@ class _StreamingToolAccumulator(TypedDict):
 # `llm_parameters` entries that configure this client rather than the request.
 # They are stripped before any params reach the OpenAI API.
 _CONTROL_PARAMS = frozenset({"use_responses_api"})
+
+
+def _sdk_params(method: Callable[..., object]) -> frozenset[str]:
+    return frozenset(inspect.signature(method).parameters) - {"self"}
+
+
+# The keyword arguments each SDK method takes. Its signatures are closed, so a
+# configured parameter the SDK does not model -- OpenRouter's `reasoning`
+# object, a field newer than the installed SDK -- would raise a TypeError on
+# every request instead of reaching the API.
+_CHAT_COMPLETIONS_PARAMS = _sdk_params(AsyncCompletions.create)
+_CHAT_PARSE_PARAMS = _sdk_params(AsyncCompletions.parse)
+_RESPONSES_PARAMS = _sdk_params(AsyncResponses.create)
+
+
+def _with_extra_body(
+    # ast-grep-ignore: no-dict-any - SDK create() kwargs have heterogeneous types
+    params: dict[str, Any],
+    accepted: frozenset[str],
+    # ast-grep-ignore: no-dict-any - SDK create() kwargs have heterogeneous types
+) -> dict[str, Any]:
+    """Move parameters the SDK method does not take into ``extra_body``.
+
+    ``extra_body`` is merged into the request JSON as-is, which is how the SDK
+    expects provider extensions to be sent. A configured ``extra_body`` is kept,
+    with the moved parameters merged over it.
+    """
+    unknown = {key: value for key, value in params.items() if key not in accepted}
+    if not unknown:
+        return params
+    known = {key: value for key, value in params.items() if key in accepted}
+    configured = known.get("extra_body") or {}
+    if not isinstance(configured, Mapping):
+        raise TypeError("llm_parameters extra_body must be a mapping")
+    known["extra_body"] = {**configured, **unknown}
+    return known
+
 
 # OpenAI proper. Anything else is an OpenAI-*compatible* endpoint, which
 # implements Chat Completions but not necessarily Responses.
@@ -380,7 +421,7 @@ class OpenAIClient(BaseLLMClient):
             ]
             params["tool_choice"] = tool_choice
 
-        return params
+        return _with_extra_body(params, _RESPONSES_PARAMS)
 
     @staticmethod
     def _is_replayable_reasoning_item(
@@ -989,7 +1030,9 @@ class OpenAIClient(BaseLLMClient):
             params["tool_choice"] = tool_choice
 
         # Make API call
-        response = await self.client.chat.completions.create(**params)
+        response = await self.client.chat.completions.create(
+            **_with_extra_body(params, _CHAT_COMPLETIONS_PARAMS)
+        )
 
         # Parse response
         message = response.choices[0].message
@@ -1063,7 +1106,7 @@ class OpenAIClient(BaseLLMClient):
                 attempt_messages,
                 lambda: self.client.beta.chat.completions.parse(
                     response_format=response_model,
-                    **base_params,
+                    **_with_extra_body(base_params, _CHAT_PARSE_PARAMS),
                 ),
                 response_schema=response_model.model_json_schema(),
             )
@@ -1157,7 +1200,9 @@ class OpenAIClient(BaseLLMClient):
             nonlocal raw_response
             response = await self._instrumented_structured_request(
                 attempt_messages,
-                lambda: self.client.chat.completions.create(**base_params),
+                lambda: self.client.chat.completions.create(
+                    **_with_extra_body(base_params, _CHAT_COMPLETIONS_PARAMS)
+                ),
                 response_schema=base_params.get("response_format"),
             )
             if not response.choices:
@@ -1379,7 +1424,9 @@ class OpenAIClient(BaseLLMClient):
 
             # Make streaming API call
             with trace.use_span(span, end_on_exit=False):
-                stream = await self.client.chat.completions.create(**params)
+                stream = await self.client.chat.completions.create(
+                    **_with_extra_body(params, _CHAT_COMPLETIONS_PARAMS)
+                )
 
             # VCR replays flatten streaming bodies into a single line with a
             # custom marker. The OpenAI SDK doesn't decode that format, so we

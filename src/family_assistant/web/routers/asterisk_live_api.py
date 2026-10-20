@@ -44,6 +44,7 @@ from google.genai.types import (
     RealtimeInputConfig,
     SpeechConfig,
     StartSensitivity,
+    ThinkingConfig,
     ToolListUnion,
     VoiceConfig,
 )
@@ -127,6 +128,102 @@ GEMINI_CHANNELS = 1
 
 JsonPrimitive: TypeAlias = str | int | float | bool | None  # noqa: UP040
 JsonValue: TypeAlias = JsonPrimitive | list["JsonValue"] | dict[str, "JsonValue"]  # noqa: UP040
+
+
+def build_live_connect_config(
+    live_config: GeminiLiveConfig,
+    *,
+    system_instruction: str | None,
+    tools: ToolListUnion | None,
+) -> LiveConnectConfig:
+    """The Live session configuration for a phone call."""
+    # Build VAD configuration from gemini_live_config
+    vad_config = live_config.vad
+
+    # Map config sensitivity strings to SDK enums (None means use default)
+    # Valid values: "DISABLED", "LOW", "DEFAULT", "HIGH"
+    start_sensitivity: StartSensitivity | None = None
+    if vad_config.start_of_speech_sensitivity != "DEFAULT":
+        try:
+            start_sensitivity = StartSensitivity(vad_config.start_of_speech_sensitivity)
+        except ValueError:
+            logger.warning(
+                f"Invalid start_of_speech_sensitivity value: "
+                f"'{vad_config.start_of_speech_sensitivity}', using default"
+            )
+
+    end_sensitivity: EndSensitivity | None = None
+    if vad_config.end_of_speech_sensitivity != "DEFAULT":
+        try:
+            end_sensitivity = EndSensitivity(vad_config.end_of_speech_sensitivity)
+        except ValueError:
+            logger.warning(
+                f"Invalid end_of_speech_sensitivity value: "
+                f"'{vad_config.end_of_speech_sensitivity}', using default"
+            )
+
+    # Build AutomaticActivityDetection with all configured values
+    # Only set disabled=True if automatic is False; otherwise leave as None
+    is_disabled = True if not vad_config.automatic else None
+    activity_detection = AutomaticActivityDetection(
+        disabled=is_disabled,
+        start_of_speech_sensitivity=start_sensitivity,
+        end_of_speech_sensitivity=end_sensitivity,
+        prefix_padding_ms=vad_config.prefix_padding_ms,
+        silence_duration_ms=vad_config.silence_duration_ms,
+    )
+
+    # Only include realtime_input_config if we have non-default VAD settings
+    has_custom_vad = (
+        not vad_config.automatic
+        or start_sensitivity is not None
+        or end_sensitivity is not None
+        or vad_config.prefix_padding_ms is not None
+        or vad_config.silence_duration_ms is not None
+    )
+    realtime_input_config = None
+    if has_custom_vad:
+        logger.info(
+            f"Applying VAD settings: automatic={vad_config.automatic}, "
+            f"start_sensitivity={vad_config.start_of_speech_sensitivity}, "
+            f"end_sensitivity={vad_config.end_of_speech_sensitivity}, "
+            f"silence_duration_ms={vad_config.silence_duration_ms}"
+        )
+        realtime_input_config = RealtimeInputConfig(
+            automatic_activity_detection=activity_detection
+        )
+
+    # Build proactivity configuration
+    # See: https://ai.google.dev/gemini-api/docs/live-guide#proactive-audio
+    proactivity = None
+    if live_config.proactivity.enabled:
+        proactivity = ProactivityConfig(
+            proactive_audio=live_config.proactivity.proactive_audio
+        )
+
+    return LiveConnectConfig(
+        response_modalities=[Modality.AUDIO],
+        speech_config=SpeechConfig(
+            voice_config=VoiceConfig(
+                prebuilt_voice_config=PrebuiltVoiceConfig(
+                    voice_name=live_config.voice.name
+                )
+            ),
+            language_code=live_config.voice.language_code,
+        ),
+        system_instruction=Content(parts=[Part(text=system_instruction)])
+        if system_instruction
+        else None,
+        tools=tools if tools else None,
+        input_audio_transcription=AudioTranscriptionConfig(),
+        output_audio_transcription=AudioTranscriptionConfig(),
+        realtime_input_config=realtime_input_config,
+        proactivity=proactivity,
+        enable_affective_dialog=True if live_config.affective_dialog.enabled else None,
+        thinking_config=ThinkingConfig(include_thoughts=True)
+        if live_config.thinking.include_thoughts
+        else None,
+    )
 
 
 class SupportsRepr(Protocol):
@@ -449,92 +546,10 @@ class AsteriskLiveHandler:
 
             logger.info(f"Configuration received. Format: {self.format}")
 
-            # Build VAD configuration from gemini_live_config
-            vad_config = self.gemini_live_config.vad
-
-            # Map config sensitivity strings to SDK enums (None means use default)
-            # Valid values: "DISABLED", "LOW", "DEFAULT", "HIGH"
-            start_sensitivity: StartSensitivity | None = None
-            if vad_config.start_of_speech_sensitivity != "DEFAULT":
-                try:
-                    start_sensitivity = StartSensitivity(
-                        vad_config.start_of_speech_sensitivity
-                    )
-                except ValueError:
-                    logger.warning(
-                        f"Invalid start_of_speech_sensitivity value: "
-                        f"'{vad_config.start_of_speech_sensitivity}', using default"
-                    )
-
-            end_sensitivity: EndSensitivity | None = None
-            if vad_config.end_of_speech_sensitivity != "DEFAULT":
-                try:
-                    end_sensitivity = EndSensitivity(
-                        vad_config.end_of_speech_sensitivity
-                    )
-                except ValueError:
-                    logger.warning(
-                        f"Invalid end_of_speech_sensitivity value: "
-                        f"'{vad_config.end_of_speech_sensitivity}', using default"
-                    )
-
-            # Build AutomaticActivityDetection with all configured values
-            # Only set disabled=True if automatic is False; otherwise leave as None
-            is_disabled = True if not vad_config.automatic else None
-            activity_detection = AutomaticActivityDetection(
-                disabled=is_disabled,
-                start_of_speech_sensitivity=start_sensitivity,
-                end_of_speech_sensitivity=end_sensitivity,
-                prefix_padding_ms=vad_config.prefix_padding_ms,
-                silence_duration_ms=vad_config.silence_duration_ms,
-            )
-
-            # Only include realtime_input_config if we have non-default VAD settings
-            has_custom_vad = (
-                not vad_config.automatic
-                or start_sensitivity is not None
-                or end_sensitivity is not None
-                or vad_config.prefix_padding_ms is not None
-                or vad_config.silence_duration_ms is not None
-            )
-            realtime_input_config = None
-            if has_custom_vad:
-                logger.info(
-                    f"Applying VAD settings: automatic={vad_config.automatic}, "
-                    f"start_sensitivity={vad_config.start_of_speech_sensitivity}, "
-                    f"end_sensitivity={vad_config.end_of_speech_sensitivity}, "
-                    f"silence_duration_ms={vad_config.silence_duration_ms}"
-                )
-                realtime_input_config = RealtimeInputConfig(
-                    automatic_activity_detection=activity_detection
-                )
-
-            # Build proactivity configuration
-            # See: https://ai.google.dev/gemini-api/docs/live-guide#proactive-audio
-            proactivity = None
-            if self.gemini_live_config.proactivity.enabled:
-                proactivity = ProactivityConfig(
-                    proactive_audio=self.gemini_live_config.proactivity.proactive_audio
-                )
-
-            config = LiveConnectConfig(
-                response_modalities=[Modality.AUDIO],
-                speech_config=SpeechConfig(
-                    voice_config=VoiceConfig(
-                        prebuilt_voice_config=PrebuiltVoiceConfig(
-                            voice_name=self.gemini_live_config.voice.name
-                        )
-                    ),
-                    language_code=self.gemini_live_config.voice.language_code,
-                ),
-                system_instruction=Content(parts=[Part(text=self.system_instruction)])
-                if self.system_instruction
-                else None,
-                tools=self.tools if self.tools else None,
-                input_audio_transcription=AudioTranscriptionConfig(),
-                output_audio_transcription=AudioTranscriptionConfig(),
-                realtime_input_config=realtime_input_config,
-                proactivity=proactivity,
+            config = build_live_connect_config(
+                self.gemini_live_config,
+                system_instruction=self.system_instruction,
+                tools=self.tools,
             )
 
             # Answer immediately so the caller stops hearing ringing.

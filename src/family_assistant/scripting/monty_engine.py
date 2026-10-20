@@ -40,6 +40,7 @@ from .config import ScriptConfig
 from .errors import ScriptExecutionError, ScriptSyntaxError, ScriptTimeoutError
 
 if TYPE_CHECKING:
+    from family_assistant.llm.one_shot import LLMParameters
     from family_assistant.llm.typesafe import JevClient
     from family_assistant.tools import ToolsProvider
     from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
@@ -959,10 +960,20 @@ class MontyEngine:
         )
         from .apis.llm import llm_call_async, llm_call_json_async  # noqa: PLC0415
 
+        def llm_parameters() -> "LLMParameters | None":
+            service = (
+                execution_context.processing_service
+                if execution_context is not None
+                else None
+            )
+            return service.app_config.llm_parameters if service is not None else None
+
         async def llm(
             prompt: str, system: str | None = None, model: str | None = None
         ) -> str:
-            return await llm_call_async(prompt, system=system, model=model)
+            return await llm_call_async(
+                prompt, system=system, model=model, llm_parameters=llm_parameters()
+            )
 
         async def llm_json(
             prompt: str,
@@ -971,7 +982,11 @@ class MontyEngine:
             model: str | None = None,
         ) -> object:
             return await llm_call_json_async(
-                prompt, schema=schema, system=system, model=model
+                prompt,
+                schema=schema,
+                system=system,
+                model=model,
+                llm_parameters=llm_parameters(),
             )
 
         def jev_client() -> "JevClient | None":

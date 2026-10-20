@@ -1,9 +1,12 @@
 """Tests for the scripting LLM API."""
 
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.llm import LLMOutput
 from family_assistant.llm.base import StructuredOutputError
@@ -15,6 +18,11 @@ from family_assistant.scripting.apis.llm import (
 from family_assistant.scripting.config import ScriptConfig
 from family_assistant.scripting.errors import ScriptExecutionError
 from family_assistant.scripting.monty_engine import MontyEngine
+from family_assistant.storage.database import Database
+from family_assistant.tools.types import ToolExecutionContext
+
+if TYPE_CHECKING:
+    from family_assistant.processing import ProcessingService
 
 # Patch location: llm_call_async now uses one_shot internally
 PATCH_TARGET = "family_assistant.llm.one_shot.LLMClientFactory.create_client"
@@ -175,3 +183,35 @@ async def test_llm_not_available_when_llm_api_disabled(
         )
         with pytest.raises(ScriptExecutionError, match=r"name 'llm' is not defined"):
             await engine.evaluate_async("llm('test')")
+
+
+async def test_script_llm_calls_get_the_deployment_llm_parameters(
+    db_engine: AsyncEngine, mock_llm_client: AsyncMock
+) -> None:
+    """A script's model is served with the same parameters as everywhere else."""
+    llm_parameters = {"gemini-": {"thinking_config": {"thinking_level": "low"}}}
+    service = SimpleNamespace(app_config=SimpleNamespace(llm_parameters=llm_parameters))
+    context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test-123",
+        user_name="Test User",
+        turn_id="turn-1",
+        db_context=Database(engine=db_engine),
+        processing_service=cast("ProcessingService", service),
+        clock=None,
+        plugins=None,
+        event_sources=None,
+        attachment_registry=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
+
+    with patch(PATCH_TARGET, return_value=mock_llm_client) as mock_factory:
+        engine = MontyEngine(default_timezone=ZoneInfo("Australia/Sydney"))
+        await engine.evaluate_async("llm('Summarise this')", execution_context=context)
+
+    mock_factory.assert_called_once_with({
+        "model": DEFAULT_MODEL,
+        "model_parameters": llm_parameters,
+    })

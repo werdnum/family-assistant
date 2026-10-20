@@ -33,12 +33,19 @@ enum GeminiLiveCodec {
         if let languageCode = token.config.voiceLanguageCode {
             speechConfig["languageCode"] = .string(languageCode)
         }
+        var generationConfig: [String: JSONValue] = [
+            "responseModalities": .array([.string("AUDIO")]),
+            "speechConfig": .object(speechConfig),
+        ]
+        if token.config.affectiveDialogEnabled {
+            generationConfig["enableAffectiveDialog"] = .bool(true)
+        }
+        if token.config.includeThoughts {
+            generationConfig["thinkingConfig"] = .object(["includeThoughts": .bool(true)])
+        }
         var setup: [String: JSONValue] = [
             "model": .string(qualifiedModelName(token.model)),
-            "generationConfig": .object([
-                "responseModalities": .array([.string("AUDIO")]),
-                "speechConfig": .object(speechConfig),
-            ]),
+            "generationConfig": .object(generationConfig),
             "systemInstruction": .object([
                 "parts": .array([.object(["text": .string(token.systemInstruction)])])
             ]),
@@ -54,6 +61,9 @@ enum GeminiLiveCodec {
         }
         if token.config.outputTranscriptionEnabled {
             setup["outputAudioTranscription"] = .object([:])
+        }
+        if let proactiveAudio = token.config.proactiveAudio {
+            setup["proactivity"] = .object(["proactiveAudio": .bool(proactiveAudio)])
         }
         let detection = automaticActivityDetection(for: activityDetection).wire
         if !detection.isEmpty {

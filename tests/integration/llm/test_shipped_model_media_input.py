@@ -328,7 +328,6 @@ async def test_shipped_default_retry_pair_completes_a_turn(
                 "provider": "google",
                 "model": _SHIPPED_GOOGLE_MODEL,
                 "api_key": os.getenv("GEMINI_API_KEY", "test-gemini-key"),
-                "api_base": "https://generativelanguage.googleapis.com/v1beta",
             },
             "fallback": {
                 "provider": "openai",

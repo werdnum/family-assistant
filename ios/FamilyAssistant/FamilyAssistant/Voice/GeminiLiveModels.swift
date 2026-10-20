@@ -105,6 +105,14 @@ struct VoiceLiveConfig: Equatable, Decodable {
     /// Replaces ``activityDetection`` when the audio runs through a car, whose
     /// microphone hears the assistant from the cabin speakers.
     let carAudioActivityDetection: VoiceActivityDetectionConfig
+    /// Lets the model adapt its tone to the user's.
+    let affectiveDialogEnabled: Bool
+    /// Nil leaves proactivity unconfigured; otherwise whether the model may
+    /// decide not to answer audio that was not meant for it.
+    let proactiveAudio: Bool?
+    /// Asks for thought summaries. They arrive as text parts marked `thought`,
+    /// which the codec ignores along with every other non-audio part.
+    let includeThoughts: Bool
 
     init(
         voiceName: String,
@@ -114,7 +122,10 @@ struct VoiceLiveConfig: Equatable, Decodable {
         outputTranscriptionEnabled: Bool,
         inputTranscriptionLanguageCodes: [String] = [],
         activityDetection: VoiceActivityDetectionConfig = VoiceActivityDetectionConfig(),
-        carAudioActivityDetection: VoiceActivityDetectionConfig = VoiceActivityDetectionConfig()
+        carAudioActivityDetection: VoiceActivityDetectionConfig = VoiceActivityDetectionConfig(),
+        affectiveDialogEnabled: Bool = false,
+        proactiveAudio: Bool? = nil,
+        includeThoughts: Bool = false
     ) {
         self.voiceName = voiceName
         self.voiceLanguageCode = voiceLanguageCode
@@ -124,13 +135,25 @@ struct VoiceLiveConfig: Equatable, Decodable {
         self.inputTranscriptionLanguageCodes = inputTranscriptionLanguageCodes
         self.activityDetection = activityDetection
         self.carAudioActivityDetection = carAudioActivityDetection
+        self.affectiveDialogEnabled = affectiveDialogEnabled
+        self.proactiveAudio = proactiveAudio
+        self.includeThoughts = includeThoughts
     }
 
     private enum CodingKeys: String, CodingKey {
         case voice, session, transcription
         case vad
         case carAudioVAD = "car_audio_vad"
+        case affectiveDialog = "affective_dialog"
+        case proactivity, thinking
     }
+
+    private enum EnabledKeys: String, CodingKey { case enabled }
+    private enum ProactivityKeys: String, CodingKey {
+        case enabled
+        case proactiveAudio = "proactive_audio"
+    }
+    private enum ThinkingKeys: String, CodingKey { case includeThoughts = "include_thoughts" }
 
     private enum VoiceKeys: String, CodingKey {
         case name
@@ -183,6 +206,23 @@ struct VoiceLiveConfig: Equatable, Decodable {
             VoiceActivityDetectionConfig.self,
             forKey: .carAudioVAD
         ) ?? activityDetection
+
+        if let affective = try? container.nestedContainer(keyedBy: EnabledKeys.self, forKey: .affectiveDialog) {
+            affectiveDialogEnabled = try affective.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
+        } else {
+            affectiveDialogEnabled = false
+        }
+        if let proactivity = try? container.nestedContainer(keyedBy: ProactivityKeys.self, forKey: .proactivity),
+           try proactivity.decodeIfPresent(Bool.self, forKey: .enabled) == true {
+            proactiveAudio = try proactivity.decodeIfPresent(Bool.self, forKey: .proactiveAudio) ?? false
+        } else {
+            proactiveAudio = nil
+        }
+        if let thinking = try? container.nestedContainer(keyedBy: ThinkingKeys.self, forKey: .thinking) {
+            includeThoughts = try thinking.decodeIfPresent(Bool.self, forKey: .includeThoughts) ?? false
+        } else {
+            includeThoughts = false
+        }
     }
 
     static let defaultVoiceName = "Puck"

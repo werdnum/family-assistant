@@ -96,9 +96,6 @@ async def llm_client_factory() -> Callable[
             "api_key": api_key,
         }
 
-        if provider == "google":
-            config["api_base"] = "https://generativelanguage.googleapis.com/v1beta"
-
         return LLMClientFactory.create_client(config)
 
     return _create_client

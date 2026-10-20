@@ -49,10 +49,6 @@ async def llm_client_with_tools() -> Callable[[str, str], Awaitable[LLMInterface
             "api_key": api_key,
         }
 
-        # Add provider-specific configuration
-        if provider == "google":
-            config["api_base"] = "https://generativelanguage.googleapis.com/v1beta"
-
         return LLMClientFactory.create_client(config)
 
     return _create_client

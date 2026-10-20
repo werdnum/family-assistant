@@ -31,7 +31,6 @@ async def test_real_provider_fallback(
                 "model": primary_model,
                 # The recorded 400 makes this fallback deterministic.
                 "api_key": "invalid-primary-key",
-                "api_base": "https://generativelanguage.googleapis.com/v1beta",
             },
             "fallback": {
                 "provider": fallback_provider,
