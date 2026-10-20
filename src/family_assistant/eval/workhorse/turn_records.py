@@ -90,7 +90,7 @@ class TurnRecord(_Frozen):
     asked_at: datetime
     prompt: str
     attachment_count: int
-    population: Literal["human", "templated"]
+    population: Literal["human", "templated", "delegated"]
     template: str | None
     intent: str
     previous_turn_id: str | None
@@ -124,6 +124,13 @@ def _int(value: object) -> int:
     return value if isinstance(value, int) else 0
 
 
+def _number(value: object) -> float:
+    # Booleans are ints; a duration never is one.
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return 0.0
+    return float(value)
+
+
 def _usage(rows: Sequence[MessageHistoryRow]) -> TurnUsage:
     infos = [
         row["reasoning_info"]
@@ -147,7 +154,7 @@ def _usage(rows: Sequence[MessageHistoryRow]) -> TurnUsage:
             _int(info.get("cached_prompt_tokens")) for info in infos
         ),
         reasoning_tokens=sum(_int(info.get("reasoning_tokens")) for info in infos),
-        model_seconds=sum(_int(info.get("duration_ms")) for info in infos) / 1000,
+        model_seconds=sum(_number(info.get("duration_ms")) for info in infos) / 1000,
         models=models,
         model_tier=tier if isinstance(tier, str) else None,
         model_tier_requested=requested if isinstance(requested, str) else None,
@@ -248,7 +255,8 @@ def build_turn_records(
     """Flatten grouped history into one record per turn of the named profiles.
 
     A conversation also holds turns no person asked: a delegated profile's
-    run and a scheduled automation share the thread. Outcome signals and the
+    run and a scheduled automation share the thread, and a delegation to
+    ``complex_tasks`` runs on an extracted profile. Outcome signals and the
     preceding turn therefore read only *human* turns of the named profiles,
     so a delegation to ``media_analyst`` seconds later is not mistaken for the
     user coming back, while re-asking on ``complex_tasks`` after
@@ -265,8 +273,7 @@ def build_turn_records(
         human = [
             opening
             for opening in openings
-            if template_key(opening.user_row["content"] or "", templated_prefixes)
-            is None
+            if _population(opening.user_row, templated_prefixes) == "human"
         ]
         for opening in openings:
             asked_at = opening.user_row["timestamp"]
@@ -295,6 +302,22 @@ def build_turn_records(
             )
     records.sort(key=lambda record: (record.asked_at, record.turn_id))
     return records
+
+
+def _population(
+    user_row: MessageHistoryRow, templated_prefixes: Sequence[str]
+) -> Literal["human", "templated", "delegated"]:
+    """Who wrote the prompt: a person, a scheduled automation, or a model.
+
+    Automations run in subconversations too, so the template is checked
+    first; of the rest, only a delegated run's opening row -- the delegating
+    model's request -- carries a ``subconversation_id``.
+    """
+    if template_key(user_row["content"] or "", templated_prefixes) is not None:
+        return "templated"
+    if user_row["subconversation_id"] is not None:
+        return "delegated"
+    return "human"
 
 
 def _record(
@@ -338,7 +361,7 @@ def _record(
         asked_at=asked_at,
         prompt=prompt,
         attachment_count=len(user_row["attachments"] or []),
-        population="templated" if template else "human",
+        population=_population(user_row, templated_prefixes),
         template=template,
         intent=intent_bucket(prompt),
         previous_turn_id=previous.user_row["turn_id"] if previous else None,

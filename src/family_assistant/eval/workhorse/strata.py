@@ -198,12 +198,14 @@ class Stratum(BaseModel):
 
 def stratum_of(record: TurnRecord) -> Stratum:
     """Templated turns are one stratum per template: their shape is fixed."""
-    if record.template is not None:
+    if record.population == "templated" and record.template is not None:
         return Stratum(
             population="templated", profile=record.profile, family=record.template
         )
     return Stratum(
-        population="human", profile=record.profile, family=record.primary_family
+        population=record.population,
+        profile=record.profile,
+        family=record.primary_family,
     )
 
 
@@ -279,11 +281,13 @@ def sample_candidates(
 
     Human turns share ``target`` by square-root allocation; each templated
     automation contributes a fixed handful, since its turns differ only in
-    the data they render. Within a stratum, up to ``negative_share`` of the
-    picks go to turns with a negative signal, because the weak labels are
-    rare and a uniform draw would show almost none of them. The order inside
-    each group is a hash of ``seed`` and the turn id, so the same snapshot and
-    seed give the same sample.
+    the data they render. Delegated runs are not sampled: a case replays the
+    turn that delegated, and the delegated profile runs for real inside it.
+    Within a stratum, up to ``negative_share`` of the picks go to turns with a
+    negative signal, because the weak labels are rare and a uniform draw would
+    show almost none of them. The order inside each group is a hash of
+    ``seed`` and the turn id, so the same snapshot and seed give the same
+    sample.
     """
     by_stratum: dict[str, list[TurnRecord]] = defaultdict(list)
     for record in records:
@@ -311,17 +315,42 @@ def sample_candidates(
         chosen += [turn for turn in ordered if turn.turn_id not in chosen_ids][
             : picks - negative_picks
         ]
-        weight = len(turns) / len(chosen)
+        weights = _cell_weights(turns, chosen)
         sampled.extend(
             SampledTurn(
                 turn_id=turn.turn_id,
                 stratum=key,
-                weight=weight,
+                weight=weights[turn.turn_id],
                 negative_signal=turn.negative_signal,
             )
             for turn in chosen
         )
     return sampled
+
+
+def _cell(turn: TurnRecord) -> tuple[bool, str]:
+    return (turn.negative_signal, size_bucket(len(turn.tool_calls)))
+
+
+def _cell_weights(
+    turns: Sequence[TurnRecord], chosen: Sequence[TurnRecord]
+) -> dict[str, float]:
+    """Weight each pick by the turns it stands for within its stratum.
+
+    Picks over-represent negative-signal turns and the rarer sizes, so one
+    weight per stratum would carry that skew into every aggregate. Each pick
+    instead stands for its cell -- negative signal by size bucket -- and the
+    cells no pick reached are spread over the picked ones in proportion, so
+    the weights still sum to the stratum's size.
+    """
+    population = Counter(_cell(turn) for turn in turns)
+    picks = Counter(_cell(turn) for turn in chosen)
+    reached = sum(population[cell] for cell in picks)
+    scale = len(turns) / reached
+    return {
+        turn.turn_id: population[_cell(turn)] / picks[_cell(turn)] * scale
+        for turn in chosen
+    }
 
 
 def stratum_frequencies(records: Sequence[TurnRecord]) -> dict[str, int]:

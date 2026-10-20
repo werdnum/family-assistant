@@ -62,6 +62,7 @@ class _Conversation:
         tool_call_id: str | None = None,
         reasoning_info: MessageReasoningInfo | None = None,
         error_traceback: str | None = None,
+        subconversation_id: str | None = None,
     ) -> None:
         self.rows.append(
             MessageHistoryRow(
@@ -79,7 +80,7 @@ class _Conversation:
                 tool_call_id=tool_call_id,
                 error_traceback=error_traceback,
                 processing_profile_id=profile,
-                subconversation_id=None,
+                subconversation_id=subconversation_id,
                 user_id="andrew",
                 attachments=None,
                 tool_name=None,
@@ -121,7 +122,7 @@ class _Conversation:
                 reasoning_info={
                     "prompt_tokens": 100,
                     "completion_tokens": 10,
-                    "duration_ms": 1500,
+                    "duration_ms": 1499.5,
                     "resolved_model": "model-a",
                     "model_tier": "standard",
                 },
@@ -235,7 +236,7 @@ def test_turn_record_pairs_calls_with_results_and_sums_usage() -> None:
     assert record.reply == "reply to What's on tomorrow?"
     assert record.usage.llm_calls == 2
     assert record.usage.prompt_tokens == 300
-    assert record.usage.model_seconds == 2.0
+    assert record.usage.model_seconds == pytest.approx(1.9995)
     assert record.usage.models == ["model-a"]
     assert record.usage.model_tier == "standard"
     assert record.wall_seconds == 3.0
@@ -265,6 +266,39 @@ def test_delegated_and_templated_turns_are_not_read_as_the_user_coming_back() ->
     assert records["t1"].delegated
     assert not records["t1"].followup_within_10m
     assert not records["t1"].escalated
+
+
+def test_a_delegation_to_complex_tasks_is_not_escalation() -> None:
+    """The delegated run is on an extracted profile but no person wrote it."""
+    conversation = _Conversation()
+    conversation.simple_turn("t1", "Research this", _T0, tools=("delegate_to_service",))
+    conversation.add(
+        turn_id="sub",
+        role="user",
+        at=_T0 + timedelta(seconds=5),
+        profile="complex_tasks",
+        content="Andrew wants this researched in depth",
+        subconversation_id="delegation-1",
+    )
+
+    records = _records(conversation)
+
+    assert records["sub"].population == "delegated"
+    assert not records["t1"].followup_within_10m
+    assert not records["t1"].escalated
+
+
+def test_an_automation_in_a_subconversation_is_templated_not_delegated() -> None:
+    conversation = _Conversation()
+    conversation.add(
+        turn_id="auto",
+        role="user",
+        at=_T0,
+        content="Generate an e-ink display for today",
+        subconversation_id="thread-1",
+    )
+
+    assert _records(conversation)["auto"].population == "templated"
 
 
 def test_re_asking_on_complex_tasks_marks_escalation_and_links_context() -> None:
@@ -383,6 +417,50 @@ def test_sample_prefers_negative_turns_up_to_the_share() -> None:
 
     assert len(sampled) == 6
     assert sum(pick.negative_signal for pick in sampled) == 3
+
+
+def test_oversampled_negatives_are_weighted_back_to_their_share() -> None:
+    """Three picks from five failures must not read as half the workload."""
+    conversation = _Conversation()
+    for index in range(30):
+        at = _T0 + timedelta(hours=index)
+        conversation.add(turn_id=f"t{index:02}", role="user", at=at, content="Hi")
+        if index < 5:
+            conversation.add(
+                turn_id=f"t{index:02}",
+                role="error",
+                at=at + timedelta(seconds=1),
+                content="failed",
+            )
+    records = list(_records(conversation).values())
+
+    sampled = sample_candidates(
+        records, target=6, templated_per_template=0, negative_share=0.5, seed="s"
+    )
+
+    negative_weight = sum(pick.weight for pick in sampled if pick.negative_signal)
+    assert negative_weight == pytest.approx(5)
+    assert sum(pick.weight for pick in sampled) == pytest.approx(30)
+
+
+def test_delegated_runs_are_recorded_but_not_sampled() -> None:
+    conversation = _Conversation()
+    conversation.add(
+        turn_id="sub",
+        role="user",
+        at=_T0,
+        profile="complex_tasks",
+        content="Andrew wants this researched",
+        subconversation_id="delegation-1",
+    )
+    records = list(_records(conversation).values())
+
+    sampled = sample_candidates(
+        records, target=5, templated_per_template=2, negative_share=0, seed="s"
+    )
+
+    assert stratum_frequencies(records) == {"delegated/complex_tasks/none": 1}
+    assert sampled == []
 
 
 def test_templated_turns_contribute_a_fixed_handful_per_template() -> None:
