@@ -34,6 +34,8 @@ export interface ThreadSummary {
   unread_count?: number;
   /** The Home tool call that started the thread, if any. */
   source_tool_call_id?: string | null;
+  /** The Home message the user continued the thread from, for its "Started from" quote. */
+  anchor_message_id?: number | null;
   /** The request the thread was started with. */
   seed_request?: string | null;
   /** The thread's latest visible message. */
@@ -49,6 +51,8 @@ export interface HomeThreadsView {
   /** The thread list could not be fetched; `threads` may be stale or missing. */
   threadsFailed: boolean;
   onRetryThreads: () => void;
+  /** Open the dialog for starting a thread on a chosen profile. */
+  onNewThread: () => void;
 }
 
 export interface ConversationSidebarProps {
@@ -106,6 +110,8 @@ export interface Message {
   internalId?: number;
   /** On a Home message echoing a thread's outcome: that thread's conversation. */
   echoed_from_thread?: string;
+  /** On the Home marker left by a turn moved into a thread: that thread's conversation. */
+  moved_to_thread?: string;
 }
 
 export interface MessageContent {
@@ -183,6 +189,8 @@ export interface BackendConversationMessage extends Record<string, unknown> {
   reasoning_info?: MessageReasoningInfo | null;
   /** On a Home message echoing a thread's outcome: that thread's conversation. */
   echoed_from_thread?: string | null;
+  /** On the Home marker left by a turn moved into a thread: that thread's conversation. */
+  moved_to_thread?: string | null;
 }
 
 export interface ActiveTurnInfo {

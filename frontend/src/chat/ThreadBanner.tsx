@@ -9,6 +9,11 @@ import type { ThreadSummary } from './types';
 
 interface ThreadBannerProps {
   thread: ThreadSummary;
+  /**
+   * The Home message a continued thread grew from, when Home has it loaded.
+   * The anchor is display-only and may since have moved, so it can be missing.
+   */
+  anchorQuote?: string | null;
   onOpenHome: (homeConversationId: string) => void;
   onMarkDone: (conversationId: string) => void;
   /** A Mark done for this thread in flight, or the last one having failed. */
@@ -26,6 +31,7 @@ interface ThreadBannerProps {
  */
 export const ThreadBanner: React.FC<ThreadBannerProps> = ({
   thread,
+  anchorQuote = null,
   onOpenHome,
   onMarkDone,
   markDoneStatus,
@@ -130,6 +136,14 @@ export const ThreadBanner: React.FC<ThreadBannerProps> = ({
           <CornerDownRightIcon size={12} className="mt-0.5 shrink-0" aria-hidden="true" />
           <span className="min-w-0 line-clamp-2 break-words">
             Started from Home
+            {anchorQuote && (
+              <>
+                {': '}
+                <span className="text-foreground/80" data-testid="thread-anchor-quote">
+                  “{anchorQuote}”
+                </span>
+              </>
+            )}
             {thread.seed_request && (
               <>
                 {' · Assistant asked: '}

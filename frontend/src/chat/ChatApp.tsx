@@ -9,6 +9,7 @@ import {
   type ChatShellValue,
   type ConversationDraft,
   type NotificationRequest,
+  type TurnToFollow,
 } from './chatShell';
 import {
   type ConversationChangeReason,
@@ -21,9 +22,10 @@ import { NotificationSettings } from './NotificationSettings';
 import { PendingConfirmationsTray } from './PendingConfirmationsTray';
 import { ProfilesProvider, useProfiles } from './profilesContext';
 import { PushNotificationButton } from './PushNotificationButton';
-import { fetchHome } from './threadsApi';
+import { StartThreadDialog } from './StartThreadDialog';
+import { fetchHome, type StartThreadRequest, startHomeThread } from './threadsApi';
 import type { PendingToolConfirmation } from './ToolConfirmationContext';
-import { ChatAppProps, Conversation } from './types';
+import { ChatAppProps, Conversation, type ThreadSummary } from './types';
 import { useActivityStream } from './useActivityStream';
 import { useHomeThreads } from './useHomeThreads';
 import { useNotifications } from './useNotifications';
@@ -168,6 +170,7 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
     failed: homeThreadsFailed,
     refresh: refreshHomeThreads,
     updateThread: updateHomeThread,
+    addThread: addHomeThread,
   } = useHomeThreads(homeConversationId);
   // Set once anything decides what the chat shows (opening a conversation, a
   // new chat, a send), so a landing on Home that resolves later doesn't
@@ -581,6 +584,48 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
     [setPanelState]
   );
 
+  // The first turn of each thread the user started here, until the pane that
+  // opens the thread takes it to follow.
+  const turnsToFollowRef = useRef(new Map<string, TurnToFollow>());
+  const takeTurnToFollow = useCallback((conversationId: string): TurnToFollow | null => {
+    const turn = turnsToFollowRef.current.get(conversationId) ?? null;
+    turnsToFollowRef.current.delete(conversationId);
+    return turn;
+  }, []);
+
+  const startThread = useCallback(
+    async (request: StartThreadRequest): Promise<ThreadSummary> => {
+      const { thread, turn } = await startHomeThread(request);
+      if (turn) {
+        turnsToFollowRef.current.set(thread.conversation_id, {
+          turnId: turn.turn_id,
+          firstSeq: turn.first_seq,
+        });
+      }
+      addHomeThread(thread);
+      // Known as a thread before the list re-renders, so it opens in the panel.
+      homeThreadsRef.current = [
+        thread,
+        ...homeThreadsRef.current.filter(
+          (entry) => entry.conversation_id !== thread.conversation_id
+        ),
+      ];
+      openConversation(thread.conversation_id);
+      refreshHomeThreads();
+      return thread;
+    },
+    [addHomeThread, openConversation, refreshHomeThreads]
+  );
+
+  const [newThreadOpen, setNewThreadOpen] = useState(false);
+  const openNewThread = useCallback(() => setNewThreadOpen(true), []);
+
+  const [homeQuotes, setHomeQuotes] = useState<ReadonlyMap<number, string>>(() => new Map());
+  const reportHomeQuotes = useCallback(
+    (quotes: ReadonlyMap<number, string>) => setHomeQuotes(quotes),
+    []
+  );
+
   const handleNewChat = useCallback(() => {
     const panelState = panelStateRef.current;
     panelStateRef.current = null;
@@ -748,9 +793,10 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
             threads: homeThreads,
             threadsFailed: homeThreadsFailed,
             onRetryThreads: refreshHomeThreads,
+            onNewThread: openNewThread,
           }
         : null,
-    [homeConversationId, homeThreads, homeThreadsFailed, refreshHomeThreads]
+    [homeConversationId, homeThreads, homeThreadsFailed, refreshHomeThreads, openNewThread]
   );
 
   const [homeLookupFailed, setHomeLookupFailed] = useState(false);
@@ -957,6 +1003,11 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
       confirmTool,
       showNotification,
       drafts,
+      startThread,
+      takeTurnToFollow,
+      openNewThread,
+      homeQuotes,
+      reportHomeQuotes,
     }),
     [
       homeConversationId,
@@ -972,6 +1023,11 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
       confirmTool,
       showNotification,
       drafts,
+      startThread,
+      takeTurnToFollow,
+      openNewThread,
+      homeQuotes,
+      reportHomeQuotes,
     ]
   );
 
@@ -1135,6 +1191,9 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
             )}
           </div>
         </div>
+        {homeConversationId && (
+          <StartThreadDialog open={newThreadOpen} onOpenChange={setNewThreadOpen} />
+        )}
       </TooltipProvider>
     </ChatShellContext.Provider>
   );

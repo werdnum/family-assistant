@@ -14,8 +14,12 @@ import {
   CalendarIcon,
   CheckCircle2Icon,
   CheckIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
   CopyIcon,
   FileSearchIcon,
+  FolderInputIcon,
+  GitBranchPlusIcon,
   Loader2Icon,
   StickyNoteIcon,
   SquareIcon,
@@ -30,10 +34,18 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { AssistantResponseImages } from './AssistantResponseImages';
 import { type ConversationLoadStatus, useChatControls } from './chatControls';
 import { LOADING_MARKER } from './constants';
 import { DynamicToolUI } from './DynamicToolUI';
+import { useHomeTurnActions } from './homeTurnActions';
 import { MarkdownText } from './MarkdownText';
 import { PendingDelegationsChip } from './PendingDelegationsChip';
 import { ThreadEchoHeader } from './ThreadEchoHeader';
@@ -382,6 +394,15 @@ const Composer: React.FC = () => {
   return (
     <ComposerPrimitive.Root className="flex flex-col gap-3 max-w-3xl mx-auto w-full">
       <SteerError />
+      {controls?.sendAsThread?.error && (
+        <p
+          role="alert"
+          className="px-2 text-xs text-destructive"
+          data-testid="send-as-thread-error"
+        >
+          {controls.sendAsThread.error}
+        </p>
+      )}
       {/* Steering sends text only, so attachments can't ride along on a steer.
           Hide the attachment UI while a turn runs to avoid a picked file being
           silently ignored by the steer and then sent with the next message. */}
@@ -401,8 +422,60 @@ const Composer: React.FC = () => {
           />
         </div>
         <ComposerAction steering={steering} onSteer={submitSteer} />
+        {controls?.sendAsThread && (
+          <ThreadPrimitive.If running={false}>
+            <SendAsThreadMenu
+              profiles={controls.sendAsThread.profiles}
+              onSend={(profileId) => {
+                controls.sendAsThread?.prepare(profileId);
+                void aui.composer.send();
+              }}
+            />
+          </ThreadPrimitive.If>
+        )}
       </div>
     </ComposerPrimitive.Root>
+  );
+};
+
+/**
+ * Sends what the composer holds as a new thread's opening message, on the
+ * profile picked here, instead of as a Home turn.
+ */
+const SendAsThreadMenu: React.FC<{
+  profiles: { id: string; label: string }[];
+  onSend: (profileId: string) => void;
+}> = ({ profiles, onSend }) => {
+  const canSend = useAuiState((s) => s.composer.canSend && s.composer.text.trim().length > 0);
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          className="h-11 shrink-0 gap-1 rounded-full px-3"
+          disabled={!canSend || profiles.length === 0}
+          aria-label="Send as a new thread"
+          title="Send as a new thread"
+          data-testid="send-as-thread-button"
+        >
+          <GitBranchPlusIcon size={16} aria-hidden="true" />
+          <ChevronDownIcon size={12} aria-hidden="true" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" side="top">
+        <DropdownMenuLabel>Send as a new thread on</DropdownMenuLabel>
+        {profiles.map((profile) => (
+          <DropdownMenuItem
+            key={profile.id}
+            onSelect={() => onSend(profile.id)}
+            data-testid={`send-as-thread-${profile.id}`}
+          >
+            {profile.label}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 };
 
@@ -569,7 +642,13 @@ const AssistantMessage: React.FC = () => {
     processing_profile_id?: string;
     reasoning_info?: MessageReasoningInfo;
     echoed_from_thread?: string;
+    moved_to_thread?: string;
+    internal_id?: number;
+    turn_id?: string;
   };
+  if (custom.moved_to_thread) {
+    return <MovedTurnMarker threadConversationId={custom.moved_to_thread} />;
+  }
   // An echo of a thread's outcome is attributed to the thread rather than to
   // the Home profile and turn its copy was stored under.
   const echoedFromThread = custom.echoed_from_thread;
@@ -671,7 +750,13 @@ const AssistantMessage: React.FC = () => {
               {/* Images the assistant attached, shown inline rather than only
                   behind the collapsed attachments tool group. */}
               <AssistantResponseImages />
-              {hasCopyableContent && <AssistantActionBar />}
+              {hasCopyableContent && (
+                <AssistantActionBar
+                  internalId={custom.internal_id}
+                  turnId={custom.turn_id}
+                  isEcho={Boolean(echoedFromThread)}
+                />
+              )}
             </div>
           </div>
         </div>
@@ -680,8 +765,54 @@ const AssistantMessage: React.FC = () => {
   );
 };
 
-const AssistantActionBar: React.FC = () => {
+/** Where a Home turn the user moved went: a link to the thread that holds it now. */
+const MovedTurnMarker: React.FC<{ threadConversationId: string }> = ({ threadConversationId }) => {
+  const threads = useThreadsContext();
+  const thread = threads?.threadsByConversationId.get(threadConversationId);
+  const label = thread ? (
+    <>
+      Moved to <span className="font-medium text-foreground/90">{thread.title}</span>
+    </>
+  ) : (
+    'Moved to a thread'
+  );
+  return (
+    <MessagePrimitive.Root
+      className="px-4 py-1 md:px-6"
+      data-testid="moved-turn-marker"
+      data-moved-to-thread={threadConversationId}
+    >
+      <div className="max-w-3xl mx-auto flex justify-center">
+        {threads ? (
+          <button
+            type="button"
+            onClick={() => threads.openConversation(threadConversationId)}
+            className="flex min-w-0 items-center gap-1.5 rounded-full border border-dashed border-border/70 px-3 py-1 text-xs text-muted-foreground hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label={thread ? `Open thread: ${thread.title}` : 'Open the thread it moved to'}
+            data-testid="moved-turn-link"
+          >
+            <FolderInputIcon size={12} className="shrink-0" aria-hidden="true" />
+            <span className="min-w-0 truncate">{label}</span>
+            <ChevronRightIcon size={12} className="shrink-0" aria-hidden="true" />
+          </button>
+        ) : (
+          <span className="text-xs text-muted-foreground">{label}</span>
+        )}
+      </div>
+    </MessagePrimitive.Root>
+  );
+};
+
+const AssistantActionBar: React.FC<{
+  internalId?: number;
+  turnId?: string;
+  isEcho: boolean;
+}> = ({ internalId, turnId, isEcho }) => {
   const aui = useAui();
+  const homeActions = useHomeTurnActions();
+  // Only an exchange the user started moves; an echo stays in Home.
+  const canMove = homeActions !== null && !isEcho && homeActions.turnHasUserMessage(turnId);
+  const target = () => ({ internalId, turnId, quote: aui.message().getCopyText() });
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
 
@@ -738,6 +869,36 @@ const AssistantActionBar: React.FC = () => {
             <CopyIcon size={12} aria-hidden="true" />
           )}
         </TooltipIconButton>
+        {homeActions && (internalId !== undefined || turnId) && (
+          <>
+            {/* @ts-expect-error - TooltipIconButton JSX component */}
+            <TooltipIconButton
+              tooltip="Continue in a thread"
+              aria-label="Continue in a thread"
+              size="icon"
+              variant="ghost"
+              className="h-7 w-7 rounded-lg"
+              onClick={() => homeActions.continueInThread(target())}
+              data-testid="continue-in-thread"
+            >
+              <GitBranchPlusIcon size={12} aria-hidden="true" />
+            </TooltipIconButton>
+            {canMove && (
+              /* @ts-expect-error - TooltipIconButton JSX component */
+              <TooltipIconButton
+                tooltip="Move to thread…"
+                aria-label="Move to thread"
+                size="icon"
+                variant="ghost"
+                className="h-7 w-7 rounded-lg"
+                onClick={() => homeActions.moveToThread(target())}
+                data-testid="move-to-thread"
+              >
+                <FolderInputIcon size={12} aria-hidden="true" />
+              </TooltipIconButton>
+            )}
+          </>
+        )}
       </ActionBarPrimitive.Root>
     </>
   );

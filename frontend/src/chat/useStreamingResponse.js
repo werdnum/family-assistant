@@ -88,6 +88,10 @@ export const useStreamingResponse = ({
       // tier, or the default when leaving one. Omitted from the request body
       // otherwise, so the backend continues the conversation's own tier.
       modelTier = undefined,
+      // `{ firstSeq }` for a turn something else already started -- a thread's
+      // first turn, which starting the thread kicked off -- to follow it from
+      // there instead of kicking one off. `turnId` names that turn.
+      existingTurn = undefined,
     }) => {
       setIsStreaming(true);
       stopRequestedRef.current = false;
@@ -185,22 +189,24 @@ export const useStreamingResponse = ({
       try {
         // Step 1: kick off the turn. This persists the user message, seeds the
         // turn_started event, and starts the background producer.
-        const startResponse = await fetch('/api/v1/chat/turns', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            turn_id: effectiveTurnId,
-            prompt,
-            conversation_id: conversationId,
-            profile_id: profileId,
-            interface_type: interfaceType,
-            attachments: attachments,
-            ...(modelTier ? { model_tier: modelTier } : {}),
-          }),
-          signal: abortControllerRef.current.signal,
-        });
+        const startResponse = existingTurn
+          ? null
+          : await fetch('/api/v1/chat/turns', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                turn_id: effectiveTurnId,
+                prompt,
+                conversation_id: conversationId,
+                profile_id: profileId,
+                interface_type: interfaceType,
+                attachments: attachments,
+                ...(modelTier ? { model_tier: modelTier } : {}),
+              }),
+              signal: abortControllerRef.current.signal,
+            });
 
         // A conversation runs one turn at a time, so the server refuses this one
         // if it already has a running turn (409) and names the turn instead. We
@@ -210,7 +216,7 @@ export const useStreamingResponse = ({
         // message arriving at the wrong door. Deliver it to the running turn as
         // a steer and follow that turn, rather than failing in front of the user.
         let adoptedSteer = null;
-        if (startResponse.status === 409) {
+        if (startResponse?.status === 409) {
           const conflict = await startResponse.json().catch(() => ({}));
           const runningTurnId = conflict?.detail?.active_turn_id;
           // Steering carries text only, so a refused send that had files cannot
@@ -242,7 +248,7 @@ export const useStreamingResponse = ({
           }
         }
 
-        if (!startResponse.ok && !adoptedSteer) {
+        if (startResponse && !startResponse.ok && !adoptedSteer) {
           if (startResponse.status === 401) {
             redirectToLogin();
             return;
@@ -369,6 +375,9 @@ export const useStreamingResponse = ({
           // in response to this message starts here; the rest is reconciled from
           // persisted history when the turn ends.
           firstSeq = pendingAdoptedEcho.afterSeq + 1;
+        } else if (existingTurn) {
+          resolvedConversationId = conversationId;
+          firstSeq = existingTurn.firstSeq;
         } else {
           const {
             conversation_id: streamConversationId,

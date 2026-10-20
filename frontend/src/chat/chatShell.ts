@@ -1,5 +1,6 @@
 import type { Attachment } from '@assistant-ui/react';
 import { createContext, useContext } from 'react';
+import type { StartThreadRequest } from './threadsApi';
 import type { PendingToolConfirmation } from './ToolConfirmationContext';
 import type { ThreadSummary } from './types';
 
@@ -48,6 +49,28 @@ export interface ChatShellValue {
    * follows its conversation from one pane to another.
    */
   drafts: Map<string, ConversationDraft>;
+  /**
+   * Start a thread of Home and open it. Resolves with the thread once it is
+   * open; rejects with a `ThreadActionError` saying why it wasn't started.
+   */
+  startThread: (request: StartThreadRequest) => Promise<ThreadSummary>;
+  /**
+   * The first turn of a thread the user just started, for the pane that opens
+   * the thread to follow live. Each is handed out once.
+   */
+  takeTurnToFollow: (conversationId: string) => TurnToFollow | null;
+  /** Open the dialog for starting a new thread. */
+  openNewThread: () => void;
+  /** Home's loaded messages as text, by stored id: what a "Started from" quote shows. */
+  homeQuotes: ReadonlyMap<number, string>;
+  /** The pane showing Home reports what it has loaded. */
+  reportHomeQuotes: (quotes: ReadonlyMap<number, string>) => void;
+}
+
+/** A turn already running in a conversation, to stream from where it began. */
+export interface TurnToFollow {
+  turnId: string;
+  firstSeq: number;
 }
 
 export const ChatShellContext = createContext<ChatShellValue | null>(null);

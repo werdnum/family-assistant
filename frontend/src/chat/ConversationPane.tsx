@@ -25,6 +25,7 @@ import { defaultAttachmentAdapter } from './attachmentAdapter';
 import { type ConversationDraft, useChatShell } from './chatShell';
 import { LOADING_MARKER } from './constants';
 import IntelligenceSelector from './IntelligenceSelector';
+import { getProfileDisplayName } from './profileNames';
 import ProfileSelector from './ProfileSelector';
 import { type ModelTier, useProfiles } from './profilesContext';
 import { ShareConversationButton } from './ShareConversationButton';
@@ -37,10 +38,17 @@ import {
 } from './chatControls';
 import { interleaveTextAndToolCalls, isToolCallDisplay, toolCallParts } from './orderedParts';
 import { Thread } from './Thread';
+import {
+  type HomeTurnActions,
+  HomeTurnActionsContext,
+  type HomeTurnTarget,
+} from './homeTurnActions';
+import { MoveToThreadDialog } from './MoveToThreadDialog';
+import { type ContinueAnchor, StartThreadDialog, threadProfiles } from './StartThreadDialog';
 import { ThreadBanner } from './ThreadBanner';
 import { ThreadsContext } from './threadsContext';
 import { ThreadStateDot } from './ThreadStateDot';
-import { markThreadDone } from './threadsApi';
+import { markThreadDone, type ThreadAttachment } from './threadsApi';
 import { ToolConfirmationProvider } from './ToolConfirmationContext';
 import { isTerminalToolOutcome, type TerminalToolOutcome } from './toolOutcome';
 import {
@@ -328,6 +336,15 @@ export function adoptPreviousMessageIds(
 /** Extract plain text from a backend message's content for a notification
  * preview. Content is either a string or an array of parts; only `text` parts
  * contribute (image/tool parts have no preview text). */
+/** A message's text, as a quote of it shows. */
+function messageText(message: Message): string {
+  return message.content
+    .filter((part) => part.type === 'text' && part.text && part.text !== LOADING_MARKER)
+    .map((part) => part.text)
+    .join('\n')
+    .trim();
+}
+
 function extractMessagePreview(content: BackendConversationMessage['content']): string {
   if (typeof content === 'string') {
     return content.trim();
@@ -538,6 +555,10 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
     confirmTool,
     showNotification,
     drafts,
+    startThread,
+    takeTurnToFollow,
+    homeQuotes,
+    reportHomeQuotes,
   } = useChatShell();
   const onConversationChangeRef = useRef(onConversationChange);
   onConversationChangeRef.current = onConversationChange;
@@ -654,6 +675,15 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
     modelTierFor(modelTierState, conversationId, currentProfileId)?.selected ?? null;
   const streamingMessageIdRef = useRef<string | null>(null);
   const activeStreamConversationIdRef = useRef<string | null>(null);
+  // Follows the first turn of a thread the user just started, once the thread's
+  // history has loaded here; defined below, beside the send path.
+  const followTurnRef = useRef<(conversationId: string) => void>(() => {});
+  // The profile the next send goes to as a new thread's opening message, set
+  // by the composer's send-as-thread menu just before it sends.
+  const sendAsThreadProfileRef = useRef<string | null>(null);
+  const sendAsThreadRef = useRef<
+    (profileId: string, text: string, attachments: ThreadAttachment[]) => Promise<void>
+  >(async () => {});
   const toolCallMessageIdRef = useRef<string | null>(null);
   const lastStreamingErrorRef = useRef<string | null>(null);
   // Whether that error was written for the user (shown verbatim) rather than
@@ -1396,6 +1426,7 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
         attachments?: Array<{ id: string; type: string; name: string; content: string }>;
         turnId?: string;
         modelTier?: string;
+        existingTurn?: { firstSeq: number };
       }) => Promise<void>;
       cancelStream: () => void;
       stopTurn: () => Promise<boolean>;
@@ -1742,6 +1773,7 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
               reasoning_info: msg.reasoning_info ?? undefined,
               internalId: Number(msg.internal_id),
               echoed_from_thread: msg.echoed_from_thread ?? undefined,
+              moved_to_thread: msg.moved_to_thread ?? undefined,
             });
             return;
           }
@@ -1809,6 +1841,7 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
             status: msg.role === 'assistant' ? { type: 'complete' } : undefined,
             internalId: Number(msg.internal_id),
             echoed_from_thread: msg.echoed_from_thread ?? undefined,
+            moved_to_thread: msg.moved_to_thread ?? undefined,
           });
         });
 
@@ -2011,7 +2044,7 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
       // instead of reopening it from scratch behind a loading placeholder.
       if (convId === conversationIdRef.current && conversationLoadRef.current === null) {
         if (activeStreamConversationIdRef.current !== convId) {
-          void loadConversationMessages(convId, true);
+          void loadConversationMessages(convId, true).then(() => followTurnRef.current(convId));
         }
         return true;
       }
@@ -2030,7 +2063,11 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
       conversationIdRef.current = convId;
       setConversationId(convId);
       onConversationChangeRef.current(convId, 'open');
-      loadConversationMessages(convId);
+      void loadConversationMessages(convId).then((result) => {
+        if (result === 'applied') {
+          followTurnRef.current(convId);
+        }
+      });
       return true;
     },
     [cancelStream, loadConversationMessages]
@@ -2276,6 +2313,9 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
         status?: { type: string; reason?: string };
       }>;
     }) => {
+      // Taken first, so a send refused below can't leave it set for the next.
+      const threadProfileId = sendAsThreadProfileRef.current;
+      sendAsThreadProfileRef.current = null;
       // An attachment whose upload failed at send has no content to send. The
       // runtime puts a draft refused with MessageNotSentError back into the
       // composer, where the attachment renders its upload error.
@@ -2321,6 +2361,15 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
           content: contentUrl,
         };
       });
+
+      if (threadProfileId) {
+        await sendAsThreadRef.current(
+          threadProfileId,
+          message.content.map((part) => part.text).join('\n'),
+          processedAttachments ?? []
+        );
+        return;
+      }
 
       // Tag the optimistic bubbles with this turn's id so an interrupted-stream
       // give-up can identify THIS turn's stranded loading bubble (e.g. to replace
@@ -2422,6 +2471,183 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
     handleReloadHistoryRef.current = handleReloadHistory;
   }, [handleReloadHistory]);
 
+  // A thread the user just started opens here with its first turn already
+  // running. Its history (the opening message, and any Home turns it continued)
+  // has loaded by now, so only the reply is left to stream: from where the turn
+  // began, replacing whatever of it the history caught mid-way.
+  followTurnRef.current = (convId: string) => {
+    if (conversationIdRef.current !== convId || activeStreamConversationIdRef.current !== null) {
+      return;
+    }
+    const turn = takeTurnToFollow(convId);
+    if (!turn) {
+      return;
+    }
+    const assistantMessageId = `msg_${Date.now()}_assistant`;
+    setMessages((prev) => [
+      ...prev.filter((msg) => !(msg.turnId === turn.turnId && msg.role === 'assistant')),
+      {
+        id: assistantMessageId,
+        role: 'assistant',
+        turnId: turn.turnId,
+        content: [{ type: 'text', text: LOADING_MARKER }],
+        isLoading: true,
+        createdAt: new Date(),
+      },
+    ]);
+    streamingMessageIdRef.current = assistantMessageId;
+    activeStreamConversationIdRef.current = convId;
+    activeTurnIdRef.current = turn.turnId;
+    turnStoppedRef.current = false;
+    lastStreamingErrorRef.current = null;
+    lastStreamingErrorIsUserFacingRef.current = false;
+    selfTurnIdsRef.current.add(turn.turnId);
+    void sendStreamingMessage({
+      prompt: '',
+      conversationId: convId,
+      profileId: currentProfileId,
+      interfaceType: 'web',
+      turnId: turn.turnId,
+      existingTurn: { firstSeq: turn.firstSeq },
+    });
+  };
+
+  // Send-as-thread: the composed message opens a new thread on the chosen
+  // profile instead of becoming a Home turn. A tier chosen here goes with it
+  // where that profile offers the tier. A retry of the same message reuses the
+  // start's id, so a start whose answer was lost isn't made twice.
+  const [sendAsThreadError, setSendAsThreadError] = useState<string | null>(null);
+  const pendingThreadStartRef = useRef<{ key: string; turnId: string } | null>(null);
+  sendAsThreadRef.current = async (
+    threadProfileId: string,
+    text: string,
+    attachments: ThreadAttachment[]
+  ) => {
+    const tierState = modelTierFor(modelTierStateRef.current, conversationId, currentProfileId);
+    const chosenTier = tierState?.selected ?? null;
+    const offersTier =
+      chosenTier !== null &&
+      (profilesById[threadProfileId]?.model_tiers ?? []).some((tier) => tier.id === chosenTier);
+    const key = JSON.stringify([
+      threadProfileId,
+      text,
+      attachments.map((attachment) => attachment.id),
+    ]);
+    const pending = pendingThreadStartRef.current;
+    const turnId = pending?.key === key ? pending.turnId : generateUUID();
+    pendingThreadStartRef.current = { key, turnId };
+    setSendAsThreadError(null);
+    try {
+      await startThread({
+        profile_id: threadProfileId,
+        prompt: text,
+        turn_id: turnId,
+        ...(attachments.length > 0 ? { attachments } : {}),
+        ...(offersTier && chosenTier ? { model_tier: chosenTier } : {}),
+      });
+    } catch (error) {
+      const reason =
+        error instanceof Error ? error.message : "Couldn't start the thread. Try again.";
+      setSendAsThreadError(reason);
+      throw new MessageNotSentError(reason);
+    }
+    pendingThreadStartRef.current = null;
+    // A tier chosen in Home is for one send, which this was.
+    setModelTierState(null);
+  };
+  useEffect(() => {
+    setSendAsThreadError(null);
+    pendingThreadStartRef.current = null;
+  }, [conversationId]);
+
+  const sendAsThreadProfiles = useMemo(
+    () =>
+      threadProfiles(Object.values(profilesById)).map((profile) => ({
+        id: profile.id,
+        label: getProfileDisplayName(profile.id),
+      })),
+    [profilesById]
+  );
+
+  // Home's messages as text, by stored id, for the "Started from" quote a
+  // thread continued from one of them shows.
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+  const homeQuoteKey = isHome
+    ? messages
+        .filter((msg) => msg.internalId !== undefined && !msg.isLoading)
+        .map((msg) => `${msg.internalId}:${msg.content.length}`)
+        .join(',')
+    : null;
+  useEffect(() => {
+    if (homeQuoteKey === null) {
+      return;
+    }
+    const quotes = new Map<number, string>();
+    for (const msg of messagesRef.current) {
+      const text = messageText(msg);
+      if (msg.internalId !== undefined && !msg.moved_to_thread && text) {
+        quotes.set(msg.internalId, text);
+      }
+    }
+    reportHomeQuotes(quotes);
+  }, [homeQuoteKey, reportHomeQuotes]);
+
+  // Home's actions on its messages, and the dialog each opens.
+  const [continueTarget, setContinueTarget] = useState<HomeTurnTarget | null>(null);
+  const [moveTarget, setMoveTarget] = useState<HomeTurnTarget | null>(null);
+  const userTurnIdsKey = messages
+    .filter((msg) => msg.role === 'user' && msg.turnId)
+    .map((msg) => msg.turnId)
+    .join(',');
+  const homeTurnActions = useMemo<HomeTurnActions | null>(() => {
+    if (!isHome) {
+      return null;
+    }
+    const userTurnIds = new Set(userTurnIdsKey.split(','));
+    return {
+      continueInThread: setContinueTarget,
+      moveToThread: setMoveTarget,
+      turnHasUserMessage: (turnId) => turnId !== undefined && userTurnIds.has(turnId),
+    };
+  }, [isHome, userTurnIdsKey]);
+  // A reply streamed here has no stored id yet; the server names it by turn.
+  const resolveHomeMessageId = useCallback(async (target: HomeTurnTarget): Promise<number> => {
+    if (target.internalId !== undefined) {
+      return target.internalId;
+    }
+    const convId = conversationIdRef.current;
+    if (target.turnId && convId) {
+      const response = await fetch(
+        `/api/v1/chat/conversations/${encodeURIComponent(convId)}/messages?limit=${HISTORY_PAGE_SIZE}`
+      );
+      if (response.ok) {
+        const data = (await response.json()) as ConversationMessagesResponse;
+        const row = data.messages.find((msg) => msg.turn_id === target.turnId);
+        if (row) {
+          return Number(row.internal_id);
+        }
+      }
+    }
+    throw new Error("This message isn't saved yet. Try again in a moment.");
+  }, []);
+  const continueAnchor = useMemo<ContinueAnchor | null>(
+    () =>
+      continueTarget
+        ? {
+            quote: continueTarget.quote,
+            resolveMessageId: () => resolveHomeMessageId(continueTarget),
+          }
+        : null,
+    [continueTarget, resolveHomeMessageId]
+  );
+  const handleTurnMoved = useCallback(() => {
+    const convId = conversationIdRef.current;
+    if (convId) {
+      void loadConversationMessages(convId, true);
+    }
+  }, [loadConversationMessages]);
+
   const convertMessage = useCallback((message: Message) => {
     // Ensure content is always an array for assistant-ui compatibility
     let content = Array.isArray(message.content)
@@ -2465,6 +2691,9 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
           processing_profile_id: message.processing_profile_id,
           reasoning_info: message.reasoning_info,
           echoed_from_thread: message.echoed_from_thread,
+          moved_to_thread: message.moved_to_thread,
+          internal_id: message.internalId,
+          turn_id: message.turnId,
         },
       },
     };
@@ -2501,7 +2730,11 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
   const retryConversationLoad = useCallback(() => {
     const convId = conversationIdRef.current;
     if (convId) {
-      void loadConversationMessages(convId);
+      void loadConversationMessages(convId).then((result) => {
+        if (result === 'applied') {
+          followTurnRef.current(convId);
+        }
+      });
     }
   }, [loadConversationMessages]);
 
@@ -2732,10 +2965,22 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
       pendingDelegations,
       conversationLoadStatus,
       retryConversationLoad,
+      sendAsThread: isHome
+        ? {
+            profiles: sendAsThreadProfiles,
+            prepare: (threadProfileId: string) => {
+              sendAsThreadProfileRef.current = threadProfileId;
+            },
+            error: sendAsThreadError,
+          }
+        : null,
     }),
     [
       conversationLoadStatus,
       retryConversationLoad,
+      isHome,
+      sendAsThreadProfiles,
+      sendAsThreadError,
       steerError,
       submitSteer,
       olderHistory,
@@ -2768,9 +3013,11 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
 
   const conversationTitle = isHome ? 'Home' : (currentThread?.title ?? null);
 
+  const anchorId = currentThread?.anchor_message_id;
   const threadBanner = currentThread && (
     <ThreadBanner
       thread={currentThread}
+      anchorQuote={typeof anchorId === 'number' ? (homeQuotes.get(anchorId) ?? null) : null}
       onOpenHome={openConversation}
       compact={presentation === 'side'}
       onMarkDone={(threadConversationId) => void handleMarkThreadDone(threadConversationId)}
@@ -2786,7 +3033,9 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
         <ChatControlsContext.Provider value={chatControls}>
           <ToolConfirmationProvider value={{ pendingConfirmations, handleConfirmation }}>
             <ThreadsContext.Provider value={threadsContextValue}>
-              <Thread />
+              <HomeTurnActionsContext.Provider value={homeTurnActions}>
+                <Thread />
+              </HomeTurnActionsContext.Provider>
             </ThreadsContext.Provider>
           </ToolConfirmationProvider>
         </ChatControlsContext.Provider>
@@ -2857,6 +3106,24 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
       {topSlot}
       {threadBanner}
       <div className="flex flex-1 flex-col min-h-0">{threadView}</div>
+      {homeTurnActions && (
+        <>
+          <StartThreadDialog
+            open={continueTarget !== null}
+            onOpenChange={(open) => !open && setContinueTarget(null)}
+            anchor={continueAnchor}
+          />
+          <MoveToThreadDialog
+            open={moveTarget !== null}
+            onOpenChange={(open) => !open && setMoveTarget(null)}
+            quote={moveTarget?.quote ?? ''}
+            resolveMessageId={() =>
+              moveTarget ? resolveHomeMessageId(moveTarget) : Promise.reject(new Error('No turn'))
+            }
+            onMoved={handleTurnMoved}
+          />
+        </>
+      )}
     </div>
   );
 

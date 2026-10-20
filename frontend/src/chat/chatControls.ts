@@ -36,6 +36,20 @@ export interface ChatControls {
   conversationLoadStatus: ConversationLoadStatus | null;
   /** Ask again for the open conversation's history after a failed load. */
   retryConversationLoad: () => void;
+  /**
+   * In Home: sending the composed message as a new thread's opening message
+   * instead. Null elsewhere.
+   */
+  sendAsThread: SendAsThreadControls | null;
+}
+
+export interface SendAsThreadControls {
+  /** The profiles a thread can be started on. */
+  profiles: { id: string; label: string }[];
+  /** Make the composer's next send start a thread on this profile. */
+  prepare: (profileId: string) => void;
+  /** Why the last send-as-thread didn't start one; its message is back in the composer. */
+  error: string | null;
 }
 
 export type OlderMessagesStatus = 'idle' | 'loading' | 'failed';

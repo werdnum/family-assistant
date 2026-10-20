@@ -27,6 +27,13 @@ export interface ServiceProfile {
   model_tiers?: ModelTier[];
   /** The tier used when the user chooses nothing. */
   default_model_tier?: string | null;
+  /**
+   * Whether Home turns may enter this profile: only here can a thread be
+   * continued with Home's context, or a Home turn be moved into its thread.
+   */
+  receives_household_context?: boolean;
+  /** A remote delegation target, which can't be chatted with directly. */
+  delegation_only?: boolean;
 }
 
 export interface ProfilesResponse {

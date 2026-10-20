@@ -9,7 +9,8 @@ const NO_THREADS: ThreadSummary[] = [];
  * threads are disabled or Home is still being looked up); `refresh` refetches,
  * superseding any request still in flight, and is stable so it can be handed
  * to activity pings. `updateThread` patches one thread from what an action on
- * it returned, ahead of the refetch the action's activity ping causes.
+ * it returned, ahead of the refetch the action's activity ping causes, and
+ * `addThread` puts a thread the user just started at the top of the list.
  */
 export function useHomeThreads(homeConversationId: string | null): {
   threads: ThreadSummary[];
@@ -17,6 +18,7 @@ export function useHomeThreads(homeConversationId: string | null): {
   failed: boolean;
   refresh: () => void;
   updateThread: (conversationId: string, update: Partial<ThreadSummary>) => void;
+  addThread: (thread: ThreadSummary) => void;
 } {
   const [threads, setThreads] = useState<ThreadSummary[]>(NO_THREADS);
   const [failed, setFailed] = useState(false);
@@ -59,6 +61,13 @@ export function useHomeThreads(homeConversationId: string | null): {
     );
   }, []);
 
+  const addThread = useCallback((thread: ThreadSummary) => {
+    setThreads((current) => [
+      thread,
+      ...current.filter((entry) => entry.conversation_id !== thread.conversation_id),
+    ]);
+  }, []);
+
   useEffect(() => {
     if (!homeConversationId) {
       setThreads(NO_THREADS);
@@ -69,5 +78,5 @@ export function useHomeThreads(homeConversationId: string | null): {
     return () => abortRef.current?.abort();
   }, [homeConversationId, refresh]);
 
-  return { threads, failed, refresh, updateThread };
+  return { threads, failed, refresh, updateThread, addThread };
 }

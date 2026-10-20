@@ -1,4 +1,4 @@
-import { HomeIcon, MessageSquarePlusIcon, SearchIcon } from 'lucide-react';
+import { GitBranchPlusIcon, HomeIcon, MessageSquarePlusIcon, SearchIcon } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -191,6 +191,14 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
             {waitingCount} waiting
           </span>
         )}
+      </button>
+      <button
+        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-muted-foreground transition-all duration-150 hover:bg-muted/60 hover:text-foreground"
+        onClick={home.onNewThread}
+        data-testid="new-thread-button"
+      >
+        <GitBranchPlusIcon size={14} aria-hidden="true" />
+        <span className="flex-1">New thread</span>
       </button>
       {home.threadsFailed && (
         <div
