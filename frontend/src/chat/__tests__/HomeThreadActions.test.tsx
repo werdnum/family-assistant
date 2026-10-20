@@ -207,7 +207,7 @@ function serveHome(threads: ThreadSummary[] = [QUOTES, BROWSING, FLIGHTS]): Acti
     http.get('/api/v1/chat/conversations/:conversationId/stream', ({ params, request }) => {
       const conversationId = String(params.conversationId);
       state.streamUrls.push(request.url);
-      const turnId = state.starts.at(-1)?.turn_id ?? 'mock-turn';
+      const turnId = state.starts[state.starts.length - 1]?.turn_id ?? 'mock-turn';
       const encoder = new TextEncoder();
       const events = [
         `event: turn_started\ndata: ${JSON.stringify({ turn_id: turnId, seq: FIRST_SEQ })}\n\n`,
