@@ -56,9 +56,10 @@ export const StartThreadDialog: React.FC<StartThreadDialogProps> = ({
   const [profileId, setProfileId] = useState('');
   const [prompt, setPrompt] = useState('');
   const [withContext, setWithContext] = useState(true);
-  // One id per start the user is making, kept across retries so a retry after
-  // a lost response returns the thread that start made rather than a second.
-  const [turnId, setTurnId] = useState(generateUUID);
+  // The start last submitted and its id. Resubmitting the same start keeps the
+  // id, so a retry after a lost response returns the thread that start made
+  // rather than a second; a changed start is a new one, with a new id.
+  const [lastStart, setLastStart] = useState<{ key: string; turnId: string } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -67,7 +68,7 @@ export const StartThreadDialog: React.FC<StartThreadDialogProps> = ({
       setProfileId('');
       setPrompt('');
       setWithContext(true);
-      setTurnId(generateUUID());
+      setLastStart(null);
       setSubmitting(false);
       setError(null);
     }
@@ -86,6 +87,9 @@ export const StartThreadDialog: React.FC<StartThreadDialogProps> = ({
     if (!canSubmit) {
       return;
     }
+    const key = JSON.stringify([selectedId, trimmedPrompt, carriesContext]);
+    const turnId = lastStart?.key === key ? lastStart.turnId : generateUUID();
+    setLastStart({ key, turnId });
     setSubmitting(true);
     setError(null);
     try {

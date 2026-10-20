@@ -99,7 +99,35 @@ function serveHome(threads: ThreadSummary[] = [QUOTES, BROWSING, FLIGHTS]): Acti
     refuseNextMove: null,
   };
   const threadRows = new Map<string, Record<string, unknown>[]>();
+  let lastTurnId = 'mock-turn';
   server.use(
+    // A Home turn is stored as it streams: the user's message, then the reply.
+    http.post('/api/v1/chat/turns', async ({ request }) => {
+      const body = (await request.json()) as { turn_id: string; prompt: string };
+      lastTurnId = body.turn_id;
+      state.homeRows = [
+        ...state.homeRows,
+        {
+          internal_id: 60,
+          turn_id: body.turn_id,
+          role: 'user',
+          content: body.prompt,
+          timestamp: '2026-10-18T11:00:00Z',
+        },
+        {
+          internal_id: 61,
+          turn_id: body.turn_id,
+          role: 'assistant',
+          content: `Reply in ${HOME}`,
+          timestamp: '2026-10-18T11:00:01Z',
+        },
+      ];
+      return HttpResponse.json({
+        turn_id: body.turn_id,
+        conversation_id: HOME,
+        first_seq: FIRST_SEQ,
+      });
+    }),
     http.get('/api/v1/chat/home', () =>
       HttpResponse.json({ enabled: true, conversation_id: HOME })
     ),
@@ -115,6 +143,7 @@ function serveHome(threads: ThreadSummary[] = [QUOTES, BROWSING, FLIGHTS]): Acti
     http.post('/api/v1/chat/home/threads', async ({ request }) => {
       const body = (await request.json()) as Record<string, unknown>;
       state.starts.push(body);
+      lastTurnId = String(body.turn_id);
       const refusal = state.refuseNextStart;
       if (refusal) {
         state.refuseNextStart = null;
@@ -207,7 +236,7 @@ function serveHome(threads: ThreadSummary[] = [QUOTES, BROWSING, FLIGHTS]): Acti
     http.get('/api/v1/chat/conversations/:conversationId/stream', ({ params, request }) => {
       const conversationId = String(params.conversationId);
       state.streamUrls.push(request.url);
-      const turnId = state.starts[state.starts.length - 1]?.turn_id ?? 'mock-turn';
+      const turnId = lastTurnId;
       const encoder = new TextEncoder();
       const events = [
         `event: turn_started\ndata: ${JSON.stringify({ turn_id: turnId, seq: FIRST_SEQ })}\n\n`,
@@ -369,6 +398,43 @@ describe('Starting and moving threads from Home', () => {
     expect(home.starts).toHaveLength(2);
     expect(home.starts[1].turn_id).toBe(home.starts[0].turn_id);
     expect(home.starts[0].profile_id).toBe('default_assistant');
+  });
+
+  it('starts afresh when a refused start is changed before it is sent again', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const home = serveHome();
+    home.refuseNextStart = () => HttpResponse.error();
+    await renderChatApp({ waitForReady: true });
+
+    await user.click(await screen.findByTestId('new-thread-button'));
+    const dialog = await screen.findByTestId('start-thread-dialog');
+    const prompt = within(dialog).getByTestId('start-thread-prompt');
+    await user.type(prompt, 'Sort out the insurance');
+    await user.click(within(dialog).getByTestId('start-thread-submit'));
+    await within(dialog).findByTestId('start-thread-error');
+    await user.type(prompt, ' renewal');
+    await user.click(within(dialog).getByTestId('start-thread-submit'));
+
+    await findPane(NEW_THREAD);
+    expect(home.starts).toHaveLength(2);
+    expect(home.starts[1].prompt).toBe('Sort out the insurance renewal');
+    expect(home.starts[1].turn_id).not.toBe(home.starts[0].turn_id);
+  });
+
+  it('continues from a reply streamed here, anchored on that reply', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const home = serveHome();
+    await renderChatApp({ waitForReady: true });
+    const homePane = await findPane(HOME);
+    await homeReply(GUTTER_REPLY);
+
+    await user.type(within(homePane).getByTestId('chat-input'), 'What about box gutters?');
+    await user.keyboard('{Enter}');
+    const dialog = await openContinue(user, `Reply in ${HOME}`);
+    await user.click(within(dialog).getByTestId('start-thread-submit'));
+
+    await findPane(NEW_THREAD);
+    expect(home.starts[0].anchor_message_id).toBe(61);
   });
 
   it('sends the composed message as a thread, with its attachment and tier', async () => {

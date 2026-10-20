@@ -2623,7 +2623,14 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
       );
       if (response.ok) {
         const data = (await response.json()) as ConversationMessagesResponse;
-        const row = data.messages.find((msg) => msg.turn_id === target.turnId);
+        // The turn's reply, which is what the user picked; any row of the turn
+        // names it to the server, but the anchor is quoted.
+        const turnRows = data.messages.filter((msg) => msg.turn_id === target.turnId);
+        const row =
+          [...turnRows]
+            .reverse()
+            .find((msg) => msg.role === 'assistant' && !msg.tool_calls?.length && msg.content) ??
+          turnRows[0];
         if (row) {
           return Number(row.internal_id);
         }
