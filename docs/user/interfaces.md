@@ -202,6 +202,33 @@ To close a thread yourself, select **Mark done** in the bar above it. It's there
 Nothing is added to Home when you do, because the thread's last message may be a question rather
 than an outcome. If the thread can't be marked done, the bar says so and the thread stays as it was.
 
+**Starting a thread yourself.** Besides asking the assistant, you can start one in three ways:
+
+- **New thread**, in the sidebar under Home. Choose which assistant runs it and write what it should
+  do. The thread opens (in the panel on a wide screen) and the assistant starts on your message
+  straight away.
+- **Send as a new thread**, the branch button beside Send in Home's message box. Choose an
+  assistant, and what you've written opens a new thread instead of going to Home. Any files you
+  attached go with it, and so does the intelligence you picked, if that assistant offers it.
+- **Continue in a thread**, among the buttons that appear when you point at one of Home's replies.
+  Choose an assistant. With **Bring the conversation along** ticked, that exchange and up to four
+  before it are copied into the thread, so it carries on where Home left off, and adding a message
+  is optional. Some assistants, such as the browsing one, don't receive your household's
+  information, so Home's conversation can't go with them. The dialog says so, and the thread starts
+  from your message alone. Either way the thread's bar says **Started from Home** and quotes the
+  reply you continued from, and Home keeps the exchange too.
+
+**Moving an exchange into a thread.** **Move to thread…**, beside **Continue in a thread**, moves
+the whole exchange (your message, what the assistant did and its reply) into a thread you already
+have. Home keeps a **Moved to …** note in its place; click it to open the thread. Only threads whose
+assistant receives your household's information can take it. The others are listed greyed out with
+the reason, as are threads that are still working. Only an exchange you started can move, so a
+thread's outcome or a reminder stays in Home. If anything is still in progress, the dialog says so
+and nothing moves.
+
+If a thread can't be started or an exchange can't be moved, the reason is shown where you asked, and
+what you wrote is kept so you can try again.
+
 **Unread counts.** Opening Home or a thread marks what's on screen as read, a moment after it
 appears, and the thread's unread count clears. With a thread open beside Home, each counts as on
 screen; Home hidden behind an expanded thread doesn't. While you are scrolled up reading older

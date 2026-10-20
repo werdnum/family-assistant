@@ -4,9 +4,10 @@
 
 Approved. Milestones 1 (threads exist) and 2 (Home on web, including the right-hand panel),
 milestone 3 (state and echo) on the backend, the web and iOS, milestone 4 (Home on iOS), and
-milestone 5 (user overrides, and automations' "new conversation per run" as a thread) on the backend
-and iOS implemented. Mockups: [one-thread-ux/mockups.html](one-thread-ux/mockups.html) (rendered:
-[iOS](one-thread-ux/ios.png), [web](one-thread-ux/web.png), [notes](one-thread-ux/notes.png)).
+milestone 5 (user overrides, and automations' "new conversation per run" as a thread) on the
+backend, the web and iOS implemented. Mockups:
+[one-thread-ux/mockups.html](one-thread-ux/mockups.html) (rendered: [iOS](one-thread-ux/ios.png),
+[web](one-thread-ux/web.png), [notes](one-thread-ux/notes.png)).
 
 ## Problem
 
@@ -386,6 +387,15 @@ and each path is governed:
   an error, including one waiting to resume after a restart, and a thread whose starting run has not
   finished, all count. Only an exchange the user started moves; a thread's echoed outcome stays in
   Home.
+
+- **The web offers no working thread as a move destination.** The client reads "at rest" from the
+  thread's state, so a thread working only on a background delegation, which the server would
+  accept, is shown unavailable until it stops. Anything the client can't see, such as a turn running
+  in another tab, is refused by the server and the client shows why.
+
+- **The web quotes "Started from" from Home's loaded messages.** There is no endpoint for one
+  message, so a thread continued from a message older than Home's loaded history, or from one moved
+  since, says "Started from Home" without the quote.
 
 - **iOS lists every done thread under "Done".** The switcher has no "Done today" cut-off. A done
   thread stays there until something reopens it, and older conversations stay under Earlier, so the
