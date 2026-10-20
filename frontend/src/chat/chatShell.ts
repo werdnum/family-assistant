@@ -71,6 +71,10 @@ export interface ChatShellValue {
 export interface TurnToFollow {
   turnId: string;
   firstSeq: number;
+  /** The turn is only in the stored record: read it there rather than stream it. */
+  alreadyComplete: boolean;
+  /** With alreadyComplete: the stored turn has no reply. */
+  incomplete: boolean;
 }
 
 export const ChatShellContext = createContext<ChatShellValue | null>(null);

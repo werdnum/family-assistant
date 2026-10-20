@@ -85,6 +85,8 @@ interface ActionsServer {
   /** Answers the next start instead of starting a thread, then is cleared. */
   refuseNextStart: (() => Response) | null;
   refuseNextMove: (() => Response) | null;
+  /** Answer starts as a retry whose turn finished and left the live stream. */
+  startsAlreadyComplete: boolean;
 }
 
 /** Threads on, Home holding a user's exchange, an echo and a reminder. */
@@ -97,6 +99,7 @@ function serveHome(threads: ThreadSummary[] = [QUOTES, BROWSING, FLIGHTS]): Acti
     streamUrls: [],
     refuseNextStart: null,
     refuseNextMove: null,
+    startsAlreadyComplete: false,
   };
   const threadRows = new Map<string, Record<string, unknown>[]>();
   let lastTurnId = 'mock-turn';
@@ -171,11 +174,25 @@ function serveHome(threads: ThreadSummary[] = [QUOTES, BROWSING, FLIGHTS]): Acti
           timestamp: '2026-10-18T10:00:00Z',
         });
       }
+      if (state.startsAlreadyComplete && typeof body.prompt === 'string') {
+        rows.push({
+          internal_id: 104,
+          turn_id: body.turn_id,
+          role: 'assistant',
+          content: 'Answered before the retry.',
+          timestamp: '2026-10-18T10:00:01Z',
+        });
+      }
       threadRows.set(NEW_THREAD, rows);
       return HttpResponse.json({
         thread: started,
         turn: body.prompt
-          ? { turn_id: body.turn_id, conversation_id: NEW_THREAD, first_seq: FIRST_SEQ }
+          ? {
+              turn_id: body.turn_id,
+              conversation_id: NEW_THREAD,
+              first_seq: FIRST_SEQ,
+              ...(state.startsAlreadyComplete ? { already_complete: true, incomplete: false } : {}),
+            }
           : null,
         copied_message_ids: body.include_context ? [101, 102] : [],
       });
@@ -435,6 +452,55 @@ describe('Starting and moving threads from Home', () => {
 
     await findPane(NEW_THREAD);
     expect(home.starts[0].anchor_message_id).toBe(61);
+  });
+
+  it('reads a retried start whose turn already finished from the record, not the stream', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const home = serveHome();
+    home.startsAlreadyComplete = true;
+    await renderChatApp({ waitForReady: true });
+
+    await user.click(await screen.findByTestId('new-thread-button'));
+    const dialog = await screen.findByTestId('start-thread-dialog');
+    await user.type(within(dialog).getByTestId('start-thread-prompt'), 'Plan the veggie garden');
+    await user.click(within(dialog).getByTestId('start-thread-submit'));
+
+    const panel = await findPane(NEW_THREAD);
+    expect(await within(panel).findByText('Answered before the retry.')).toBeInTheDocument();
+    expect(home.streamUrls.filter((url) => url.includes(`/${NEW_THREAD}/stream`))).toEqual([]);
+  });
+
+  it('starts afresh when the tier of a refused send-as-thread is changed', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const home = serveHome();
+    home.refuseNextStart = () => HttpResponse.error();
+    await renderChatApp({ waitForReady: true });
+    const homePane = await findPane(HOME);
+
+    const pickTier = async (tier: RegExp) => {
+      await user.click(within(homePane).getByRole('combobox', { name: 'Intelligence' }));
+      await user.click(await screen.findByRole('option', { name: tier }));
+    };
+    const sendAsThread = async () => {
+      await user.click(within(homePane).getByTestId('send-as-thread-button'));
+      await user.click(await screen.findByTestId('send-as-thread-default_assistant'));
+    };
+    await pickTier(/Deep/);
+    await user.type(within(homePane).getByTestId('chat-input'), 'Compare solar quotes');
+    await sendAsThread();
+    await within(homePane).findByTestId('send-as-thread-error');
+    await waitFor(() =>
+      expect(within(homePane).getByTestId('chat-input')).toHaveValue('Compare solar quotes')
+    );
+    await pickTier(/Standard/);
+    await sendAsThread();
+
+    await findPane(NEW_THREAD);
+    expect(home.starts).toHaveLength(2);
+    expect(home.starts[0].model_tier).toBe('deep');
+    // Back on the default, which a start names by leaving the tier out.
+    expect(home.starts[1]).not.toHaveProperty('model_tier');
+    expect(home.starts[1].turn_id).not.toBe(home.starts[0].turn_id);
   });
 
   it('sends the composed message as a thread, with its attachment and tier', async () => {

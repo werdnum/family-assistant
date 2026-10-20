@@ -1426,7 +1426,7 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
         attachments?: Array<{ id: string; type: string; name: string; content: string }>;
         turnId?: string;
         modelTier?: string;
-        existingTurn?: { firstSeq: number };
+        existingTurn?: { firstSeq: number; alreadyComplete?: boolean; incomplete?: boolean };
       }) => Promise<void>;
       cancelStream: () => void;
       stopTurn: () => Promise<boolean>;
@@ -2508,7 +2508,11 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
       profileId: currentProfileId,
       interfaceType: 'web',
       turnId: turn.turnId,
-      existingTurn: { firstSeq: turn.firstSeq },
+      existingTurn: {
+        firstSeq: turn.firstSeq,
+        alreadyComplete: turn.alreadyComplete,
+        incomplete: turn.incomplete,
+      },
     });
   };
 
@@ -2528,10 +2532,12 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
     const offersTier =
       chosenTier !== null &&
       (profilesById[threadProfileId]?.model_tiers ?? []).some((tier) => tier.id === chosenTier);
+    const modelTier = offersTier && chosenTier ? chosenTier : null;
     const key = JSON.stringify([
       threadProfileId,
       text,
       attachments.map((attachment) => attachment.id),
+      modelTier,
     ]);
     const pending = pendingThreadStartRef.current;
     const turnId = pending?.key === key ? pending.turnId : generateUUID();
@@ -2543,7 +2549,7 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
         prompt: text,
         turn_id: turnId,
         ...(attachments.length > 0 ? { attachments } : {}),
-        ...(offersTier && chosenTier ? { model_tier: chosenTier } : {}),
+        ...(modelTier ? { model_tier: modelTier } : {}),
       });
     } catch (error) {
       const reason =

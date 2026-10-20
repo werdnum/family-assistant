@@ -600,6 +600,8 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
         turnsToFollowRef.current.set(thread.conversation_id, {
           turnId: turn.turn_id,
           firstSeq: turn.first_seq,
+          alreadyComplete: turn.already_complete === true,
+          incomplete: turn.incomplete === true,
         });
       }
       addHomeThread(thread);

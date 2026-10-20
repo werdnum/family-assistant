@@ -88,9 +88,11 @@ export const useStreamingResponse = ({
       // tier, or the default when leaving one. Omitted from the request body
       // otherwise, so the backend continues the conversation's own tier.
       modelTier = undefined,
-      // `{ firstSeq }` for a turn something else already started -- a thread's
-      // first turn, which starting the thread kicked off -- to follow it from
-      // there instead of kicking one off. `turnId` names that turn.
+      // `{ firstSeq, alreadyComplete, incomplete }` for a turn something else
+      // already started -- a thread's first turn, which starting the thread
+      // kicked off -- to follow it from there instead of kicking one off.
+      // `turnId` names that turn; the flags are the kickoff response's own,
+      // for a turn only the stored record still has.
       existingTurn = undefined,
     }) => {
       setIsStreaming(true);
@@ -378,6 +380,10 @@ export const useStreamingResponse = ({
         } else if (existingTurn) {
           resolvedConversationId = conversationId;
           firstSeq = existingTurn.firstSeq;
+          durableTurnState = {
+            alreadyComplete: existingTurn.alreadyComplete === true,
+            durableIncomplete: existingTurn.incomplete === true,
+          };
         } else {
           const {
             conversation_id: streamConversationId,

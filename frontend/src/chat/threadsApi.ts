@@ -106,7 +106,15 @@ export interface StartThreadRequest {
 export interface StartThreadResponse {
   thread: ThreadSummary;
   /** The first turn, running the opening message; null when there is none. */
-  turn: { turn_id: string; conversation_id: string; first_seq: number } | null;
+  turn: {
+    turn_id: string;
+    conversation_id: string;
+    first_seq: number;
+    /** A retried start whose turn is in the stored record but no longer live. */
+    already_complete?: boolean;
+    /** With already_complete: the stored turn has no reply (it was interrupted). */
+    incomplete?: boolean;
+  } | null;
   copied_message_ids: number[];
 }
 
