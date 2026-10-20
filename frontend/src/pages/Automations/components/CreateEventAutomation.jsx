@@ -5,7 +5,6 @@ import { PageContainer, PageHeader } from '@/components/layout/PageHeader';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -16,6 +15,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
+import { NewRunOption } from './NewRunOption';
 
 const CreateEventAutomation = ({ onSuccess, onCancel }) => {
   const [loading, setLoading] = useState(false);
@@ -331,24 +331,12 @@ const CreateEventAutomation = ({ onSuccess, onCancel }) => {
                     placeholder="Optional custom prompt for the LLM"
                   />
                 </div>
-                <div className="space-y-2">
-                  <div className="flex items-center space-x-2">
-                    <Checkbox
-                      id="new_conversation"
-                      checked={formData.new_conversation}
-                      onCheckedChange={(checked) =>
-                        setFormData({ ...formData, new_conversation: checked === true })
-                      }
-                    />
-                    <Label htmlFor="new_conversation" className="font-normal">
-                      Start a new conversation each time
-                    </Label>
-                  </div>
-                  <p className="text-sm text-muted-foreground pl-6">
-                    Each run opens its own conversation instead of continuing an existing one, so
-                    the prompt should say everything the assistant needs.
-                  </p>
-                </div>
+                <NewRunOption
+                  checked={formData.new_conversation}
+                  onCheckedChange={(checked) =>
+                    setFormData({ ...formData, new_conversation: checked })
+                  }
+                />
               </>
             )}
 
