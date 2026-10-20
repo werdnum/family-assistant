@@ -11,6 +11,8 @@ stratum, and writes three files into the private tree:
   frequency, which is what results are later weighted back to.
 - ``candidates.yaml`` -- the deterministic stratified sample curation starts
   from, each entry carrying its stratum weight.
+- ``google_world.json`` -- every Gmail message and Drive file a recorded turn
+  saw, pooled into the world the sandbox's fake Google serves.
 
 Everything written is raw household text, so the destination must resolve
 inside the repository's gitignored private tree. The database is opened
@@ -43,6 +45,7 @@ from family_assistant.eval.private_paths import (
     PrivateEvalPathError,
     resolve_private_eval_path,
 )
+from family_assistant.eval.workhorse.google_world import build_google_world
 from family_assistant.eval.workhorse.strata import (
     DEFAULT_TEMPLATED_PREFIXES,
     sample_candidates,
@@ -56,6 +59,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
+    from family_assistant.eval.workhorse.google_world import GoogleWorld
     from family_assistant.eval.workhorse.strata import SampledTurn
     from family_assistant.eval.workhorse.turn_records import TurnRecord
     from family_assistant.storage.types import MessageHistoryRow
@@ -205,6 +209,7 @@ def _summary(
     prefixes: Sequence[str],
     records: Sequence[TurnRecord],
     sampled: Sequence[SampledTurn],
+    world: GoogleWorld,
 ) -> dict[str, object]:
     return {
         "extracted_at": datetime.now(UTC).isoformat(),
@@ -220,6 +225,12 @@ def _summary(
         "turns_by_profile": dict(Counter(r.profile for r in records)),
         "negative_signal_turns": sum(1 for r in records if r.negative_signal),
         "candidates": len(sampled),
+        "google_world": {
+            "messages": len(world.messages),
+            "messages_with_body": sum(1 for m in world.messages if m.body is not None),
+            "files": len(world.files),
+            "files_with_content": sum(1 for f in world.files if f.content is not None),
+        },
         "stratum_frequencies": stratum_frequencies(records),
     }
 
@@ -262,6 +273,7 @@ def _write(
     records: Sequence[TurnRecord],
     summary: dict[str, object],
     candidates: list[dict[str, object]],
+    world: GoogleWorld,
 ) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     with (out_dir / "records.jsonl").open("w", encoding="utf-8") as handle:
@@ -270,6 +282,9 @@ def _write(
             handle.write("\n")
     (out_dir / "summary.json").write_text(
         json.dumps(summary, indent=2) + "\n", encoding="utf-8"
+    )
+    (out_dir / "google_world.json").write_text(
+        world.model_dump_json(indent=1), encoding="utf-8"
     )
     (out_dir / "candidates.yaml").write_text(
         yaml.safe_dump(candidates, sort_keys=False, allow_unicode=True, width=100),
@@ -301,8 +316,14 @@ def main(argv: list[str] | None = None) -> int:
         negative_share=args.negative_share,
         seed=args.seed,
     )
+    world = build_google_world(grouped)
     summary = _summary(
-        args, profiles=profiles, prefixes=prefixes, records=records, sampled=sampled
+        args,
+        profiles=profiles,
+        prefixes=prefixes,
+        records=records,
+        sampled=sampled,
+        world=world,
     )
 
     print(f"Turns extracted: {len(records)} {summary['turns_by_population']}")
@@ -318,8 +339,9 @@ def main(argv: list[str] | None = None) -> int:
         records=records,
         summary=summary,
         candidates=_candidate_entries(records, sampled),
+        world=world,
     )
-    print(f"Wrote records.jsonl, summary.json and candidates.yaml to {out_dir}")
+    print(f"Wrote records, summary, candidates and the Google world to {out_dir}")
     return 0
 
 

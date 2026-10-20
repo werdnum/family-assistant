@@ -323,10 +323,24 @@ another is exactly the non-uniform bias a comparison cannot carry. Four classes,
    household owns: the drift is the same for every candidate in a run, and a replay would reject
    most of the varied queries a search tool receives.
 3. **Household-owned external state** — Home Assistant, the task tracker, Google mail and drive — is
-   served by **deterministic fakes seeded from the snapshot**, so that two candidates phrasing a
-   lookup differently both get a correct answer. Where no seeded fake exists yet, a replay of the
-   case's recorded results is the interim backing, and a call the replay cannot answer ends the
-   trial as `unbacked_call`, which is excluded from quality metrics and reported as a harness gap.
+   served from **what the household's turns actually saw**, so two candidates phrasing a lookup
+   differently both get a correct answer. The snapshot holds no mailbox and no house, but it holds
+   every result those tools returned, and pooled across the history that is a small real world: each
+   item is some case's needle and every other case's distractor. A case sees the part of it that
+   existed when it was asked. No bulk export of the mailbox or the house is taken; one is worth
+   adding only if this proves too easy, for instance if every candidate aces the mail cases.
+   - **Google mail and drive** are a fake behind the connected-account transport, the one seam every
+     Gmail, Drive and Google Calendar request already passes through. Everything above it runs as in
+     production: the integration enabled by configuration, the user's connection stored encrypted, a
+     token refreshed before every request, the tools' scope checks and parsing.
+   - **Home Assistant** is a real `hass` process, as the integration tests already run, configured
+     with the entities and states the recorded results show, so templates, service calls and state
+     changes behave as they would at home. Recorder history starts empty.
+   - What the record cannot supply stays absent rather than invented. A message only ever seen in a
+     listing is served with its snippet as its body and the trial is marked partial; content that
+     was never recorded at all — attachment bytes, an unread Drive file — is unbacked. A call
+     nothing can answer ends the trial as `unbacked_call`, which is excluded from quality metrics
+     and reported as a harness gap.
 4. **External writes** — messaging, email, Home Assistant service calls, anything that leaves the
    sandbox — go to **capture backends** that record the call and return a success-shaped result.
    Captured calls are part of the end state and are what "no message was sent" assertions check.
@@ -339,10 +353,11 @@ a case that depends on their output says so.
 
 This is the one place the sandbox needs new seams. Concretely: a generic fake MCP server process
 that serves a registry snapshot with seeded-fake, replay or capture semantics per tool covers every
-MCP-backed tool in one mechanism; the `Assistant` needs config-selectable backends for the weather
-service and Home Assistant (there is no constructor seam today) and the outbound messaging paths.
-Prefer one mechanism keyed by tool name over per-integration fakes, so a tool added later either has
-a backing or fails loudly as unbacked, never silently succeeds.
+MCP-backed tool in one mechanism; the `Assistant` takes a connected-account transport for Google,
+and needs config-selectable backends for the weather service and the outbound messaging paths. Home
+Assistant needs no seam: its plugin instance is configuration, pointed at the sandbox `hass`. Prefer
+one mechanism keyed by tool name over per-integration fakes, so a tool added later either has a
+backing or fails loudly as unbacked, never silently succeeds.
 
 ### Driving a turn
 
@@ -351,6 +366,11 @@ The runner POSTs to `/api/v1/chat/turns` with the case's prompt, `profile_id`, t
 answers confirmation prompts with a per-case policy (default: approve, and count it), and then
 collects: reply text, the tool-call sequence, confirmations, errors, iteration count, the
 `reasoning_info` envelope (tier, serving model, usage), latency, and the sandbox state diff.
+
+The sandbox runs with real web authentication, and the runner calls as the case's household user
+with an API token. Connected-account integrations refuse the shared development identity by design,
+and the user-scoped state a case reads (notes visibility, reminders, the Google connection) belongs
+to the real user, so running as anyone else would test a different assistant.
 
 ## Part 3 — Grading and reporting
 
@@ -423,12 +443,12 @@ Each milestone is independently useful and verifiable.
    suite behind an opt-in marker. Verified by the first self-test: one synthetic case with the mock
    LLM scripted to call a calendar tool "tomorrow" relative to a frozen date, and the end state
    showing the event on the right day, running in CI.
-4. **Tool backing.** The fake MCP server with seeded-fake, replay and capture semantics, seeded
-   fakes for Home Assistant and the task tracker, live read-only wiring for search and weather, and
-   the config seams for weather, Home Assistant and messaging. Verified by a conformance check that
-   every tool in the registry snapshot has a backing class for every case, failing the run
-   otherwise, and by self-test cases for each class including an unbacked call ending a trial as
-   unscorable.
+4. **Tool backing.** The Google fake and its transport seam, a sandbox `hass` built from recorded
+   Home Assistant results, the fake MCP server with seeded-fake, replay and capture semantics for
+   the task tracker and other MCP tools, live read-only wiring for search and weather, and the
+   config seams for weather and messaging. Verified by a conformance check that every tool in the
+   registry snapshot has a backing class for every case, failing the run otherwise, and by self-test
+   cases for each class including an unbacked call ending a trial as unscorable.
 5. **Runner, outcome classification and deterministic grading.** Drive turns, collect traces,
    classify each trial's outcome, apply the checks, write run records. Verified by running the dev
    slice on the current `standard` tier, inspecting a handful of traces by hand, and fixing every

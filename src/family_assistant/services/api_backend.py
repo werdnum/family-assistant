@@ -73,6 +73,22 @@ class ApiBackend(Protocol):
         ...
 
 
+@dataclass(frozen=True)
+class ConnectedAccountTransport:
+    """Where connected-account traffic goes instead of the real provider.
+
+    For harnesses that run the whole application against a stand-in provider:
+    ``api_backend`` answers the data requests the tools make, and
+    ``token_http_client`` answers the OAuth token refresh the credential
+    resolver makes before each one. Everything between -- integration gating,
+    stored and encrypted connections, scope checks, the tools themselves --
+    runs as in production.
+    """
+
+    api_backend: ApiBackend
+    token_http_client: httpx.AsyncClient
+
+
 class HttpApiBackend:
     """A :class:`ApiBackend` over an injected ``httpx.AsyncClient``."""
 
