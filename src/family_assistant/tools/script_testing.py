@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field
 
+from family_assistant.llm.one_shot import one_shot_structured
 from family_assistant.tools.execute_script import execute_script_tool
 from family_assistant.tools.infrastructure import (
     ToolDescriptorProvider,
@@ -255,10 +256,6 @@ class ScriptTestingToolsProvider(ToolsProvider):
         examples: Sequence[ToolHistoryExample],
     ) -> ToolResult:
         """Use the default one-shot model to synthesize a realistic tool return value."""
-        # Local import avoids a startup circular import through family_assistant.llm.
-        from family_assistant.llm.one_shot import (  # noqa: PLC0415
-            one_shot_structured,
-        )
 
         tool_definition = await self._get_tool_definition(name)
         prompt = self._build_simulation_prompt(

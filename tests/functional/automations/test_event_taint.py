@@ -9,8 +9,9 @@ import pytest
 
 from family_assistant.security.taint import InMemoryTurnTaintTracker, SourceTrustTier
 from family_assistant.storage.database import Database
-from family_assistant.tools import LOCAL_TOOL_METADATA_BY_NAME, ToolTag
+from family_assistant.tools.catalog import LOCAL_TOOL_METADATA_BY_NAME
 from family_assistant.tools.events import query_recent_events_tool
+from family_assistant.tools.metadata import ToolTag
 from family_assistant.tools.types import ToolExecutionContext
 
 if TYPE_CHECKING:

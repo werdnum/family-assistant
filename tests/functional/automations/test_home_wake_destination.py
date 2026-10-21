@@ -34,10 +34,13 @@ from family_assistant.task_worker import (
     handle_script_execution,
 )
 from family_assistant.threads.home import ensure_web_home, find_home
-from family_assistant.tools import CompositeToolsProvider, LocalToolsProvider
 from family_assistant.tools.automations import (
     create_automation_tool,
     update_automation_tool,
+)
+from family_assistant.tools.infrastructure import (
+    CompositeToolsProvider,
+    LocalToolsProvider,
 )
 from family_assistant.tools.tasks import (
     cancel_pending_callback_tool,

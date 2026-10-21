@@ -23,8 +23,11 @@ from typing import TYPE_CHECKING, cast
 import pytest
 import yaml
 
-from family_assistant.tools import MCPToolsProvider
-from family_assistant.tools.mcp import MCP_SERVER_STATUS_CONNECTED, MCPServerStatus
+from family_assistant.tools.mcp import (
+    MCP_SERVER_STATUS_CONNECTED,
+    MCPServerStatus,
+    MCPToolsProvider,
+)
 
 if TYPE_CHECKING:
     from family_assistant.tools.types import MCPServerStdIOConfig

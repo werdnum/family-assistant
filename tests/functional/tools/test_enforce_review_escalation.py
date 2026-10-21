@@ -50,20 +50,22 @@ from family_assistant.services.tool_call_review import (
 )
 from family_assistant.storage.confirmation_requests import confirmation_requests_table
 from family_assistant.storage.database import Database
-from family_assistant.tools import (
+from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
     LocalToolsProvider,
-    MCPToolsProvider,
     PolicyEnforcingToolsProvider,
-    PolicyEngine,
     TaintTrackingToolsProvider,
-    ToolPolicyConfig,
-    ToolPolicyDecision,
 )
+from family_assistant.tools.mcp import MCPToolsProvider
 from family_assistant.tools.metadata import (
     ToolRegistration,
     ToolTag,
     make_local_tool_metadata,
+)
+from family_assistant.tools.policy import (
+    PolicyEngine,
+    ToolPolicyConfig,
+    ToolPolicyDecision,
 )
 from family_assistant.tools.types import (
     ToolDefinition,

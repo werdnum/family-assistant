@@ -23,13 +23,6 @@ from family_assistant.security.taint import (
     derive_tool_result_taint_source,
 )
 from family_assistant.storage.database import Database
-from family_assistant.tools import (
-    AVAILABLE_FUNCTIONS,
-    LOCAL_TOOL_DESCRIPTORS,
-    LOCAL_TOOL_METADATA_BY_NAME,
-    LocalToolsProvider,
-    ToolTag,
-)
 from family_assistant.tools.calendar import (
     CALENDAR_TOOLS_DEFINITION,
     add_calendar_event_tool,
@@ -40,11 +33,18 @@ from family_assistant.tools.calendar import (
     resolve_target_caldav_url,
     search_calendar_events_tool,
 )
+from family_assistant.tools.catalog import (
+    AVAILABLE_FUNCTIONS,
+    LOCAL_TOOL_DESCRIPTORS,
+    LOCAL_TOOL_METADATA_BY_NAME,
+)
 from family_assistant.tools.confirmation import (
     render_add_calendar_event_confirmation,
     render_delete_calendar_event_confirmation,
     render_modify_calendar_event_confirmation,
 )
+from family_assistant.tools.infrastructure import LocalToolsProvider
+from family_assistant.tools.metadata import ToolTag
 from family_assistant.tools.types import (
     CalendarConfig,
     CalendarEvent,

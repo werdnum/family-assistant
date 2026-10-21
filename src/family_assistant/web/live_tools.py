@@ -24,7 +24,7 @@ from family_assistant.tools.types import ToolResult
 
 if TYPE_CHECKING:
     from family_assistant.processing import ProcessingService
-    from family_assistant.tools import ToolsProvider
+    from family_assistant.tools.infrastructure import ToolsProvider
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)

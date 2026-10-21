@@ -26,17 +26,15 @@ from family_assistant.processing import (
     ProcessingServiceConfig,
 )
 from family_assistant.storage.database import Database
-from family_assistant.tools import (
+from family_assistant.tools.catalog import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
-from family_assistant.tools import (
-    TOOLS_DEFINITION as local_tools_definition,
-)
-from family_assistant.tools import (
+from family_assistant.tools.catalog import TOOLS_DEFINITION as local_tools_definition
+from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
     LocalToolsProvider,
-    MCPToolsProvider,
 )
+from family_assistant.tools.mcp import MCPToolsProvider
 from family_assistant.tools.types import ToolExecutionContext
 from tests.mocks.mock_llm import (
     LLMOutput as MockLLMOutput,

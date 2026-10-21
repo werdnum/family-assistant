@@ -17,7 +17,7 @@ from family_assistant.llm.messages import AssistantMessage, ToolMessage
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.storage.database import Database
 from family_assistant.storage.history_compaction import HistoryScope
-from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS
+from family_assistant.tools.catalog import LOCAL_TOOL_REGISTRATIONS
 from tests.functional.history_window_helpers import (
     CONVERSATION_ID,
     PROFILE_ID,

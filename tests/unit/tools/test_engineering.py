@@ -20,7 +20,7 @@ from family_assistant.llm.request_buffer import (
     get_request_buffer,
     reset_request_buffer,
 )
-from family_assistant.tools import (
+from family_assistant.tools.catalog import (
     AVAILABLE_FUNCTIONS,
     LOCAL_TOOL_METADATA_BY_NAME,
 )

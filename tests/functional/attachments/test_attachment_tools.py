@@ -18,10 +18,11 @@ from family_assistant.scripting.apis.attachments import ScriptAttachment
 from family_assistant.security.taint import TurnTaintState
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
-from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS, LocalToolsProvider
 from family_assistant.tools.attachments import attach_to_response_tool
+from family_assistant.tools.catalog import LOCAL_TOOL_REGISTRATIONS
 from family_assistant.tools.communication import send_message_to_user_tool
 from family_assistant.tools.image_tools import highlight_image_tool
+from family_assistant.tools.infrastructure import LocalToolsProvider
 from family_assistant.tools.types import ToolExecutionContext
 from tests.helpers import seed_known_conversation
 

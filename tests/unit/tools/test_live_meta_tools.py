@@ -14,8 +14,8 @@ from typing import TYPE_CHECKING, Any, cast
 import jsonschema
 import pytest
 
-from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS
 from family_assistant.tools.argument_schema import check_parameter_schema
+from family_assistant.tools.catalog import LOCAL_TOOL_REGISTRATIONS
 from family_assistant.tools.infrastructure import LocalToolsProvider
 from family_assistant.tools.live_meta import (
     CALL_TOOL_TOOL_NAME,

@@ -44,21 +44,23 @@ from family_assistant.storage.repositories.notes import (
     NoteReadPolicy,
     NoteWritePolicy,
 )
-from family_assistant.tools import (
+from family_assistant.tools.catalog import (
     LOCAL_TOOL_REGISTRATIONS as local_tool_registrations,
 )
-from family_assistant.tools import (
+from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
     LocalToolsProvider,
-    MCPToolsProvider,
     PolicyEnforcingToolsProvider,
+    TaintTrackingToolsProvider,
+    ToolsProvider,
+)
+from family_assistant.tools.mcp import MCPToolsProvider
+from family_assistant.tools.policy import (
     PolicyEngine,
     PolicyRule,
-    TaintTrackingToolsProvider,
     ToolMatcher,
     ToolPolicyConfig,
     ToolPolicyDecision,
-    ToolsProvider,
 )
 from family_assistant.web.app_creator import app as actual_app
 from family_assistant.web.web_chat_interface import WebChatInterface

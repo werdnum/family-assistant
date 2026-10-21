@@ -39,13 +39,17 @@ from family_assistant.telegram.ui import (
     PendingTelegramConfirmation,
     TelegramConfirmationUIManager,
 )
-from family_assistant.tools import PolicyEngine, ToolPolicyConfig, ToolPolicyDecision
 from family_assistant.tools.infrastructure import (
     PolicyEnforcingToolsProvider,
     TaintTrackingToolsProvider,
     ToolProviderComposite,
     ToolsProvider,
     find_provider_by_type,
+)
+from family_assistant.tools.policy import (
+    PolicyEngine,
+    ToolPolicyConfig,
+    ToolPolicyDecision,
 )
 from family_assistant.tools.types import (
     ConfirmationOutcome,

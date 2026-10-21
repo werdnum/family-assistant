@@ -13,12 +13,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from family_assistant.tools import (
-    LOCAL_TOOL_REGISTRATIONS,
-    LocalToolsProvider,
-    OnDemandToolsView,
-    PolicyEnforcingToolsProvider,
-)
+from family_assistant.tools.catalog import LOCAL_TOOL_REGISTRATIONS
 from family_assistant.tools.engineering import (
     get_mcp_server_status,
     get_profile_config,
@@ -28,8 +23,13 @@ from family_assistant.tools.engineering import (
     reconnect_mcp_server,
     resolve_tool_policy,
 )
+from family_assistant.tools.infrastructure import (
+    LocalToolsProvider,
+    PolicyEnforcingToolsProvider,
+)
 from family_assistant.tools.mcp import MCPToolsProvider
 from family_assistant.tools.metadata import ToolTag
+from family_assistant.tools.on_demand import OnDemandToolsView
 from family_assistant.tools.policy import (
     PolicyEngine,
     PolicyRule,

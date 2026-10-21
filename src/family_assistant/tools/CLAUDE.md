@@ -6,8 +6,8 @@ organized into thematic submodules under `src/family_assistant/tools/`.
 ## Adding a New Tool
 
 A tool needs a JSON schema definition, an async implementation, a registration entry, and a policy
-rule. Registration lives in `src/family_assistant/tools/__init__.py`; runtime access is denied
-unless `tools_policy` also allows it, so both are required.
+rule. Registration lives in `src/family_assistant/tools/catalog.py`; runtime access is denied unless
+`tools_policy` also allows it, so both are required.
 
 A tool that belongs to an integration packaged as a plugin (`src/family_assistant/plugins/`, e.g.
 Home Assistant, Reolink cameras, AI workers) is declared on the plugin as a `ToolRegistration`
@@ -58,11 +58,12 @@ async def tool_name_tool(exec_context: ToolExecutionContext, param1: str) -> Too
     return ToolResult(data={"status": "success", "param1": param1})
 ```
 
-### Step 2: Register the Tool in `__init__.py`
+### Step 2: Register the Tool in `catalog.py`
 
-In `src/family_assistant/tools/__init__.py`:
+In `src/family_assistant/tools/catalog.py` (not the package `__init__.py`, which stays empty so that
+importing one tool module does not import every other one):
 
-- Import `SOMETHING_TOOLS_DEFINITION` and `tool_name_tool`, and add both to `__all__`.
+- Import `SOMETHING_TOOLS_DEFINITION` and `tool_name_tool`.
 - Add `SOMETHING_TOOLS_DEFINITION` to the `_LOCAL_TOOL_DEFINITIONS` concatenation.
 - Add `"tool_name": tool_name_tool` to `_LOCAL_TOOL_IMPLEMENTATIONS`.
 - Add `"tool_name": _metadata(ToolTag.…, …)` to `LOCAL_TOOL_METADATA_BY_NAME`. Tags drive policy
@@ -189,18 +190,22 @@ For **recurring** schedules use the automations framework (`create_automation` w
 
 All tool implementations are async, but declaring `async` is not enough: blocking work on the event
 loop freezes every other operation (database, HTTP, WebSockets, Telegram delivery) and can hang
-scripts waiting on async progress. The `jq_query` tool once timed out in scripts because
-`jq.compile()` blocked the loop.
+scripts waiting on async progress.
 
 Wrap in `asyncio.to_thread()` (or use `aiofiles`) any:
 
 - Filesystem call — `Path.read_bytes()`, `Path.exists()`, `Path.stat()`, `os.listdir()`, `open()`
 - `json.loads()` / `json.dumps()` on large data, CSV parsing, regex over large text
-- `jq.compile()` and `.input().all()`
 - PIL/Pillow work (`Image.open()`, `.resize()`, `.save()`), `ImageFont.truetype()`
 - Chart rendering (`vlc.vegalite_to_png()`, matplotlib)
 - `filetype.guess()`
 - Any third-party library without async support, or anything taking >10ms
+
+A thread only helps when the work releases the GIL. A C extension that holds it for the whole call
+freezes the loop from a thread just as it would inline, and a thread cannot be cancelled when the
+work runs away. Run such work, especially when its cost is set by model-supplied input, in a child
+process with a timeout and an output cap. `jq_query` does this: the jq binding holds the GIL while a
+program runs, so `run_jq_in_subprocess` executes it in `jq_worker.py` and kills it on timeout.
 
 You don't need it for SQLAlchemy async sessions, async HTTP clients, anything already inside
 `aiofiles.open()`, or small in-memory work.

@@ -39,9 +39,13 @@ from family_assistant.services.tool_call_review import (
     ToolCallReviewVerdict,
     assemble_tool_call_review_messages,
 )
-from family_assistant.tools import LOCAL_TOOL_DESCRIPTORS, PolicyEngine, ToolDescriptor
-from family_assistant.tools.metadata import ToolTag
-from family_assistant.tools.policy import ToolPolicyConfig, ToolPolicyDecision
+from family_assistant.tools.catalog import LOCAL_TOOL_DESCRIPTORS
+from family_assistant.tools.metadata import ToolDescriptor, ToolTag
+from family_assistant.tools.policy import (
+    PolicyEngine,
+    ToolPolicyConfig,
+    ToolPolicyDecision,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULTS_PATH = REPO_ROOT / "defaults.yaml"

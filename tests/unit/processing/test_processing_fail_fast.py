@@ -59,8 +59,7 @@ if TYPE_CHECKING:
 
     from family_assistant.interfaces import ChatInterface
     from family_assistant.llm.messages import ContentPartDict
-    from family_assistant.tools import ToolExecutionContext
-    from family_assistant.tools.types import ToolDefinition
+    from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
 
 class SimpleToolsProvider:

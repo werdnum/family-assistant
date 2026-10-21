@@ -17,17 +17,15 @@ from family_assistant.plugins.home_assistant.instance import HomeAssistantInstan
 from family_assistant.plugins.runtime import ProfilePlugins
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.database import Database
-from family_assistant.tools import (
+from family_assistant.tools.catalog import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
-from family_assistant.tools import (
-    TOOLS_DEFINITION as local_tools_definition,
-)
-from family_assistant.tools import (
+from family_assistant.tools.catalog import TOOLS_DEFINITION as local_tools_definition
+from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
     LocalToolsProvider,
-    MCPToolsProvider,
 )
+from family_assistant.tools.mcp import MCPToolsProvider
 from tests.mocks.mock_llm import (
     LLMOutput as MockLLMOutput,
 )

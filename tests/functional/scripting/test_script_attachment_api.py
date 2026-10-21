@@ -21,12 +21,14 @@ from family_assistant.security.taint import (
 )
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
-from family_assistant.tools import (
-    ATTACHMENT_TOOLS_DEFINITION,
+from family_assistant.tools.attachments import ATTACHMENT_TOOLS_DEFINITION
+from family_assistant.tools.catalog import (
+    AVAILABLE_FUNCTIONS as local_tool_implementations,
+)
+from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
     LocalToolsProvider,
 )
-from family_assistant.tools import AVAILABLE_FUNCTIONS as local_tool_implementations
 from family_assistant.tools.types import ToolExecutionContext
 
 if TYPE_CHECKING:

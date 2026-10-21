@@ -16,7 +16,7 @@ from family_assistant.storage.events import (
     event_listeners_table,
 )
 from family_assistant.storage.repositories.worker_tasks import worker_tasks_table
-from family_assistant.tools import ToolExecutionContext
+from family_assistant.tools.types import ToolExecutionContext
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator

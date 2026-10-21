@@ -18,9 +18,7 @@ from family_assistant.telegram.handler import TelegramUpdateHandler
 from family_assistant.telegram.interface import (
     TelegramChatInterface,
 )  # For type hinting mock_confirmation_manager
-from family_assistant.tools import (
-    ToolsProvider,  # Changed from CompositeToolsProvider for generality
-)
+from family_assistant.tools.infrastructure import ToolsProvider
 from tests.mocks.mock_llm import LLMOutput as MockLLMOutput
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
 

@@ -5,8 +5,8 @@
 [gemini-antigravity-managed-agent.md](gemini-antigravity-managed-agent.md) shipped the `coder`
 profile on the Antigravity managed agent and listed **custom environments** as a non-goal: each run
 got a fresh default sandbox, and `environment` was left unset. Attachment routing later took half of
-that back — `interactions_agent_service.py` mounts delegated attachments as `environment.sources` —
-but the other half of the `environment` block, `network`, was still never sent.
+that back — `interactions_agent_service.py` uploads delegated attachments into the sandbox — but the
+other half of the `environment` block, `network`, was still never sent.
 
 `environment.network` is where the Interactions API puts the sandbox's **egress proxy**. It accepts
 either the string `"disabled"` (no outbound traffic at all) or an allowlist:
@@ -146,9 +146,9 @@ the operator's own `config.yaml` (for this cluster, the `family-assistant` Confi
    header: a run that reaches GitHub unauthenticated fails deep inside the agent with a 404 on a
    private repo, which is the confusing-error-at-another-layer case the error-handling guide is
    about.
-3. **`providers/google_genai_client.py`** — `_build_agent_environment()` merges `sources` and
-   `network` into one `environment` block and is awaited by both callers, so the egress policy
-   applies to the interactive `/coder` path as well as the delegated one. Previously only
+3. **`providers/google_genai_client.py`** — `_build_agent_environment()` builds the `network` and
+   `env` of the `environment` block and is awaited by both callers, so the egress policy applies to
+   the interactive `/coder` path as well as the delegated one. Previously only
    `start_agent_interaction` could set an environment; the stream path had nothing to put there.
 4. **`assistant.py`** — `antigravity_environment` joins `antigravity_model` and
    `antigravity_max_total_tokens` in the profile's `client_config`.
@@ -159,7 +159,7 @@ the operator's own `config.yaml` (for this cluster, the `family-assistant` Confi
   `agents.create()`. Reusing one across runs would mean managing its lifecycle and would break the
   "fresh sandbox per run" property the profile's isolation rests on.
 - **Mounting the household's own files.** Still the [B] decision the original design doc deferred.
-  `sources` carries delegated attachments and nothing else.
+  The sandbox receives delegated attachments and nothing else.
 - **Per-turn or per-user credentials.** The App installation is a property of the deployment, so one
   credential serves every run on the profile. Scoping a token to the acting user would need a
   per-user GitHub identity the assistant does not have.

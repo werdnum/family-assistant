@@ -939,6 +939,9 @@ default_profile_settings:
     # Telegram conversations come in bursts; the first message after an hour's
     # quiet re-decides the window while the provider cache is cold anyway.
     history_idle_gap_minutes: 60
+    # Web chats are long-lived and resumed after hours away, so their idle
+    # gap is longer: a few hours' quiet starts a fresh window.
+    web_history_idle_gap_minutes: 300
     max_iterations: 10 # Maximum number of tool call iterations
   tools_config:
     mcp_initialization_timeout_seconds: 60 # Default 1 minute
@@ -954,6 +957,7 @@ default_profile_settings:
       - "delete_script"
       - "get_delegation_status"
       - "list_delegations"
+      - "cancel_delegation"
       - "query_recent_events"
       - "reindex_email"
       - "schedule_future_callback"
@@ -1033,6 +1037,7 @@ default_profile_settings:
             - "delegate_to_service"
             - "get_delegation_status"
             - "list_delegations"
+            - "cancel_delegation"
             # Refused outside a user's Home, and while conversation_threads is
             # off; admitted per target by the delegation rules below.
             - "start_thread"
@@ -1344,6 +1349,7 @@ service_profiles:
               - "delegate_to_service"
               - "get_delegation_status"
               - "list_delegations"
+              - "cancel_delegation"
           decision: "allow"
           priority: 10
         - match:
@@ -1723,7 +1729,7 @@ service_profiles:
       - "/research_max"
   - id: "coder"
     user_selectable: true
-    description: "Coding agent. Writes and runs code, works with files, and reads the web to get a self-contained programming or computation task DONE — write and test a script, transform or analyse data, debug a snippet, work out a result — returning the finished output rather than instructions. Runs on the Google Antigravity managed agent in a throwaway Google-hosted Linux sandbox,, so it sees nothing but the text of the request: no notes, calendar, documents, Home Assistant or other Family Assistant tools, and no shared workspace. Attachments you pass are mounted as files in its sandbox under /workspace, so hand it the file rather than pasting the contents. Choose it over spawn_worker when the task needs no files from the shared workspace and you want the result back in the conversation; choose spawn_worker when the agent must read or write shared workspace files, and complex_tasks when the task needs the family's own data. It reasons with a fast, inexpensive model by default; ask for a stronger model_tier only for a problem the default has failed at or is plainly not up to, since it costs many times more."
+    description: "Coding agent. Writes and runs code, works with files, and reads the web to get a self-contained programming or computation task DONE — write and test a script, transform or analyse data, debug a snippet, work out a result — returning the finished output rather than instructions. Runs on the Google Antigravity managed agent in a throwaway Google-hosted Linux sandbox,, so it sees nothing but the text of the request: no notes, calendar, documents, Home Assistant or other Family Assistant tools, and no shared workspace. Attachments you pass are mounted as files in its sandbox under /workspace, so hand it the file rather than pasting the contents; files it saves under /workspace/outputs come back to you as attachments on its result (up to 20 files, 50 MB), so ask for a model, image or document as a file when that is what the user wants. Choose it over spawn_worker when the task needs no files from the shared workspace and you want the result back in the conversation; choose spawn_worker when the agent must read or write shared workspace files, and complex_tasks when the task needs the family's own data. It reasons with a fast, inexpensive model by default; ask for a stronger model_tier only for a problem the default has failed at or is plainly not up to, since it costs many times more."
     # The tier is the model the agent reasons with. Flash is the default
     # because it is a fraction of Argon's cost and enough for most requests;
     # Argon is a choice someone makes, never Auto's.
@@ -2216,6 +2222,7 @@ service_profiles:
               - "delegate_to_service"
               - "get_delegation_status"
               - "list_delegations"
+              - "cancel_delegation"
               - "query_recent_events"
               - "render_home_assistant_template"
               - "get_camera_snapshot"
@@ -2457,6 +2464,7 @@ service_profiles:
               - "get_note"
               - "get_delegation_status"
               - "list_delegations"
+              - "cancel_delegation"
               - "get_attachment_info"
           decision: "allow"
           priority: 10

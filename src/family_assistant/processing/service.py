@@ -65,6 +65,7 @@ from family_assistant.storage.delegation_runs import (
 )
 from family_assistant.storage.history_compaction import HistoryScope
 from family_assistant.threads.echo import announce_home_change, echo_finished_turn
+from family_assistant.tools.live_meta import LiveMetaToolsProvider
 from family_assistant.utils.clock import Clock, SystemClock
 from family_assistant.utils.text_normalization import normalize_latex_to_unicode
 
@@ -104,6 +105,7 @@ if TYPE_CHECKING:
     from family_assistant.llm.typesafe import JevClient
     from family_assistant.memory.review_context import MemoryReviewContext
     from family_assistant.plugins.runtime import ProfilePlugins
+    from family_assistant.processing.delegation_turns import RunningDelegationTurns
     from family_assistant.processing.history_relevance import TurnRelevance
     from family_assistant.processing.protocol import DelegatableService
     from family_assistant.processing.types import (
@@ -125,7 +127,8 @@ if TYPE_CHECKING:
     from family_assistant.storage.database import Database
     from family_assistant.telegram.protocols import ConfirmationUIManager
     from family_assistant.threads.echo import HomeActivityPublisher
-    from family_assistant.tools import OnDemandToolsView, ToolsProvider
+    from family_assistant.tools.infrastructure import ToolsProvider
+    from family_assistant.tools.on_demand import OnDemandToolsView
     from family_assistant.tools.types import EventSourcesById
 
 logger = logging.getLogger(__name__)
@@ -333,6 +336,7 @@ class ProcessingService:
         turn_relevance: TurnRelevance | None = None,
         jev_client: JevClient | None = None,
         home_activity_publisher: HomeActivityPublisher | None = None,
+        delegation_turns: RunningDelegationTurns | None = None,
     ) -> None:
         """Build a profile's service.
 
@@ -355,9 +359,15 @@ class ProcessingService:
 
         ``home_activity_publisher`` is the live stream open clients follow,
         told when a turn here echoes a finished thread into its Home.
+
+        ``delegation_turns`` is the deployment's one registry of running
+        delegated turns, shared by every profile so a turn running under one
+        can be stopped from another; with none, a running turn cannot be
+        stopped mid-turn.
         """
         self.jev_client = jev_client
         self.home_activity_publisher = home_activity_publisher
+        self.delegation_turns = delegation_turns
         self._llm_client = llm_client
         self._tier_llm_clients: dict[str, LLMInterface] = dict(tier_llm_clients or {})
         self._model_router = model_router
@@ -1479,10 +1489,6 @@ class ProcessingService:
         if self.on_demand_view is None:
             return self.tools_provider
         if self._live_tools_provider is None:
-            from family_assistant.tools.live_meta import (  # noqa: PLC0415 - avoids a cycle through tools/__init__
-                LiveMetaToolsProvider,
-            )
-
             self._live_tools_provider = LiveMetaToolsProvider(self.on_demand_view)
         return self._live_tools_provider
 

@@ -25,11 +25,11 @@ from family_assistant.services.attachment_registry import (
     AttachmentRegistry,
 )
 from family_assistant.storage.database import Database
-from family_assistant.tools import MCPServerConfig, MCPToolsProvider
 from family_assistant.tools.infrastructure import (
     LocalToolsProvider,
     TaintTrackingToolsProvider,
 )
+from family_assistant.tools.mcp import MCPToolsProvider
 from family_assistant.tools.mcp_attachments import (
     AttachmentParameter,
     MCPAttachmentMode,
@@ -40,7 +40,11 @@ from family_assistant.tools.metadata import (
     ToolTag,
     make_local_tool_metadata,
 )
-from family_assistant.tools.types import ToolExecutionContext, ToolResult
+from family_assistant.tools.types import (
+    MCPServerConfig,
+    ToolExecutionContext,
+    ToolResult,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

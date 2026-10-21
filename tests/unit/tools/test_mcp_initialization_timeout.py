@@ -10,17 +10,17 @@ from unittest.mock import AsyncMock
 import pytest
 from mcp.types import ListToolsResult, Tool
 
-from family_assistant.tools import MCPServerConfig, MCPToolsProvider
 from family_assistant.tools.mcp import (
     MCP_SERVER_STATUS_CANCELLED,
     MCP_SERVER_STATUS_CONNECTED,
+    MCPToolsProvider,
 )
 
 if TYPE_CHECKING:
     from mcp import ClientSession
 
     from family_assistant.tools.metadata import ToolDescriptor
-    from family_assistant.tools.types import ToolDefinition
+    from family_assistant.tools.types import MCPServerConfig, ToolDefinition
 
 FAST = "fast-server"
 SLOW = "slow-server"

@@ -59,11 +59,11 @@ from family_assistant.storage.database import (
 )
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.repositories.notes import NoteReadPolicy, NoteWritePolicy
-from family_assistant.tools import (
+from family_assistant.tools.attachments import read_text_attachment_tool
+from family_assistant.tools.catalog import (
     LOCAL_TOOL_METADATA_BY_NAME,
     LOCAL_TOOL_REGISTRATIONS,
 )
-from family_assistant.tools.attachments import read_text_attachment_tool
 from family_assistant.tools.documents import get_full_document_content_tool
 from family_assistant.tools.infrastructure import (
     LocalToolsProvider,

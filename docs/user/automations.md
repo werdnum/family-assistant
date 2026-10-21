@@ -147,10 +147,11 @@ one.
 ## Events from outside your household
 
 An event trigger can carry content from outside — a webhook, an email — so the assistant turn it
-wakes runs in a restricted event-handler mode. Notes it saves are quarantined under the `event_logs`
-label and are not pulled into your main assistant's context; you can read them in the web interface.
-If you want an event-driven result in a normally visible note, have a **script** automation write
-the note rather than the woken assistant.
+wakes runs in a restricted event-handler mode. That includes a `wake_llm()` hand-off from a script
+an event triggered. Notes it saves are quarantined under the `event_logs` label and are not pulled
+into your main assistant's context; you can read them in the web interface. If you want an
+event-driven result in a normally visible note, have a **script** automation write the note rather
+than the woken assistant.
 
 ## Scheduled health checks
 

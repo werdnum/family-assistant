@@ -11,13 +11,13 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from family_assistant.tools import (
-    LOCAL_TOOL_REGISTRATIONS,
+from family_assistant.tools.catalog import LOCAL_TOOL_REGISTRATIONS
+from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
     LocalToolsProvider,
     PolicyEnforcingToolsProvider,
+    ToolsProvider,
 )
-from family_assistant.tools.infrastructure import ToolsProvider
 from family_assistant.tools.policy import (
     PolicyEngine,
     ToolPolicyConfig,

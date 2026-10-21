@@ -22,14 +22,14 @@ from family_assistant.storage.database import Database
 from family_assistant.storage.events import EventActionType, EventSourceType
 from family_assistant.storage.repositories.notes import NoteReadPolicy, NoteWritePolicy
 from family_assistant.task_worker import TaskWorker, handle_script_execution
-from family_assistant.tools import (
+from family_assistant.tools.catalog import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
-from family_assistant.tools import (
-    NOTE_TOOLS_DEFINITION,
+from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
     LocalToolsProvider,
 )
+from family_assistant.tools.notes import NOTE_TOOLS_DEFINITION
 from family_assistant.tools.stored_scripts import save_script_tool
 from family_assistant.tools.types import ToolExecutionContext
 from tests.helpers import wait_for_tasks_to_complete

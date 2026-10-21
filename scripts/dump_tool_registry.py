@@ -64,14 +64,14 @@ from family_assistant.services.google_provider import GOOGLE_PROVIDER
 from family_assistant.services.oauth_integration_state import (
     evaluate_oauth_integration_state,
 )
-from family_assistant.tools import (
-    MCPServerConfig,
-    MCPToolsProvider,
-    build_local_tool_descriptors,
-)
 from family_assistant.tools.calendar import GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES
 from family_assistant.tools.google_data import GOOGLE_TOOL_REQUIRED_SCOPES
-from family_assistant.tools.mcp import MCP_SERVER_STATUS_CONNECTED, MCPServerStatus
+from family_assistant.tools.mcp import (
+    MCP_SERVER_STATUS_CONNECTED,
+    MCPServerStatus,
+    MCPToolsProvider,
+)
+from family_assistant.tools.metadata import build_local_tool_descriptors
 from family_assistant.web.auth import AUTH_ENABLED
 
 if TYPE_CHECKING:
@@ -79,6 +79,7 @@ if TYPE_CHECKING:
 
     from family_assistant.config_models import AppConfig
     from family_assistant.tools.metadata import ToolDescriptor
+    from family_assistant.tools.types import MCPServerConfig
 
 from family_assistant.config_models import mcp_servers_for_runtime
 

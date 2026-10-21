@@ -29,14 +29,14 @@ from family_assistant.task_worker import (
     handle_llm_callback,
     handle_script_execution,
 )
-from family_assistant.tools import (
+from family_assistant.tools.catalog import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
-from family_assistant.tools import (
-    NOTE_TOOLS_DEFINITION,
+from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
     LocalToolsProvider,
 )
+from family_assistant.tools.notes import NOTE_TOOLS_DEFINITION
 from tests.helpers import wait_for_condition, wait_for_tasks_to_complete
 from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
 

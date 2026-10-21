@@ -4,17 +4,18 @@ import copy
 
 import pytest
 
-from family_assistant.tools import (
+from family_assistant.tools.catalog import (
     AVAILABLE_FUNCTIONS,
     LOCAL_TOOL_METADATA_BY_NAME,
     LOCAL_TOOL_REGISTRATIONS,
     TOOLS_DEFINITION,
+)
+from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
     LocalToolsProvider,
-    MCPToolsProvider,
-    build_local_tool_registrations,
 )
-from family_assistant.tools.metadata import ToolTag
+from family_assistant.tools.mcp import MCPToolsProvider
+from family_assistant.tools.metadata import ToolTag, build_local_tool_registrations
 
 
 @pytest.mark.asyncio

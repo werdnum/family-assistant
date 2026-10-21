@@ -25,14 +25,14 @@ from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.repositories.tasks import TasksRepository
 from family_assistant.storage.tasks import TaskPriority, tasks_table
 from family_assistant.task_worker import TaskWorker, handle_llm_callback
-from family_assistant.tools import (
-    CompositeToolsProvider,
-    LocalToolsProvider,
-    MCPToolsProvider,
-)
 from family_assistant.tools.events import (
     test_event_listener_tool as event_listener_test_tool,
 )
+from family_assistant.tools.infrastructure import (
+    CompositeToolsProvider,
+    LocalToolsProvider,
+)
+from family_assistant.tools.mcp import MCPToolsProvider
 from family_assistant.tools.types import ToolExecutionContext
 from tests.helpers import wait_for_condition
 from tests.mocks.mock_llm import LLMOutput as MockLLMOutput

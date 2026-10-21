@@ -59,7 +59,7 @@ from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.notes import NoteReadPolicy
 from family_assistant.storage.tasks import TaskPriority, tasks_table
 from family_assistant.task_worker import TaskWorker, handle_confirmation_tool_execution
-from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS
+from family_assistant.tools.catalog import LOCAL_TOOL_REGISTRATIONS
 from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
     LocalToolsProvider,

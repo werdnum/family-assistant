@@ -61,9 +61,9 @@ async def test_json_helper_decodes_body() -> None:
 async def test_forwards_request_content_and_content_type() -> None:
     captured: dict[str, object] = {}
 
-    def _handler(request: httpx.Request) -> httpx.Response:
+    async def _handler(request: httpx.Request) -> httpx.Response:
         captured["content_type"] = request.headers.get("content-type")
-        captured["content"] = request.content
+        captured["content"] = await request.aread()
         return httpx.Response(200, json={"id": "draft-1"})
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(_handler))
@@ -80,6 +80,67 @@ async def test_forwards_request_content_and_content_type() -> None:
     assert response.json() == {"id": "draft-1"}
     assert captured["content_type"] == "application/json; charset=UTF-8"
     assert captured["content"] == b'{"message":{"raw":"abc"}}'
+
+
+class _ChunkRecordingTransport(httpx.AsyncBaseTransport):
+    """Record the request body chunks as the client sends them."""
+
+    def __init__(self) -> None:
+        self.chunks: list[bytes] = []
+        self.headers: httpx.Headers | None = None
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        self.headers = request.headers
+        assert isinstance(request.stream, httpx.AsyncByteStream)
+        self.chunks.extend([chunk async for chunk in request.stream])
+        return httpx.Response(200, json={"id": "file-1"})
+
+
+@pytest.mark.asyncio
+async def test_large_request_body_is_streamed_in_chunks_with_content_length() -> None:
+    body = bytes(range(256)) * 4096
+    transport = _ChunkRecordingTransport()
+    backend = HttpApiBackend(httpx.AsyncClient(transport=transport))
+
+    await backend.request(
+        method="PUT",
+        url="https://www.googleapis.com/upload/drive/v3/files?upload_id=x",
+        access_token="tok",
+        content=body,
+        content_type="model/3mf",
+    )
+
+    assert len(transport.chunks) > 1
+    assert b"".join(transport.chunks) == body
+    assert transport.headers is not None
+    assert transport.headers.get("content-length") == str(len(body))
+    assert "transfer-encoding" not in transport.headers
+
+
+@pytest.mark.asyncio
+async def test_forwards_extra_headers_and_returns_lowercased_response_headers() -> None:
+    captured: dict[str, object] = {}
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        captured["upload_type"] = request.headers.get("x-upload-content-type")
+        captured["authorization"] = request.headers.get("authorization")
+        return httpx.Response(
+            200, headers={"Location": "https://www.googleapis.com/upload/session"}
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(_handler))
+    backend = HttpApiBackend(client)
+
+    response = await backend.request(
+        method="POST",
+        url="https://www.googleapis.com/upload/drive/v3/files",
+        access_token="tok",
+        headers={"X-Upload-Content-Type": "model/3mf", "Authorization": "spoofed"},
+    )
+
+    assert captured["upload_type"] == "model/3mf"
+    assert captured["authorization"] == "Bearer tok"
+    assert response.headers["location"] == "https://www.googleapis.com/upload/session"
 
 
 @pytest.mark.asyncio

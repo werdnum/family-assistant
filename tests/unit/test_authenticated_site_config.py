@@ -17,8 +17,11 @@ from pydantic import ValidationError
 
 from family_assistant.config_loader import load_config
 from family_assistant.config_models import AppConfig
-from family_assistant.tools import LOCAL_TOOL_DESCRIPTORS, LOCAL_TOOL_METADATA_BY_NAME
 from family_assistant.tools.authenticated_site_surface import admissible_tools
+from family_assistant.tools.catalog import (
+    LOCAL_TOOL_DESCRIPTORS,
+    LOCAL_TOOL_METADATA_BY_NAME,
+)
 from family_assistant.tools.metadata import ToolDescriptor
 from family_assistant.tools.policy import PolicyEngine, ToolPolicyDecision
 

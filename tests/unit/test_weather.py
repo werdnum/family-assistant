@@ -17,7 +17,7 @@ from family_assistant.services.effective_tool_registry import (
 )
 from family_assistant.services.oauth_integration_state import OAuthIntegrationState
 from family_assistant.storage.database import Database
-from family_assistant.tools import LocalToolsProvider
+from family_assistant.tools.infrastructure import LocalToolsProvider
 from family_assistant.tools.types import ToolExecutionContext, ToolResult
 from family_assistant.utils.clock import MockClock
 from family_assistant.weather import WeatherService
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from family_assistant.config_models import AppConfig
-    from family_assistant.tools import ToolRegistration
+    from family_assistant.tools.metadata import ToolRegistration
 
 pytestmark = pytest.mark.no_db
 

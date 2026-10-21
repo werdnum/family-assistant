@@ -54,6 +54,13 @@ finishes. If instead the assistant decides on its own to hand a question to the 
 it gives you a `delegation_...` reference, keeps the conversation free, and posts the result back
 automatically when it's ready; you can ask a follow-up that continues that same research session.
 
+Work handed off like this can be called off while it's still going: ask the assistant to cancel it
+("stop that research", "cancel the duplicate coder job"). It stops and reports nothing further;
+anything it had already done, such as a note it saved, stays done. A remote agent may finish the step
+it's on first, and one that was only just being started may carry on to the end unseen; either way
+you won't get its result. A task that is itself waiting on other handed-off work can be cancelled once that work
+finishes, and work running as a separate thread is stopped from the thread itself.
+
 ## Saving what you find
 
 Ask the assistant to index a page so you can search it later — see

@@ -33,7 +33,7 @@ from family_assistant.eval.tool_call_review.registry_snapshot import (
     descriptors_to_snapshot,
 )
 from family_assistant.eval.tool_call_review.scrub import TaskTemplate
-from family_assistant.tools import LOCAL_TOOL_DESCRIPTORS
+from family_assistant.tools.catalog import LOCAL_TOOL_DESCRIPTORS
 
 if TYPE_CHECKING:
     from pathlib import Path

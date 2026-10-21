@@ -7,8 +7,8 @@ import textwrap
 from datetime import tzinfo
 from typing import Any
 
-from family_assistant.scripting import ScriptExecutionError, ScriptSyntaxError
 from family_assistant.scripting.config import ScriptConfig
+from family_assistant.scripting.errors import ScriptExecutionError, ScriptSyntaxError
 from family_assistant.scripting.monty_engine import MontyEngine
 from family_assistant.scripting.validator import ScriptValidator
 from family_assistant.storage.types import EventConditionEvaluatorConfig

@@ -31,8 +31,11 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
     from family_assistant.llm.messages import LLMMessage
-    from family_assistant.tools import ToolExecutionContext
-    from family_assistant.tools.types import ToolDefinition, ToolResult
+    from family_assistant.tools.types import (
+        ToolDefinition,
+        ToolExecutionContext,
+        ToolResult,
+    )
 
 
 class _CapturingMockLLMClient(RuleBasedMockLLMClient):

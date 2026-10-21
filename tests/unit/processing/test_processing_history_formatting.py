@@ -629,3 +629,51 @@ def test_web_history_configuration_with_zero_values() -> None:
     assert processing_service.context_preparer.get_history_limits(
         "web"
     ) == HistoryLimits(budget_chars=0, min_turns=0, max_age=timedelta(hours=0))
+
+
+def _limits_for(
+    interface_type: str,
+    history_idle_gap_minutes: float | None,
+    web_history_idle_gap_minutes: float | None,
+) -> HistoryLimits:
+    processing_service = ProcessingService(
+        llm_client=RuleBasedMockLLMClient(rules=[]),
+        tools_provider=MockToolsProvider(),
+        service_config=ProcessingServiceConfig(
+            prompts={},
+            timezone=ZoneInfo("UTC"),
+            history_budget_chars=100_000,
+            history_max_age_hours=24,
+            history_idle_gap_minutes=history_idle_gap_minutes,
+            web_history_idle_gap_minutes=web_history_idle_gap_minutes,
+            tools_config=ToolsConfig(),
+            delegation_security_level=DelegationSecurityLevel.CONFIRM,
+            id="test_idle_gap_profile",
+        ),
+        context_providers=[],
+        server_url="http://test.com",
+        app_config=AppConfig(),
+    )
+    return processing_service.context_preparer.get_history_limits(interface_type)
+
+
+@pytest.mark.parametrize(
+    ("interface_type", "general", "web", "expected"),
+    [
+        ("web", 60, None, timedelta(minutes=60)),
+        ("web", 60, 300, timedelta(minutes=300)),
+        ("telegram", 60, 300, timedelta(minutes=60)),
+        ("web", 60, 0, None),
+        ("telegram", 0, 300, None),
+        ("web", 0, None, None),
+        ("web", None, None, None),
+    ],
+)
+def test_history_idle_gap(
+    interface_type: str,
+    general: float | None,
+    web: float | None,
+    expected: timedelta | None,
+) -> None:
+    """The web idle gap falls back to the general one, and 0 turns it off."""
+    assert _limits_for(interface_type, general, web).idle_gap == expected

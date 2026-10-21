@@ -33,14 +33,6 @@ from family_assistant.processing import ProcessingService, ProcessingServiceConf
 from family_assistant.processing.types import DelegationSecurityLevel
 from family_assistant.storage.database import Database
 from family_assistant.storage.delegation_runs import delegated_subconversation_id
-from family_assistant.tools import (
-    LOCAL_TOOL_REGISTRATIONS,
-    LocalToolsProvider,
-    PolicyEnforcingToolsProvider,
-    PolicyEngine,
-    ToolPolicyConfig,
-    ToolPolicyDecision,
-)
 from family_assistant.tools import authenticated_sites as authenticated_sites_module
 from family_assistant.tools import browser_backend as browser_backend_module
 from family_assistant.tools import browser_dom as browser_dom_module
@@ -50,6 +42,16 @@ from family_assistant.tools.browser_backend import (
     RemoteBrowserBackend,
     authenticated_binding_for,
     release_authenticated_session,
+)
+from family_assistant.tools.catalog import LOCAL_TOOL_REGISTRATIONS
+from family_assistant.tools.infrastructure import (
+    LocalToolsProvider,
+    PolicyEnforcingToolsProvider,
+)
+from family_assistant.tools.policy import (
+    PolicyEngine,
+    ToolPolicyConfig,
+    ToolPolicyDecision,
 )
 from tests.mocks.mock_llm import (
     MatcherArgs,

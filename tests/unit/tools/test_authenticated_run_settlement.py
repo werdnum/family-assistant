@@ -70,6 +70,7 @@ class _FakeSiteWorker:
     """The delegated browser profile, reduced to answering the turn."""
 
     kind = "local"
+    delegation_turns = None
 
     def __init__(self) -> None:
         self.service_config = SimpleNamespace(

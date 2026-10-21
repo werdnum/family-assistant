@@ -29,18 +29,20 @@ from family_assistant.processing import (
 from family_assistant.security.taint import TaintMetadata
 from family_assistant.storage import delegation_runs_table, message_history_table
 from family_assistant.storage.database import Database
-from family_assistant.tools import (
+from family_assistant.tools.catalog import (
     LOCAL_TOOL_REGISTRATIONS as local_tool_registrations,
 )
-from family_assistant.tools import (
+from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
     LocalToolsProvider,
-    MCPToolsProvider,
     PolicyEnforcingToolsProvider,
+    ToolsProvider,
+)
+from family_assistant.tools.mcp import MCPToolsProvider
+from family_assistant.tools.policy import (
     PolicyEngine,
     ToolPolicyConfig,
     ToolPolicyDecision,
-    ToolsProvider,
 )
 from tests.helpers import wait_for_condition
 from tests.mocks.mock_llm import (

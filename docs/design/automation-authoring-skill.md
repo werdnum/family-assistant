@@ -66,11 +66,11 @@ Scheduled automations created this way are stamped `default_assistant` and wake 
 set, including `delegate_to_service` — the woken turn delegates the browsing (or research, or media
 work) it needs at wake time.
 
-Event automations are unchanged by this: a `wake_llm` event listener still routes to `event_handler`
-regardless of who authored it, because the triggering event is untrusted (see
-[Corrected invariant](#corrected-invariant) below). The skill states that limit and its allowed tool
-set explicitly, so the authoring model scopes an event wake to what `event_handler` can reach rather
-than assuming the capabilities a scheduled wake gets.
+Event automations are unchanged by this: a `wake_llm` event listener, and a `wake_llm()` from an
+event script, still route to `event_handler` regardless of who authored them, because the triggering
+event is untrusted (see [Corrected invariant](#corrected-invariant) below). The skill states that
+limit and its allowed tool set explicitly, so the authoring model scopes an event wake to what
+`event_handler` can reach rather than assuming the capabilities a scheduled wake gets.
 
 ### Security
 
@@ -115,11 +115,13 @@ describe the exact assumption whose violation caused this bug.
 
 The accurate rule:
 
-- Schedule automations, `schedule_action`, and a script's `wake_llm()` stamp their originating
-  profile, and `handle_llm_callback` resolves and switches to it.
-- **Event listeners** are the exception: `EventProcessor` stamps `event_handler` regardless of
-  origin, because the triggering event is untrusted content and the woken LLM is the injectable
-  component.
+- Schedule automations, `schedule_action`, and a scheduled script's `wake_llm()` stamp their
+  originating profile, and `handle_llm_callback` resolves and switches to it.
+- **Event-triggered wakes** are the exception: `EventProcessor` stamps `event_handler` on an event
+  listener's `wake_llm` action, and a `wake_llm()` from an event listener's script is stamped
+  `event_handler` too, regardless of origin. The triggering event is untrusted content and the woken
+  LLM is the injectable component. The script itself keeps its creating profile, because it is
+  deterministic and the event can steer its arguments but not which tools it calls.
 - `allow_wake_llm=False` therefore guards a real escalation on the event-listener path, and on the
   stamped path prevents enqueueing a wake that `handle_llm_callback`'s execution-time re-check would
   reject at fire time anyway. Refusing at creation is better than either outcome.

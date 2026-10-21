@@ -6,7 +6,7 @@ from pathlib import Path
 import aiofiles
 from fastapi import APIRouter, HTTPException, Request
 
-from family_assistant.tools import _scan_user_docs
+from family_assistant.tools.documents import _scan_user_docs
 
 logger = logging.getLogger(__name__)
 

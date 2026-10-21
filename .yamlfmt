@@ -1,3 +1,8 @@
+# VCR cassettes are recorded by the test suite, so formatting them only adds
+# churn to every re-record.
+match_type: doublestar
+exclude:
+  - "**/cassettes/**"
 formatter:
   scan_folded_as_literal: true
   retain_line_breaks: true

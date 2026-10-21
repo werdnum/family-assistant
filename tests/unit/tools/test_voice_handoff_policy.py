@@ -10,7 +10,7 @@ from family_assistant.assistant import (
     _build_profile_policy_engine,  # noqa: PLC2701 - verify the effective runtime policy
 )
 from family_assistant.config_loader import load_config
-from family_assistant.tools import LOCAL_TOOL_DESCRIPTORS
+from family_assistant.tools.catalog import LOCAL_TOOL_DESCRIPTORS
 from family_assistant.tools.policy import ToolPolicyDecision
 
 if TYPE_CHECKING:

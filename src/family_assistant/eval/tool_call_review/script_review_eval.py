@@ -49,7 +49,7 @@ from family_assistant.services.tool_call_review import (
     ToolCallReviewVerdict,
     program_review_constraints,
 )
-from family_assistant.tools import LOCAL_TOOL_DESCRIPTORS
+from family_assistant.tools.catalog import LOCAL_TOOL_DESCRIPTORS
 from family_assistant.tools.infrastructure import (
     SCRIPT_REVIEW_MAX_EXECUTION_TIME_SECONDS,
     SCRIPT_REVIEW_MODEL_BOUNDARIES,

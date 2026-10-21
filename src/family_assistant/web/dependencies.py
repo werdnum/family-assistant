@@ -12,7 +12,7 @@ from family_assistant.services.user_identity import (
     UserIdentityResolver,
 )
 from family_assistant.storage.database import Database
-from family_assistant.tools import ToolsProvider
+from family_assistant.tools.infrastructure import ToolsProvider
 from family_assistant.web import route_auth
 from family_assistant.web.auth import (
     AuthService,

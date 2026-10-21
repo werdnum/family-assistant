@@ -62,8 +62,8 @@ from family_assistant.task_worker import (
     ScriptExecutionPayload,
     handle_script_execution,
 )
-from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS
 from family_assistant.tools.automations import create_automation_tool
+from family_assistant.tools.catalog import LOCAL_TOOL_REGISTRATIONS
 from family_assistant.tools.infrastructure import (
     LocalToolsProvider,
     PolicyEnforcingToolsProvider,

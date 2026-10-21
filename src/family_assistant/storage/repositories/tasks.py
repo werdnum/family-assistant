@@ -317,12 +317,15 @@ class TasksRepository(BaseRepository):
             )
 
         try:
-            await self._db.atomic(_enqueue)
+            # A duplicate task id is an outcome callers handle (deterministic
+            # ids are how they dedupe), so errors are logged here, not as
+            # ERROR by the transaction layer.
+            await self._db.atomic(_enqueue, log_errors=False)
         except IntegrityError as e:
-            # For non-system tasks, this is an error
             if not is_system_task:
-                logger.exception(
-                    f"ENQUEUE FAILED: Task with ID '{task_id}' already exists in the queue: {e}"
+                logger.info(
+                    "Task '%s' already exists in the queue; not enqueuing it again",
+                    task_id,
                 )
                 raise TaskAlreadyExistsError(
                     f"Task ID '{task_id}' already exists"

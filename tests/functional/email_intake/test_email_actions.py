@@ -37,19 +37,19 @@ from family_assistant.storage.database import Database
 from family_assistant.storage.email import ParsedEmailData
 from family_assistant.storage.repositories.notes import NoteReadPolicy
 from family_assistant.task_worker import handle_confirmation_tool_execution
-from family_assistant.tools import (
+from family_assistant.tools.catalog import (
     AVAILABLE_FUNCTIONS,
     LOCAL_TOOL_METADATA_BY_NAME,
     TOOLS_DEFINITION,
+)
+from family_assistant.tools.infrastructure import (
     LocalToolsProvider,
     PolicyEnforcingToolsProvider,
-    PolicyEngine,
     TaintTrackingToolsProvider,
-    ToolExecutionContext,
-    ToolPolicyConfig,
-    build_local_tool_registrations,
 )
-from family_assistant.tools.types import ConfirmationOutcome
+from family_assistant.tools.metadata import build_local_tool_registrations
+from family_assistant.tools.policy import PolicyEngine, ToolPolicyConfig
+from family_assistant.tools.types import ConfirmationOutcome, ToolExecutionContext
 from family_assistant.utils.clock import SystemClock
 from tests.mocks.mock_llm import MatcherArgs, RuleBasedMockLLMClient
 

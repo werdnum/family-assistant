@@ -193,6 +193,37 @@ async def test_anthropic_generate_json_uses_native_object_tool() -> None:
 
 @pytest.mark.no_db
 @pytest.mark.asyncio
+async def test_anthropic_one_shot_outputs_write_nothing_to_the_cache() -> None:
+    """A structured request is never extended by a later one, so a breakpoint
+    on it would be a cache write that is never read."""
+    client = AnthropicClient(api_key="test", model="claude-sonnet-4-5")
+    structured = MagicMock()
+    structured.stop_reason = "end_turn"
+    structured.content = [SimpleNamespace(type="text", text='{"answer": "ok"}')]
+    json_object = MagicMock()
+    json_object.content = [
+        SimpleNamespace(
+            type="tool_use", name="return_json_object", input={"answer": "ok"}
+        )
+    ]
+
+    with patch.object(
+        client.client.messages, "create", new_callable=AsyncMock
+    ) as mock_create:
+        mock_create.side_effect = [structured, json_object]
+        await client.generate_structured(
+            messages=[UserMessage(content="Review this tool call")],
+            response_model=SampleResponse,
+        )
+        await client.generate_json(messages=[UserMessage(content="Return JSON")])
+
+    assert mock_create.await_count == 2
+    for call in mock_create.await_args_list:
+        assert "cache_control" not in json.dumps(call.kwargs["messages"])
+
+
+@pytest.mark.no_db
+@pytest.mark.asyncio
 async def test_google_generate_structured_uses_response_schema() -> None:
     """Gemini structured output should use response_schema and JSON MIME type."""
     client = GoogleGenAIClient(api_key="test", model="gemini-3.8-flash")

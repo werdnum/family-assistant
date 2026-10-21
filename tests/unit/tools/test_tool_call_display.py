@@ -5,7 +5,7 @@ import json
 import pytest
 
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
-from family_assistant.tools import TOOLS_DEFINITION
+from family_assistant.tools.catalog import TOOLS_DEFINITION
 from family_assistant.tools.display import describe_tool_call, has_phrase
 from family_assistant.web.tool_call_serialization import serialize_tool_call
 

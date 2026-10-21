@@ -9,11 +9,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import TYPE_CHECKING, Any
-
-import jq
+import sys
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 from family_assistant.scripting.apis.attachments import ScriptAttachment
+from family_assistant.tools import jq_worker
 from family_assistant.tools.taint_helpers import inherit_attachment_taint
 from family_assistant.tools.types import ToolDefinition, ToolResult
 
@@ -22,13 +23,19 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+JQ_TIMEOUT_SECONDS = 30.0
+JQ_MAX_OUTPUT_BYTES = 8 * 1024 * 1024
+_JQ_MAX_STDERR_BYTES = 16 * 1024
+_JQ_WORKER_PATH = Path(__file__).with_name("jq_worker.py")
+_READ_CHUNK_BYTES = 64 * 1024
+
 # Tool Definitions
 DATA_MANIPULATION_TOOLS_DEFINITION: list[ToolDefinition] = [
     {
         "type": "function",
         "function": {
             "name": "jq_query",
-            "description": "Query JSON data from an attachment using jq syntax. Use this to explore and extract specific fields from large JSON datasets without loading the entire content into context. Returns the query result as formatted JSON.",
+            "description": "Query JSON data from an attachment using jq syntax. Use this to explore and extract specific fields from large JSON datasets without loading the entire content into context. Returns the query result as formatted JSON. Queries are stopped after 30 seconds, and results over 8 MB are rejected, so narrow the query rather than returning whole large datasets.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -109,48 +116,108 @@ async def jq_query_tool(
                 text=f"Error: Attachment file not found for {attachment_id}."
             )
 
-        # Read and parse JSON - use asyncio.to_thread to avoid blocking event loop
-        # File I/O and JSON parsing can be blocking on large files
-        try:
-
-            def _load_and_parse_json() -> Any:  # noqa: ANN401
-                content = file_path.read_bytes()
-                return json.loads(content.decode("utf-8"))
-
-            json_data = await asyncio.to_thread(_load_and_parse_json)
-        except UnicodeDecodeError:
-            return ToolResult(
-                text="Error: Attachment is not valid UTF-8 text. Cannot process as JSON."
-            )
-        except json.JSONDecodeError as e:
-            return ToolResult(
-                text=f"Error: Attachment is not valid JSON. Parse error: {e!s}"
-            )
-
-        # Compile and execute jq query - use asyncio.to_thread to avoid blocking event loop
-        # jq.compile() and .input().all() are CPU-intensive synchronous operations
-        try:
-
-            def _execute_jq_query() -> list[Any]:
-                jq_compiled = jq.compile(jq_program)
-                return jq_compiled.input(json_data).all()
-
-            result = await asyncio.to_thread(_execute_jq_query)
-
-            # Return structured data - ToolResult handles conversion to text for LLM
-            # If single result, unwrap from list
-            if len(result) == 1:
-                return ToolResult(data=result[0])
-            else:
-                return ToolResult(data=result)
-
-        except ValueError as e:
-            # jq compilation or execution error
-            logger.error(f"jq query error: {e}")
-            return ToolResult(text=f"Error: Invalid jq query. {e!s}")
+        return await run_jq_in_subprocess(jq_program, file_path)
 
     try:
         return await _execute_query()
     except Exception as e:
         logger.exception(f"Error executing jq query on attachment {attachment_id}: {e}")
         return ToolResult(text=f"Error: Failed to execute jq query. {e!s}")
+
+
+class _OutputTooLargeError(Exception):
+    pass
+
+
+async def _read_capped(stream: asyncio.StreamReader, limit: int) -> bytes:
+    """Read a stream to EOF, raising once more than ``limit`` bytes arrive."""
+    buffer = bytearray()
+    while chunk := await stream.read(_READ_CHUNK_BYTES):
+        buffer.extend(chunk)
+        if len(buffer) > limit:
+            raise _OutputTooLargeError
+    return bytes(buffer)
+
+
+async def _read_truncated(stream: asyncio.StreamReader, limit: int) -> bytes:
+    """Read a stream to EOF, keeping only the first ``limit`` bytes.
+
+    Draining past the limit keeps a chatty program (jq's ``debug``) from filling
+    the pipe and stalling until the timeout.
+    """
+    buffer = bytearray()
+    while chunk := await stream.read(_READ_CHUNK_BYTES):
+        buffer.extend(chunk[: max(0, limit - len(buffer))])
+    return bytes(buffer)
+
+
+async def run_jq_in_subprocess(
+    jq_program: str,
+    json_path: Path,
+    *,
+    timeout_seconds: float = JQ_TIMEOUT_SECONDS,
+    max_output_bytes: int = JQ_MAX_OUTPUT_BYTES,
+) -> ToolResult:
+    """Run a jq program over a JSON file in a child process.
+
+    The jq binding holds the GIL while a program runs, so a thread does not keep
+    the event loop responsive; a child process does, and can be killed when the
+    program runs too long or produces too much output.
+    """
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-I",
+        str(_JQ_WORKER_PATH),
+        jq_program,
+        str(json_path),
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+    async def _collect() -> tuple[bytes, bytes, int]:
+        assert process.stdout is not None and process.stderr is not None
+        stdout, stderr = await asyncio.gather(
+            _read_capped(process.stdout, max_output_bytes),
+            _read_truncated(process.stderr, _JQ_MAX_STDERR_BYTES),
+        )
+        return stdout, stderr, await process.wait()
+
+    try:
+        stdout, stderr, returncode = await asyncio.wait_for(
+            _collect(), timeout=timeout_seconds
+        )
+    except TimeoutError:
+        logger.warning(f"jq program timed out after {timeout_seconds}s: {jq_program}")
+        return ToolResult(
+            text=f"Error: jq query timed out after {timeout_seconds:g} seconds. "
+            "Simplify the query or narrow it to a smaller part of the data."
+        )
+    except _OutputTooLargeError:
+        logger.warning(f"jq output exceeded {max_output_bytes} bytes: {jq_program}")
+        return ToolResult(
+            text=f"Error: jq query result is larger than {max_output_bytes} bytes. "
+            "Narrow the query (select fields, filter, or slice) to return less data."
+        )
+    finally:
+        if process.returncode is None:
+            process.kill()
+            await process.wait()
+
+    message = stderr.decode("utf-8", errors="replace").strip()
+    if returncode == jq_worker.EXIT_JQ_ERROR:
+        logger.error(f"jq query error: {message}")
+        return ToolResult(text=f"Error: Invalid jq query. {message}")
+    if returncode == jq_worker.EXIT_INVALID_JSON:
+        return ToolResult(
+            text=f"Error: Attachment is not valid JSON. Parse error: {message}"
+        )
+    if returncode == jq_worker.EXIT_INVALID_UTF8:
+        return ToolResult(
+            text="Error: Attachment is not valid UTF-8 text. Cannot process as JSON."
+        )
+    if returncode != 0:
+        raise RuntimeError(f"jq worker exited with status {returncode}: {message}")
+
+    text = stdout.decode("utf-8")
+    return ToolResult(text=text, data=await asyncio.to_thread(json.loads, text))

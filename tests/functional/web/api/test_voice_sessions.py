@@ -12,7 +12,7 @@ from family_assistant.assistant import Assistant
 from family_assistant.llm.messages import AssistantMessage, UserMessage
 from family_assistant.services.notifier import NotificationMetadata
 from family_assistant.storage.database import Database
-from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS
+from family_assistant.tools.catalog import LOCAL_TOOL_REGISTRATIONS
 from family_assistant.tools.infrastructure import LocalToolsProvider
 from tests.helpers import wait_for_condition
 

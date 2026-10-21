@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from family_assistant.tools import LOCAL_TOOL_DESCRIPTORS
+from family_assistant.tools.catalog import LOCAL_TOOL_DESCRIPTORS
 from family_assistant.tools.metadata import ToolDescriptor, ToolTag
 from family_assistant.tools.policy import (
     PolicyEngine,

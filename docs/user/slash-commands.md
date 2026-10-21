@@ -89,8 +89,11 @@ Five things to know:
   household's own information.
 - **Files you hand it are mounted in its sandbox.** Ask the assistant to pass an attachment along
   and the agent gets the real file to open and rewrite, under `/workspace`.
-- **The sandbox is thrown away.** Files it creates live only for that run, so ask it to include
-  anything you want to keep in its reply.
+- **Files it makes come back when the assistant hands it the job.** Ask the assistant to have the
+  coder make something, and anything the agent saves for you (a 3D model, an image, a spreadsheet, a
+  script) arrives as attachments on its reply, up to 20 files and 50 MB per run; the reply names any
+  that didn't fit. Talking to `/coder` directly returns only its reply text, so ask it to include
+  anything you want to keep.
 - **It may have GitHub access.** Where the setup grants it, the agent can clone your repositories,
   read code and issues, and push branches or open pull requests as part of a task — ask for it the
   same way you'd ask for anything else:

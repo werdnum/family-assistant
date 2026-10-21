@@ -11,6 +11,7 @@ from sqlalchemy.sql import functions as func
 
 from family_assistant.llm.model_selection import ResolvedModelSelection
 from family_assistant.storage.delegation_runs import (
+    CANCELLABLE_DELEGATION_STATUSES,
     RECONCILABLE_FAILURE_KINDS,
     TERMINAL_DELEGATION_STATUSES,
     AuthenticatedSiteEnvelope,
@@ -147,6 +148,9 @@ class DelegationRunSummary(TypedDict):
     # answer changed rather than only that it did.
     late_recovered_at: NotRequired[str]
     original_error: NotRequired[str | None]
+    # Present only on a run stopped with cancel_delegation, which is otherwise
+    # indistinguishable from a run that failed on its own.
+    cancelled: NotRequired[bool]
 
 
 class PendingDelegationSummary(TypedDict):
@@ -503,6 +507,31 @@ class DelegationRunsRepository(BaseRepository):
         )
         row = await self._db.fetch_one(stmt)
         return self._row_to_dict(row) if row is not None else None
+
+    async def has_active_children(self, parent: DelegationRunDict) -> bool:
+        """Whether a run this run started is still unfinished.
+
+        Unlike :meth:`list_undelivered_children`, this counts a child the
+        run's turn is still waiting on inline, before any handoff.
+        """
+        if parent["subconversation_id"] is None:
+            return False
+        stmt = (
+            select(delegation_runs_table.c.id)
+            .where(delegation_runs_table.c.conversation_id == parent["conversation_id"])
+            .where(
+                delegation_runs_table.c.source_subconversation_id
+                == parent["subconversation_id"]
+            )
+            .where(delegation_runs_table.c.created_at >= parent["created_at"])
+            .where(
+                delegation_runs_table.c.status.notin_(
+                    list(TERMINAL_DELEGATION_STATUSES)
+                )
+            )
+            .limit(1)
+        )
+        return await self._db.fetch_one(stmt) is not None
 
     async def list_undelivered_children(
         self, parent: DelegationRunDict
@@ -922,6 +951,12 @@ class DelegationRunsRepository(BaseRepository):
         )
         if values.get("local_failure_kind") == "stranded":
             stmt = stmt.where(delegation_runs_table.c.status.in_(["queued", "running"]))
+        elif values.get("local_failure_kind") == "cancelled":
+            stmt = stmt.where(
+                delegation_runs_table.c.status.in_(
+                    list(CANCELLABLE_DELEGATION_STATUSES)
+                )
+            )
         result = await self._execute_with_logging("terminate_delegation_run", stmt)
         row = result.one_or_none()
         return self._row_to_dict(dict(row)) if row is not None else None
@@ -1095,6 +1130,8 @@ class DelegationRunsRepository(BaseRepository):
                 summary["original_error"] = run["error"]
         if run["status"] == "failed":
             summary["error"] = run["error"]
+            if run["local_failure_kind"] == "cancelled":
+                summary["cancelled"] = True
         return summary
 
     @staticmethod

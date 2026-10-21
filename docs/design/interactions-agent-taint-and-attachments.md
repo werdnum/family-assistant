@@ -135,10 +135,16 @@ that parameter; it is now what the gate evaluates.
 
 ### 3. Attachments mount as files, and bring their taint with them
 
-Delegated attachments become `environment.sources` entries of `type: "inline"` with base64 `content`
-and a `target` path under `/workspace`, so the agent opens a real file rather than reading a blob
-pasted into its prompt. That is the right shape for a coding agent, and it makes binary attachments
-work instead of being refused.
+Delegated attachments are uploaded into the run's environment under `/workspace`, so the agent opens
+a real file rather than reading a blob pasted into its prompt. That is the right shape for a coding
+agent, and it makes binary attachments work instead of being refused.
+
+They are uploaded through the environments API rather than sent as inline `environment.sources`: the
+API rejects an inline source over 1 MiB of base64, or inline sources totalling over 2 MiB, with a
+bare `400 Request contains an invalid argument`, which is any ordinary photo or screenshot. A run
+with files therefore creates its environment first, uploads into it, and starts the interaction on
+that `environment_id`. A run on an existing environment ignores an `env` block sent with the run, so
+the egress policy (`network` and `env`) is set on the environment when it is created.
 
 Each attachment contributes a `TaintSource` derived from its stored provenance (the same
 `taint_metadata` / `source_trust_tier` fields `merge_artifact_taint_into_context` reads), merged
@@ -165,11 +171,11 @@ routing the user's own file is allowed without one.
    class, called from `run_stream` against the merged turn state; both chat entry points catch
    `TaintedSinkRefusedError` and render it.
 7. **`processing/interactions_agent_service.py`** — `_refuse_denied_sink()` applies it to the
-   delegated submit; `_build_environment_sources()` replaces the blanket refusal, giving each
-   mounted file a unique `target` (a repeated filename gains a `-2` suffix, since the sandbox holds
-   one file per path).
-8. **`llm/providers/google_genai_client.py`** — `start_agent_interaction(..., environment_sources=)`
-   attaches `environment: {"type": "remote", "sources": [...]}`.
+   delegated submit; `_build_sandbox_files()` replaces the blanket refusal, giving each mounted file
+   a unique path (a repeated filename gains a `-2` suffix, since the sandbox holds one file per
+   path).
+8. **`llm/providers/google_genai_client.py`** — `start_agent_interaction(..., sandbox_files=)`
+   provisions an environment holding the files and runs the interaction on it.
 9. **`defaults.yaml`** — `coder` declares `taint_sink_class: sandbox_network` and pins
    `taint_policy.mode: enforce`, so the gate holds at any rollout stage.
 
@@ -203,6 +209,29 @@ routing the user's own file is allowed without one.
 - **`confirm` at the profile gate.** Refusing is right while the only confirmable entry point is the
   delegation tool. If a `known_contact`-tier direct `/coder` turn turns out to be common, the
   interactive path could offer a real confirmation, since it has a user waiting.
-- **Attachment size.** Capped so one delegation cannot push an arbitrarily large base64 body through
-  `interactions.create`. The cap is a constant rather than config until there is evidence about what
-  real files look like.
+- **Attachment size.** Capped so one delegation cannot upload an arbitrarily large payload. The cap
+  is a constant rather than config until there is evidence about what real files look like.
+
+### 4. Output files come back the same way
+
+What the agent saves under `/workspace/outputs` is returned as attachments on a delegated run's
+result. The prompt states the directory and the caps (20 files, 50 MB a run) on the submit path
+only, since a run streamed straight into a chat collects nothing and must not promise files; a file
+past the caps is named in the reply rather than dropped. The run's environment outlives it, so the
+files are read back after it finishes -- through one worker step that both terminal paths, the
+completing poll and late-completion recovery, go through. Each file is owned by the run's user and
+carries the taint of the run's own reply, since the agent produced both from the same inputs. A
+transient failure fetching them leaves the run to be read again; a permanent one delivers the text
+and says the files could not be fetched.
+
+## Deliberate simplifications
+
+- **Output files registered for a losing reader are left in place.** Two readers racing to finish
+  one run can both fetch its outputs before one wins the terminal transition. The loser's copies are
+  referenced by nothing, and the unreferenced-attachment sweep does not collect tool attachments, so
+  they stay as stored files. Racing reconcilers are rare and the cost is storage, not a wrong
+  delivery; registering after the transition instead would split the result write in two.
+- **Uploaded environments are not deleted.** Deleting an environment deletes the interactions run on
+  it, so it cannot be removed while the result is still to be read, and a run on an implicit sandbox
+  leaves a stored environment behind just the same. Retention is the provider's, as it already was
+  for every run.

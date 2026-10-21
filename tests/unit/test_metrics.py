@@ -39,11 +39,11 @@ from family_assistant.processing.interactions_agent_service import (
 )
 from family_assistant.processing.protocol import DelegationTransientError
 from family_assistant.processing.types import ProcessingServiceConfig
-from family_assistant.tools import ToolNotFoundError
 from family_assistant.tools.infrastructure import (
     LocalToolsProvider,
     TaintTrackingToolsProvider,
     ToolDescriptorProvider,
+    ToolNotFoundError,
 )
 from family_assistant.tools.metadata import (
     ToolRegistration,

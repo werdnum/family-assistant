@@ -11,7 +11,7 @@ import re
 import time
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Mapping, Sequence
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from family_assistant.tools.types import ToolAttachment
 
 import aiofiles
+import httpx
 from google import genai
 from google.genai import types
 from google.genai.client import DebugConfig
@@ -140,6 +141,38 @@ _INTERACTION_TERMINAL_ERROR_STATUSES = {
     "incomplete",
     "budget_exceeded",
 }
+
+
+def _caused_by_transport_failure(error: BaseException) -> bool:
+    """Whether a failed connection or timeout lies anywhere in the cause chain."""
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        if isinstance(current, httpx.TransportError):
+            return True
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return False
+
+
+@dataclass(frozen=True)
+class SandboxFile:
+    """One file to place in an agent run's sandbox before the run starts."""
+
+    # Absolute path inside the sandbox, e.g. ``/workspace/data.csv``.
+    path: str
+    content: bytes
+    mime_type: str
+
+
+@dataclass(frozen=True)
+class SandboxFileEntry:
+    """One file an agent run left in its environment."""
+
+    # Relative to the environment root, e.g. ``workspace/outputs/model.stl``.
+    path: str
+    size_bytes: int | None
+    mime_type: str | None
 
 
 def _agent_interaction_response(response: object) -> Interaction:
@@ -1967,7 +2000,6 @@ class GoogleGenAIClient(BaseLLMClient):
     # ast-grep-ignore: no-dict-any - environment payload for the Interactions SDK
     async def _build_agent_environment(
         self,
-        environment_sources: Sequence[Mapping[str, Any]] | None = None,
         # ast-grep-ignore: no-dict-any - environment payload for the Interactions SDK
     ) -> tuple[dict[str, Any] | None, bool]:
         """Build the ``environment`` block, or ``None`` to send none.
@@ -1975,11 +2007,10 @@ class GoogleGenAIClient(BaseLLMClient):
         Also returns whether git reaches GitHub through a stored credential,
         which the agent must be told how to use.
 
-        Merges the two things that shape a run's sandbox: files mounted into it
-        (a delegation's attachments, submit path only — the interactive path
-        carries no attachments) and its egress policy, which comes from static
-        profile config and so applies to both paths. Credentials named by that
-        policy are minted here, per run.
+        Carries the run's egress policy, which comes from static profile config
+        and so applies to both the submit and the streaming path. Credentials
+        named by that policy are minted here, per run. Files are not mounted
+        here: see ``_provision_sandbox``.
 
         Antigravity always gets a block, even an otherwise empty one: the API
         requires the field and rejects a create request that omits it with
@@ -1991,8 +2022,6 @@ class GoogleGenAIClient(BaseLLMClient):
         # ast-grep-ignore: no-dict-any - environment payload for the Interactions SDK
         environment: dict[str, Any] = {}
         github_git = False
-        if environment_sources:
-            environment["sources"] = list(environment_sources)
         if self._antigravity_egress is not None:
             egress = await self._antigravity_egress.resolve()
             if egress.network is not None:
@@ -2009,7 +2038,6 @@ class GoogleGenAIClient(BaseLLMClient):
         messages: Sequence[LLMMessage],
         *,
         previous_interaction_id: str | None = None,
-        environment_sources: Sequence[Mapping[str, Any]] | None = None,
         # ast-grep-ignore: no-dict-any - **kwargs for the Interactions SDK's create()
     ) -> dict[str, Any]:
         """The full create request: input, system instruction and sandbox.
@@ -2021,9 +2049,7 @@ class GoogleGenAIClient(BaseLLMClient):
         create_kwargs = self._build_agent_create_kwargs(
             messages, previous_interaction_id=previous_interaction_id
         )
-        environment, github_git = await self._build_agent_environment(
-            environment_sources
-        )
+        environment, github_git = await self._build_agent_environment()
         if environment is None:
             return create_kwargs
         if github_git:
@@ -2038,6 +2064,49 @@ class GoogleGenAIClient(BaseLLMClient):
         create_kwargs["environment"] = environment
         return create_kwargs
 
+    async def _provision_sandbox(
+        self,
+        # ast-grep-ignore: no-dict-any - environment payload for the Interactions SDK
+        environment: Mapping[str, Any],
+        files: Sequence[SandboxFile],
+        # ast-grep-ignore: no-dict-any - environment payload for the Interactions SDK
+    ) -> dict[str, Any]:
+        """Create an environment holding ``files``; return a block naming it.
+
+        Files go through the environments API's upload rather than as inline
+        ``environment.sources``, because the API rejects an inline source over
+        1 MiB of base64 (and a request whose inline sources total over 2 MiB)
+        with a bare ``400 Request contains an invalid argument`` -- which is
+        every photo or screenshot a user attaches.
+
+        A run on an existing environment ignores any ``env`` sent with the run,
+        so the egress policy's ``network`` and ``env`` are set on the
+        environment when it is created instead. The environment is not deleted
+        afterwards: deleting it deletes the interaction with it, and a run on
+        an implicit sandbox leaves one behind just the same.
+        """
+        # ast-grep-ignore: no-dict-any - environment payload for the Interactions SDK
+        extra_body: dict[str, Any] = {}
+        if "env" in environment:
+            extra_body["env"] = environment["env"]
+        environments = self.client.aio.environments
+        created = await environments.create_environment(
+            network=environment.get("network"),
+            extra_body=extra_body or None,
+        )
+        if not created.id:
+            raise DelegationTransientError(
+                "Environments API create response carried no environment id"
+            )
+        for file in files:
+            await environments.files.upload(
+                environment=created.id,
+                path=file.path,
+                file=file.content,
+                mime_type=file.mime_type,
+            )
+        return {"type": "remote", "environment_id": created.id}
+
     def _classify_agent_delegation_error(self, e: Exception) -> Exception:
         """Map an Interactions API exception to the delegation error taxonomy.
 
@@ -2048,10 +2117,14 @@ class GoogleGenAIClient(BaseLLMClient):
         streaming path, which raises ``LLMProviderError`` subtypes via
         ``_map_interactions_error`` instead). Duck-types on ``status_code``
         (SDK ``APIStatusError``), mirroring ``_map_interactions_error``'s own
-        pattern. Errors this doesn't recognize (including non-HTTP transport
-        errors with no ``status_code``) are returned unwrapped — safe, since
-        ``task_worker.py``'s default (fail-fast) handling already applies to
-        anything that isn't a ``DelegationTransientError``.
+        pattern.
+
+        A connection that failed or timed out is transient wherever it
+        surfaces: the SDK's connection errors and the egress credential store
+        both chain the ``httpx`` error that caused them. Without this, one
+        blip polling a long run failed the whole delegation and orphaned its
+        result. Anything else unrecognized is returned unwrapped, so the
+        worker fails fast on it.
         """
         status_code: int | None = getattr(e, "status_code", None)
         if status_code == 404:
@@ -2060,6 +2133,8 @@ class GoogleGenAIClient(BaseLLMClient):
             return DelegationPermanentError(str(e))
         if status_code == 429 or (status_code is not None and status_code >= 500):
             return DelegationTransientError(str(e))
+        if _caused_by_transport_failure(e):
+            return DelegationTransientError(str(e))
         return e
 
     async def start_agent_interaction(
@@ -2067,7 +2142,7 @@ class GoogleGenAIClient(BaseLLMClient):
         messages: Sequence[LLMMessage],
         *,
         previous_interaction_id: str | None = None,
-        environment_sources: Sequence[Mapping[str, Any]] | None = None,
+        sandbox_files: Sequence[SandboxFile] = (),
     ) -> Interaction:
         """Start an Interactions agent run without waiting for it to finish.
 
@@ -2084,15 +2159,16 @@ class GoogleGenAIClient(BaseLLMClient):
         need none, because polling or cancelling by id is the same call
         whatever produced the id.
         """
-        # A fresh sandbox with the caller's files mounted into it, under this
-        # profile's egress policy. Only the submit path carries sources: the
-        # interactive path goes through the provider-agnostic
-        # `generate_response_stream`, which has no attachments to mount.
-        create_kwargs = await self._build_agent_request(
-            messages,
-            previous_interaction_id=previous_interaction_id,
-            environment_sources=environment_sources,
-        )
+        # A fresh sandbox under this profile's egress policy, with the caller's
+        # files in it. Only the submit path carries files: the interactive path
+        # goes through the provider-agnostic `generate_response_stream`, which
+        # has no attachments to mount.
+        try:
+            create_kwargs = await self._build_agent_request(
+                messages, previous_interaction_id=previous_interaction_id
+            )
+        except Exception as e:
+            raise self._classify_agent_delegation_error(e) from e
         # Accounting starts here, not above: building the kwargs and resolving
         # the sandbox's credentials can fail without any request reaching
         # Google, and a failure that never left the process is not a provider
@@ -2101,6 +2177,10 @@ class GoogleGenAIClient(BaseLLMClient):
         # reaches no terminal poll.
         started = time.monotonic()
         try:
+            if sandbox_files:
+                create_kwargs["environment"] = await self._provision_sandbox(
+                    create_kwargs.get("environment", {}), sandbox_files
+                )
             interaction = _agent_interaction_response(
                 await self.client.aio.interactions.create(**create_kwargs, stream=False)
             )
@@ -2159,6 +2239,56 @@ class GoogleGenAIClient(BaseLLMClient):
         try:
             return _agent_interaction_response(
                 await self.client.aio.interactions.get(interaction_id, stream=False)
+            )
+        except Exception as e:
+            raise self._classify_agent_delegation_error(e) from e
+
+    async def list_sandbox_files(
+        self, environment_id: str, directory: str
+    ) -> list[SandboxFileEntry]:
+        """Every file under ``directory`` in a run's environment, recursively.
+
+        A directory the run never created is an empty listing rather than an
+        error: the API answers it with a 404, which would otherwise classify as
+        the *run* having vanished.
+        """
+        entries: list[SandboxFileEntry] = []
+        page_token: str | None = None
+        while True:
+            try:
+                response = await self.client.aio.environments.files.list(
+                    environment=environment_id,
+                    path=directory,
+                    recursive=True,
+                    page_token=page_token,
+                )
+            except Exception as e:
+                if getattr(e, "status_code", None) == 404:
+                    return []
+                raise self._classify_agent_delegation_error(e) from e
+            entries.extend(
+                SandboxFileEntry(
+                    path=entry.path,
+                    size_bytes=entry.size_bytes,
+                    mime_type=entry.mime_type,
+                )
+                for entry in response.files or []
+                if entry.type == "FILE" and entry.path
+            )
+            if not response.next_page_token:
+                return entries
+            page_token = response.next_page_token
+
+    @property
+    def runs_in_sandbox(self) -> bool:
+        """Whether this client's agent works in a sandbox it can leave files in."""
+        return is_antigravity_model(self._agent_name)
+
+    async def download_sandbox_file(self, environment_id: str, path: str) -> bytes:
+        """The content of one file in a run's environment."""
+        try:
+            return await self.client.aio.environments.files.download(
+                environment_id=environment_id, path=path
             )
         except Exception as e:
             raise self._classify_agent_delegation_error(e) from e

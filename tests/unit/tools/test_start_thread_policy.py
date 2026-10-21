@@ -14,12 +14,12 @@ import pytest
 from family_assistant.assistant import (
     _build_profile_policy_engine,  # noqa: PLC2701 - the helper production uses to apply global policy injection
 )
-from family_assistant.tools import LOCAL_TOOL_DESCRIPTORS
+from family_assistant.tools.catalog import LOCAL_TOOL_DESCRIPTORS
 from tests.unit.conftest import shipped_profile
 
 if TYPE_CHECKING:
     from family_assistant.config_models import AppConfig
-    from family_assistant.tools import ToolDescriptor
+    from family_assistant.tools.metadata import ToolDescriptor
 
 pytestmark = pytest.mark.no_db
 

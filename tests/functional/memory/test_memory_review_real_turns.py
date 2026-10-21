@@ -45,8 +45,11 @@ from family_assistant.security.taint import (
 from family_assistant.storage.database import Database
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.repositories.notes import NoteReadPolicy
-from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS, LocalToolsProvider
-from family_assistant.tools.infrastructure import TaintTrackingToolsProvider
+from family_assistant.tools.catalog import LOCAL_TOOL_REGISTRATIONS
+from family_assistant.tools.infrastructure import (
+    LocalToolsProvider,
+    TaintTrackingToolsProvider,
+)
 from family_assistant.tools.metadata import (
     ToolRegistration,
     ToolTag,

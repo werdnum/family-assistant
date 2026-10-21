@@ -229,7 +229,9 @@ class TestAnthropicPromptCacheBreakpoint:
         messages: list[LLMMessage],
     ) -> str | list[TextBlockParam] | None:
         client = AnthropicClient(api_key="test", model="claude-sonnet-4-6")
-        system_value, _ = client._convert_messages_to_anthropic_format(messages)
+        system_value, _ = client._convert_messages_to_anthropic_format(
+            messages, cache_conversation=True
+        )
         return system_value
 
     def test_splits_at_stable_prefix_and_marks_only_the_prefix_cacheable(self) -> None:
@@ -244,7 +246,7 @@ class TestAnthropicPromptCacheBreakpoint:
             {
                 "type": "text",
                 "text": stable,
-                "cache_control": {"type": "ephemeral"},
+                "cache_control": {"type": "ephemeral", "ttl": "1h"},
             },
             {"type": "text", "text": volatile},
         ]
@@ -300,7 +302,7 @@ class TestAnthropicPromptCacheBreakpoint:
             {
                 "type": "text",
                 "text": content,
-                "cache_control": {"type": "ephemeral"},
+                "cache_control": {"type": "ephemeral", "ttl": "1h"},
             }
         ]
 
@@ -317,7 +319,10 @@ class TestAnthropicPromptCacheBreakpoint:
 
         assert isinstance(system_value, list)
         assert system_value[0]["text"] == stable
-        assert system_value[0].get("cache_control") == {"type": "ephemeral"}
+        assert system_value[0].get("cache_control") == {
+            "type": "ephemeral",
+            "ttl": "1h",
+        }
         assert "Reminder triggered" in system_value[1]["text"]
         assert "cache_control" not in system_value[1]
 
@@ -442,15 +447,36 @@ class TestConversationCacheBreakpoints:
             UserMessage(content="What is on my calendar?"),
         ]
 
-        _, turn_one = client._convert_messages_to_anthropic_format(history)
-        _, turn_two = client._convert_messages_to_anthropic_format([
-            *history,
-            AssistantMessage(content="Nothing today."),
-            UserMessage(content="Thanks"),
-        ])
+        _, turn_one = client._convert_messages_to_anthropic_format(
+            history, cache_conversation=True
+        )
+        _, turn_two = client._convert_messages_to_anthropic_format(
+            [
+                *history,
+                AssistantMessage(content="Nothing today."),
+                UserMessage(content="Thanks"),
+            ],
+            cache_conversation=True,
+        )
 
         assert _without_markers(turn_two[: len(turn_one)]) == _without_markers(turn_one)
         assert _breakpoint_positions(turn_one) == [(len(turn_one) - 1, 0)]
+
+    def test_only_the_streamed_agent_loop_marks_the_conversation(self) -> None:
+        """A one-shot request's tail is unique, so a breakpoint there is a write
+        that nothing ever reads."""
+        client = self._client()
+        messages: list[LLMMessage] = [
+            SystemMessage(content="You are helpful.", stable_prefix_len=16),
+            UserMessage(content="What is on my calendar?"),
+        ]
+
+        streamed = client._assemble_request(messages, None, None, streaming=True)
+        one_shot = client._assemble_request(messages, None, None, streaming=False)
+
+        assert _breakpoint_positions(streamed["messages"]) == [(0, 0)]
+        assert _breakpoint_positions(one_shot["messages"]) == []
+        assert one_shot["system"] == streamed["system"]
 
     def test_user_text_is_always_a_block_list(self) -> None:
         """A message keeps one wire shape whether or not it merges.
@@ -460,9 +486,12 @@ class TestConversationCacheBreakpoints:
         thinking block were computed against.
         """
         client = self._client()
-        _, api_messages = client._convert_messages_to_anthropic_format([
-            UserMessage(content="Summarize this."),
-        ])
+        _, api_messages = client._convert_messages_to_anthropic_format(
+            [
+                UserMessage(content="Summarize this."),
+            ],
+            cache_conversation=True,
+        )
 
         assert _without_markers(api_messages) == [
             {"role": "user", "content": [{"type": "text", "text": "Summarize this."}]}
@@ -487,7 +516,9 @@ class TestConversationCacheBreakpoints:
             ToolMessage(content="sunny", tool_call_id="call_1", name="weather"),
         ]
 
-        _, api_messages = client._convert_messages_to_anthropic_format(messages)
+        _, api_messages = client._convert_messages_to_anthropic_format(
+            messages, cache_conversation=True
+        )
 
         assert _breakpoint_positions(api_messages) == [(len(api_messages) - 1, 0)]
 
@@ -520,7 +551,9 @@ class TestConversationCacheBreakpoints:
             ),
         ]
 
-        _, api_messages = client._convert_messages_to_anthropic_format(messages)
+        _, api_messages = client._convert_messages_to_anthropic_format(
+            messages, cache_conversation=True
+        )
 
         assert api_messages[-1]["content"][:2] == [
             {"type": "thinking", "thinking": "reasoning", "signature": "sig"},

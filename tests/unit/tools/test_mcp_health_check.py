@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
@@ -13,18 +14,22 @@ from mcp.types import ErrorData, ListToolsResult, Tool
 from pydantic import ValidationError
 
 from family_assistant.config_models import ToolsConfig
-from family_assistant.tools import MCPServerConfig, MCPToolsProvider
 from family_assistant.tools.mcp import (
     DEFAULT_HEALTH_CHECK_INTERVAL_SECONDS,
     DEFAULT_TOOL_REFRESH_INTERVAL_SECONDS,
     MCP_SERVER_STATUS_CONNECTED,
     MCP_SERVER_STATUS_FAILED,
+    MCPToolsProvider,
+    _MCPConnectionLostError,  # noqa: PLC2701 - the per-user lifecycle has no public seam
+    _UserMCPConnections,  # noqa: PLC2701 - the per-user lifecycle has no public seam
 )
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from mcp import ClientSession
+
+    from family_assistant.tools.types import MCPServerConfig
 
 SERVER_ID = "test-server"
 
@@ -345,3 +350,45 @@ async def test_health_check_preserves_replacement_session_on_stale_ping_error() 
     # The new session installed in the meantime must be preserved
     assert provider._sessions.get(SERVER_ID) is new_session
     assert provider._server_statuses[SERVER_ID] == MCP_SERVER_STATUS_CONNECTED
+
+
+@pytest.mark.asyncio
+async def test_user_health_check_tolerates_a_lost_connection(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """One user's dropped connection is logged as a warning, not an escaped error."""
+    connections = _UserMCPConnections(
+        "tuit",
+        cast(
+            "MCPServerConfig",
+            {
+                "transport": "streamable_http",
+                "url": "http://tuit.test/mcp",
+                "user_auth": {
+                    "users": {
+                        "alex": {"token_env": "TUIT_ALEX", "expected_user_id": "alex"},
+                        "sam": {"token_env": "TUIT_SAM", "expected_user_id": "sam"},
+                    },
+                },
+            },
+        ),
+        initialization_timeout_seconds=1,
+        health_check_interval_seconds=3600,
+        reconnect_backoff_base_seconds=1,
+        reconnect_backoff_max_seconds=1,
+        tool_refresh_interval_seconds=None,
+        tool_call_timeout_seconds=1,
+    )
+    lost = AsyncMock(side_effect=_MCPConnectionLostError())
+    healthy = AsyncMock(return_value=None)
+    connections.connections["alex"].run = lost  # type: ignore[method-assign]
+    connections.connections["sam"].run = healthy  # type: ignore[method-assign]
+
+    with caplog.at_level(logging.WARNING, logger="family_assistant.tools.mcp"):
+        await connections.check_health(force_tool_refresh=False)
+
+    healthy.assert_awaited_once()
+    assert any(
+        record.levelno == logging.WARNING and "user 'alex'" in record.getMessage()
+        for record in caplog.records
+    )

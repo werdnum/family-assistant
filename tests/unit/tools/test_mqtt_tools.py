@@ -10,8 +10,8 @@ from pydantic import SecretStr
 
 from family_assistant.config_models import AppConfig, MQTTConfig
 from family_assistant.storage.database import Database
-from family_assistant.tools import TOOLS_DEFINITION
 from family_assistant.tools.argument_schema import argument_schema_errors
+from family_assistant.tools.catalog import TOOLS_DEFINITION
 from family_assistant.tools.mqtt import mqtt_publish_tool
 from family_assistant.tools.types import ToolExecutionContext
 

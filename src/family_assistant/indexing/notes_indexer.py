@@ -13,7 +13,7 @@ from family_assistant.storage.vector import (
     delete_document_embeddings,
     get_document_by_id,
 )
-from family_assistant.tools import ToolExecutionContext
+from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
 

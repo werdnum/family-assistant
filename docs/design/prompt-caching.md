@@ -57,6 +57,19 @@ the leading one `cache_control: {"type": "ephemeral"}`. Concatenating the blocks
 string previously sent. Because a breakpoint on the last system block also covers everything
 rendered before it, this caches the tool definitions along with the static instructions.
 
+This breakpoint uses the one-hour TTL (`"ttl": "1h"`) rather than the default five minutes. The
+tools and static instructions (about 30k tokens on the main profiles) are shared by every turn of
+every conversation, and people routinely reply more than five minutes apart, so with the default TTL
+a large share of turns started cold. A one-hour write costs 2× the input price instead of 1.25×,
+which a prefix this widely shared repays within a few reads. Anthropic requires longer-lived
+breakpoints to precede shorter ones; this one comes before every conversation breakpoint, which keep
+the default TTL.
+
+The conversation breakpoint is placed only on streamed requests, which are the agent loop's. Every
+other request — a tool-call review, a structured or JSON output, a summary, an attachment pick — is
+one-shot: its tail is unique and no later request extends it, so a breakpoint there writes a cache
+entry (at 1.25× the input price) that is never read, and skews the account's cache-hit metric.
+
 A prompt that is stable all the way to the end — what a template with no volatile placeholders
 produces — needs no split and is emitted as a single cacheable block. Only when there is no boundary
 at all does the client send the plain string as before, so requests that cannot benefit keep their

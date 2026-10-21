@@ -3,25 +3,9 @@ Family Assistant Scripting System.
 
 Provides scripting engines for executing user-defined scripts
 with access to family assistant tools and state.
+
+The package itself re-exports nothing: the engine imports the tool
+infrastructure, which imports the script API types from this package, so
+pulling the engine in here would close an import cycle. Import from the
+submodules directly.
 """
-
-from .config import ScriptConfig
-from .errors import (
-    ScriptError,
-    ScriptExecutionError,
-    ScriptSyntaxError,
-    ScriptTimeoutError,
-)
-from .monty_engine import MontyEngine
-from .validator import ScriptValidator, ValidationResult
-
-__all__ = [
-    "MontyEngine",
-    "ScriptConfig",
-    "ScriptError",
-    "ScriptExecutionError",
-    "ScriptSyntaxError",
-    "ScriptTimeoutError",
-    "ScriptValidator",
-    "ValidationResult",
-]

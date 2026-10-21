@@ -33,11 +33,16 @@ from typing import TYPE_CHECKING, cast
 
 from family_assistant.config_loader import load_config
 from family_assistant.config_models import mcp_servers_for_runtime
-from family_assistant.tools import MCPServerConfig, MCPToolsProvider
-from family_assistant.tools.mcp import MCP_SERVER_STATUS_CONNECTED, MCPServerStatus
+from family_assistant.tools.mcp import (
+    MCP_SERVER_STATUS_CONNECTED,
+    MCPServerStatus,
+    MCPToolsProvider,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+    from family_assistant.tools.types import MCPServerConfig
 
 logger = logging.getLogger("check_mcp_servers")
 

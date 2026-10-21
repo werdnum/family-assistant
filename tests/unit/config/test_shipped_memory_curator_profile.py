@@ -24,7 +24,7 @@ from family_assistant.memory.invariants import MEMORY_LABEL
 from family_assistant.storage.base import create_engine_with_sqlite_optimizations
 from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.notes import NoteReadPolicy
-from family_assistant.tools import LOCAL_TOOL_DESCRIPTORS
+from family_assistant.tools.catalog import LOCAL_TOOL_DESCRIPTORS
 from family_assistant.tools.policy import ToolPolicyDecision
 from family_assistant.tools.types import ToolExecutionContext
 from tests.unit.conftest import shipped_profile

@@ -1349,12 +1349,12 @@ How much of a conversation's earlier turns a profile's prompt carries. Set under
 in `default_profile_settings` or on a profile; the `web_` variants apply on the web interface and
 fall back to the plain settings when unset.
 
-| Key                                                         | Default (shipped)  | Meaning                                                                 |
-| ----------------------------------------------------------- | ------------------ | ----------------------------------------------------------------------- |
-| `history_budget_chars` / `web_history_budget_chars`         | `40000` / `120000` | Size of the window, in characters of rendered history.                  |
-| `history_min_turns` / `web_history_min_turns`               | `2`                | The newest turns that stay (compacted if need be) whatever their size.  |
-| `history_max_age_hours` / `web_history_max_age_hours`       | `2` / `720`        | A turn whose last activity is older than this leaves at the next event. |
-| `history_idle_gap_minutes` / `web_history_idle_gap_minutes` | `60` / unset       | The first message after this much quiet is a compaction event.          |
+| Key                                                         | Default (shipped)  | Meaning                                                                  |
+| ----------------------------------------------------------- | ------------------ | ------------------------------------------------------------------------ |
+| `history_budget_chars` / `web_history_budget_chars`         | `40000` / `120000` | Size of the window, in characters of rendered history.                   |
+| `history_min_turns` / `web_history_min_turns`               | `2`                | The newest turns that stay (compacted if need be) whatever their size.   |
+| `history_max_age_hours` / `web_history_max_age_hours`       | `2` / `720`        | A turn whose last activity is older than this leaves at the next event.  |
+| `history_idle_gap_minutes` / `web_history_idle_gap_minutes` | `60` / `300`       | The first message after this much quiet is a compaction event; 0 is off. |
 
 The window is made of whole turns — a request, every tool call and result it led to, and the answer.
 A turn is never split. Only the active profile's rows are loaded, on every path. A reply to a

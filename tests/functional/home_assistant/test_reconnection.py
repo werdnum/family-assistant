@@ -4,11 +4,13 @@ Test Home Assistant event source reconnection and health checking.
 
 import asyncio
 import contextlib
+import logging
 from collections.abc import Iterator
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from zoneinfo import ZoneInfo
 
+import janus
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -223,3 +225,20 @@ async def test_event_processor_health_status_counts_enabled_listeners(
     assert status["processor_running"] is True
     assert status["listener_cache"]["listener_count"] == 2
     assert status["listener_cache"]["by_source"] == {"home_assistant": 2}
+
+
+@pytest.mark.asyncio
+async def test_event_processor_exits_quietly_when_queue_shuts_down(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Shutting the queue down in stop() is teardown, not a processing error."""
+    source = HomeAssistantSource(MagicMock())
+    source._running = True
+    source._event_queue = janus.Queue()
+    source._event_queue.shutdown()
+
+    with caplog.at_level(logging.ERROR):
+        await asyncio.wait_for(source._process_events(), timeout=5)
+
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+    await source._event_queue.wait_closed()

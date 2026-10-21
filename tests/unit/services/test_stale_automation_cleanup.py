@@ -14,7 +14,7 @@ from family_assistant.storage.database import Database
 from family_assistant.storage.schedule_automations import schedule_automations_table
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.task_worker import handle_stale_automation_cleanup
-from family_assistant.tools import ToolExecutionContext
+from family_assistant.tools.types import ToolExecutionContext
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator

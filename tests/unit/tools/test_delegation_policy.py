@@ -44,7 +44,7 @@ from family_assistant.security.taint import (
     unknown_external_taint_metadata,
 )
 from family_assistant.storage.database import Database
-from family_assistant.tools import LOCAL_TOOL_DESCRIPTORS
+from family_assistant.tools.catalog import LOCAL_TOOL_DESCRIPTORS
 from family_assistant.tools.policy import ToolPolicyDecision
 from family_assistant.tools.services import (
     _confirmation_tool_arguments,  # noqa: PLC2701 - the drift these guard is between two private helpers
@@ -66,7 +66,7 @@ if TYPE_CHECKING:
     from family_assistant.a2a.client import A2AClientWrapper
     from family_assistant.llm.content_parts import ContentPartDict
     from family_assistant.processing import ProcessingService
-    from family_assistant.tools import ToolDescriptor
+    from family_assistant.tools.metadata import ToolDescriptor
 
 
 class _Namespace:

@@ -8,15 +8,12 @@ from unittest.mock import AsyncMock
 import pytest
 from mcp.types import ListToolsResult, Tool, ToolAnnotations
 
-from family_assistant.tools import (
-    MCPServerConfig,
-    MCPToolsProvider,
-    PolicyEnforcingToolsProvider,
-)
+from family_assistant.tools.infrastructure import PolicyEnforcingToolsProvider
 from family_assistant.tools.mcp import (
     MCP_SERVER_STATUS_CANCELLED,
     MCP_SERVER_STATUS_CONNECTED,
     MCP_SERVER_STATUS_FAILED,
+    MCPToolsProvider,
 )
 from family_assistant.tools.metadata import (
     ToolDescriptor,
@@ -30,7 +27,7 @@ from family_assistant.tools.policy import (
     ToolPolicyConfig,
     ToolPolicyDecision,
 )
-from family_assistant.tools.types import ToolDefinition
+from family_assistant.tools.types import MCPServerConfig, ToolDefinition
 
 
 def _tool_definition(name: str) -> ToolDefinition:

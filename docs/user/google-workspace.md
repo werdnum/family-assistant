@@ -29,7 +29,8 @@ binary files as downloadable attachments.
 It can also create **unsent** Gmail drafts, optionally attaching existing Family Assistant
 attachments, and create or replace files inside its dedicated **Family Assistant** Drive folder.
 Authored content becomes a native Google Doc by default; plain text and Markdown are also supported,
-and existing attachments can be uploaded as ordinary files.
+and existing attachments up to 100 MB (3D-print models, large PDFs, archives) can be uploaded as
+ordinary files.
 
 Gmail searches use standard Gmail syntax (`from:school has:attachment`) and Drive searches use Drive
 query syntax (`name contains 'budget'`), so you can be as precise as you like.

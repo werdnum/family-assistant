@@ -8,8 +8,8 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from family_assistant.storage.database import Database
-from family_assistant.tools import (
-    LOCAL_TOOL_REGISTRATIONS,
+from family_assistant.tools.catalog import LOCAL_TOOL_REGISTRATIONS
+from family_assistant.tools.infrastructure import (
     LocalToolsProvider,
     PolicyEnforcingToolsProvider,
 )

@@ -19,7 +19,7 @@ from family_assistant.assistant import (
     _build_profile_policy_engine,  # noqa: PLC2701 - exercise production policy assembly
 )
 from family_assistant.config_loader import load_config
-from family_assistant.tools import LOCAL_TOOL_DESCRIPTORS
+from family_assistant.tools.catalog import LOCAL_TOOL_DESCRIPTORS
 from family_assistant.tools.policy import PolicyEngine, ToolPolicyDecision
 
 if TYPE_CHECKING:

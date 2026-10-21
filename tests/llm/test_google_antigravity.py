@@ -2,15 +2,19 @@
 
 import importlib
 from collections.abc import AsyncGenerator, Generator
-from unittest.mock import AsyncMock, MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
+import httpx
 import pytest
+from google import genai
 from google.genai.interactions import Interaction
 from pydantic import TypeAdapter
 
 from family_assistant.llm import LLMStreamEvent
 from family_assistant.llm.antigravity_egress import (
     GITHUB_GIT_AUTH_ENV,
+    AntigravityEgressError,
     EgressNetworkPayload,
     EgressResolution,
 )
@@ -24,14 +28,24 @@ from family_assistant.llm.messages import (
 )
 from family_assistant.llm.providers.google_genai_client import (
     GoogleGenAIClient,
+    SandboxFile,
     is_antigravity_model,
     is_deep_research_model,
     is_interactions_agent_model,
+)
+from family_assistant.processing.protocol import (
+    DelegationPermanentError,
+    DelegationTransientError,
 )
 
 ANTIGRAVITY_AGENT_ID = "antigravity-preview-05-2026"
 
 _SDK_INTERACTIONS_MODULE = importlib.import_module("google.genai._gaos.models")
+_SDK_COMPAT_ERRORS = importlib.import_module("google.genai._gaos.lib.compat_errors")
+# The real async environments resources, resolved before any test patches
+# ``genai.Client``.
+_SDK_ASYNC_ENVIRONMENTS = type(genai.Client(api_key="test").aio.environments)
+_SDK_ASYNC_ENVIRONMENT_FILES = type(genai.Client(api_key="test").aio.environments.files)
 _CREATE_INTERACTION_ADAPTER = TypeAdapter(
     _SDK_INTERACTIONS_MODULE.CreateInteractionRequestBody
 )
@@ -384,40 +398,101 @@ async def test_egress_policy_reaches_the_interactive_path(
     }
 
 
+def _accept_environments(mock_genai_client: MagicMock) -> MagicMock:
+    """Stub the environments API: creation returns ``env_1``, uploads succeed.
+
+    Specced from the installed SDK's async classes, so a method this SDK
+    version lacks, a sync one awaited, or a keyword it does not take fails here
+    rather than in production.
+    """
+    environments = create_autospec(_SDK_ASYNC_ENVIRONMENTS, instance=True)
+    environments.files = create_autospec(_SDK_ASYNC_ENVIRONMENT_FILES, instance=True)
+    environments.create_environment.return_value = SimpleNamespace(id="env_1")
+    mock_genai_client.aio.environments = environments
+    return environments
+
+
 @pytest.mark.asyncio
-async def test_submit_path_merges_mounted_sources_with_egress_policy(
+async def test_submit_path_uploads_files_into_an_environment(
     mock_genai_client: MagicMock,
 ) -> None:
-    """One environment block carries both, rather than either overwriting the other."""
+    """Files are uploaded, not inlined: the API rejects an inline source over
+    1 MiB of base64, which is any ordinary photo."""
     client = _egress_client("disabled")
-    mock_interaction = Interaction(id="inter_ag_env_submit", status="in_progress")
-    mock_genai_client.aio.interactions.create = AsyncMock(return_value=mock_interaction)
+    environments = _accept_environments(mock_genai_client)
+    create = _accept_submissions(mock_genai_client)
+    photo = b"\x89PNG" + bytes(2 * 1024 * 1024)
 
     await client.start_agent_interaction(
-        [UserMessage(content="Analyse the file.")],
-        environment_sources=[
-            {
-                "type": "inline",
-                "content": "YSxiCjEsMg==",
-                "encoding": "base64",
-                "target": "/workspace/data.csv",
-            }
+        [UserMessage(content="Analyse the photo.")],
+        sandbox_files=[
+            SandboxFile(
+                path="/workspace/photo.png", content=photo, mime_type="image/png"
+            )
         ],
     )
 
-    call_kwargs = mock_genai_client.aio.interactions.create.call_args.kwargs
-    assert call_kwargs["environment"] == {
+    environments.files.upload.assert_awaited_once_with(
+        environment="env_1",
+        path="/workspace/photo.png",
+        file=photo,
+        mime_type="image/png",
+    )
+    assert create.call_args.kwargs["environment"] == {
         "type": "remote",
-        "sources": [
-            {
-                "type": "inline",
-                "content": "YSxiCjEsMg==",
-                "encoding": "base64",
-                "target": "/workspace/data.csv",
-            }
-        ],
-        "network": "disabled",
+        "environment_id": "env_1",
     }
+    body = _CREATE_INTERACTION_ADAPTER.validate_python(create.call_args.kwargs)
+    assert body.environment.environment_id == "env_1"
+
+
+@pytest.mark.asyncio
+async def test_uploaded_environment_carries_the_egress_policy(
+    mock_genai_client: MagicMock,
+) -> None:
+    """A run on an existing environment ignores ``env`` sent with the run, so
+    network and env are set when the environment is created."""
+    client = _egress_client(_STORED_GITHUB)
+    environments = _accept_environments(mock_genai_client)
+    _accept_submissions(mock_genai_client)
+
+    await client.start_agent_interaction(
+        [UserMessage(content="Fix the bug in this file.")],
+        sandbox_files=[
+            SandboxFile(
+                path="/workspace/a.py", content=b"x = 1\n", mime_type="text/x-python"
+            )
+        ],
+    )
+
+    environments.create_environment.assert_awaited_once_with(
+        network=_STORED_GITHUB.network,
+        extra_body={"env": _STORED_GITHUB.env},
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_upload_fails_the_delegation_permanently(
+    mock_genai_client: MagicMock,
+) -> None:
+    """Provisioning reaches Google, so its errors use the delegation taxonomy."""
+    client = _egress_client("disabled")
+    environments = _accept_environments(mock_genai_client)
+    rejection = Exception("Request contains an invalid argument.")
+    rejection.status_code = 400  # pyright: ignore[reportAttributeAccessIssue]
+    environments.files.upload.side_effect = rejection
+    create = _accept_submissions(mock_genai_client)
+
+    with pytest.raises(DelegationPermanentError):
+        await client.start_agent_interaction(
+            [UserMessage(content="Analyse the file.")],
+            sandbox_files=[
+                SandboxFile(
+                    path="/workspace/a.csv", content=b"a,b", mime_type="text/csv"
+                )
+            ],
+        )
+    create.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -563,3 +638,124 @@ async def test_without_a_stored_git_credential_git_is_not_mentioned(
     call_kwargs = create.call_args.kwargs
     assert "env" not in call_kwargs["environment"]
     assert call_kwargs["system_instruction"] == "You are a coding agent."
+
+
+def _connection_blip() -> Exception:
+    """What the SDK raises when a connection to the API fails outright."""
+    request = httpx.Request("GET", "https://generativelanguage.googleapis.com/")
+    cause = httpx.ConnectError("All connection attempts failed", request=request)
+    error = _SDK_COMPAT_ERRORS.APIConnectionError(message=str(cause), request=request)
+    error.__cause__ = cause
+    return error
+
+
+@pytest.mark.asyncio
+async def test_a_connection_blip_while_polling_is_transient(
+    mock_genai_client: MagicMock,
+) -> None:
+    """One failed poll of a long run must reschedule, not fail the delegation."""
+    client = _egress_client("disabled")
+    mock_genai_client.aio.interactions.get = AsyncMock(side_effect=_connection_blip())
+
+    with pytest.raises(DelegationTransientError):
+        await client.get_agent_interaction("inter_long_running")
+
+
+@pytest.mark.asyncio
+async def test_a_connection_blip_storing_an_egress_credential_is_transient(
+    mock_genai_client: MagicMock,
+) -> None:
+    """The credential store is reached over the same network as the run."""
+    request = httpx.Request("PATCH", "https://generativelanguage.googleapis.com/")
+
+    class _BlippingResolver:
+        async def resolve(self) -> EgressResolution:
+            try:
+                raise httpx.ConnectError(
+                    "All connection attempts failed", request=request
+                )
+            except httpx.ConnectError as e:
+                raise AntigravityEgressError("Storing egress credential failed") from e
+
+    client = GoogleGenAIClient(
+        api_key="test",
+        model=ANTIGRAVITY_AGENT_ID,
+        antigravity_model="gemini-3.8-flash",
+        antigravity_egress_resolver=_BlippingResolver(),
+    )
+    create = _accept_submissions(mock_genai_client)
+
+    with pytest.raises(DelegationTransientError):
+        await client.start_agent_interaction([UserMessage(content="Fix the bug.")])
+    create.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_misconfigured_egress_credential_still_fails_fast(
+    mock_genai_client: MagicMock,
+) -> None:
+    """Only a failed connection is retried; a configuration error is not."""
+
+    class _MisconfiguredResolver:
+        async def resolve(self) -> EgressResolution:
+            raise AntigravityEgressError("GitHub App private key is missing")
+
+    client = GoogleGenAIClient(
+        api_key="test",
+        model=ANTIGRAVITY_AGENT_ID,
+        antigravity_model="gemini-3.8-flash",
+        antigravity_egress_resolver=_MisconfiguredResolver(),
+    )
+    _accept_submissions(mock_genai_client)
+
+    with pytest.raises(AntigravityEgressError):
+        await client.start_agent_interaction([UserMessage(content="Fix the bug.")])
+
+
+@pytest.mark.asyncio
+async def test_a_run_that_wrote_no_outputs_lists_none(
+    mock_genai_client: MagicMock,
+) -> None:
+    """The API answers a missing directory with a 404, which must not read as
+    the run itself having vanished."""
+    client = _egress_client("disabled")
+    environments = _accept_environments(mock_genai_client)
+    request = httpx.Request("GET", "https://generativelanguage.googleapis.com/")
+    environments.files.list.side_effect = _SDK_COMPAT_ERRORS.NotFoundError(
+        "Path 'workspace/outputs' not found",
+        response=httpx.Response(404, request=request),
+        body=None,
+    )
+
+    assert await client.list_sandbox_files("env_1", "workspace/outputs") == []
+    environments.files.list.assert_awaited_once_with(
+        environment="env_1", path="workspace/outputs", recursive=True, page_token=None
+    )
+
+
+@pytest.mark.asyncio
+async def test_every_page_of_an_output_listing_is_read(
+    mock_genai_client: MagicMock,
+) -> None:
+    """The SDK hands back one page; files past it would be lost unseen."""
+    client = _egress_client("disabled")
+    environments = _accept_environments(mock_genai_client)
+
+    def page(path: str, token: str | None) -> SimpleNamespace:
+        entry = SimpleNamespace(
+            path=path, type="FILE", size_bytes=1, mime_type="text/plain"
+        )
+        return SimpleNamespace(files=[entry], next_page_token=token)
+
+    environments.files.list.side_effect = [
+        page("workspace/outputs/a.txt", "page-2"),
+        page("workspace/outputs/b.txt", None),
+    ]
+
+    entries = await client.list_sandbox_files("env_1", "workspace/outputs")
+
+    assert [entry.path for entry in entries] == [
+        "workspace/outputs/a.txt",
+        "workspace/outputs/b.txt",
+    ]
+    assert environments.files.list.await_args_list[1].kwargs["page_token"] == "page-2"

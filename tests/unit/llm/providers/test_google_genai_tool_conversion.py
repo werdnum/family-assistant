@@ -15,7 +15,8 @@ from family_assistant.llm.providers.google_genai_client import (
     gemini_unrepresentable_parameters,
 )
 from family_assistant.processing.quiet_turn import END_TURN_QUIETLY_TOOL_DEFINITION
-from family_assistant.tools import ACTIVATE_TOOLS_DEFINITION, TOOLS_DEFINITION
+from family_assistant.tools.catalog import TOOLS_DEFINITION
+from family_assistant.tools.on_demand import ACTIVATE_TOOLS_DEFINITION
 from family_assistant.tools.types import ToolDefinition, normalize_json_schema_type
 
 

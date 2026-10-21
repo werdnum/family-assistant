@@ -19,28 +19,30 @@ from family_assistant.calendar_integration import (
     fetch_event_details_for_confirmation,
 )
 from family_assistant.storage.database import Database
-from family_assistant.tools import (
-    LOCAL_TOOL_REGISTRATIONS as local_tool_registrations,
-)
-from family_assistant.tools import (
-    CompositeToolsProvider,
-    LocalToolsProvider,
-    PolicyEnforcingToolsProvider,
-    PolicyEngine,
-    PolicyRule,
-    TaintTrackingToolsProvider,
-    ToolMatcher,
-    ToolPolicyConfig,
-    ToolPolicyDecision,
-)
 from family_assistant.tools.calendar import (
     add_calendar_event_tool,
     search_calendar_events_tool,
+)
+from family_assistant.tools.catalog import (
+    LOCAL_TOOL_REGISTRATIONS as local_tool_registrations,
 )
 from family_assistant.tools.confirmation import (
     TOOL_CONFIRMATION_RENDERERS,
     render_delete_calendar_event_confirmation,
     render_modify_calendar_event_confirmation,
+)
+from family_assistant.tools.infrastructure import (
+    CompositeToolsProvider,
+    LocalToolsProvider,
+    PolicyEnforcingToolsProvider,
+    TaintTrackingToolsProvider,
+)
+from family_assistant.tools.policy import (
+    PolicyEngine,
+    PolicyRule,
+    ToolMatcher,
+    ToolPolicyConfig,
+    ToolPolicyDecision,
 )
 from family_assistant.tools.types import (
     CalendarConfig,
