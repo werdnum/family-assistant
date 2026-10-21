@@ -158,8 +158,9 @@ class FakeGoogleBackend:
         params: Mapping[str, str] | None = None,
         content: bytes | None = None,
         content_type: str | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> ApiResponse:
-        del access_token
+        del access_token, headers
         path = urlparse(url).path
         query = dict(params or {})
         if path.startswith(CALENDAR_PREFIX) and self.calendar is not None:
