@@ -287,8 +287,10 @@ note in the house style.
 
 - **In-app state** is loaded into the sandbox database (Postgres with pgvector, so the production
   index is queryable as-is).
-- **Calendar** is served by the Radicale fixture already used in tests, seeded from the exported
-  iCalendar.
+- **Calendar** is rebuilt from recorded calendar results, like mail: the deployment's calendars from
+  `list_calendars`, and every event a turn saw, created or deleted, with its observations over time.
+  The writable CalDAV calendar and the read-only iCal feeds are served by one Radicale process; the
+  Google calendars by the Google fake. Calendar ids and names are the deployment's.
 - **Time.** Each trial runs with the **process clock frozen at the case's asked-at moment** using
   `time-machine`, which patches the interpreter's clock sources so the roughly two hundred direct
   wall-clock reads under `Assistant` all agree, without a clock seam. The fixture is not re-dated:
@@ -296,14 +298,15 @@ note in the house style.
   prompt was written on, and past calendar events are found where they were. Database-side `now()`
   defaults are the one clock this does not reach; they stamp bookkeeping columns, not anything a
   case asserts on.
-- **State is the fixture's, not history's.** The snapshot holds the household as it is now, not as
-  it was when each turn was asked, and notes, automations and calendar entries change. A case's
-  expectations are therefore **authored against the fixture revision it names**, which is the only
-  ground truth the sandbox has; the historical reply is a reference for the judge, flagged where
-  curation found the state has since moved. A case whose required state no longer exists in any
-  fixture is excluded rather than reconstructed, and the export reports how many that was. Where a
-  case needs state the fixture lacks, curation adds it as a declared per-case delta applied on
-  materialisation, so the fixture stays one revision and the delta is visible in the case.
+- **State is rewound to the case's moment.** The snapshot holds the household after every case in
+  it, so replayed as is a case sees its own future: notes its original turn went on to write, later
+  documents, the rest of the conversation. Each trial runs on a fresh copy rewound to the moment the
+  case was asked. Rows created after it are removed; notes, which keep no history, are rebuilt from
+  the recorded reads and writes of them, which reproduce later observations almost exactly; calendar
+  events and mail are filtered to what existed then. The prompt is replayed in its original
+  conversation, so the rewound history is the context it had. What the record cannot rewind is
+  reported per trial rather than guessed, and where a case needs state the record lacks, curation
+  adds it as a declared per-case delta.
 
 ### Tool surface
 
@@ -358,6 +361,27 @@ and needs config-selectable backends for the weather service and the outbound me
 Assistant needs no seam: its plugin instance is configuration, pointed at the sandbox `hass`. Prefer
 one mechanism keyed by tool name over per-integration fakes, so a tool added later either has a
 backing or fails loudly as unbacked, never silently succeeds.
+
+### Measuring the simulation
+
+Coverage is measured, not assumed, two ways. **Traffic replay** re-executes a sample of every tool's
+recorded calls through the sandbox's tool API under the recorded profile and classifies each result
+against the recording (similar, different, missing tool, missing configuration, new error); weighted
+by production call volume this is the coverage figure, and it is re-run whenever backing changes.
+**Probing** has agents act as an assistant against the sandbox in one area each, comparing what they
+get with the recorded traffic, to find the walls replay cannot: semantics a fake gets consistently
+wrong, results that leak the sandbox, state from the future. For a fake that answers queries, the
+recorded searches are its conformance suite: each is replayed with its own evidence withheld, and
+recall and precision against the real results are reported.
+
+The first measurement found about half of production's tool-call volume backed. In order of the
+workload share they gate, the remaining gaps are: Home Assistant (native and MCP, from recorded
+entity listings and the snapshot's state-change events, on a real `hass`); web search and the other
+read-only lookups (a replay cache keyed on normalised arguments, returning an explicit miss); the
+code-execution server; the task tracker (a stateful fake from its recorded results); attachment
+payloads, which the snapshot does not hold; and delegations that leave the sandbox (the browser and
+deep research profiles), which must be backed or blocked, because a live answer is neither
+reproducible nor the household's.
 
 ### Driving a turn
 
@@ -468,9 +492,13 @@ Each milestone is independently useful and verifiable.
 - **Live reads drift.** Web search, weather and transport answers change between runs; a comparison
   within one run sees the same drift for every candidate, and runs are not compared on those tools'
   content across time.
-- **Fixture state is current, not historical.** Expectations are authored against the fixture, the
-  historical reply is only a reference, and cases whose state is gone are excluded and counted
-  rather than reconstructed.
+- **Rewind is as good as the record.** Notes edited outside a recorded turn, or deleted without one,
+  cannot be placed exactly; such notes keep their snapshot content and are reported. Automations and
+  event listeners stay disabled rather than rewound, since a frozen clock would otherwise fire them
+  mid-trial.
+- **Household-owned services see only what was recorded.** Mail bodies, Drive content and calendar
+  descriptions exist only where some turn read them; search over the rest falls back on recorded
+  search verdicts, measured by replaying every recorded search with its own evidence withheld.
 - **Single-turn by default.** Multi-turn journeys are supported through preludes, but the first set
   is dominated by single turns because that is what the workload is and what can be graded cleanly.
 - **Raw text lives in the private tree.** No pseudonymisation on the hot path; the existing scrubber

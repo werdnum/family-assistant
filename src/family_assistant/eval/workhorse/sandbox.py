@@ -20,18 +20,18 @@ replaced:
   chain entry with no fallback, allowed on the profiles a case runs on.
 - **Time**: the process clock is moved to the moment the case was asked.
 
-The auth environment is read once, when ``family_assistant.web.auth`` is
-first imported, so :func:`apply_sandbox_auth_environment` must run before any
-application import; :func:`require_sandbox_auth` fails a boot that missed it.
+Authentication is switched on by
+:mod:`family_assistant.eval.workhorse.sandbox_auth`, which must run before
+any application import.
 """
 
 from __future__ import annotations
 
 import contextlib
-import os
 from typing import TYPE_CHECKING
 
 import time_machine
+from pydantic import TypeAdapter
 
 from family_assistant.config_models import (
     ModelTierConfig,
@@ -39,6 +39,7 @@ from family_assistant.config_models import (
     UserIdentityConfig,
 )
 from family_assistant.eval.workhorse.google_sandbox import seed_google_connection
+from family_assistant.security.taint import SourceTrustTier
 from family_assistant.storage import api_tokens as api_tokens_storage
 from family_assistant.storage.base import metadata
 from family_assistant.storage.database import Database
@@ -54,11 +55,11 @@ if TYPE_CHECKING:
 
 __all__ = [
     "CREDENTIAL_TABLES",
-    "apply_sandbox_auth_environment",
+    "DEPLOYMENT_OVERLAY_KEYS",
+    "deployment_overlay",
     "eval_tier_name",
     "frozen_clock",
     "prepare_sandbox_database",
-    "require_sandbox_auth",
     "sandbox_config",
 ]
 
@@ -73,36 +74,70 @@ CREDENTIAL_TABLES = (
     "user_oauth_connections",
 )
 
-_AUTH_ENVIRONMENT = {
-    "OIDC_CLIENT_ID": "workhorse-eval",
-    "OIDC_CLIENT_SECRET": "workhorse-eval-secret",
-    # Discovery is fetched only for an interactive login, which the sandbox
-    # never performs; requests authenticate with an API token instead.
-    "OIDC_DISCOVERY_URL": "http://127.0.0.1:9/.well-known/openid-configuration",
-    "SESSION_SECRET_KEY": "workhorse-eval-session-secret-0123456789",
-}
-
 _PROFILES_UNDER_TEST = ("default_assistant", "complex_tasks")
 
+# Deployment settings that change how the assistant behaves without reaching
+# anything outside the sandbox. The rest of a recorded deployment config --
+# plugins, MQTT, push, outbound mail, MCP servers, remote agents -- points at
+# the real house and the real world, and is never taken. Model tiers and the
+# global tool policy stay as shipped too: both are coupled to the shipped
+# profiles, which a dump taken at another revision may not match.
+DEPLOYMENT_OVERLAY_KEYS = (
+    "taint_policy",
+    "memory_config",
+    "notes_config",
+    "tool_call_review",
+)
+_TIER_FIELDS = ("high_taint_tier", "default_unspecified_tool_output_tier")
+_TIER_KEYED_FIELDS = (
+    "operator_minimum",
+    "matrix",
+    "matrix_overrides",
+    "artifact_labels",
+)
 
-def apply_sandbox_auth_environment() -> None:
-    """Turn on web authentication; call before importing the application."""
-    for name, value in _AUTH_ENVIRONMENT.items():
-        os.environ.setdefault(name, value)
+
+def _tier_name(value: object) -> object:
+    """A tier the config dump wrote as its number, back as its name.
+
+    Config dumps serialise the tier enum by value, but configuration accepts
+    names only, since numbers shift when a tier is inserted.
+    """
+    if isinstance(value, int) or (isinstance(value, str) and value.isdigit()):
+        return SourceTrustTier(int(value)).config_value
+    return value
 
 
-def require_sandbox_auth() -> None:
-    """Fail unless web authentication came up enabled."""
-    # Imported here, not at module level: the module reads the auth
-    # environment on import, which must come after apply_sandbox_auth_environment.
-    from family_assistant.web import auth  # noqa: PLC0415
+def _taint_policy_by_name(policy: Mapping[str, object]) -> dict[str, object]:
+    named = dict(policy)
+    for field_name in _TIER_FIELDS:
+        if field_name in named:
+            named[field_name] = _tier_name(named[field_name])
+    for field_name in _TIER_KEYED_FIELDS:
+        value = named.get(field_name)
+        if isinstance(value, dict):
+            named[field_name] = {str(_tier_name(k)): v for k, v in value.items()}
+    return named
 
-    if not auth.AUTH_ENABLED:
-        raise RuntimeError(
-            "The workhorse sandbox needs web authentication, which is read when "
-            "family_assistant.web.auth is first imported. Call "
-            "apply_sandbox_auth_environment() before importing the application."
-        )
+
+def deployment_overlay(config: AppConfig, recorded: Mapping[str, object]) -> AppConfig:
+    """``config`` with the deployment's behaviour settings from a recorded dump.
+
+    ``recorded`` is the ``config`` object of a ``get_resolved_config`` result.
+    Only :data:`DEPLOYMENT_OVERLAY_KEYS` are taken.
+    """
+    update: dict[str, object] = {}
+    for key in DEPLOYMENT_OVERLAY_KEYS:
+        value = recorded.get(key)
+        if value is None:
+            continue
+        if key == "taint_policy" and isinstance(value, dict):
+            value = _taint_policy_by_name(value)
+        # Validated field by field: the rest of the config is left as it is,
+        # secrets included, rather than round-tripped through a dump.
+        annotation = type(config).model_fields[key].annotation
+        update[key] = TypeAdapter(annotation).validate_python(value)
+    return config.model_copy(update=update)
 
 
 def eval_tier_name(configuration: str) -> str:

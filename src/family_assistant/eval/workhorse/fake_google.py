@@ -31,6 +31,10 @@ from email.policy import default as default_policy
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
+from family_assistant.eval.workhorse.fake_google_calendar import (
+    CALENDAR_PREFIX,
+    FakeGoogleCalendar,
+)
 from family_assistant.eval.workhorse.google_search import (
     drive_known_folders,
     drive_query_matches,
@@ -132,6 +136,8 @@ class FakeGoogleBackend:
     withheld: frozenset[str] = frozenset()
     # The user's own addresses, which Gmail's ``me`` stands for.
     user_addresses: tuple[str, ...] = ()
+    # Google Calendar, when the trial has a calendar world.
+    calendar: FakeGoogleCalendar | None = None
     unbacked: list[str] = field(default_factory=list)
     partial: list[str] = field(default_factory=list)
     writes: list[dict[str, object]] = field(default_factory=list)
@@ -156,7 +162,11 @@ class FakeGoogleBackend:
         del access_token
         path = urlparse(url).path
         query = dict(params or {})
-        if path.startswith(_GMAIL_PREFIX):
+        if path.startswith(CALENDAR_PREFIX) and self.calendar is not None:
+            response = self.calendar.handle(
+                method, path[len(CALENDAR_PREFIX) :], query, content
+            )
+        elif path.startswith(_GMAIL_PREFIX):
             response = self._gmail(method, path[len(_GMAIL_PREFIX) :], query, content)
         elif path.startswith(_UPLOAD_PREFIX):
             response = self._drive_upload(method, path, content, content_type)

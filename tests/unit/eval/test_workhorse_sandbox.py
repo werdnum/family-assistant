@@ -11,6 +11,7 @@ from family_assistant.config_loader import load_config
 from family_assistant.config_models import RetryModelConfig
 from family_assistant.eval.workhorse.google_sandbox import eval_google_integration
 from family_assistant.eval.workhorse.sandbox import (
+    deployment_overlay,
     eval_tier_name,
     frozen_clock,
     sandbox_config,
@@ -93,3 +94,34 @@ def test_the_clock_moves_to_the_moment_and_ticks() -> None:
         now = datetime.now(UTC)
 
     assert moment <= now < datetime(2026, 8, 6, 1, 1, tzinfo=UTC)
+
+
+def test_a_recorded_deployment_overlays_only_its_behaviour_settings(
+    tmp_path: Path,
+) -> None:
+    shipped = load_config(
+        config_file_path=str(tmp_path / "none.yaml"), load_dotenv_file=False
+    )
+    recorded = {
+        # Dumps write tiers as numbers; configuration takes names.
+        "taint_policy": {
+            "mode": "observe",
+            "history_taint_epoch": "2026-07-24T04:00:00Z",
+            "high_taint_tier": 5,
+            "matrix_overrides": {"5": {"sensitive_read_broadening": "audit"}},
+            "artifact_labels": {"3": ["source_known_contact"]},
+        },
+        "memory_config": {"enabled": True, "core_note_title": "Household Memory"},
+        # Never taken: these reach the real house and the real world.
+        "mqtt_config": {"broker_host": "mqtt.example.com"},
+        "plugins": {"home_assistant": {"default": {"url": "https://ha.example.com"}}},
+    }
+
+    config = deployment_overlay(shipped, recorded)
+
+    assert config.taint_policy.history_taint_epoch == datetime(
+        2026, 7, 24, 4, 0, tzinfo=UTC
+    )
+    assert config.memory_config.core_note_title == "Household Memory"
+    assert config.mqtt_config == shipped.mqtt_config
+    assert config.plugins == shipped.plugins

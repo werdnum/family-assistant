@@ -13,6 +13,8 @@ stratum, and writes three files into the private tree:
   from, each entry carrying its stratum weight.
 - ``google_world.json`` -- every Gmail message and Drive file a recorded turn
   saw, pooled into the world the sandbox's fake Google serves.
+- ``calendar_world.json`` -- the calendars and the events turns saw, created
+  and deleted, which the sandbox serves through Radicale and the fake Google.
 
 Everything written is raw household text, so the destination must resolve
 inside the repository's gitignored private tree. The database is opened
@@ -36,6 +38,7 @@ import sys
 from collections import Counter
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+from zoneinfo import ZoneInfo
 
 import yaml
 
@@ -45,6 +48,7 @@ from family_assistant.eval.private_paths import (
     PrivateEvalPathError,
     resolve_private_eval_path,
 )
+from family_assistant.eval.workhorse.calendar_world import build_calendar_world
 from family_assistant.eval.workhorse.google_world import build_google_world
 from family_assistant.eval.workhorse.strata import (
     DEFAULT_TEMPLATED_PREFIXES,
@@ -59,6 +63,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
+    from family_assistant.eval.workhorse.calendar_world import CalendarWorld
     from family_assistant.eval.workhorse.google_world import GoogleWorld
     from family_assistant.eval.workhorse.strata import SampledTurn
     from family_assistant.eval.workhorse.turn_records import TurnRecord
@@ -143,6 +148,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--seed",
         default="workhorse",
         help="Sampling seed; the same snapshot and seed give the same sample.",
+    )
+    parser.add_argument(
+        "--timezone",
+        default="Australia/Sydney",
+        help="The household's timezone, which calendar results were rendered in.",
     )
     parser.add_argument(
         "--dry-run",
@@ -274,6 +284,7 @@ def _write(
     summary: dict[str, object],
     candidates: list[dict[str, object]],
     world: GoogleWorld,
+    calendar_world: CalendarWorld,
 ) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     with (out_dir / "records.jsonl").open("w", encoding="utf-8") as handle:
@@ -285,6 +296,9 @@ def _write(
     )
     (out_dir / "google_world.json").write_text(
         world.model_dump_json(indent=1), encoding="utf-8"
+    )
+    (out_dir / "calendar_world.json").write_text(
+        calendar_world.model_dump_json(indent=1), encoding="utf-8"
     )
     (out_dir / "candidates.yaml").write_text(
         yaml.safe_dump(candidates, sort_keys=False, allow_unicode=True, width=100),
@@ -317,6 +331,7 @@ def main(argv: list[str] | None = None) -> int:
         seed=args.seed,
     )
     world = build_google_world(grouped)
+    calendar_world = build_calendar_world(grouped, timezone=ZoneInfo(args.timezone))
     summary = _summary(
         args,
         profiles=profiles,
@@ -340,6 +355,7 @@ def main(argv: list[str] | None = None) -> int:
         summary=summary,
         candidates=_candidate_entries(records, sampled),
         world=world,
+        calendar_world=calendar_world,
     )
     print(f"Wrote records, summary, candidates and the Google world to {out_dir}")
     return 0

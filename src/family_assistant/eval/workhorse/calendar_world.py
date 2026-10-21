@@ -19,7 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -96,6 +96,9 @@ class WorldEvent(_Model):
     source_id: str
     recurring_series_uid: str | None = None
     observations: list[EventObservation]
+    # Further starts of a recurring series that reuses one UID for every
+    # occurrence, as CalDAV does; each lasts as long as the observed one.
+    occurrence_starts: list[str] = []
     # Set when a recorded turn created or deleted it.
     created_at: datetime | None = None
     deleted_at: datetime | None = None
@@ -156,6 +159,36 @@ def _synthetic_uid(arguments: Mapping[str, object]) -> str:
         json.dumps(arguments, sort_keys=True, default=str).encode()
     ).hexdigest()
     return f"eval-{digest[:24]}"
+
+
+def _span(observation: EventObservation) -> tuple[str, str, timedelta | None]:
+    """Title, time of day and duration: what a series keeps between occurrences."""
+    if observation.all_day:
+        start, end = (
+            date.fromisoformat(observation.start),
+            date.fromisoformat(observation.end[:10]),
+        )
+        return observation.summary, "", end - start
+    start_at = datetime.fromisoformat(observation.start)
+    end_at = (
+        datetime.fromisoformat(observation.end) if len(observation.end) > 10 else None
+    )
+    return (
+        observation.summary,
+        start_at.strftime("%H:%M"),
+        end_at - start_at if end_at is not None else None,
+    )
+
+
+def _another_occurrence(known: list[EventObservation], seen: EventObservation) -> bool:
+    """Whether ``seen`` is a different occurrence of a series, not an edit.
+
+    CalDAV gives every occurrence of a recurring series the same UID, which
+    looks like one event moving. An occurrence keeps the title, time of day
+    and length and lands on another date; an edit changes one of those.
+    """
+    latest = known[-1]
+    return latest.start[:10] != seen.start[:10] and _span(latest) == _span(seen)
 
 
 def _optional_str(value: object) -> str | None:
@@ -229,7 +262,15 @@ class _Builder:
                     matched_queries=[query] if query else [],
                 )
                 continue
-            existing.observations.append(observation)
+            if _another_occurrence(existing.observations, observation):
+                starts = {o.start for o in existing.observations}
+                if (
+                    observation.start not in starts
+                    and observation.start not in existing.occurrence_starts
+                ):
+                    existing.occurrence_starts.append(observation.start)
+            else:
+                existing.observations.append(observation)
             if query and query not in existing.matched_queries:
                 existing.matched_queries.append(query)
 

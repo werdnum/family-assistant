@@ -203,3 +203,57 @@ def test_failed_and_unparseable_results_are_ignored() -> None:
 
     assert world.events == []
     assert json.loads(world.model_dump_json())["calendars"] == []
+
+
+def _ballet(start: str, end: str) -> str:
+    return f"""Found 1 event(s):
+
+1. Ballet
+   Start: {start}
+   End: {end}
+   UID: ballet-series
+   Calendar: https://caldav.example.com/calendars/abc123
+   Source ID: abc123"""
+
+
+def test_a_weekly_occurrence_is_part_of_the_series_not_a_move() -> None:
+    world = build_calendar_world(
+        _history([
+            (
+                _T,
+                "search_calendar_events",
+                {},
+                _ballet("2026-09-26 09:10 AEST", "2026-09-26 10:40 AEST"),
+            ),
+            (
+                _T,
+                "search_calendar_events",
+                {},
+                _ballet("2026-10-03 09:10 AEST", "2026-10-03 10:40 AEST"),
+            ),
+        ]),
+        timezone=_SYDNEY,
+    )
+
+    (series,) = world.events
+    first = series.as_of(_T)
+    assert first is not None and first.start.startswith("2026-09-26")
+    assert [s[:10] for s in series.occurrence_starts] == ["2026-10-03"]
+
+
+def test_a_moved_appointment_is_an_edit() -> None:
+    moved = _SEARCH.replace("2026-10-20 09:00 AEDT", "2026-10-22 12:30 AEDT").replace(
+        "2026-10-20 10:00 AEDT", "2026-10-22 13:30 AEDT"
+    )
+    world = build_calendar_world(
+        _history([
+            (_T, "search_calendar_events", {}, _SEARCH),
+            (_T + timedelta(days=1), "search_calendar_events", {}, moved),
+        ]),
+        timezone=_SYDNEY,
+    )
+
+    dentist = next(e for e in world.events if e.uid == "dentist-1")
+    after = dentist.as_of(_T + timedelta(days=2))
+    assert dentist.occurrence_starts == []
+    assert after is not None and after.start.startswith("2026-10-22T12:30")

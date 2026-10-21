@@ -16,6 +16,7 @@ from pydantic import SecretStr
 
 from family_assistant.config_models import GoogleIntegrationConfig
 from family_assistant.eval.workhorse.fake_google import FakeGoogleBackend
+from family_assistant.eval.workhorse.fake_google_calendar import FakeGoogleCalendar
 from family_assistant.services.api_backend import ConnectedAccountTransport
 from family_assistant.services.credential_encryption import CredentialEncryption
 from family_assistant.services.google_provider import GOOGLE_PROVIDER
@@ -23,6 +24,7 @@ from family_assistant.services.google_provider import GOOGLE_PROVIDER
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from family_assistant.eval.workhorse.calendar_world import CalendarWorld
     from family_assistant.eval.workhorse.google_world import GoogleWorld
     from family_assistant.storage.database import Database
 
@@ -84,10 +86,21 @@ def _token_endpoint(request: httpx.Request) -> httpx.Response:
 
 
 def google_transport(
-    world: GoogleWorld, now: datetime, *, user_addresses: tuple[str, ...] = ()
+    world: GoogleWorld,
+    now: datetime,
+    *,
+    user_addresses: tuple[str, ...] = (),
+    calendar_world: CalendarWorld | None = None,
 ) -> tuple[ConnectedAccountTransport, FakeGoogleBackend]:
     """The transport to hand the application, and the fake behind it."""
-    backend = FakeGoogleBackend(world=world, now=now, user_addresses=user_addresses)
+    backend = FakeGoogleBackend(
+        world=world,
+        now=now,
+        user_addresses=user_addresses,
+        calendar=FakeGoogleCalendar(world=calendar_world, now=now)
+        if calendar_world is not None
+        else None,
+    )
     transport = ConnectedAccountTransport(
         api_backend=backend,
         token_http_client=httpx.AsyncClient(
