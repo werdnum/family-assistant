@@ -563,8 +563,10 @@ def _wait_for_http(
     while wall.monotonic() < deadline:
         if process.poll() is not None:
             raise RuntimeError("Home Assistant exited during startup")
+        # Onboarding, not just HTTP: the server answers before the onboarding
+        # component registers its views, and onboarding is the next request.
         with contextlib.suppress(httpx.HTTPError):
-            if client.get("/api/").status_code < 500:
+            if client.get("/api/onboarding").status_code == 200:
                 return
         wall.sleep(0.5)
     raise RuntimeError("Home Assistant did not start serving HTTP in time")
