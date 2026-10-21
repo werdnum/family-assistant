@@ -3,6 +3,7 @@
 import importlib
 import json
 from collections.abc import AsyncGenerator, Generator
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -675,6 +676,10 @@ async def test_agent_response_ignores_unused_environment(
     }
     mock_genai_client.aio.interactions.get = AsyncMock(return_value=response)
     mock_genai_client.aio.interactions.create = AsyncMock(return_value=response)
+    # A submitted sandbox run is given an environment of its own first.
+    mock_genai_client.aio.environments.create_environment = AsyncMock(
+        return_value=SimpleNamespace(id="env_1")
+    )
 
     for result in (
         await client.get_agent_interaction("inter_env"),

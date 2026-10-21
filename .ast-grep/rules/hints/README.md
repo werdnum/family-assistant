@@ -12,22 +12,6 @@ the required test fixtures under `.ast-grep/tests/hints/`), see
 
 This file is the catalogue of active hints.
 
-## `async-magic-mock`
-
-**Pattern**: `MagicMock(...)` or `Mock(...)` inside an `async def`. Test files only (the
-`test_only_hints` set in `check-hints.py`).
-
-**Why**: `MagicMock` does not handle async methods, so the mock fails once it is `await`ed. Use
-`AsyncMock`.
-
-## `test-mocking-guideline`
-
-**Pattern**: any `Mock(...)`, `MagicMock(...)`, or `AsyncMock(...)`. Test files only.
-
-**Why**: project guidelines prefer real or fake implementations over mocks. Use a real object when
-it is lightweight and has no external dependencies, a fake for external services, and a mock only
-for genuinely external dependencies such as the Telegram API.
-
 ## `no-wait-for-selector-then-click`
 
 **Pattern**: `$VAR = await $PAGE.wait_for_selector($$$)`.

@@ -94,6 +94,9 @@ Five things to know:
   script) arrives as attachments on its reply, up to 20 files and 50 MB per run; the reply names any
   that didn't fit. Talking to `/coder` directly returns only its reply text, so ask it to include
   anything you want to keep.
+- **Picking a job back up keeps its files.** Ask the assistant to continue an earlier coder job,
+  even one that stopped with an error, and the agent carries on in the same sandbox, with its
+  earlier work and any new files you send.
 - **It may have GitHub access.** Where the setup grants it, the agent can clone your repositories,
   read code and issues, and push branches or open pull requests as part of a task — ask for it the
   same way you'd ask for anything else:

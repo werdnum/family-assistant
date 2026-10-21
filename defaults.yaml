@@ -425,9 +425,13 @@ gemini_live_config:
     prefix_padding_ms: 300
     silence_duration_ms: null
   # Advanced features (require v1alpha API)
-  # Affective dialog allows the model to adapt response style to user's tone
+  # Affective dialog lets the model adapt its response style to the user's tone.
+  # Must stay off: no Live model we can run accepts it. The configured model
+  # takes the setup frame, returns setupComplete, and then closes the session
+  # with 1007 "Request contains an invalid argument." a moment later, so every
+  # voice session dies on connect. See the configuration reference.
   affective_dialog:
-    enabled: true
+    enabled: false
   # Proactivity allows the model to proactively decline irrelevant responses
   proactivity:
     enabled: true

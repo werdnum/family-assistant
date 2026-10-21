@@ -3746,6 +3746,9 @@ async def test_coder_list_environment_delivers_result(
     llm_client = GoogleGenAIClient(api_key="test", model="antigravity-preview-09-2026")
     interaction_id = "inter_coder_env"
     sdk = MagicMock()
+    sdk.aio.environments.create_environment = AsyncMock(
+        return_value=SimpleNamespace(id="env_coder")
+    )
     sdk.aio.interactions.create = AsyncMock(
         return_value={
             "id": interaction_id,

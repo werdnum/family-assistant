@@ -162,6 +162,10 @@ async def test_a_live_run_reads_as_pending_and_records_a_bounded_reading() -> No
     }
 
 
+@pytest.mark.skip(
+    reason="Antigravity's cancel answers 400 for every run, so the run cannot be "
+    "re-recorded; see https://github.com/werdnum/family-assistant/issues/1470"
+)
 @pytest.mark.no_db
 @pytest.mark.asyncio
 @pytest.mark.integration

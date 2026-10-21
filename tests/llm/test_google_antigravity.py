@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 import httpx
 import pytest
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai.interactions import Interaction
 from pydantic import TypeAdapter
 
@@ -26,6 +27,7 @@ from family_assistant.llm.messages import (
     TextContentPart,
     UserMessage,
 )
+from family_assistant.llm.providers import google_genai_client
 from family_assistant.llm.providers.google_genai_client import (
     GoogleGenAIClient,
     SandboxFile,
@@ -59,6 +61,8 @@ def mock_genai_client() -> Generator[MagicMock]:
         mock_instance = mock_client.return_value
         mock_instance.aio = MagicMock()
         mock_instance.aio.interactions = MagicMock()
+        # Every submitted sandbox run is given an environment of its own.
+        _accept_environments(mock_instance)
         yield mock_instance
 
 
@@ -259,6 +263,11 @@ async def test_start_agent_interaction_submits_antigravity_without_streaming(
     )
     mock_interaction = Interaction(id="inter_ag_submit", status="in_progress")
     mock_genai_client.aio.interactions.create = AsyncMock(return_value=mock_interaction)
+    mock_genai_client.aio.interactions.get = AsyncMock(
+        return_value=Interaction(
+            id="inter_ag_prev", status="completed", environment_id="env_prev"
+        )
+    )
 
     result = await client.start_agent_interaction(
         [UserMessage(content="Do the thing.")],
@@ -441,6 +450,7 @@ async def test_submit_path_uploads_files_into_an_environment(
     assert create.call_args.kwargs["environment"] == {
         "type": "remote",
         "environment_id": "env_1",
+        "network": "disabled",
     }
     body = _CREATE_INTERACTION_ADAPTER.validate_python(create.call_args.kwargs)
     assert body.environment.environment_id == "env_1"
@@ -515,8 +525,10 @@ async def test_default_sandbox_is_stated_rather_than_omitted(
 
     await client.start_agent_interaction([UserMessage(content="Do the thing.")])
 
+    # A submitted run names the environment created for it, so that a resume
+    # can bring files into the same sandbox.
     call_kwargs = mock_genai_client.aio.interactions.create.call_args.kwargs
-    assert call_kwargs["environment"] == {"type": "remote"}
+    assert call_kwargs["environment"] == {"type": "remote", "environment_id": "env_1"}
 
 
 @pytest.mark.asyncio
@@ -580,16 +592,22 @@ _STORED_GITHUB = EgressResolution(
 async def test_a_stored_git_credential_is_bound_to_the_sandbox_variable(
     mock_genai_client: MagicMock,
 ) -> None:
-    """The request the installed SDK accepts carries the credential binding."""
+    """The binding is made when the sandbox is created.
+
+    A run in an existing environment ignores an ``env`` sent with the run, so
+    the variable has to be on the environment itself.
+    """
     client = _egress_client(_STORED_GITHUB)
     create = _accept_submissions(mock_genai_client)
 
     await client.start_agent_interaction([UserMessage(content="Fix the bug.")])
 
-    body = _CREATE_INTERACTION_ADAPTER.validate_python(create.call_args.kwargs)
-    assert body.environment.model_dump(exclude_none=True)["env"] == {
-        GITHUB_GIT_AUTH_ENV: {"credential": "fa-egress-github-app-1-git"}
+    environments = mock_genai_client.aio.environments
+    assert environments.create_environment.await_args.kwargs["extra_body"] == {
+        "env": {GITHUB_GIT_AUTH_ENV: {"credential": "fa-egress-github-app-1-git"}}
     }
+    body = _CREATE_INTERACTION_ADAPTER.validate_python(create.call_args.kwargs)
+    assert body.environment.environment_id == "env_1"
 
 
 @pytest.mark.asyncio
@@ -743,7 +761,7 @@ async def test_every_page_of_an_output_listing_is_read(
 
     def page(path: str, token: str | None) -> SimpleNamespace:
         entry = SimpleNamespace(
-            path=path, type="FILE", size_bytes=1, mime_type="text/plain"
+            path=path, type="FILE", size_bytes=1, mime_type="text/plain", modified=None
         )
         return SimpleNamespace(files=[entry], next_page_token=token)
 
@@ -759,3 +777,148 @@ async def test_every_page_of_an_output_listing_is_read(
         "workspace/outputs/b.txt",
     ]
     assert environments.files.list.await_args_list[1].kwargs["page_token"] == "page-2"
+
+
+def _previous_run_in(mock_genai_client: MagicMock, environment_id: str) -> None:
+    """The interaction a resume chains onto ran in ``environment_id``."""
+    mock_genai_client.aio.interactions.get = AsyncMock(
+        return_value=Interaction(
+            id="inter_prev", status="completed", environment_id=environment_id
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_resumed_run_continues_in_its_predecessors_sandbox(
+    mock_genai_client: MagicMock,
+) -> None:
+    """The conversation and the disk come back together.
+
+    Chained without it, the API forks the earlier disk into a sandbox of its
+    own and leaves out files uploaded for the resume; given a fresh one, the
+    agent would find its conversation but not its work.
+    """
+    client = _egress_client("disabled")
+    create = _accept_submissions(mock_genai_client)
+    _previous_run_in(mock_genai_client, "env_prev")
+    environments = mock_genai_client.aio.environments
+
+    await client.start_agent_interaction(
+        [UserMessage(content="Now render the second bookmark.")],
+        previous_interaction_id="inter_prev",
+        sandbox_files=[
+            SandboxFile(
+                path="/workspace/ref.png", content=b"png", mime_type="image/png"
+            )
+        ],
+    )
+
+    environments.create_environment.assert_not_awaited()
+    assert environments.files.upload.await_args.kwargs["environment"] == "env_prev"
+    assert create.call_args.kwargs["previous_interaction_id"] == "inter_prev"
+    assert create.call_args.kwargs["environment"] == {
+        "type": "remote",
+        "environment_id": "env_prev",
+        "network": "disabled",
+    }
+
+
+@pytest.mark.asyncio
+async def test_an_upload_into_a_sandbox_not_yet_visible_is_retried(
+    mock_genai_client: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A just-created environment can 404 an upload for about a second."""
+    monkeypatch.setattr(
+        google_genai_client, "_UPLOAD_NOT_FOUND_RETRY_DELAYS", (0.0, 0.0)
+    )
+    client = _egress_client("disabled")
+    create = _accept_submissions(mock_genai_client)
+    environments = mock_genai_client.aio.environments
+    environments.files.upload.side_effect = [_not_found(), None]
+
+    await client.start_agent_interaction(
+        [UserMessage(content="Analyse the file.")],
+        sandbox_files=[
+            SandboxFile(path="/workspace/a.csv", content=b"a,b", mime_type="text/csv")
+        ],
+    )
+
+    assert environments.files.upload.await_count == 2
+    create.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_a_sandbox_that_never_takes_uploads_fails_the_resume_plainly(
+    mock_genai_client: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A run the API gave an implicit sandbox left one that refuses uploads."""
+    monkeypatch.setattr(
+        google_genai_client, "_UPLOAD_NOT_FOUND_RETRY_DELAYS", (0.0, 0.0)
+    )
+    client = _egress_client("disabled")
+    create = _accept_submissions(mock_genai_client)
+    _previous_run_in(mock_genai_client, "env_implicit")
+    mock_genai_client.aio.environments.files.upload.side_effect = _not_found()
+
+    with pytest.raises(DelegationPermanentError, match="does not accept new files"):
+        await client.start_agent_interaction(
+            [UserMessage(content="Use this too.")],
+            previous_interaction_id="inter_prev",
+            sandbox_files=[
+                SandboxFile(path="/workspace/b.csv", content=b"b", mime_type="text/csv")
+            ],
+        )
+    create.assert_not_called()
+
+
+def _not_found() -> Exception:
+    request = httpx.Request("POST", "https://generativelanguage.googleapis.com/")
+    return _SDK_COMPAT_ERRORS.NotFoundError(
+        "Environment not found or not accessible.",
+        response=httpx.Response(404, request=request),
+        body=None,
+    )
+
+
+def _download_not_found() -> genai_errors.ClientError:
+    """What the file transfer helpers raise for a missing environment."""
+    return genai_errors.ClientError(
+        404,
+        {"error": {"message": "Environment not found or not accessible."}},
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_download_from_a_sandbox_not_yet_visible_is_retried(
+    mock_genai_client: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        google_genai_client, "_UPLOAD_NOT_FOUND_RETRY_DELAYS", (0.0, 0.0)
+    )
+    client = _egress_client("disabled")
+    files = mock_genai_client.aio.environments.files
+    files.download.side_effect = [_download_not_found(), b"model bytes"]
+
+    content = await client.download_sandbox_file("env_1", "workspace/outputs/a.stl")
+
+    assert content == b"model bytes"
+
+
+@pytest.mark.asyncio
+async def test_a_file_that_stays_missing_is_lost_not_the_run(
+    mock_genai_client: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 404 would otherwise read as the run gone, and the run be resubmitted."""
+    monkeypatch.setattr(
+        google_genai_client, "_UPLOAD_NOT_FOUND_RETRY_DELAYS", (0.0, 0.0)
+    )
+    client = _egress_client("disabled")
+    files = mock_genai_client.aio.environments.files
+    files.download.side_effect = _download_not_found()
+
+    with pytest.raises(DelegationPermanentError, match="could not be read back"):
+        await client.download_sandbox_file("env_1", "workspace/outputs/a.stl")

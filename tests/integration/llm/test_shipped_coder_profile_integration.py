@@ -19,6 +19,7 @@ import os
 import random
 import re
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -137,6 +138,7 @@ async def _run_to_completion(
     content_parts: list[ContentPartDict] | None = None,
     acting_user_id: str | None = None,
     expected_output: str = "39287",
+    subconversation_id: str | None = None,
 ) -> Interaction:
     selection = (
         coder.resolve_model_selection(
@@ -149,7 +151,7 @@ async def _run_to_completion(
         content_parts
         or [{"type": "text", "text": "Run Python to print 17 * 2311, then stop."}],
         conversation_id="coder-integration",
-        subconversation_id=None,
+        subconversation_id=subconversation_id,
         user_name="Tester",
         db_context=Database(db_engine),
         acting_user_id=acting_user_id,
@@ -348,3 +350,90 @@ async def test_files_the_agent_leaves_in_outputs_come_back_as_attachments(
         "report.txt": (b"tps-1457", "text/plain"),
         "data_table.bin": (bytes(range(256)) * 4, "application/octet-stream"),
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+@pytest.mark.llm_integration
+@pytest.mark.vcr(before_record_response=_sanitize_keeping_upload_sessions)
+async def test_a_resumed_run_finds_its_earlier_work_and_its_new_files(
+    coder: InteractionsAgentProcessingService,
+    db_engine: AsyncEngine,
+    llm_record_mode: str,
+) -> None:
+    """Resuming brings back the sandbox's disk along with the conversation.
+
+    The earlier run is recorded as failed -- the 21 Oct case, where a
+    connection blip on our side failed a run that had done real work -- and
+    the resume brings a new attachment, which must land beside that work.
+    """
+    first = await _run_to_completion(
+        coder,
+        db_engine,
+        model_tier=None,
+        llm_record_mode=llm_record_mode,
+        content_parts=[
+            {
+                "type": "text",
+                "text": "Run `printf remembered > /workspace/note.txt`, then reply "
+                "with just the word DONE.",
+            }
+        ],
+        expected_output="DONE",
+        subconversation_id="sub-resume",
+    )
+    assert first.id
+    db_context = Database(db_engine)
+    await db_context.delegation_runs.create_run({
+        "delegation_id": "d-first",
+        "task_id": "task-d-first",
+        "source_profile_id": "default_assistant",
+        "target_service_id": "coder",
+        "interface_type": "web",
+        "conversation_id": "coder-integration",
+        "subconversation_id": "sub-resume",
+        "request_text": "write the note",
+        "content_parts_json": [],
+    })
+    await db_context.delegation_runs.mark_awaiting_remote(
+        "d-first",
+        remote_task_id=first.id,
+        remote_context_id=None,
+        started_at=datetime(2026, 10, 21, tzinfo=UTC),
+    )
+    await db_context.delegation_runs.mark_failed(
+        delegation_id="d-first",
+        error="All connection attempts failed",
+        completed_at=datetime(2026, 10, 21, tzinfo=UTC),
+    )
+    registry = coder.attachment_registry
+    assert registry is not None
+    reference = await registry.register_user_attachment(
+        db_context=db_context,
+        content=b"added on resume",
+        filename="ref.txt",
+        mime_type="text/plain",
+        user_id="tester",
+    )
+
+    resumed = await _run_to_completion(
+        coder,
+        db_engine,
+        model_tier=None,
+        llm_record_mode=llm_record_mode,
+        content_parts=[
+            {
+                "type": "text",
+                "text": "Run `cat /workspace/note.txt; echo; cat /workspace/ref.txt` "
+                "and reply with the raw output only.",
+            },
+            {"type": "attachment", "attachment_id": reference.attachment_id},
+        ],
+        acting_user_id="tester",
+        expected_output="remembered",
+        subconversation_id="sub-resume",
+    )
+
+    assert "added on resume" in (resumed.output_text or "")
+    assert resumed.previous_interaction_id == first.id
+    assert resumed.environment_id == first.environment_id

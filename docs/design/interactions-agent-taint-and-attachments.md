@@ -224,6 +224,17 @@ carries the taint of the run's own reply, since the agent produced both from the
 transient failure fetching them leaves the run to be read again; a permanent one delivers the text
 and says the files could not be fetched.
 
+### 5. A resumed run continues in the same sandbox
+
+Resuming a delegation chains onto the earlier run's interaction, and the resumed run executes in
+that run's environment, so the agent finds its earlier work where it left it, along with any file
+sent with the resume. Every delegated sandbox run is therefore given an environment created through
+the API, even with nothing to upload, because only such an environment accepts uploads later. For a
+sandboxed agent, a resume chains onto the latest run that reached the provider, failed or not: a run
+failed on our side after a connection blip did real work, and its sandbox still holds it. Its
+outputs are the files under `/workspace/outputs` modified since it started: the predecessor's are in
+the same directory and were returned with that run.
+
 ## Deliberate simplifications
 
 - **Output files registered for a losing reader are left in place.** Two readers racing to finish

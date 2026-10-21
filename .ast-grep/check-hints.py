@@ -63,10 +63,7 @@ def run_ast_grep_hints(files: list[str]) -> list[dict]:
             continue
 
     # Filter to only test files for test-specific hints
-    test_only_hints = {
-        "async-magic-mock",
-        "test-mocking-guideline",
-    }
+    test_only_hints: set[str] = set()
 
     filtered_data = []
     for item in all_results:

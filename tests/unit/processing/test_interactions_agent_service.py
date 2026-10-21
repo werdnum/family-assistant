@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock
@@ -1781,3 +1782,111 @@ async def test_a_retryable_download_failure_registers_nothing(
         )
 
     assert await registry.list_attachments(db_context, acting_user_id="user-1") == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("agent_client", "chained_onto"),
+    [
+        (lambda: _antigravity_client("gemini-3.8-flash"), "inter_failed"),
+        (_google_client, None),
+    ],
+    ids=["sandboxed agent", "deep research"],
+)
+async def test_a_resume_after_a_failed_run_chains_only_a_sandboxed_agent(
+    db_engine: AsyncEngine,
+    agent_client: Callable[[], GoogleGenAIClient],
+    chained_onto: str | None,
+) -> None:
+    """A sandboxed agent's failed run holds its work; Deep Research's does not."""
+    db_context = Database(db_engine)
+    await db_context.delegation_runs.create_run({
+        "delegation_id": "d-failed",
+        "task_id": "task-d-failed",
+        "source_profile_id": "src",
+        "target_service_id": "research",
+        "interface_type": "web",
+        "conversation_id": "conv-1",
+        "subconversation_id": "sub-1",
+        "request_text": "make the bookmarks",
+        "content_parts_json": [],
+    })
+    await db_context.delegation_runs.mark_awaiting_remote(
+        "d-failed",
+        remote_task_id="inter_failed",
+        remote_context_id=None,
+        started_at=datetime(2026, 10, 21, tzinfo=UTC),
+    )
+    await db_context.delegation_runs.mark_failed(
+        delegation_id="d-failed",
+        error="All connection attempts failed",
+        completed_at=datetime(2026, 10, 21, tzinfo=UTC),
+    )
+    client = agent_client()
+    interaction = AsyncMock()
+    interaction.id = "inter_resumed"
+    client.start_agent_interaction = AsyncMock(return_value=interaction)
+    service = _make_service(client)
+
+    await service.submit_async(
+        [{"type": "text", "text": "Carry on from where you were."}],
+        conversation_id="conv-1",
+        subconversation_id="sub-1",
+        user_name="Andrew",
+        db_context=db_context,
+    )
+
+    kwargs = client.start_agent_interaction.call_args.kwargs
+    assert kwargs["previous_interaction_id"] == chained_onto
+
+
+@pytest.mark.asyncio
+async def test_a_resumed_run_returns_only_what_it_wrote(
+    db_engine: AsyncEngine,
+    tmp_path: Path,
+) -> None:
+    """The predecessor's outputs share the sandbox and were already returned."""
+    registry = AttachmentRegistry(
+        storage_path=str(tmp_path), db_engine=db_engine, config=None
+    )
+    client, download = _client_with_outputs({})
+    started = datetime(2026, 10, 21, 5, 41, 8, 600_000, tzinfo=UTC)
+    client.list_sandbox_files = AsyncMock(
+        return_value=[
+            SandboxFileEntry(
+                path=f"workspace/outputs/{name}",
+                size_bytes=1,
+                mime_type="text/plain",
+                modified=modified,
+            )
+            for name, modified in (
+                ("earlier.txt", started - timedelta(minutes=30)),
+                # Whole-second listing time, written in the run's first second.
+                ("first-second.txt", started.replace(microsecond=0)),
+                ("later.txt", started + timedelta(minutes=2)),
+                ("untimed.txt", None),
+            )
+        ]
+    )
+    download.side_effect = lambda _env, _path: b"x"
+    service = _make_service(client, attachment_registry=registry)
+    observation = replace(
+        _finished_with_environment("env_prev"), remote_created_at=started
+    )
+
+    collected = await service.collect_outputs(
+        observation,
+        owner_user_id="user-1",
+        conversation_id="conv-1",
+        taint_state=TurnTaintState.empty(),
+        db_context=Database(db_engine),
+    )
+
+    fetched = [call.args[1] for call in download.await_args_list]
+    assert fetched == [
+        "workspace/outputs/first-second.txt",
+        "workspace/outputs/later.txt",
+        "workspace/outputs/untimed.txt",
+    ]
+    assert len(collected.attachment_ids) == 3
+    assert collected.omitted == []

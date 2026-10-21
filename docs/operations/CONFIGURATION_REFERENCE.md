@@ -3190,6 +3190,27 @@ calls over Asterisk use `vad` with `telephone_overrides.vad` applied on top.
 
 ______________________________________________________________________
 
+## Affective Dialog (`gemini_live_config.affective_dialog`)
+
+```yaml
+gemini_live_config:
+  affective_dialog:
+    enabled: false
+```
+
+Asks the model to adapt its response style to the user's tone. **Leave it off.** No Live model this
+deployment can run accepts it: the configured model takes the setup frame and answers
+`setupComplete`, then closes the session with `1007 Request contains an invalid argument.` a moment
+later. Turning it on therefore kills every voice session on connect — iOS, web and Asterisk phone
+calls alike, since all three senders read this one setting — and the user hears a call that starts
+and drops within a second.
+
+The failure is only visible as a close code, so a session that dies this way is recorded in the
+`Voice.connection` telemetry lane as `close_reason_category: "invalid_setup"` after a
+`setup_complete` breadcrumb. `proactivity` in the same block is unaffected and safe to enable.
+
+______________________________________________________________________
+
 ## Advanced Configuration
 
 ### DEFAULT_SERVICE_PROFILE_ID

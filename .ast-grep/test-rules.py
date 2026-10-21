@@ -6,7 +6,7 @@ Validates that rules match positive examples and don't match negative examples.
 
 Usage:
     .ast-grep/test-rules.py                    # Test all rules
-    .ast-grep/test-rules.py --rule async-magic-mock  # Test specific rule
+    .ast-grep/test-rules.py --rule no-unspecced-mock  # Test specific rule
     .ast-grep/test-rules.py --verbose          # Show detailed output
 """
 

@@ -501,8 +501,9 @@ class InteractionsAgentProcessingService(ProcessingService):
         cache prefix to protect.
         Chains onto the prior delegation's
         interaction (if this is a resumed run — see
-        ``DelegationRunsRepository.get_latest_completed_run``), and submits
-        in the background.
+        ``DelegationRunsRepository.get_latest_chainable_run``), and submits
+        in the background. A sandboxed agent resumes in the same sandbox, so
+        its earlier files are where it left them.
 
         Attachments are mounted into the sandbox and their taint folded into
         the sink evaluation, which happens *after* they are resolved so a file
@@ -555,12 +556,14 @@ class InteractionsAgentProcessingService(ProcessingService):
             llm_client=llm_client,
         )
 
+        client = self._google_client(llm_client)
         previous_interaction_id: str | None = None
         if subconversation_id is not None:
-            prior_run = await db_context.delegation_runs.get_latest_completed_run(
+            prior_run = await db_context.delegation_runs.get_latest_chainable_run(
                 conversation_id=conversation_id,
                 subconversation_id=subconversation_id,
                 target_service_id=self.service_config.id,
+                include_failed=client.runs_in_sandbox,
             )
             if prior_run is not None:
                 previous_interaction_id = prior_run["remote_task_id"]
@@ -570,7 +573,7 @@ class InteractionsAgentProcessingService(ProcessingService):
         # so the profile it should be attributed to is established here.
         token = set_processing_profile(self.service_config.id)
         try:
-            interaction = await self._google_client(llm_client).start_agent_interaction(
+            interaction = await client.start_agent_interaction(
                 messages,
                 previous_interaction_id=previous_interaction_id,
                 sandbox_files=sandbox_files,
@@ -613,6 +616,20 @@ class InteractionsAgentProcessingService(ProcessingService):
             return CollectedOutputs(attachment_ids=[], omitted=[])
         client = self._google_client()
         entries = await client.list_sandbox_files(environment_id, _SANDBOX_OUTPUT_DIR)
+        # A resumed run works in its predecessor's sandbox, whose outputs were
+        # returned with that run: only what this run wrote is its output. The
+        # listing has whole-second timestamps, so the run's start is truncated
+        # to match; a file that reports no time is returned rather than lost.
+        started = observation.remote_created_at
+        if started is not None and started.tzinfo is not None:
+            started = started.replace(microsecond=0)
+            entries = [
+                entry
+                for entry in entries
+                if entry.modified is None
+                or entry.modified.tzinfo is None
+                or entry.modified >= started
+            ]
         if not entries:
             return CollectedOutputs(attachment_ids=[], omitted=[])
         registry = self.attachment_registry

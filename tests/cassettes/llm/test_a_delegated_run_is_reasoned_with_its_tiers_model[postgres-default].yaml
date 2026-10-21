@@ -1,337 +1,422 @@
 interactions:
-  - request:
-      body: '{"agent": "antigravity-preview-09-2026", "input": "Run Python to print 17 * 2311, then stop.", "agent_config": {"model": "gemini-3.8-flash", "type": "antigravity"}, "background": true, "environment": {"type": "remote"}, "stream": false, "system_instruction": "[Active Processing Profile: coder]\n\nYou are a coding agent working for Tester. You run in an isolated sandbox with code execution, a scratch filesystem and web access; you have no access to Tester''s notes, calendar, documents or devices, so work only from what is in the request. Write the code, run it, and check the output before you answer \u2014 carry the task through to a finished result rather than describing how it could be done. The sandbox is discarded when you finish, so include any code, data or files that matter in your reply. Report what you did along with the result; your final text response will be sent directly to Tester.\nWeb chat copy: hover over an assistant reply or Tab to its Copy response button to copy the response text. A checkmark confirms success; if clipboard access fails, an error below the reply suggests selecting and copying the text manually.\nApple Watch note: Family Assistant includes a watchOS voice app. Users sign in on their paired iPhone, then tap Set up with iPhone in the watch app; no watch-side URL entry or browser login is needed. After setup, tap Start Voice or the Family Assistant Voice watch-face complication. Voice works over whatever connection the watch has, with or without the iPhone nearby. Expired sign-in is renewed through the iPhone setup flow. Phone sign-out/account changes clear watch sign-in when connectivity delivers the update, not immediately while disconnected. The watch shows microphone activity, live captions, and mute/end controls, and ends a session when leaving the app. Watch voice conversations are not saved to chat history. See docs/user/interfaces.md for setup.\nWeb conversation sharing: the header Share button opens a dialog. Create and copy link makes a read-only link for signed-in authorized users; Copy link or Retry copy reuses the displayed selectable URL without replacing it. Replace and copy link invalidates the previous link even if copying fails, and Stop sharing revokes access. The URL is kept only while that conversation stays open in the web app and cannot be retrieved after leaving or reloading.\nNative iOS app note: if a user asks about the app, explain that Chat, Voice, and Notes open in native iOS screens. Shared-conversation links on assistant.andrewgarrett.dev also open in a native authenticated read-only transcript that supports pull-to-refresh and attachments without adding the conversation to the recipient''s history. Native Chat shares browser conversation history, streams replies, can stop or steer a running reply, supports profile switching, Markdown, tool calls, approvals, attachments of any file type, sharing files from the iOS share sheet or Files \"Open In\" flow into a new Chat draft, pasting a copied image (e.g. a screenshot, or a photo copied in the Photos app) as a draft attachment via the composer''s paste button, notification deep links, direct launch into a fresh composer when there is no recent chat to restore, and a long-press app-icon \"New Chat\" quick action. The Chat toolbar shows a connection indicator that rides out a momentary blip without flashing a warning, shows a spinner while it is actively reconnecting, and otherwise distinguishes degraded (updates lagging, tap to reconnect), offline (no connection, tap to reconnect), and sign-in-required (tap to sign in) states rather than one generic \"no connection\" icon; background sync failures surface quietly through it instead of popping error dialogs \u2014 and, when the conversation list itself can''t refresh, through a small \"Couldn''t refresh \u2014 last updated ...\" note at the top of the list rather than a dialog \u2014 so there are far fewer interrupting popups. A failed send shows inline on the message with a Retry button that safely resends without ever double-sending (reconnecting to an already-running reply instead of re-posting it), rather than a modal. The conversation list refreshes automatically when the app returns to the foreground, so chats that changed while it was backgrounded stay up to date without a manual pull-to-refresh. Native Voice is a top-level tab, asks for microphone permission when starting, shows a microphone level meter while audio frames are captured, reports an error instead of staying connected silently if microphone capture fails, and can be opened from the long-press app-icon \"Voice\" quick action. The search field above the chat list, in the iOS app and the web chat sidebar, finds chats by words said anywhere in them (not just the last message): every typed word must start a word somewhere in the chat, and each result shows a snippet of where it matched. Notes can search, read, create, edit, delete, and change whether notes are loaded into the assistant''s context automatically. Other app pages still open through the embedded web interface. The gear menu can enable APNs notifications, and confirmation notifications can include approve/deny actions when the server is configured.\nNative voice diagnostics: iPhone and Apple Watch send connection-stage metadata automatically, without audio, transcripts or credentials. For a failed connection, ask for the approximate attempt time and device and consult remote diagnostics; no USB connection is required. Failed report uploads are retried on voice entry or app relaunch, so missing reports do not prove that a startup stage succeeded. See docs/user/interfaces.md.\nIf a user reports the iOS message \"authentication wall detected\", explain that the app received a sign-in or network access page instead of its API. Tell them to open their Family Assistant web address in Safari, complete any sign-in, return to the app, and tap the Chat connection indicator; if the page is unreachable or the message persists, advise them to contact the person who manages the server and access gateway.\n\nEach user message begins with a [Sent ...] line giving the time it was sent. The line is added by the system, not written by the user; the newest one is the current time. Never include such a line in your reply. A user message that arrives after your tool results, before you have answered, was sent while you were already working: treat it as the latest instruction for the turn, re-evaluate your plan, and make the smallest necessary adjustment before continuing.\n\nCurrent time: <pinned>\n\nFiles you are sent are in /workspace. Save every file meant for Tester (a model, image, document or data file) under /workspace/outputs: the files there are sent to Tester as attachments with your reply, up to 20 files and 50 MB in all. Nothing else in the sandbox is returned."}'
-      headers:
-        accept:
-          - application/json
-        accept-encoding:
-          - gzip, deflate
-        connection:
-          - keep-alive
-        content-length:
-          - '6859'
-        content-type:
-          - application/json
-        host:
-          - generativelanguage.googleapis.com
-        user-agent:
-          - speakeasy-sdk/python 2.4.1-preview.5 internal v1beta google-genai
-        x-goog-api-client:
-          - google-genai-sdk/2.24.0 gl-python/3.13.13
-      method: POST
-      uri: https://generativelanguage.googleapis.com/v1beta/interactions
-    response:
-      body:
-        string: !!binary |
-          H4sIAAAAAAAC/5SP3VKDMBSE34VbxclJmli51Kk/M1in1BbKDROSUxp/AhNSpDq+u6Fv4O13dvfs
-          /kRGR0k0QHV3UN+4zcpdUY7Zu0/TYsH1Ala13bH14/a2HJ+KZ/axyfN7qjZluj7B+FJky80Dp0ty
-          gFWuosuo99If+5BobNW5tnHY9wErh9Lj9IkSKmIgMYVXQhPGE4ArwQXMOeH0gpCEkKA/dvpferSD
-          ca39ROur86B6RpnkKIiAay41m2mBewCUQPbzWrKpKrrBKKy8QRccobnV0ulwaes3VP48wqOTypvW
-          BiybEB+otN40Tg7Gn+LO4WDwKyY38dQ0+v0DAAD//wMAOEmKClEBAAA=
-      headers:
-        Alt-Svc:
-          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
-        Content-Encoding:
-          - gzip
-        Content-Type:
-          - application/json
-        Date:
-          - Wed, 21 Oct 2026 02:35:17 GMT
-        Server:
-          - scaffolding on HTTPServer2
-        Server-Timing:
-          - gfet4t7; dur=10566
-        Transfer-Encoding:
-          - chunked
-        Vary:
-          - Origin
-          - X-Origin
-          - Referer
-        X-Content-Type-Options:
-          - nosniff
-        X-Frame-Options:
-          - SAMEORIGIN
-        X-XSS-Protection:
-          - '0'
-      status:
-        code: 200
-        message: OK
-  - request:
-      body: ''
-      headers:
-        accept:
-          - application/json
-        accept-encoding:
-          - gzip, deflate
-        connection:
-          - keep-alive
-        content-type:
-          - application/json
-        host:
-          - generativelanguage.googleapis.com
-        user-agent:
-          - speakeasy-sdk/python 2.4.1-preview.5 internal v1beta google-genai
-        x-goog-api-client:
-          - google-genai-sdk/2.24.0 gl-python/3.13.13
-      method: GET
-      uri: https://generativelanguage.googleapis.com/v1beta/interactions/v1_ChczeVRZYXZxRktLLXE5dE1QbnY3SHVBZxIXM3lUWWF2cUZLSy1xOXRNUG52N0h1QWc?stream=false
-    response:
-      body:
-        string: !!binary |
-          H4sIAAAAAAAC/4yPy26DMBBF/8XblspjA0lZtkofEk0VUhLCBhl7QtyHQcahpFX+vSZf0O2ZO3fO
-          /BKtSEIGqO4P8gc3WbkryjH7cGlaLCK1gFVtdnz9tLkrx+fihX/m2+0Dk3mZrk8wvhbZMn+M2JIe
-          YLWV5Jr0Trhj7xu1qTrbNhb73mNpUTicLjHK4gBowOCNsoRHCYQ3bB5HM7iiNKHUh4+d+n8YzaBt
-          a77QuOrySh0yLiKMaQyzSCgeqhj3ACiA7ue14JMk2kFLrJxG6ze8s1HCKj9p63eU7qLv0ArpdGs8
-          Fo2v91QYpxsrBu1OQWdx0Pgd0Ntg0iTnPwAAAP//AwCOn3gASwEAAA==
-      headers:
-        Alt-Svc:
-          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
-        Content-Encoding:
-          - gzip
-        Content-Type:
-          - application/json
-        Date:
-          - Wed, 21 Oct 2026 02:35:19 GMT
-        Server:
-          - scaffolding on HTTPServer2
-        Server-Timing:
-          - gfet4t7; dur=1331
-        Transfer-Encoding:
-          - chunked
-        Vary:
-          - Origin
-          - X-Origin
-          - Referer
-        X-Content-Type-Options:
-          - nosniff
-        X-Frame-Options:
-          - SAMEORIGIN
-        X-XSS-Protection:
-          - '0'
-      status:
-        code: 200
-        message: OK
-  - request:
-      body: ''
-      headers:
-        accept:
-          - application/json
-        accept-encoding:
-          - gzip, deflate
-        connection:
-          - keep-alive
-        content-type:
-          - application/json
-        host:
-          - generativelanguage.googleapis.com
-        user-agent:
-          - speakeasy-sdk/python 2.4.1-preview.5 internal v1beta google-genai
-        x-goog-api-client:
-          - google-genai-sdk/2.24.0 gl-python/3.13.13
-      method: GET
-      uri: https://generativelanguage.googleapis.com/v1beta/interactions/v1_ChczeVRZYXZxRktLLXE5dE1QbnY3SHVBZxIXM3lUWWF2cUZLSy1xOXRNUG52N0h1QWc?stream=false
-    response:
-      body:
-        string: !!binary |
-          H4sIAAAAAAAC/4yPy26DMBBF/8XblspjA0lZtkofEk0VUhLCBhl7QtyHQcahpFX+vSZf0O2ZO3fO
-          /BKtSEIGqO4P8gc3WbkryjH7cGlaLCK1gFVtdnz9tLkrx+fihX/m2+0Dk3mZrk8wvhbZMn+M2JIe
-          YLWV5Jr0Trhj7xu1qTrbNhb73mNpUTicLjHK4gBowOCNsoRHCYQ3bB5HM7iiNKHUh4+d+n8YzaBt
-          a77QuOrySh0yLiKMaQyzSCgeqhj3ACiA7ue14JMk2kFLrJxG6ze8s1HCKj9p63eU7qLv0ArpdGs8
-          Fo2v91QYpxsrBu1OQWdx0Pgd0Ntg0iTnPwAAAP//AwCOn3gASwEAAA==
-      headers:
-        Alt-Svc:
-          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
-        Content-Encoding:
-          - gzip
-        Content-Type:
-          - application/json
-        Date:
-          - Wed, 21 Oct 2026 02:35:20 GMT
-        Server:
-          - scaffolding on HTTPServer2
-        Server-Timing:
-          - gfet4t7; dur=1297
-        Transfer-Encoding:
-          - chunked
-        Vary:
-          - Origin
-          - X-Origin
-          - Referer
-        X-Content-Type-Options:
-          - nosniff
-        X-Frame-Options:
-          - SAMEORIGIN
-        X-XSS-Protection:
-          - '0'
-      status:
-        code: 200
-        message: OK
-  - request:
-      body: ''
-      headers:
-        accept:
-          - application/json
-        accept-encoding:
-          - gzip, deflate
-        connection:
-          - keep-alive
-        content-type:
-          - application/json
-        host:
-          - generativelanguage.googleapis.com
-        user-agent:
-          - speakeasy-sdk/python 2.4.1-preview.5 internal v1beta google-genai
-        x-goog-api-client:
-          - google-genai-sdk/2.24.0 gl-python/3.13.13
-      method: GET
-      uri: https://generativelanguage.googleapis.com/v1beta/interactions/v1_ChczeVRZYXZxRktLLXE5dE1QbnY3SHVBZxIXM3lUWWF2cUZLSy1xOXRNUG52N0h1QWc?stream=false
-    response:
-      body:
-        string: !!binary |
-          H4sIAAAAAAAC/4yPy26DMBBF/8XblspjA0lZtkofEk0VUhLCBhl7QtyHQcahpFX+vSZf0O2ZO3fO
-          /BKtSEIGqO4P8gc3WbkryjH7cGlaLCK1gFVtdnz9tLkrx+fihX/m2+0Dk3mZrk8wvhbZMn+M2JIe
-          YLWV5Jr0Trhj7xu1qTrbNhb73mNpUTicLjHK4gBowOCNsoRHCYQ3bB5HM7iiNKHUh4+d+n8YzaBt
-          a77QuOrySh0yLiKMaQyzSCgeqhj3ACiA7ue14JMk2kFLrJxG6ze8s1HCKj9p63eU7qLv0ArpdGs8
-          Fo2v91QYpxsrBu1OQWdx0Pgd0Ntg0iTnPwAAAP//AwCOn3gASwEAAA==
-      headers:
-        Alt-Svc:
-          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
-        Content-Encoding:
-          - gzip
-        Content-Type:
-          - application/json
-        Date:
-          - Wed, 21 Oct 2026 02:35:37 GMT
-        Server:
-          - scaffolding on HTTPServer2
-        Server-Timing:
-          - gfet4t7; dur=1699
-        Transfer-Encoding:
-          - chunked
-        Vary:
-          - Origin
-          - X-Origin
-          - Referer
-        X-Content-Type-Options:
-          - nosniff
-        X-Frame-Options:
-          - SAMEORIGIN
-        X-XSS-Protection:
-          - '0'
-      status:
-        code: 200
-        message: OK
-  - request:
-      body: ''
-      headers:
-        accept:
-          - application/json
-        accept-encoding:
-          - gzip, deflate
-        connection:
-          - keep-alive
-        content-type:
-          - application/json
-        host:
-          - generativelanguage.googleapis.com
-        user-agent:
-          - speakeasy-sdk/python 2.4.1-preview.5 internal v1beta google-genai
-        x-goog-api-client:
-          - google-genai-sdk/2.24.0 gl-python/3.13.13
-      method: GET
-      uri: https://generativelanguage.googleapis.com/v1beta/interactions/v1_ChczeVRZYXZxRktLLXE5dE1QbnY3SHVBZxIXM3lUWWF2cUZLSy1xOXRNUG52N0h1QWc?stream=false
-    response:
-      body:
-        string: !!binary |
-          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
-      headers:
-        Alt-Svc:
-          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
-        Content-Encoding:
-          - gzip
-        Content-Type:
-          - application/json
-        Date:
-          - Wed, 21 Oct 2026 02:35:57 GMT
-        Server:
-          - scaffolding on HTTPServer2
-        Server-Timing:
-          - gfet4t7; dur=4971
-        Transfer-Encoding:
-          - chunked
-        Vary:
-          - Origin
-          - X-Origin
-          - Referer
-        X-Content-Type-Options:
-          - nosniff
-        X-Frame-Options:
-          - SAMEORIGIN
-        X-XSS-Protection:
-          - '0'
-      status:
-        code: 200
-        message: OK
+- request:
+    body: '{}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '2'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - speakeasy-sdk/python 2.4.1-preview.5 internal v1beta google-genai
+      x-goog-api-client:
+      - google-genai-sdk/2.24.0 gl-python/3.13.13
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/environments
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/6tWykxRslIyTDM1MEtLMzU0NrcwTTGzTE4ysbBMTE4xMTA0TjIyTFbSUSouSSwp
+        LQaqTUwuySxLVaoFAIujOy87AAAA
+    headers:
+      Alt-Svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      Content-Encoding:
+      - gzip
+      Content-Type:
+      - application/json
+      Date:
+      - Wed, 21 Oct 2026 05:39:47 GMT
+      Server:
+      - scaffolding on HTTPServer2
+      Server-Timing:
+      - gfet4t7; dur=2282
+      Transfer-Encoding:
+      - chunked
+      Vary:
+      - Origin
+      - X-Origin
+      - Referer
+      X-Content-Type-Options:
+      - nosniff
+      X-Frame-Options:
+      - SAMEORIGIN
+      X-XSS-Protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"agent": "antigravity-preview-09-2026", "input": "Run Python to print
+      17 * 2311, then stop.", "agent_config": {"model": "gemini-3.8-flash", "type":
+      "antigravity"}, "background": true, "environment": {"environment_id": "1f506ff513785d69cb489acd4013b21c",
+      "type": "remote"}, "stream": false, "system_instruction": "[Active Processing
+      Profile: coder]\n\nYou are a coding agent working for Tester. You run in an
+      isolated sandbox with code execution, a scratch filesystem and web access; you
+      have no access to Tester''s notes, calendar, documents or devices, so work only
+      from what is in the request. Write the code, run it, and check the output before
+      you answer \u2014 carry the task through to a finished result rather than describing
+      how it could be done. The sandbox is discarded when you finish, so include any
+      code, data or files that matter in your reply. Report what you did along with
+      the result; your final text response will be sent directly to Tester.\nWeb chat
+      copy: hover over an assistant reply or Tab to its Copy response button to copy
+      the response text. A checkmark confirms success; if clipboard access fails,
+      an error below the reply suggests selecting and copying the text manually.\nApple
+      Watch note: Family Assistant includes a watchOS voice app. Users sign in on
+      their paired iPhone, then tap Set up with iPhone in the watch app; no watch-side
+      URL entry or browser login is needed. After setup, tap Start Voice or the Family
+      Assistant Voice watch-face complication. Voice works over whatever connection
+      the watch has, with or without the iPhone nearby. Expired sign-in is renewed
+      through the iPhone setup flow. Phone sign-out/account changes clear watch sign-in
+      when connectivity delivers the update, not immediately while disconnected. The
+      watch shows microphone activity, live captions, and mute/end controls, and ends
+      a session when leaving the app. Watch voice conversations are not saved to chat
+      history. See docs/user/interfaces.md for setup.\nWeb conversation sharing: the
+      header Share button opens a dialog. Create and copy link makes a read-only link
+      for signed-in authorized users; Copy link or Retry copy reuses the displayed
+      selectable URL without replacing it. Replace and copy link invalidates the previous
+      link even if copying fails, and Stop sharing revokes access. The URL is kept
+      only while that conversation stays open in the web app and cannot be retrieved
+      after leaving or reloading.\nNative iOS app note: if a user asks about the app,
+      explain that Chat, Voice, and Notes open in native iOS screens. Shared-conversation
+      links on assistant.andrewgarrett.dev also open in a native authenticated read-only
+      transcript that supports pull-to-refresh and attachments without adding the
+      conversation to the recipient''s history. Native Chat shares browser conversation
+      history, streams replies, can stop or steer a running reply, supports profile
+      switching, Markdown, tool calls, approvals, attachments of any file type, sharing
+      files from the iOS share sheet or Files \"Open In\" flow into a new Chat draft,
+      pasting a copied image (e.g. a screenshot, or a photo copied in the Photos app)
+      as a draft attachment via the composer''s paste button, notification deep links,
+      direct launch into a fresh composer when there is no recent chat to restore,
+      and a long-press app-icon \"New Chat\" quick action. The Chat toolbar shows
+      a connection indicator that rides out a momentary blip without flashing a warning,
+      shows a spinner while it is actively reconnecting, and otherwise distinguishes
+      degraded (updates lagging, tap to reconnect), offline (no connection, tap to
+      reconnect), and sign-in-required (tap to sign in) states rather than one generic
+      \"no connection\" icon; background sync failures surface quietly through it
+      instead of popping error dialogs \u2014 and, when the conversation list itself
+      can''t refresh, through a small \"Couldn''t refresh \u2014 last updated ...\"
+      note at the top of the list rather than a dialog \u2014 so there are far fewer
+      interrupting popups. A failed send shows inline on the message with a Retry
+      button that safely resends without ever double-sending (reconnecting to an already-running
+      reply instead of re-posting it), rather than a modal. The conversation list
+      refreshes automatically when the app returns to the foreground, so chats that
+      changed while it was backgrounded stay up to date without a manual pull-to-refresh.
+      Native Voice is a top-level tab, asks for microphone permission when starting,
+      shows a microphone level meter while audio frames are captured, reports an error
+      instead of staying connected silently if microphone capture fails, and can be
+      opened from the long-press app-icon \"Voice\" quick action. The search field
+      above the chat list, in the iOS app and the web chat sidebar, finds chats by
+      words said anywhere in them (not just the last message): every typed word must
+      start a word somewhere in the chat, and each result shows a snippet of where
+      it matched. Notes can search, read, create, edit, delete, and change whether
+      notes are loaded into the assistant''s context automatically. Other app pages
+      still open through the embedded web interface. The gear menu can enable APNs
+      notifications, and confirmation notifications can include approve/deny actions
+      when the server is configured.\nNative voice diagnostics: iPhone and Apple Watch
+      send connection-stage metadata automatically, without audio, transcripts or
+      credentials. For a failed connection, ask for the approximate attempt time and
+      device and consult remote diagnostics; no USB connection is required. Failed
+      report uploads are retried on voice entry or app relaunch, so missing reports
+      do not prove that a startup stage succeeded. See docs/user/interfaces.md.\nIf
+      a user reports the iOS message \"authentication wall detected\", explain that
+      the app received a sign-in or network access page instead of its API. Tell them
+      to open their Family Assistant web address in Safari, complete any sign-in,
+      return to the app, and tap the Chat connection indicator; if the page is unreachable
+      or the message persists, advise them to contact the person who manages the server
+      and access gateway.\n\nEach user message begins with a [Sent ...] line giving
+      the time it was sent. The line is added by the system, not written by the user;
+      the newest one is the current time. Never include such a line in your reply.
+      A user message that arrives after your tool results, before you have answered,
+      was sent while you were already working: treat it as the latest instruction
+      for the turn, re-evaluate your plan, and make the smallest necessary adjustment
+      before continuing.\n\nCurrent time: <pinned>\n\nFiles you are sent are in /workspace.
+      Save every file meant for Tester (a model, image, document or data file) under
+      /workspace/outputs: the files there are sent to Tester as attachments with your
+      reply, up to 20 files and 50 MB in all. Nothing else in the sandbox is returned."}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '6911'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - speakeasy-sdk/python 2.4.1-preview.5 internal v1beta google-genai
+      x-goog-api-client:
+      - google-genai-sdk/2.24.0 gl-python/3.13.13
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/5SPwU7DMBBE/8VXCFonthvnCAIOqEhEiIpcIsfepAbViZxtoCD+Hac/gLi+mZ2d
+        +WbesYotvL3ZNw/1e9287rTcAn3W93en5vD4tP3aT2b3cn37h84u2UyGjnOK86Gd4jhEnOeEbURD
+        uL7JIVcZhyznzyCrQleivFJa5iCU2FwAVADJf5zcv/wYFh/HcMBA7XkN7yWovpe82JTSKW07UWpj
+        nQBedDm3a1WMi7fYkseYLlLz4Ex0SRm7N7R0HkEYjSU/hoTNkOITNYH8EM3i6ZRNERePHxnobG3K
+        fn4BAAD//wMAiBVsiE4BAAA=
+    headers:
+      Alt-Svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      Content-Encoding:
+      - gzip
+      Content-Type:
+      - application/json
+      Date:
+      - Wed, 21 Oct 2026 05:39:54 GMT
+      Server:
+      - scaffolding on HTTPServer2
+      Server-Timing:
+      - gfet4t7; dur=6819
+      Transfer-Encoding:
+      - chunked
+      Vary:
+      - Origin
+      - X-Origin
+      - Referer
+      X-Content-Type-Options:
+      - nosniff
+      X-Frame-Options:
+      - SAMEORIGIN
+      X-XSS-Protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - speakeasy-sdk/python 2.4.1-preview.5 internal v1beta google-genai
+      x-goog-api-client:
+      - google-genai-sdk/2.24.0 gl-python/3.13.13
+    method: GET
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions/v1_ChZKRkRZYW95M0txRGFyZmNQMzhpaWVBEhZKRkRZYW95M0txRGFyZmNQMzhpaWVB?stream=false
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/4yPwU7DMBBE/8VXMFo7dRLnCAIOqEhEiIpcIsfepAbViZxtoCD+Hac/ANeZ2dk3
+        38w7VrFFtDf75qF+r5vXnVZboM/6/u7UHB6ftl/7yexerm//8Nklm8nQcU51PrRTHIeI85xkG9EQ
+        rm8kyJwL4FI8g6oyXSm4KspCaHkBUAGk8HFy/w9jWHwcwwEDtecdoleQ970SWVEql2vbbUptrNuA
+        yDop7AqJcfEWW/IY00ViDs5El5yxe0NLZ3zCaCz5MSTZDKk+qSaQH6JZPJ34FHHx+MFB8xWT/fwC
+        AAD//wMAYL6yDUgBAAA=
+    headers:
+      Alt-Svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      Content-Encoding:
+      - gzip
+      Content-Type:
+      - application/json
+      Date:
+      - Wed, 21 Oct 2026 05:39:55 GMT
+      Server:
+      - scaffolding on HTTPServer2
+      Server-Timing:
+      - gfet4t7; dur=1408
+      Transfer-Encoding:
+      - chunked
+      Vary:
+      - Origin
+      - X-Origin
+      - Referer
+      X-Content-Type-Options:
+      - nosniff
+      X-Frame-Options:
+      - SAMEORIGIN
+      X-XSS-Protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - speakeasy-sdk/python 2.4.1-preview.5 internal v1beta google-genai
+      x-goog-api-client:
+      - google-genai-sdk/2.24.0 gl-python/3.13.13
+    method: GET
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions/v1_ChZKRkRZYW95M0txRGFyZmNQMzhpaWVBEhZKRkRZYW95M0txRGFyZmNQMzhpaWVB?stream=false
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/4yPwU7DMBBE/8VXMFo7dRLnCAIOqEhEiIpcIsfepAbViZxtoCD+Hac/ANeZ2dk3
+        38w7VrFFtDf75qF+r5vXnVZboM/6/u7UHB6ftl/7yexerm//8Nklm8nQcU51PrRTHIeI85xkG9EQ
+        rm8kyJwL4FI8g6oyXSm4KspCaHkBUAGk8HFy/w9jWHwcwwEDtecdoleQ970SWVEql2vbbUptrNuA
+        yDop7AqJcfEWW/IY00ViDs5El5yxe0NLZ3zCaCz5MSTZDKk+qSaQH6JZPJ34FHHx+MFB8xWT/fwC
+        AAD//wMAYL6yDUgBAAA=
+    headers:
+      Alt-Svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      Content-Encoding:
+      - gzip
+      Content-Type:
+      - application/json
+      Date:
+      - Wed, 21 Oct 2026 05:39:57 GMT
+      Server:
+      - scaffolding on HTTPServer2
+      Server-Timing:
+      - gfet4t7; dur=1291
+      Transfer-Encoding:
+      - chunked
+      Vary:
+      - Origin
+      - X-Origin
+      - Referer
+      X-Content-Type-Options:
+      - nosniff
+      X-Frame-Options:
+      - SAMEORIGIN
+      X-XSS-Protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - speakeasy-sdk/python 2.4.1-preview.5 internal v1beta google-genai
+      x-goog-api-client:
+      - google-genai-sdk/2.24.0 gl-python/3.13.13
+    method: GET
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions/v1_ChZKRkRZYW95M0txRGFyZmNQMzhpaWVBEhZKRkRZYW95M0txRGFyZmNQMzhpaWVB?stream=false
+  response:
+    body:
+      string: !!binary |
+        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
+        AAD//wMA0XVJsHkeAAA=
+    headers:
+      Alt-Svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      Content-Encoding:
+      - gzip
+      Content-Type:
+      - application/json
+      Date:
+      - Wed, 21 Oct 2026 05:40:17 GMT
+      Server:
+      - scaffolding on HTTPServer2
+      Server-Timing:
+      - gfet4t7; dur=5140
+      Transfer-Encoding:
+      - chunked
+      Vary:
+      - Origin
+      - X-Origin
+      - Referer
+      X-Content-Type-Options:
+      - nosniff
+      X-Frame-Options:
+      - SAMEORIGIN
+      X-XSS-Protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
 version: 1
