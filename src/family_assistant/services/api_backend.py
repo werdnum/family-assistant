@@ -11,13 +11,13 @@ wire as a Bearer header and returns the raw status/bytes.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import httpx
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import AsyncIterator, Mapping
 
 # Default per-request timeout for REST calls (seconds).
 _DEFAULT_TIMEOUT_SECONDS = 30.0
@@ -27,6 +27,11 @@ _DEFAULT_TIMEOUT_SECONDS = 30.0
 # Drive download (``alt=media``) or a hostile export can never be materialized in
 # memory. 25 MiB matches the Drive download pre-check in ``tools/google_data.py``.
 _DEFAULT_MAX_RESPONSE_BYTES = 25 * 1024 * 1024
+
+# Request bodies are sent in chunks of this size. The transport applies its
+# write timeout to each chunk, so a large upload on a slow link fails only when
+# it stalls, not when the whole body takes longer than the timeout.
+_REQUEST_BODY_CHUNK_BYTES = 256 * 1024
 
 
 class ApiBackendError(Exception):
@@ -40,10 +45,14 @@ class ApiBackendError(Exception):
 
 @dataclass(frozen=True)
 class ApiResponse:
-    """A minimal REST response: status code and raw body bytes."""
+    """A minimal REST response: status code, raw body bytes and headers.
+
+    ``headers`` keys are lower-cased.
+    """
 
     status_code: int
     content: bytes
+    headers: Mapping[str, str] = field(default_factory=dict)
 
     def json(self) -> Any:  # noqa: ANN401 - arbitrary decoded JSON shape
         """Decode the body as JSON."""
@@ -68,6 +77,7 @@ class ApiBackend(Protocol):
         params: Mapping[str, str] | None = None,
         content: bytes | None = None,
         content_type: str | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> ApiResponse:
         """Issue an authenticated request to a full REST URL."""
         ...
@@ -113,6 +123,7 @@ class HttpApiBackend:
         params: Mapping[str, str] | None = None,
         content: bytes | None = None,
         content_type: str | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> ApiResponse:
         """Issue an authenticated request, returning status and raw bytes.
 
@@ -131,6 +142,7 @@ class HttpApiBackend:
                 params=params,
                 content=content,
                 content_type=content_type,
+                headers=headers,
             )
         except httpx.HTTPError as exc:
             raise ApiBackendError(f"API request to {url} failed") from exc
@@ -144,17 +156,21 @@ class HttpApiBackend:
         params: Mapping[str, str] | None,
         content: bytes | None,
         content_type: str | None,
+        headers: Mapping[str, str] | None,
     ) -> ApiResponse:
         """Stream the response body under the ``max_response_bytes`` budget."""
-        headers = {"Authorization": f"Bearer {access_token}"}
+        request_headers = dict(headers or {})
+        request_headers["Authorization"] = f"Bearer {access_token}"
         if content_type is not None:
-            headers["Content-Type"] = content_type
+            request_headers["Content-Type"] = content_type
+        if content is not None:
+            request_headers["Content-Length"] = str(len(content))
         async with self._http_client.stream(
             method,
             url,
-            headers=headers,
+            headers=request_headers,
             params=dict(params) if params is not None else None,
-            content=content,
+            content=_chunked(content) if content is not None else None,
             timeout=self._timeout,
         ) as response:
             chunks: list[bytes] = []
@@ -168,5 +184,16 @@ class HttpApiBackend:
                     )
                 chunks.append(chunk)
             return ApiResponse(
-                status_code=response.status_code, content=b"".join(chunks)
+                status_code=response.status_code,
+                content=b"".join(chunks),
+                headers={
+                    name.lower(): value for name, value in response.headers.items()
+                },
             )
+
+
+async def _chunked(content: bytes) -> AsyncIterator[bytes]:
+    """Yield ``content`` in ``_REQUEST_BODY_CHUNK_BYTES`` slices."""
+    view = memoryview(content)
+    for start in range(0, len(view), _REQUEST_BODY_CHUNK_BYTES):
+        yield bytes(view[start : start + _REQUEST_BODY_CHUNK_BYTES])

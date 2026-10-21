@@ -17,7 +17,7 @@ import pytest
 
 from family_assistant.assistant import Assistant
 from family_assistant.config_loader import load_config
-from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS
+from family_assistant.tools.catalog import LOCAL_TOOL_REGISTRATIONS
 from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
     LocalToolsProvider,

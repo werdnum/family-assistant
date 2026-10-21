@@ -10,7 +10,7 @@ from family_assistant.events.condition_evaluator import (
     EventConditionEvaluator,
     EventConditionValidator,
 )
-from family_assistant.scripting import ScriptExecutionError, ScriptSyntaxError
+from family_assistant.scripting.errors import ScriptExecutionError, ScriptSyntaxError
 from family_assistant.storage.types import EventConditionEvaluatorConfig
 
 TEST_TZ = ZoneInfo("Australia/Sydney")

@@ -205,3 +205,93 @@ async def test_a_resumed_run_does_not_inherit_its_predecessors_children(
     children = await runs.list_undelivered_children(resumed)
 
     assert [child["delegation_id"] for child in children] == ["child-of-2"]
+
+
+class TestLatestChainableRun:
+    """Which earlier run in a lineage a resume chains onto."""
+
+    @staticmethod
+    async def _lineage_run(
+        db_context: Database,
+        delegation_id: str,
+        *,
+        remote_task_id: str | None,
+        outcome: str,
+        at: datetime,
+    ) -> None:
+        run = _make_run(delegation_id, f"task-{delegation_id}")
+        run["subconversation_id"] = "sub-lineage"
+        await db_context.delegation_runs.create_run(run)
+        if remote_task_id is not None:
+            await db_context.delegation_runs.mark_awaiting_remote(
+                delegation_id,
+                remote_task_id=remote_task_id,
+                remote_context_id=None,
+                started_at=at,
+            )
+        if outcome == "completed":
+            await db_context.delegation_runs.mark_completed(
+                delegation_id=delegation_id,
+                result_text="done",
+                result_attachment_ids=[],
+                completed_at=at,
+            )
+        else:
+            await db_context.delegation_runs.mark_failed(
+                delegation_id=delegation_id, error="boom", completed_at=at
+            )
+
+    async def _latest(
+        self, db_context: Database, *, include_failed: bool
+    ) -> str | None:
+        run = await db_context.delegation_runs.get_latest_chainable_run(
+            conversation_id="conv-1",
+            subconversation_id="sub-lineage",
+            target_service_id="remote_profile",
+            include_failed=include_failed,
+        )
+        return run["remote_task_id"] if run else None
+
+    @pytest.mark.asyncio
+    async def test_a_sandboxed_resume_chains_onto_a_failed_run(
+        self, db_context: Database
+    ) -> None:
+        """The 21 Oct case: a run failed on our side after real remote work."""
+        await self._lineage_run(
+            db_context,
+            "d-done",
+            remote_task_id="inter-1",
+            outcome="completed",
+            at=datetime(2026, 10, 21, 0, 0, tzinfo=UTC),
+        )
+        await self._lineage_run(
+            db_context,
+            "d-blip",
+            remote_task_id="inter-2",
+            outcome="failed",
+            at=datetime(2026, 10, 21, 0, 46, tzinfo=UTC),
+        )
+
+        assert await self._latest(db_context, include_failed=True) == "inter-2"
+        assert await self._latest(db_context, include_failed=False) == "inter-1"
+
+    @pytest.mark.asyncio
+    async def test_a_run_that_never_reached_the_provider_is_skipped(
+        self, db_context: Database
+    ) -> None:
+        await self._lineage_run(
+            db_context,
+            "d-done",
+            remote_task_id="inter-1",
+            outcome="completed",
+            at=datetime(2026, 10, 21, 0, 0, tzinfo=UTC),
+        )
+        await self._lineage_run(
+            db_context,
+            "d-unsent",
+            remote_task_id=None,
+            outcome="failed",
+            at=datetime(2026, 10, 21, 0, 46, tzinfo=UTC),
+        )
+
+        assert await self._latest(db_context, include_failed=True) == "inter-1"

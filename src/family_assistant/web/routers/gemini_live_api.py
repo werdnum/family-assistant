@@ -20,7 +20,7 @@ from family_assistant.processing import ProcessingService
 from family_assistant.processing.household_context import (
     render_live_session_context,
 )
-from family_assistant.tools import get_tool_definitions_for_advertisement
+from family_assistant.tools.infrastructure import get_tool_definitions_for_advertisement
 from family_assistant.tools.types import normalize_json_schema_type
 from family_assistant.web.auth import get_user_from_request
 from family_assistant.web.dependencies import get_current_user, get_processing_service

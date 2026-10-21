@@ -13,13 +13,13 @@ from typing import TYPE_CHECKING
 import pytest
 
 from family_assistant.tool_inventory import build_tool_inventory
-from family_assistant.tools import (
-    LOCAL_TOOL_REGISTRATIONS,
+from family_assistant.tools.catalog import LOCAL_TOOL_REGISTRATIONS
+from family_assistant.tools.infrastructure import (
     LocalToolsProvider,
-    OnDemandToolsView,
     PolicyEnforcingToolsProvider,
 )
 from family_assistant.tools.metadata import ToolDescriptor, ToolTag
+from family_assistant.tools.on_demand import OnDemandToolsView
 from family_assistant.tools.policy import (
     PolicyEngine,
     PolicyRule,

@@ -33,9 +33,9 @@ from family_assistant.security.taint import (
     is_externally_authored,
     resolve_tool_sink_class,
 )
-from family_assistant.tools import ToolDescriptor
 from family_assistant.tools.mcp import MCP_STREAMABLE_HTTP_TRANSPORTS
 from family_assistant.tools.metadata import (
+    ToolDescriptor,
     normalize_mcp_tool_metadata,
     resolve_mcp_tool_tags,
 )

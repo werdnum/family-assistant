@@ -12,7 +12,7 @@ from mcp.shared.exceptions import McpError
 from mcp.shared.message import SessionMessage
 from mcp.types import INVALID_PARAMS, ErrorData
 
-from family_assistant.tools import MCPToolsProvider
+from family_assistant.tools.mcp import MCPToolsProvider
 
 
 @pytest.mark.parametrize(

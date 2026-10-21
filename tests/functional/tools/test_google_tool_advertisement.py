@@ -26,22 +26,20 @@ from family_assistant.services.oauth_integration_state import (
     OAuthIntegrationState,
     filter_oauth_tool_registrations,
 )
-from family_assistant.tools import (
+from family_assistant.tools.catalog import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
-from family_assistant.tools import (
-    LOCAL_TOOL_DESCRIPTORS,
-    TOOLS_DEFINITION,
-    LocalToolsProvider,
-    PolicyEnforcingToolsProvider,
-    PolicyEngine,
-    ToolPolicyDecision,
-    build_local_tool_registrations,
-)
-from family_assistant.tools import (
+from family_assistant.tools.catalog import LOCAL_TOOL_DESCRIPTORS, TOOLS_DEFINITION
+from family_assistant.tools.catalog import (
     LOCAL_TOOL_METADATA_BY_NAME as local_tool_metadata_by_name,
 )
 from family_assistant.tools.google_data import GOOGLE_TOOL_REQUIRED_SCOPES
+from family_assistant.tools.infrastructure import (
+    LocalToolsProvider,
+    PolicyEnforcingToolsProvider,
+)
+from family_assistant.tools.metadata import build_local_tool_registrations
+from family_assistant.tools.policy import PolicyEngine, ToolPolicyDecision
 
 if TYPE_CHECKING:
     from pathlib import Path

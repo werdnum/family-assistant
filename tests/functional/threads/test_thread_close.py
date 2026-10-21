@@ -36,12 +36,16 @@ from family_assistant.security.taint import (
 from family_assistant.storage import message_history_table
 from family_assistant.storage.database import Database
 from family_assistant.threads.listing import ThreadSummary, summarize_threads
-from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS as local_tool_registrations
-from family_assistant.tools import (
+from family_assistant.tools.catalog import (
+    LOCAL_TOOL_REGISTRATIONS as local_tool_registrations,
+)
+from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
     LocalToolsProvider,
-    MCPToolsProvider,
     PolicyEnforcingToolsProvider,
+)
+from family_assistant.tools.mcp import MCPToolsProvider
+from family_assistant.tools.policy import (
     PolicyEngine,
     ToolPolicyConfig,
     ToolPolicyDecision,

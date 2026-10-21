@@ -20,8 +20,8 @@ from typing import TYPE_CHECKING
 import pytest
 
 from family_assistant.skills.loader import load_skills_from_directory
-from family_assistant.tools import LOCAL_TOOL_DESCRIPTORS, PolicyEngine
-from family_assistant.tools.policy import ToolPolicyDecision
+from family_assistant.tools.catalog import LOCAL_TOOL_DESCRIPTORS
+from family_assistant.tools.policy import PolicyEngine, ToolPolicyDecision
 from tests.functional.tools.test_defaults_tool_policy_parity import (
     _load_resolved_profiles,
 )

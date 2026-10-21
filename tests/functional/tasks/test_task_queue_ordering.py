@@ -1,11 +1,13 @@
 """Tests for the order in which the queue hands out eligible tasks."""
 
+import logging
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.storage.database import Database
+from family_assistant.storage.repositories.tasks import TaskAlreadyExistsError
 from family_assistant.storage.tasks import TaskPriority
 
 TASK_TYPE = "ordering_probe"
@@ -328,3 +330,26 @@ async def test_queue_state_snapshot_reports_each_lane_separately(
     assert (background.due, interactive.due) == (1, 1)
     assert background.due_latency_seconds == pytest.approx(1800, abs=30)
     assert interactive.due_latency_seconds == pytest.approx(120, abs=30)
+
+
+@pytest.mark.asyncio
+async def test_duplicate_task_id_is_reported_without_an_error_log(
+    db_engine: AsyncEngine, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Deterministic ids are how producers dedupe, so a collision is not an ERROR."""
+    db = Database(db_engine)
+    await db.tasks.enqueue(
+        task_id="deterministic", task_type=TASK_TYPE, priority=TaskPriority.BACKGROUND
+    )
+
+    with (
+        caplog.at_level(logging.INFO),
+        pytest.raises(TaskAlreadyExistsError),
+    ):
+        await db.tasks.enqueue(
+            task_id="deterministic",
+            task_type=TASK_TYPE,
+            priority=TaskPriority.BACKGROUND,
+        )
+
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]

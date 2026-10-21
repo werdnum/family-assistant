@@ -44,13 +44,13 @@ from family_assistant.services.tool_call_review import (
     ToolCallReviewVerdict,
 )
 from family_assistant.storage.database import Database
-from family_assistant.tools import (
-    LOCAL_TOOL_REGISTRATIONS,
+from family_assistant.tools.catalog import LOCAL_TOOL_REGISTRATIONS
+from family_assistant.tools.engineering import resolve_tool_policy
+from family_assistant.tools.infrastructure import (
     LocalToolsProvider,
     PolicyEnforcingToolsProvider,
     TaintTrackingToolsProvider,
 )
-from family_assistant.tools.engineering import resolve_tool_policy
 from family_assistant.tools.metadata import ToolDescriptor, ToolTag
 from family_assistant.tools.policy import ToolPolicyDecision
 from family_assistant.tools.types import (

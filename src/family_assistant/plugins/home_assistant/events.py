@@ -297,6 +297,9 @@ class HomeAssistantSource(BaseEventSource, EventSource):
 
             try:
                 await self._process_next_event()
+            except janus.AsyncQueueShutDown:
+                logger.debug("Event queue shut down; stopping event processor")
+                return
             except Exception as e:
                 logger.exception(f"Error processing queued event: {e}")
 

@@ -87,6 +87,7 @@ class GoogleUserApi:
         params: Mapping[str, str] | None = None,
         content: bytes | None = None,
         content_type: str | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> ApiResponse:
         """Issue an authenticated request, retrying once on ``401``.
 
@@ -106,6 +107,7 @@ class GoogleUserApi:
             params=params,
             content=content,
             content_type=content_type,
+            headers=headers,
         )
         if response.status_code == 401:
             self.resolver.evict_cached_token(self.user_id)
@@ -119,6 +121,7 @@ class GoogleUserApi:
                 params=params,
                 content=content,
                 content_type=content_type,
+                headers=headers,
             )
 
         if 200 <= response.status_code < 300:
@@ -137,6 +140,7 @@ class GoogleUserApi:
         params: Mapping[str, str] | None,
         content: bytes | None,
         content_type: str | None,
+        headers: Mapping[str, str] | None,
     ) -> ApiResponse:
         """Call the shared backend, naming the provider in transport errors.
 
@@ -153,6 +157,7 @@ class GoogleUserApi:
                 params=params,
                 content=content,
                 content_type=content_type,
+                headers=headers,
             )
         except ApiBackendError as exc:
             raise ApiBackendError(f"{GOOGLE_PROVIDER.display_name} {exc}") from exc

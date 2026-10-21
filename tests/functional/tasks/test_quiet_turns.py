@@ -32,7 +32,7 @@ from family_assistant.task_worker import (
     NonRetryableTaskError,
     handle_llm_callback,
 )
-from family_assistant.tools import LocalToolsProvider
+from family_assistant.tools.infrastructure import LocalToolsProvider
 from family_assistant.tools.types import (
     ToolDefinition,
     ToolExecutionContext,

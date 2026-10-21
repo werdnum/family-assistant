@@ -33,6 +33,9 @@ Additional guidance is available in subdirectories:
 
 - Place all imports at the top of the file, organized by the isort rules in `pyproject.toml`.
 - Use type hints for all method parameters and return values.
+- Module-level imports must not form a cycle; `tests/unit/test_import_cycles.py` enforces it. Keep
+  package `__init__.py` files from re-exporting their submodules, and import a name from the module
+  that defines it, so importing one leaf module does not drag in its whole package.
 - Comments are used to explain implementation when it's unclear. Do NOT add comments that are
   self-evident from the code, or that explain the code's history (that's what commit history is
   for). No comments like `# Removed db_context`.
@@ -504,8 +507,8 @@ only fetch a whole file, so a sprawling file wastes context and a well-named sma
 
 ### Adding New Tools
 
-Tools must be registered in TWO places: in the code (`src/family_assistant/tools/__init__.py`) and
-in the configuration (`defaults.yaml` / `config.yaml`). See
+Tools must be registered in TWO places: in the code (`src/family_assistant/tools/catalog.py`) and in
+the configuration (`defaults.yaml` / `config.yaml`). See
 [src/family_assistant/tools/CLAUDE.md](src/family_assistant/tools/CLAUDE.md) for complete tool
 development guidance.
 

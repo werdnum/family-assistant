@@ -18,7 +18,7 @@ from family_assistant.plugins.home_assistant.instance import HomeAssistantInstan
 from family_assistant.plugins.home_assistant.plugin import HOME_ASSISTANT_PLUGIN
 from family_assistant.plugins.registry import PLUGINS, PLUGINS_BY_ID
 from family_assistant.plugins.runtime import PluginRuntime
-from family_assistant.tools import LOCAL_TOOL_METADATA_BY_NAME, TOOLS_DEFINITION
+from family_assistant.tools.catalog import LOCAL_TOOL_METADATA_BY_NAME, TOOLS_DEFINITION
 from family_assistant.tools.metadata import ToolTag, join_tool_registrations
 
 

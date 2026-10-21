@@ -36,18 +36,20 @@ from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage import init_db
 from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.notes import NoteReadPolicy
-from family_assistant.tools import (
+from family_assistant.tools.catalog import (
     LOCAL_TOOL_REGISTRATIONS as local_tool_registrations,
 )
-from family_assistant.tools import (
+from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
     LocalToolsProvider,
-    MCPToolsProvider,
     PolicyEnforcingToolsProvider,
+    ToolsProvider,
+)
+from family_assistant.tools.mcp import MCPToolsProvider
+from family_assistant.tools.policy import (
     PolicyEngine,
     ToolPolicyConfig,
     ToolPolicyDecision,
-    ToolsProvider,
 )
 from family_assistant.web.app_creator import app as actual_app
 from family_assistant.web.dependencies import get_current_user

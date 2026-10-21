@@ -107,7 +107,9 @@ def test_thinking_blocks_replayed_verbatim_and_first(
         ),
     ]
 
-    _system, api_messages = client._convert_messages_to_anthropic_format(messages)
+    _system, api_messages = client._convert_messages_to_anthropic_format(
+        messages, cache_conversation=True
+    )
 
     content = api_messages[-1]["content"]
     assert [block["type"] for block in content] == ["thinking", "text", "tool_use"]
@@ -122,7 +124,9 @@ def test_assistant_turn_without_thinking_metadata_is_unchanged(
         AssistantMessage(content="Plain answer, no reasoning captured."),
     ]
 
-    _system, api_messages = client._convert_messages_to_anthropic_format(messages)
+    _system, api_messages = client._convert_messages_to_anthropic_format(
+        messages, cache_conversation=True
+    )
 
     assert [block["type"] for block in api_messages[0]["content"]] == ["text"]
 
@@ -206,7 +210,9 @@ def test_tool_results_still_convert_alongside_thinking(
         ToolMessage(tool_call_id="toolu_1", content="714", name="calculate"),
     ]
 
-    _system, api_messages = client._convert_messages_to_anthropic_format(messages)
+    _system, api_messages = client._convert_messages_to_anthropic_format(
+        messages, cache_conversation=True
+    )
 
     assert [block["type"] for block in api_messages[1]["content"]] == [
         "thinking",

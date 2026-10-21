@@ -21,9 +21,9 @@ from family_assistant.services.google_provider import GOOGLE_PROVIDER, GoogleSco
 from family_assistant.services.oauth_integration_state import (
     evaluate_oauth_integration_state,
 )
-from family_assistant.tools import ToolPolicyConfig
 from family_assistant.tools.calendar import GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES
 from family_assistant.tools.google_data import GOOGLE_TOOL_REQUIRED_SCOPES
+from family_assistant.tools.policy import ToolPolicyConfig
 
 GMAIL_SCOPE = GoogleScope.GMAIL_READONLY.value
 GMAIL_COMPOSE_SCOPE = GoogleScope.GMAIL_COMPOSE.value

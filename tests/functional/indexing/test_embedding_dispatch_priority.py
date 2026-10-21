@@ -21,7 +21,7 @@ from family_assistant.indexing.processors.dispatch_processors import (
 from family_assistant.storage.database import Database
 from family_assistant.storage.tasks import TaskPriority, tasks_table
 from family_assistant.storage.vector import Document
-from family_assistant.tools import ToolExecutionContext
+from family_assistant.tools.types import ToolExecutionContext
 
 
 def _context(db_engine: AsyncEngine, priority: TaskPriority) -> ToolExecutionContext:

@@ -39,7 +39,7 @@ from family_assistant.services.tool_call_review import (
     TriggerReviewInput,
     compute_trusted_destination_echo,
 )
-from family_assistant.tools import LOCAL_TOOL_DESCRIPTORS
+from family_assistant.tools.catalog import LOCAL_TOOL_DESCRIPTORS
 
 # The harness must stay byte-faithful to the runtime's own signal derivation:
 # the destination the reviewer sees comes from the descriptor's declared

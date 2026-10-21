@@ -20,7 +20,7 @@ from family_assistant.security.taint import (
 )
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
-from family_assistant.tools import AVAILABLE_FUNCTIONS, TOOLS_DEFINITION
+from family_assistant.tools.catalog import AVAILABLE_FUNCTIONS, TOOLS_DEFINITION
 from family_assistant.tools.execute_script import execute_script_tool
 from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,

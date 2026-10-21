@@ -1349,12 +1349,12 @@ How much of a conversation's earlier turns a profile's prompt carries. Set under
 in `default_profile_settings` or on a profile; the `web_` variants apply on the web interface and
 fall back to the plain settings when unset.
 
-| Key                                                         | Default (shipped)  | Meaning                                                                 |
-| ----------------------------------------------------------- | ------------------ | ----------------------------------------------------------------------- |
-| `history_budget_chars` / `web_history_budget_chars`         | `40000` / `120000` | Size of the window, in characters of rendered history.                  |
-| `history_min_turns` / `web_history_min_turns`               | `2`                | The newest turns that stay (compacted if need be) whatever their size.  |
-| `history_max_age_hours` / `web_history_max_age_hours`       | `2` / `720`        | A turn whose last activity is older than this leaves at the next event. |
-| `history_idle_gap_minutes` / `web_history_idle_gap_minutes` | `60` / unset       | The first message after this much quiet is a compaction event.          |
+| Key                                                         | Default (shipped)  | Meaning                                                                  |
+| ----------------------------------------------------------- | ------------------ | ------------------------------------------------------------------------ |
+| `history_budget_chars` / `web_history_budget_chars`         | `40000` / `120000` | Size of the window, in characters of rendered history.                   |
+| `history_min_turns` / `web_history_min_turns`               | `2`                | The newest turns that stay (compacted if need be) whatever their size.   |
+| `history_max_age_hours` / `web_history_max_age_hours`       | `2` / `720`        | A turn whose last activity is older than this leaves at the next event.  |
+| `history_idle_gap_minutes` / `web_history_idle_gap_minutes` | `60` / `300`       | The first message after this much quiet is a compaction event; 0 is off. |
 
 The window is made of whole turns — a request, every tool call and result it led to, and the answer.
 A turn is never split. Only the active profile's rows are loaded, on every path. A reply to a
@@ -3187,6 +3187,27 @@ used, and each interruption, in the `Voice.connection` telemetry lane.
 `automatic: false` (push-to-talk) is not supported by the native app, which has no control to mark
 the start and end of speech; it logs the setting as an error and keeps automatic detection. Phone
 calls over Asterisk use `vad` with `telephone_overrides.vad` applied on top.
+
+______________________________________________________________________
+
+## Affective Dialog (`gemini_live_config.affective_dialog`)
+
+```yaml
+gemini_live_config:
+  affective_dialog:
+    enabled: false
+```
+
+Asks the model to adapt its response style to the user's tone. **Leave it off.** No Live model this
+deployment can run accepts it: the configured model takes the setup frame and answers
+`setupComplete`, then closes the session with `1007 Request contains an invalid argument.` a moment
+later. Turning it on therefore kills every voice session on connect — iOS, web and Asterisk phone
+calls alike, since all three senders read this one setting — and the user hears a call that starts
+and drops within a second.
+
+The failure is only visible as a close code, so a session that dies this way is recorded in the
+`Voice.connection` telemetry lane as `close_reason_category: "invalid_setup"` after a
+`setup_complete` breadcrumb. `proactivity` in the same block is unaffected and safe to enable.
 
 ______________________________________________________________________
 

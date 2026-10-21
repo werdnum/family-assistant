@@ -4,11 +4,13 @@ from family_assistant.delegation_security import DelegationSecurityLevel
 
 from .protocol import (
     PENDING,
+    CollectedOutputs,
     DelegatableService,
     DelegationPermanentError,
     DelegationTaskNotFoundError,
     DelegationTransientError,
     ObservableDelegationService,
+    OutputCollectingDelegationService,
     PendingPoll,
     PollableDelegationService,
     RemoteDisposition,
@@ -22,12 +24,14 @@ from .types import ChatInteractionResult, ProcessingServiceConfig, RemoteService
 __all__ = [
     "PENDING",
     "ChatInteractionResult",
+    "CollectedOutputs",
     "DelegatableService",
     "DelegationPermanentError",
     "DelegationSecurityLevel",
     "DelegationTaskNotFoundError",
     "DelegationTransientError",
     "ObservableDelegationService",
+    "OutputCollectingDelegationService",
     "PendingPoll",
     "PollableDelegationService",
     "ProcessingService",

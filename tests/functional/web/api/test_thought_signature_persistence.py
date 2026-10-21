@@ -29,18 +29,20 @@ from family_assistant.processing import ProcessingService, ProcessingServiceConf
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.notes import NoteReadPolicy
-from family_assistant.tools import (
+from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
     LocalToolsProvider,
     PolicyEnforcingToolsProvider,
-    PolicyEngine,
-    ToolPolicyConfig,
-    ToolPolicyDecision,
 )
 from family_assistant.tools.metadata import (
     ToolRegistration,
     ToolTag,
     make_local_tool_metadata,
+)
+from family_assistant.tools.policy import (
+    PolicyEngine,
+    ToolPolicyConfig,
+    ToolPolicyDecision,
 )
 from family_assistant.tools.types import ToolDefinition, ToolResult
 from family_assistant.utils.clock import MockClock

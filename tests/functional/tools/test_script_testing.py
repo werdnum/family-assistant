@@ -18,7 +18,7 @@ from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.security.note_provenance import NoteProvenanceStamp
 from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.notes import NoteReadPolicy, NoteWritePolicy
-from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS
+from family_assistant.tools.catalog import LOCAL_TOOL_REGISTRATIONS
 from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
     LocalToolsProvider,

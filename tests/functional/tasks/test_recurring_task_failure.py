@@ -10,7 +10,7 @@ from sqlalchemy import select
 from family_assistant.storage.database import Database
 from family_assistant.storage.tasks import TaskPriority, tasks_table
 from family_assistant.task_worker import TaskWorker
-from family_assistant.tools import ToolExecutionContext
+from family_assistant.tools.types import ToolExecutionContext
 from tests.helpers import wait_for_condition
 
 logger = logging.getLogger(__name__)

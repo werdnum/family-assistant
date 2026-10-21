@@ -35,11 +35,8 @@ from family_assistant.llm.messages import (
 from family_assistant.llm.providers.anthropic_client import AnthropicClient
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.llm.providers.openai_client import OpenAIClient
-from family_assistant.tools import (
-    LOCAL_TOOL_DESCRIPTORS,
-    PolicyEngine,
-    ToolPolicyDecision,
-)
+from family_assistant.tools.catalog import LOCAL_TOOL_DESCRIPTORS
+from family_assistant.tools.policy import PolicyEngine, ToolPolicyDecision
 from family_assistant.tools.types import ToolAttachment
 from tests.unit.conftest import shipped_profile
 

@@ -42,7 +42,7 @@ from family_assistant.processing import ProcessingService, ProcessingServiceConf
 from family_assistant.security.taint import TurnTaintState
 from family_assistant.storage.database import Database, set_engine_memory_limits
 from family_assistant.storage.repositories.notes import NoteReadPolicy, NoteWritePolicy
-from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS
+from family_assistant.tools.catalog import LOCAL_TOOL_REGISTRATIONS
 from family_assistant.tools.infrastructure import (
     LocalToolsProvider,
     PolicyEnforcingToolsProvider,

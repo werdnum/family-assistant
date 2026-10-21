@@ -315,6 +315,9 @@ class RemoteObservation:
     resolved_model: str | None = None
     error_summary: str | None = None
     event_cursor: str | None = None
+    # The sandbox the run executed in, for a target whose runs leave files
+    # behind (see OutputCollectingDelegationService). Not persisted.
+    environment_id: str | None = None
 
     @property
     def is_terminal(self) -> bool:
@@ -401,5 +404,42 @@ class ObservableDelegationService(Protocol):
         Paired with :meth:`observe_async` so a poll is one read classified
         once, rather than a second classification of the same provider state
         that can disagree with the reconciler's.
+        """
+        ...
+
+
+@dataclass(frozen=True)
+class CollectedOutputs:
+    """Files a finished remote run produced, registered as attachments."""
+
+    attachment_ids: list[str]
+    # Human-readable notes on files that were found but not returned (over a
+    # cap, say), so the reply can say so instead of dropping them silently.
+    omitted: list[str]
+
+
+@runtime_checkable
+class OutputCollectingDelegationService(Protocol):
+    """A pollable target whose finished run can leave files behind.
+
+    The worker calls this once a run has completed, on the terminal poll and
+    on late-completion recovery alike, and delivers what it returns with the
+    run's text. It is separate from observing the run because it has side
+    effects -- it registers attachments -- and an observation is a read.
+    """
+
+    async def collect_outputs(
+        self,
+        observation: RemoteObservation,
+        *,
+        owner_user_id: str | None,
+        conversation_id: str,
+        taint_state: TurnTaintState,
+        db_context: Database,
+    ) -> CollectedOutputs:
+        """Register the run's output files as attachments owned by its user.
+
+        Raises the delegation error taxonomy: a
+        :class:`DelegationTransientError` leaves the run to be read again.
         """
         ...

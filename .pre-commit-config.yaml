@@ -48,6 +48,8 @@ repos:
         language: system
         entry: uvx --from google-yamlfmt==0.17.0 yamlfmt
         types: [yaml]
+        # Keep in sync with the exclude list in .yamlfmt.
+        exclude: (^|/)cassettes/
   - repo: local
     hooks:
       - id: biome-format

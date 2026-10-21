@@ -29,7 +29,7 @@ from family_assistant.security.taint import (
     merge_taint_state_into_tracker,
     prompt_window_taint,
 )
-from family_assistant.tools import (
+from family_assistant.tools.infrastructure import (
     TaintTrackingToolsProvider,
     ToolPolicyDeniedError,
     collect_system_prompt_addition,

@@ -1558,6 +1558,23 @@ class MCPToolsProvider:
             self._definitions.append(definition)
             self._descriptors.append(descriptor)
             self._tool_map[tool_name] = server_id
+        self._sort_registered_tools()
+
+    def _sort_registered_tools(self) -> None:
+        """Order tools by configured server, then name.
+
+        The tool list leads the LLM's cached prompt prefix, so it must not
+        depend on which server happened to reconnect last.
+        """
+        server_order = {
+            server_id: index for index, server_id in enumerate(self._mcp_server_configs)
+        }
+
+        def tool_key(name: str) -> tuple[int, str]:
+            return (server_order.get(self._tool_map[name], len(server_order)), name)
+
+        self._definitions.sort(key=lambda d: tool_key(d["function"]["name"]))
+        self._descriptors.sort(key=lambda d: tool_key(d.name))
 
     def _refresh_server_tools(
         self, server_id: str, server_tools: Sequence[Any]
@@ -2068,11 +2085,19 @@ class _UserMCPConnections:
             if failed:
                 await provider._retry_disconnected_servers([self.server_id])
 
+        async def check_user(user_id: str, item: _UserMCPConnection) -> None:
+            try:
+                await item.run(lambda: check(item.provider))
+            except _MCPConnectionLostError:
+                logger.warning(
+                    "MCP connection for server '%s' (user '%s') was lost during "
+                    "its health check; the next pass will reconnect it",
+                    self.server_id,
+                    user_id,
+                )
+
         await asyncio.gather(
-            *(
-                item.run(lambda item=item: check(item.provider))
-                for item in self.connections.values()
-            )
+            *(check_user(user_id, item) for user_id, item in self.connections.items())
         )
 
     async def reconnect(self) -> bool:

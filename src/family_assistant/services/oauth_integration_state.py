@@ -59,8 +59,8 @@ from family_assistant.services.credential_encryption import (
     CredentialEncryption,
     CredentialEncryptionError,
 )
-from family_assistant.tools import (
-    LOCAL_TOOL_DESCRIPTORS,
+from family_assistant.tools.catalog import LOCAL_TOOL_DESCRIPTORS
+from family_assistant.tools.policy import (
     PolicyEngine,
     ToolPolicyConfig,
     ToolPolicyDecision,

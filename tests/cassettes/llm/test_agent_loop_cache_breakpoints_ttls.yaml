@@ -1,0 +1,2161 @@
+interactions:
+- request:
+    body: '{"max_tokens":64000,"messages":[{"role":"user","content":[{"type":"text","text":"Turn
+      on the kitchen lights. The set_lights tool is not loaded yet, so load it with
+      activate_tools first.","cache_control":{"type":"ephemeral"}}]}],"model":"claude-opus-5-5","output_config":{"effort":"high"},"system":[{"type":"text","text":"You
+      are the family''s household assistant.\n\nHouse rule 0: when asked about room
+      0, refer to it as room number 0 and remember that its lights are on circuit
+      0.\nHouse rule 1: when asked about room 1, refer to it as room number 1 and
+      remember that its lights are on circuit 1.\nHouse rule 2: when asked about room
+      2, refer to it as room number 2 and remember that its lights are on circuit
+      2.\nHouse rule 3: when asked about room 3, refer to it as room number 3 and
+      remember that its lights are on circuit 3.\nHouse rule 4: when asked about room
+      4, refer to it as room number 4 and remember that its lights are on circuit
+      4.\nHouse rule 5: when asked about room 5, refer to it as room number 5 and
+      remember that its lights are on circuit 5.\nHouse rule 6: when asked about room
+      6, refer to it as room number 6 and remember that its lights are on circuit
+      6.\nHouse rule 7: when asked about room 7, refer to it as room number 7 and
+      remember that its lights are on circuit 0.\nHouse rule 8: when asked about room
+      8, refer to it as room number 8 and remember that its lights are on circuit
+      1.\nHouse rule 9: when asked about room 9, refer to it as room number 9 and
+      remember that its lights are on circuit 2.\nHouse rule 10: when asked about
+      room 10, refer to it as room number 10 and remember that its lights are on circuit
+      3.\nHouse rule 11: when asked about room 11, refer to it as room number 11 and
+      remember that its lights are on circuit 4.\nHouse rule 12: when asked about
+      room 12, refer to it as room number 12 and remember that its lights are on circuit
+      5.\nHouse rule 13: when asked about room 13, refer to it as room number 13 and
+      remember that its lights are on circuit 6.\nHouse rule 14: when asked about
+      room 14, refer to it as room number 14 and remember that its lights are on circuit
+      0.\nHouse rule 15: when asked about room 15, refer to it as room number 15 and
+      remember that its lights are on circuit 1.\nHouse rule 16: when asked about
+      room 16, refer to it as room number 16 and remember that its lights are on circuit
+      2.\nHouse rule 17: when asked about room 17, refer to it as room number 17 and
+      remember that its lights are on circuit 3.\nHouse rule 18: when asked about
+      room 18, refer to it as room number 18 and remember that its lights are on circuit
+      4.\nHouse rule 19: when asked about room 19, refer to it as room number 19 and
+      remember that its lights are on circuit 5.\nHouse rule 20: when asked about
+      room 20, refer to it as room number 20 and remember that its lights are on circuit
+      6.\nHouse rule 21: when asked about room 21, refer to it as room number 21 and
+      remember that its lights are on circuit 0.\nHouse rule 22: when asked about
+      room 22, refer to it as room number 22 and remember that its lights are on circuit
+      1.\nHouse rule 23: when asked about room 23, refer to it as room number 23 and
+      remember that its lights are on circuit 2.\nHouse rule 24: when asked about
+      room 24, refer to it as room number 24 and remember that its lights are on circuit
+      3.\nHouse rule 25: when asked about room 25, refer to it as room number 25 and
+      remember that its lights are on circuit 4.\nHouse rule 26: when asked about
+      room 26, refer to it as room number 26 and remember that its lights are on circuit
+      5.\nHouse rule 27: when asked about room 27, refer to it as room number 27 and
+      remember that its lights are on circuit 6.\nHouse rule 28: when asked about
+      room 28, refer to it as room number 28 and remember that its lights are on circuit
+      0.\nHouse rule 29: when asked about room 29, refer to it as room number 29 and
+      remember that its lights are on circuit 1.\nHouse rule 30: when asked about
+      room 30, refer to it as room number 30 and remember that its lights are on circuit
+      2.\nHouse rule 31: when asked about room 31, refer to it as room number 31 and
+      remember that its lights are on circuit 3.\nHouse rule 32: when asked about
+      room 32, refer to it as room number 32 and remember that its lights are on circuit
+      4.\nHouse rule 33: when asked about room 33, refer to it as room number 33 and
+      remember that its lights are on circuit 5.\nHouse rule 34: when asked about
+      room 34, refer to it as room number 34 and remember that its lights are on circuit
+      6.\nHouse rule 35: when asked about room 35, refer to it as room number 35 and
+      remember that its lights are on circuit 0.\nHouse rule 36: when asked about
+      room 36, refer to it as room number 36 and remember that its lights are on circuit
+      1.\nHouse rule 37: when asked about room 37, refer to it as room number 37 and
+      remember that its lights are on circuit 2.\nHouse rule 38: when asked about
+      room 38, refer to it as room number 38 and remember that its lights are on circuit
+      3.\nHouse rule 39: when asked about room 39, refer to it as room number 39 and
+      remember that its lights are on circuit 4.\nHouse rule 40: when asked about
+      room 40, refer to it as room number 40 and remember that its lights are on circuit
+      5.\nHouse rule 41: when asked about room 41, refer to it as room number 41 and
+      remember that its lights are on circuit 6.\nHouse rule 42: when asked about
+      room 42, refer to it as room number 42 and remember that its lights are on circuit
+      0.\nHouse rule 43: when asked about room 43, refer to it as room number 43 and
+      remember that its lights are on circuit 1.\nHouse rule 44: when asked about
+      room 44, refer to it as room number 44 and remember that its lights are on circuit
+      2.\nHouse rule 45: when asked about room 45, refer to it as room number 45 and
+      remember that its lights are on circuit 3.\nHouse rule 46: when asked about
+      room 46, refer to it as room number 46 and remember that its lights are on circuit
+      4.\nHouse rule 47: when asked about room 47, refer to it as room number 47 and
+      remember that its lights are on circuit 5.\nHouse rule 48: when asked about
+      room 48, refer to it as room number 48 and remember that its lights are on circuit
+      6.\nHouse rule 49: when asked about room 49, refer to it as room number 49 and
+      remember that its lights are on circuit 0.\nHouse rule 50: when asked about
+      room 50, refer to it as room number 50 and remember that its lights are on circuit
+      1.\nHouse rule 51: when asked about room 51, refer to it as room number 51 and
+      remember that its lights are on circuit 2.\nHouse rule 52: when asked about
+      room 52, refer to it as room number 52 and remember that its lights are on circuit
+      3.\nHouse rule 53: when asked about room 53, refer to it as room number 53 and
+      remember that its lights are on circuit 4.\nHouse rule 54: when asked about
+      room 54, refer to it as room number 54 and remember that its lights are on circuit
+      5.\nHouse rule 55: when asked about room 55, refer to it as room number 55 and
+      remember that its lights are on circuit 6.\nHouse rule 56: when asked about
+      room 56, refer to it as room number 56 and remember that its lights are on circuit
+      0.\nHouse rule 57: when asked about room 57, refer to it as room number 57 and
+      remember that its lights are on circuit 1.\nHouse rule 58: when asked about
+      room 58, refer to it as room number 58 and remember that its lights are on circuit
+      2.\nHouse rule 59: when asked about room 59, refer to it as room number 59 and
+      remember that its lights are on circuit 3.\nHouse rule 60: when asked about
+      room 60, refer to it as room number 60 and remember that its lights are on circuit
+      4.\nHouse rule 61: when asked about room 61, refer to it as room number 61 and
+      remember that its lights are on circuit 5.\nHouse rule 62: when asked about
+      room 62, refer to it as room number 62 and remember that its lights are on circuit
+      6.\nHouse rule 63: when asked about room 63, refer to it as room number 63 and
+      remember that its lights are on circuit 0.\nHouse rule 64: when asked about
+      room 64, refer to it as room number 64 and remember that its lights are on circuit
+      1.\nHouse rule 65: when asked about room 65, refer to it as room number 65 and
+      remember that its lights are on circuit 2.\nHouse rule 66: when asked about
+      room 66, refer to it as room number 66 and remember that its lights are on circuit
+      3.\nHouse rule 67: when asked about room 67, refer to it as room number 67 and
+      remember that its lights are on circuit 4.\nHouse rule 68: when asked about
+      room 68, refer to it as room number 68 and remember that its lights are on circuit
+      5.\nHouse rule 69: when asked about room 69, refer to it as room number 69 and
+      remember that its lights are on circuit 6.\nHouse rule 70: when asked about
+      room 70, refer to it as room number 70 and remember that its lights are on circuit
+      0.\nHouse rule 71: when asked about room 71, refer to it as room number 71 and
+      remember that its lights are on circuit 1.\nHouse rule 72: when asked about
+      room 72, refer to it as room number 72 and remember that its lights are on circuit
+      2.\nHouse rule 73: when asked about room 73, refer to it as room number 73 and
+      remember that its lights are on circuit 3.\nHouse rule 74: when asked about
+      room 74, refer to it as room number 74 and remember that its lights are on circuit
+      4.\nHouse rule 75: when asked about room 75, refer to it as room number 75 and
+      remember that its lights are on circuit 5.\nHouse rule 76: when asked about
+      room 76, refer to it as room number 76 and remember that its lights are on circuit
+      6.\nHouse rule 77: when asked about room 77, refer to it as room number 77 and
+      remember that its lights are on circuit 0.\nHouse rule 78: when asked about
+      room 78, refer to it as room number 78 and remember that its lights are on circuit
+      1.\nHouse rule 79: when asked about room 79, refer to it as room number 79 and
+      remember that its lights are on circuit 2.\nHouse rule 80: when asked about
+      room 80, refer to it as room number 80 and remember that its lights are on circuit
+      3.\nHouse rule 81: when asked about room 81, refer to it as room number 81 and
+      remember that its lights are on circuit 4.\nHouse rule 82: when asked about
+      room 82, refer to it as room number 82 and remember that its lights are on circuit
+      5.\nHouse rule 83: when asked about room 83, refer to it as room number 83 and
+      remember that its lights are on circuit 6.\nHouse rule 84: when asked about
+      room 84, refer to it as room number 84 and remember that its lights are on circuit
+      0.\nHouse rule 85: when asked about room 85, refer to it as room number 85 and
+      remember that its lights are on circuit 1.\nHouse rule 86: when asked about
+      room 86, refer to it as room number 86 and remember that its lights are on circuit
+      2.\nHouse rule 87: when asked about room 87, refer to it as room number 87 and
+      remember that its lights are on circuit 3.\nHouse rule 88: when asked about
+      room 88, refer to it as room number 88 and remember that its lights are on circuit
+      4.\nHouse rule 89: when asked about room 89, refer to it as room number 89 and
+      remember that its lights are on circuit 5.\nHouse rule 90: when asked about
+      room 90, refer to it as room number 90 and remember that its lights are on circuit
+      6.\nHouse rule 91: when asked about room 91, refer to it as room number 91 and
+      remember that its lights are on circuit 0.\nHouse rule 92: when asked about
+      room 92, refer to it as room number 92 and remember that its lights are on circuit
+      1.\nHouse rule 93: when asked about room 93, refer to it as room number 93 and
+      remember that its lights are on circuit 2.\nHouse rule 94: when asked about
+      room 94, refer to it as room number 94 and remember that its lights are on circuit
+      3.\nHouse rule 95: when asked about room 95, refer to it as room number 95 and
+      remember that its lights are on circuit 4.\nHouse rule 96: when asked about
+      room 96, refer to it as room number 96 and remember that its lights are on circuit
+      5.\nHouse rule 97: when asked about room 97, refer to it as room number 97 and
+      remember that its lights are on circuit 6.\nHouse rule 98: when asked about
+      room 98, refer to it as room number 98 and remember that its lights are on circuit
+      0.\nHouse rule 99: when asked about room 99, refer to it as room number 99 and
+      remember that its lights are on circuit 1.\nHouse rule 100: when asked about
+      room 100, refer to it as room number 100 and remember that its lights are on
+      circuit 2.\nHouse rule 101: when asked about room 101, refer to it as room number
+      101 and remember that its lights are on circuit 3.\nHouse rule 102: when asked
+      about room 102, refer to it as room number 102 and remember that its lights
+      are on circuit 4.\nHouse rule 103: when asked about room 103, refer to it as
+      room number 103 and remember that its lights are on circuit 5.\nHouse rule 104:
+      when asked about room 104, refer to it as room number 104 and remember that
+      its lights are on circuit 6.\nHouse rule 105: when asked about room 105, refer
+      to it as room number 105 and remember that its lights are on circuit 0.\nHouse
+      rule 106: when asked about room 106, refer to it as room number 106 and remember
+      that its lights are on circuit 1.\nHouse rule 107: when asked about room 107,
+      refer to it as room number 107 and remember that its lights are on circuit 2.\nHouse
+      rule 108: when asked about room 108, refer to it as room number 108 and remember
+      that its lights are on circuit 3.\nHouse rule 109: when asked about room 109,
+      refer to it as room number 109 and remember that its lights are on circuit 4.\nHouse
+      rule 110: when asked about room 110, refer to it as room number 110 and remember
+      that its lights are on circuit 5.\nHouse rule 111: when asked about room 111,
+      refer to it as room number 111 and remember that its lights are on circuit 6.\nHouse
+      rule 112: when asked about room 112, refer to it as room number 112 and remember
+      that its lights are on circuit 0.\nHouse rule 113: when asked about room 113,
+      refer to it as room number 113 and remember that its lights are on circuit 1.\nHouse
+      rule 114: when asked about room 114, refer to it as room number 114 and remember
+      that its lights are on circuit 2.\nHouse rule 115: when asked about room 115,
+      refer to it as room number 115 and remember that its lights are on circuit 3.\nHouse
+      rule 116: when asked about room 116, refer to it as room number 116 and remember
+      that its lights are on circuit 4.\nHouse rule 117: when asked about room 117,
+      refer to it as room number 117 and remember that its lights are on circuit 5.\nHouse
+      rule 118: when asked about room 118, refer to it as room number 118 and remember
+      that its lights are on circuit 6.\nHouse rule 119: when asked about room 119,
+      refer to it as room number 119 and remember that its lights are on circuit 0.\nHouse
+      rule 120: when asked about room 120, refer to it as room number 120 and remember
+      that its lights are on circuit 1.\nHouse rule 121: when asked about room 121,
+      refer to it as room number 121 and remember that its lights are on circuit 2.\nHouse
+      rule 122: when asked about room 122, refer to it as room number 122 and remember
+      that its lights are on circuit 3.\nHouse rule 123: when asked about room 123,
+      refer to it as room number 123 and remember that its lights are on circuit 4.\nHouse
+      rule 124: when asked about room 124, refer to it as room number 124 and remember
+      that its lights are on circuit 5.\nHouse rule 125: when asked about room 125,
+      refer to it as room number 125 and remember that its lights are on circuit 6.\nHouse
+      rule 126: when asked about room 126, refer to it as room number 126 and remember
+      that its lights are on circuit 0.\nHouse rule 127: when asked about room 127,
+      refer to it as room number 127 and remember that its lights are on circuit 1.\nHouse
+      rule 128: when asked about room 128, refer to it as room number 128 and remember
+      that its lights are on circuit 2.\nHouse rule 129: when asked about room 129,
+      refer to it as room number 129 and remember that its lights are on circuit 3.\nHouse
+      rule 130: when asked about room 130, refer to it as room number 130 and remember
+      that its lights are on circuit 4.\nHouse rule 131: when asked about room 131,
+      refer to it as room number 131 and remember that its lights are on circuit 5.\nHouse
+      rule 132: when asked about room 132, refer to it as room number 132 and remember
+      that its lights are on circuit 6.\nHouse rule 133: when asked about room 133,
+      refer to it as room number 133 and remember that its lights are on circuit 0.\nHouse
+      rule 134: when asked about room 134, refer to it as room number 134 and remember
+      that its lights are on circuit 1.\nHouse rule 135: when asked about room 135,
+      refer to it as room number 135 and remember that its lights are on circuit 2.\nHouse
+      rule 136: when asked about room 136, refer to it as room number 136 and remember
+      that its lights are on circuit 3.\nHouse rule 137: when asked about room 137,
+      refer to it as room number 137 and remember that its lights are on circuit 4.\nHouse
+      rule 138: when asked about room 138, refer to it as room number 138 and remember
+      that its lights are on circuit 5.\nHouse rule 139: when asked about room 139,
+      refer to it as room number 139 and remember that its lights are on circuit 6.\nHouse
+      rule 140: when asked about room 140, refer to it as room number 140 and remember
+      that its lights are on circuit 0.\nHouse rule 141: when asked about room 141,
+      refer to it as room number 141 and remember that its lights are on circuit 1.\nHouse
+      rule 142: when asked about room 142, refer to it as room number 142 and remember
+      that its lights are on circuit 2.\nHouse rule 143: when asked about room 143,
+      refer to it as room number 143 and remember that its lights are on circuit 3.\nHouse
+      rule 144: when asked about room 144, refer to it as room number 144 and remember
+      that its lights are on circuit 4.\nHouse rule 145: when asked about room 145,
+      refer to it as room number 145 and remember that its lights are on circuit 5.\nHouse
+      rule 146: when asked about room 146, refer to it as room number 146 and remember
+      that its lights are on circuit 6.\nHouse rule 147: when asked about room 147,
+      refer to it as room number 147 and remember that its lights are on circuit 0.\nHouse
+      rule 148: when asked about room 148, refer to it as room number 148 and remember
+      that its lights are on circuit 1.\nHouse rule 149: when asked about room 149,
+      refer to it as room number 149 and remember that its lights are on circuit 2.\nHouse
+      rule 150: when asked about room 150, refer to it as room number 150 and remember
+      that its lights are on circuit 3.\nHouse rule 151: when asked about room 151,
+      refer to it as room number 151 and remember that its lights are on circuit 4.\nHouse
+      rule 152: when asked about room 152, refer to it as room number 152 and remember
+      that its lights are on circuit 5.\nHouse rule 153: when asked about room 153,
+      refer to it as room number 153 and remember that its lights are on circuit 6.\nHouse
+      rule 154: when asked about room 154, refer to it as room number 154 and remember
+      that its lights are on circuit 0.\nHouse rule 155: when asked about room 155,
+      refer to it as room number 155 and remember that its lights are on circuit 1.\nHouse
+      rule 156: when asked about room 156, refer to it as room number 156 and remember
+      that its lights are on circuit 2.\nHouse rule 157: when asked about room 157,
+      refer to it as room number 157 and remember that its lights are on circuit 3.\nHouse
+      rule 158: when asked about room 158, refer to it as room number 158 and remember
+      that its lights are on circuit 4.\nHouse rule 159: when asked about room 159,
+      refer to it as room number 159 and remember that its lights are on circuit 5.\nHouse
+      rule 160: when asked about room 160, refer to it as room number 160 and remember
+      that its lights are on circuit 6.\nHouse rule 161: when asked about room 161,
+      refer to it as room number 161 and remember that its lights are on circuit 0.\nHouse
+      rule 162: when asked about room 162, refer to it as room number 162 and remember
+      that its lights are on circuit 1.\nHouse rule 163: when asked about room 163,
+      refer to it as room number 163 and remember that its lights are on circuit 2.\nHouse
+      rule 164: when asked about room 164, refer to it as room number 164 and remember
+      that its lights are on circuit 3.\nHouse rule 165: when asked about room 165,
+      refer to it as room number 165 and remember that its lights are on circuit 4.\nHouse
+      rule 166: when asked about room 166, refer to it as room number 166 and remember
+      that its lights are on circuit 5.\nHouse rule 167: when asked about room 167,
+      refer to it as room number 167 and remember that its lights are on circuit 6.\nHouse
+      rule 168: when asked about room 168, refer to it as room number 168 and remember
+      that its lights are on circuit 0.\nHouse rule 169: when asked about room 169,
+      refer to it as room number 169 and remember that its lights are on circuit 1.\nHouse
+      rule 170: when asked about room 170, refer to it as room number 170 and remember
+      that its lights are on circuit 2.\nHouse rule 171: when asked about room 171,
+      refer to it as room number 171 and remember that its lights are on circuit 3.\nHouse
+      rule 172: when asked about room 172, refer to it as room number 172 and remember
+      that its lights are on circuit 4.\nHouse rule 173: when asked about room 173,
+      refer to it as room number 173 and remember that its lights are on circuit 5.\nHouse
+      rule 174: when asked about room 174, refer to it as room number 174 and remember
+      that its lights are on circuit 6.\nHouse rule 175: when asked about room 175,
+      refer to it as room number 175 and remember that its lights are on circuit 0.\nHouse
+      rule 176: when asked about room 176, refer to it as room number 176 and remember
+      that its lights are on circuit 1.\nHouse rule 177: when asked about room 177,
+      refer to it as room number 177 and remember that its lights are on circuit 2.\nHouse
+      rule 178: when asked about room 178, refer to it as room number 178 and remember
+      that its lights are on circuit 3.\nHouse rule 179: when asked about room 179,
+      refer to it as room number 179 and remember that its lights are on circuit 4.\nHouse
+      rule 180: when asked about room 180, refer to it as room number 180 and remember
+      that its lights are on circuit 5.\nHouse rule 181: when asked about room 181,
+      refer to it as room number 181 and remember that its lights are on circuit 6.\nHouse
+      rule 182: when asked about room 182, refer to it as room number 182 and remember
+      that its lights are on circuit 0.\nHouse rule 183: when asked about room 183,
+      refer to it as room number 183 and remember that its lights are on circuit 1.\nHouse
+      rule 184: when asked about room 184, refer to it as room number 184 and remember
+      that its lights are on circuit 2.\nHouse rule 185: when asked about room 185,
+      refer to it as room number 185 and remember that its lights are on circuit 3.\nHouse
+      rule 186: when asked about room 186, refer to it as room number 186 and remember
+      that its lights are on circuit 4.\nHouse rule 187: when asked about room 187,
+      refer to it as room number 187 and remember that its lights are on circuit 5.\nHouse
+      rule 188: when asked about room 188, refer to it as room number 188 and remember
+      that its lights are on circuit 6.\nHouse rule 189: when asked about room 189,
+      refer to it as room number 189 and remember that its lights are on circuit 0.\nHouse
+      rule 190: when asked about room 190, refer to it as room number 190 and remember
+      that its lights are on circuit 1.\nHouse rule 191: when asked about room 191,
+      refer to it as room number 191 and remember that its lights are on circuit 2.\nHouse
+      rule 192: when asked about room 192, refer to it as room number 192 and remember
+      that its lights are on circuit 3.\nHouse rule 193: when asked about room 193,
+      refer to it as room number 193 and remember that its lights are on circuit 4.\nHouse
+      rule 194: when asked about room 194, refer to it as room number 194 and remember
+      that its lights are on circuit 5.\nHouse rule 195: when asked about room 195,
+      refer to it as room number 195 and remember that its lights are on circuit 6.\nHouse
+      rule 196: when asked about room 196, refer to it as room number 196 and remember
+      that its lights are on circuit 0.\nHouse rule 197: when asked about room 197,
+      refer to it as room number 197 and remember that its lights are on circuit 1.\nHouse
+      rule 198: when asked about room 198, refer to it as room number 198 and remember
+      that its lights are on circuit 2.\nHouse rule 199: when asked about room 199,
+      refer to it as room number 199 and remember that its lights are on circuit 3.\nHouse
+      rule 200: when asked about room 200, refer to it as room number 200 and remember
+      that its lights are on circuit 4.\nHouse rule 201: when asked about room 201,
+      refer to it as room number 201 and remember that its lights are on circuit 5.\nHouse
+      rule 202: when asked about room 202, refer to it as room number 202 and remember
+      that its lights are on circuit 6.\nHouse rule 203: when asked about room 203,
+      refer to it as room number 203 and remember that its lights are on circuit 0.\nHouse
+      rule 204: when asked about room 204, refer to it as room number 204 and remember
+      that its lights are on circuit 1.\nHouse rule 205: when asked about room 205,
+      refer to it as room number 205 and remember that its lights are on circuit 2.\nHouse
+      rule 206: when asked about room 206, refer to it as room number 206 and remember
+      that its lights are on circuit 3.\nHouse rule 207: when asked about room 207,
+      refer to it as room number 207 and remember that its lights are on circuit 4.\nHouse
+      rule 208: when asked about room 208, refer to it as room number 208 and remember
+      that its lights are on circuit 5.\nHouse rule 209: when asked about room 209,
+      refer to it as room number 209 and remember that its lights are on circuit 6.\nHouse
+      rule 210: when asked about room 210, refer to it as room number 210 and remember
+      that its lights are on circuit 0.\nHouse rule 211: when asked about room 211,
+      refer to it as room number 211 and remember that its lights are on circuit 1.\nHouse
+      rule 212: when asked about room 212, refer to it as room number 212 and remember
+      that its lights are on circuit 2.\nHouse rule 213: when asked about room 213,
+      refer to it as room number 213 and remember that its lights are on circuit 3.\nHouse
+      rule 214: when asked about room 214, refer to it as room number 214 and remember
+      that its lights are on circuit 4.\nHouse rule 215: when asked about room 215,
+      refer to it as room number 215 and remember that its lights are on circuit 5.\nHouse
+      rule 216: when asked about room 216, refer to it as room number 216 and remember
+      that its lights are on circuit 6.\nHouse rule 217: when asked about room 217,
+      refer to it as room number 217 and remember that its lights are on circuit 0.\nHouse
+      rule 218: when asked about room 218, refer to it as room number 218 and remember
+      that its lights are on circuit 1.\nHouse rule 219: when asked about room 219,
+      refer to it as room number 219 and remember that its lights are on circuit 2.\nHouse
+      rule 220: when asked about room 220, refer to it as room number 220 and remember
+      that its lights are on circuit 3.\nHouse rule 221: when asked about room 221,
+      refer to it as room number 221 and remember that its lights are on circuit 4.\nHouse
+      rule 222: when asked about room 222, refer to it as room number 222 and remember
+      that its lights are on circuit 5.\nHouse rule 223: when asked about room 223,
+      refer to it as room number 223 and remember that its lights are on circuit 6.\nHouse
+      rule 224: when asked about room 224, refer to it as room number 224 and remember
+      that its lights are on circuit 0.\nHouse rule 225: when asked about room 225,
+      refer to it as room number 225 and remember that its lights are on circuit 1.\nHouse
+      rule 226: when asked about room 226, refer to it as room number 226 and remember
+      that its lights are on circuit 2.\nHouse rule 227: when asked about room 227,
+      refer to it as room number 227 and remember that its lights are on circuit 3.\nHouse
+      rule 228: when asked about room 228, refer to it as room number 228 and remember
+      that its lights are on circuit 4.\nHouse rule 229: when asked about room 229,
+      refer to it as room number 229 and remember that its lights are on circuit 5.\nHouse
+      rule 230: when asked about room 230, refer to it as room number 230 and remember
+      that its lights are on circuit 6.\nHouse rule 231: when asked about room 231,
+      refer to it as room number 231 and remember that its lights are on circuit 0.\nHouse
+      rule 232: when asked about room 232, refer to it as room number 232 and remember
+      that its lights are on circuit 1.\nHouse rule 233: when asked about room 233,
+      refer to it as room number 233 and remember that its lights are on circuit 2.\nHouse
+      rule 234: when asked about room 234, refer to it as room number 234 and remember
+      that its lights are on circuit 3.\nHouse rule 235: when asked about room 235,
+      refer to it as room number 235 and remember that its lights are on circuit 4.\nHouse
+      rule 236: when asked about room 236, refer to it as room number 236 and remember
+      that its lights are on circuit 5.\nHouse rule 237: when asked about room 237,
+      refer to it as room number 237 and remember that its lights are on circuit 6.\nHouse
+      rule 238: when asked about room 238, refer to it as room number 238 and remember
+      that its lights are on circuit 0.\nHouse rule 239: when asked about room 239,
+      refer to it as room number 239 and remember that its lights are on circuit 1.\nHouse
+      rule 240: when asked about room 240, refer to it as room number 240 and remember
+      that its lights are on circuit 2.\nHouse rule 241: when asked about room 241,
+      refer to it as room number 241 and remember that its lights are on circuit 3.\nHouse
+      rule 242: when asked about room 242, refer to it as room number 242 and remember
+      that its lights are on circuit 4.\nHouse rule 243: when asked about room 243,
+      refer to it as room number 243 and remember that its lights are on circuit 5.\nHouse
+      rule 244: when asked about room 244, refer to it as room number 244 and remember
+      that its lights are on circuit 6.\nHouse rule 245: when asked about room 245,
+      refer to it as room number 245 and remember that its lights are on circuit 0.\nHouse
+      rule 246: when asked about room 246, refer to it as room number 246 and remember
+      that its lights are on circuit 1.\nHouse rule 247: when asked about room 247,
+      refer to it as room number 247 and remember that its lights are on circuit 2.\nHouse
+      rule 248: when asked about room 248, refer to it as room number 248 and remember
+      that its lights are on circuit 3.\nHouse rule 249: when asked about room 249,
+      refer to it as room number 249 and remember that its lights are on circuit 4.\nHouse
+      rule 250: when asked about room 250, refer to it as room number 250 and remember
+      that its lights are on circuit 5.\nHouse rule 251: when asked about room 251,
+      refer to it as room number 251 and remember that its lights are on circuit 6.\nHouse
+      rule 252: when asked about room 252, refer to it as room number 252 and remember
+      that its lights are on circuit 0.\nHouse rule 253: when asked about room 253,
+      refer to it as room number 253 and remember that its lights are on circuit 1.\nHouse
+      rule 254: when asked about room 254, refer to it as room number 254 and remember
+      that its lights are on circuit 2.\nHouse rule 255: when asked about room 255,
+      refer to it as room number 255 and remember that its lights are on circuit 3.\nHouse
+      rule 256: when asked about room 256, refer to it as room number 256 and remember
+      that its lights are on circuit 4.\nHouse rule 257: when asked about room 257,
+      refer to it as room number 257 and remember that its lights are on circuit 5.\nHouse
+      rule 258: when asked about room 258, refer to it as room number 258 and remember
+      that its lights are on circuit 6.\nHouse rule 259: when asked about room 259,
+      refer to it as room number 259 and remember that its lights are on circuit 0.\nHouse
+      rule 260: when asked about room 260, refer to it as room number 260 and remember
+      that its lights are on circuit 1.\nHouse rule 261: when asked about room 261,
+      refer to it as room number 261 and remember that its lights are on circuit 2.\nHouse
+      rule 262: when asked about room 262, refer to it as room number 262 and remember
+      that its lights are on circuit 3.\nHouse rule 263: when asked about room 263,
+      refer to it as room number 263 and remember that its lights are on circuit 4.\nHouse
+      rule 264: when asked about room 264, refer to it as room number 264 and remember
+      that its lights are on circuit 5.\nHouse rule 265: when asked about room 265,
+      refer to it as room number 265 and remember that its lights are on circuit 6.\nHouse
+      rule 266: when asked about room 266, refer to it as room number 266 and remember
+      that its lights are on circuit 0.\nHouse rule 267: when asked about room 267,
+      refer to it as room number 267 and remember that its lights are on circuit 1.\nHouse
+      rule 268: when asked about room 268, refer to it as room number 268 and remember
+      that its lights are on circuit 2.\nHouse rule 269: when asked about room 269,
+      refer to it as room number 269 and remember that its lights are on circuit 3.\nHouse
+      rule 270: when asked about room 270, refer to it as room number 270 and remember
+      that its lights are on circuit 4.\nHouse rule 271: when asked about room 271,
+      refer to it as room number 271 and remember that its lights are on circuit 5.\nHouse
+      rule 272: when asked about room 272, refer to it as room number 272 and remember
+      that its lights are on circuit 6.\nHouse rule 273: when asked about room 273,
+      refer to it as room number 273 and remember that its lights are on circuit 0.\nHouse
+      rule 274: when asked about room 274, refer to it as room number 274 and remember
+      that its lights are on circuit 1.\nHouse rule 275: when asked about room 275,
+      refer to it as room number 275 and remember that its lights are on circuit 2.\nHouse
+      rule 276: when asked about room 276, refer to it as room number 276 and remember
+      that its lights are on circuit 3.\nHouse rule 277: when asked about room 277,
+      refer to it as room number 277 and remember that its lights are on circuit 4.\nHouse
+      rule 278: when asked about room 278, refer to it as room number 278 and remember
+      that its lights are on circuit 5.\nHouse rule 279: when asked about room 279,
+      refer to it as room number 279 and remember that its lights are on circuit 6.\nHouse
+      rule 280: when asked about room 280, refer to it as room number 280 and remember
+      that its lights are on circuit 0.\nHouse rule 281: when asked about room 281,
+      refer to it as room number 281 and remember that its lights are on circuit 1.\nHouse
+      rule 282: when asked about room 282, refer to it as room number 282 and remember
+      that its lights are on circuit 2.\nHouse rule 283: when asked about room 283,
+      refer to it as room number 283 and remember that its lights are on circuit 3.\nHouse
+      rule 284: when asked about room 284, refer to it as room number 284 and remember
+      that its lights are on circuit 4.\nHouse rule 285: when asked about room 285,
+      refer to it as room number 285 and remember that its lights are on circuit 5.\nHouse
+      rule 286: when asked about room 286, refer to it as room number 286 and remember
+      that its lights are on circuit 6.\nHouse rule 287: when asked about room 287,
+      refer to it as room number 287 and remember that its lights are on circuit 0.\nHouse
+      rule 288: when asked about room 288, refer to it as room number 288 and remember
+      that its lights are on circuit 1.\nHouse rule 289: when asked about room 289,
+      refer to it as room number 289 and remember that its lights are on circuit 2.\nHouse
+      rule 290: when asked about room 290, refer to it as room number 290 and remember
+      that its lights are on circuit 3.\nHouse rule 291: when asked about room 291,
+      refer to it as room number 291 and remember that its lights are on circuit 4.\nHouse
+      rule 292: when asked about room 292, refer to it as room number 292 and remember
+      that its lights are on circuit 5.\nHouse rule 293: when asked about room 293,
+      refer to it as room number 293 and remember that its lights are on circuit 6.\nHouse
+      rule 294: when asked about room 294, refer to it as room number 294 and remember
+      that its lights are on circuit 0.\nHouse rule 295: when asked about room 295,
+      refer to it as room number 295 and remember that its lights are on circuit 1.\nHouse
+      rule 296: when asked about room 296, refer to it as room number 296 and remember
+      that its lights are on circuit 2.\nHouse rule 297: when asked about room 297,
+      refer to it as room number 297 and remember that its lights are on circuit 3.\nHouse
+      rule 298: when asked about room 298, refer to it as room number 298 and remember
+      that its lights are on circuit 4.\nHouse rule 299: when asked about room 299,
+      refer to it as room number 299 and remember that its lights are on circuit 5.\nHouse
+      rule 300: when asked about room 300, refer to it as room number 300 and remember
+      that its lights are on circuit 6.\nHouse rule 301: when asked about room 301,
+      refer to it as room number 301 and remember that its lights are on circuit 0.\nHouse
+      rule 302: when asked about room 302, refer to it as room number 302 and remember
+      that its lights are on circuit 1.\nHouse rule 303: when asked about room 303,
+      refer to it as room number 303 and remember that its lights are on circuit 2.\nHouse
+      rule 304: when asked about room 304, refer to it as room number 304 and remember
+      that its lights are on circuit 3.\nHouse rule 305: when asked about room 305,
+      refer to it as room number 305 and remember that its lights are on circuit 4.\nHouse
+      rule 306: when asked about room 306, refer to it as room number 306 and remember
+      that its lights are on circuit 5.\nHouse rule 307: when asked about room 307,
+      refer to it as room number 307 and remember that its lights are on circuit 6.\nHouse
+      rule 308: when asked about room 308, refer to it as room number 308 and remember
+      that its lights are on circuit 0.\nHouse rule 309: when asked about room 309,
+      refer to it as room number 309 and remember that its lights are on circuit 1.\nHouse
+      rule 310: when asked about room 310, refer to it as room number 310 and remember
+      that its lights are on circuit 2.\nHouse rule 311: when asked about room 311,
+      refer to it as room number 311 and remember that its lights are on circuit 3.\nHouse
+      rule 312: when asked about room 312, refer to it as room number 312 and remember
+      that its lights are on circuit 4.\nHouse rule 313: when asked about room 313,
+      refer to it as room number 313 and remember that its lights are on circuit 5.\nHouse
+      rule 314: when asked about room 314, refer to it as room number 314 and remember
+      that its lights are on circuit 6.\nHouse rule 315: when asked about room 315,
+      refer to it as room number 315 and remember that its lights are on circuit 0.\nHouse
+      rule 316: when asked about room 316, refer to it as room number 316 and remember
+      that its lights are on circuit 1.\nHouse rule 317: when asked about room 317,
+      refer to it as room number 317 and remember that its lights are on circuit 2.\nHouse
+      rule 318: when asked about room 318, refer to it as room number 318 and remember
+      that its lights are on circuit 3.\nHouse rule 319: when asked about room 319,
+      refer to it as room number 319 and remember that its lights are on circuit 4.\nHouse
+      rule 320: when asked about room 320, refer to it as room number 320 and remember
+      that its lights are on circuit 5.\nHouse rule 321: when asked about room 321,
+      refer to it as room number 321 and remember that its lights are on circuit 6.\nHouse
+      rule 322: when asked about room 322, refer to it as room number 322 and remember
+      that its lights are on circuit 0.\nHouse rule 323: when asked about room 323,
+      refer to it as room number 323 and remember that its lights are on circuit 1.\nHouse
+      rule 324: when asked about room 324, refer to it as room number 324 and remember
+      that its lights are on circuit 2.\nHouse rule 325: when asked about room 325,
+      refer to it as room number 325 and remember that its lights are on circuit 3.\nHouse
+      rule 326: when asked about room 326, refer to it as room number 326 and remember
+      that its lights are on circuit 4.\nHouse rule 327: when asked about room 327,
+      refer to it as room number 327 and remember that its lights are on circuit 5.\nHouse
+      rule 328: when asked about room 328, refer to it as room number 328 and remember
+      that its lights are on circuit 6.\nHouse rule 329: when asked about room 329,
+      refer to it as room number 329 and remember that its lights are on circuit 0.\nHouse
+      rule 330: when asked about room 330, refer to it as room number 330 and remember
+      that its lights are on circuit 1.\nHouse rule 331: when asked about room 331,
+      refer to it as room number 331 and remember that its lights are on circuit 2.\nHouse
+      rule 332: when asked about room 332, refer to it as room number 332 and remember
+      that its lights are on circuit 3.\nHouse rule 333: when asked about room 333,
+      refer to it as room number 333 and remember that its lights are on circuit 4.\nHouse
+      rule 334: when asked about room 334, refer to it as room number 334 and remember
+      that its lights are on circuit 5.\nHouse rule 335: when asked about room 335,
+      refer to it as room number 335 and remember that its lights are on circuit 6.\nHouse
+      rule 336: when asked about room 336, refer to it as room number 336 and remember
+      that its lights are on circuit 0.\nHouse rule 337: when asked about room 337,
+      refer to it as room number 337 and remember that its lights are on circuit 1.\nHouse
+      rule 338: when asked about room 338, refer to it as room number 338 and remember
+      that its lights are on circuit 2.\nHouse rule 339: when asked about room 339,
+      refer to it as room number 339 and remember that its lights are on circuit 3.\nHouse
+      rule 340: when asked about room 340, refer to it as room number 340 and remember
+      that its lights are on circuit 4.\nHouse rule 341: when asked about room 341,
+      refer to it as room number 341 and remember that its lights are on circuit 5.\nHouse
+      rule 342: when asked about room 342, refer to it as room number 342 and remember
+      that its lights are on circuit 6.\nHouse rule 343: when asked about room 343,
+      refer to it as room number 343 and remember that its lights are on circuit 0.\nHouse
+      rule 344: when asked about room 344, refer to it as room number 344 and remember
+      that its lights are on circuit 1.\nHouse rule 345: when asked about room 345,
+      refer to it as room number 345 and remember that its lights are on circuit 2.\nHouse
+      rule 346: when asked about room 346, refer to it as room number 346 and remember
+      that its lights are on circuit 3.\nHouse rule 347: when asked about room 347,
+      refer to it as room number 347 and remember that its lights are on circuit 4.\nHouse
+      rule 348: when asked about room 348, refer to it as room number 348 and remember
+      that its lights are on circuit 5.\nHouse rule 349: when asked about room 349,
+      refer to it as room number 349 and remember that its lights are on circuit 6.\nHouse
+      rule 350: when asked about room 350, refer to it as room number 350 and remember
+      that its lights are on circuit 0.\nHouse rule 351: when asked about room 351,
+      refer to it as room number 351 and remember that its lights are on circuit 1.\nHouse
+      rule 352: when asked about room 352, refer to it as room number 352 and remember
+      that its lights are on circuit 2.\nHouse rule 353: when asked about room 353,
+      refer to it as room number 353 and remember that its lights are on circuit 3.\nHouse
+      rule 354: when asked about room 354, refer to it as room number 354 and remember
+      that its lights are on circuit 4.\nHouse rule 355: when asked about room 355,
+      refer to it as room number 355 and remember that its lights are on circuit 5.\nHouse
+      rule 356: when asked about room 356, refer to it as room number 356 and remember
+      that its lights are on circuit 6.\nHouse rule 357: when asked about room 357,
+      refer to it as room number 357 and remember that its lights are on circuit 0.\nHouse
+      rule 358: when asked about room 358, refer to it as room number 358 and remember
+      that its lights are on circuit 1.\nHouse rule 359: when asked about room 359,
+      refer to it as room number 359 and remember that its lights are on circuit 2.\nHouse
+      rule 360: when asked about room 360, refer to it as room number 360 and remember
+      that its lights are on circuit 3.\nHouse rule 361: when asked about room 361,
+      refer to it as room number 361 and remember that its lights are on circuit 4.\nHouse
+      rule 362: when asked about room 362, refer to it as room number 362 and remember
+      that its lights are on circuit 5.\nHouse rule 363: when asked about room 363,
+      refer to it as room number 363 and remember that its lights are on circuit 6.\nHouse
+      rule 364: when asked about room 364, refer to it as room number 364 and remember
+      that its lights are on circuit 0.\nHouse rule 365: when asked about room 365,
+      refer to it as room number 365 and remember that its lights are on circuit 1.\nHouse
+      rule 366: when asked about room 366, refer to it as room number 366 and remember
+      that its lights are on circuit 2.\nHouse rule 367: when asked about room 367,
+      refer to it as room number 367 and remember that its lights are on circuit 3.\nHouse
+      rule 368: when asked about room 368, refer to it as room number 368 and remember
+      that its lights are on circuit 4.\nHouse rule 369: when asked about room 369,
+      refer to it as room number 369 and remember that its lights are on circuit 5.\nHouse
+      rule 370: when asked about room 370, refer to it as room number 370 and remember
+      that its lights are on circuit 6.\nHouse rule 371: when asked about room 371,
+      refer to it as room number 371 and remember that its lights are on circuit 0.\nHouse
+      rule 372: when asked about room 372, refer to it as room number 372 and remember
+      that its lights are on circuit 1.\nHouse rule 373: when asked about room 373,
+      refer to it as room number 373 and remember that its lights are on circuit 2.\nHouse
+      rule 374: when asked about room 374, refer to it as room number 374 and remember
+      that its lights are on circuit 3.\nHouse rule 375: when asked about room 375,
+      refer to it as room number 375 and remember that its lights are on circuit 4.\nHouse
+      rule 376: when asked about room 376, refer to it as room number 376 and remember
+      that its lights are on circuit 5.\nHouse rule 377: when asked about room 377,
+      refer to it as room number 377 and remember that its lights are on circuit 6.\nHouse
+      rule 378: when asked about room 378, refer to it as room number 378 and remember
+      that its lights are on circuit 0.\nHouse rule 379: when asked about room 379,
+      refer to it as room number 379 and remember that its lights are on circuit 1.\nHouse
+      rule 380: when asked about room 380, refer to it as room number 380 and remember
+      that its lights are on circuit 2.\nHouse rule 381: when asked about room 381,
+      refer to it as room number 381 and remember that its lights are on circuit 3.\nHouse
+      rule 382: when asked about room 382, refer to it as room number 382 and remember
+      that its lights are on circuit 4.\nHouse rule 383: when asked about room 383,
+      refer to it as room number 383 and remember that its lights are on circuit 5.\nHouse
+      rule 384: when asked about room 384, refer to it as room number 384 and remember
+      that its lights are on circuit 6.\nHouse rule 385: when asked about room 385,
+      refer to it as room number 385 and remember that its lights are on circuit 0.\nHouse
+      rule 386: when asked about room 386, refer to it as room number 386 and remember
+      that its lights are on circuit 1.\nHouse rule 387: when asked about room 387,
+      refer to it as room number 387 and remember that its lights are on circuit 2.\nHouse
+      rule 388: when asked about room 388, refer to it as room number 388 and remember
+      that its lights are on circuit 3.\nHouse rule 389: when asked about room 389,
+      refer to it as room number 389 and remember that its lights are on circuit 4.\nHouse
+      rule 390: when asked about room 390, refer to it as room number 390 and remember
+      that its lights are on circuit 5.\nHouse rule 391: when asked about room 391,
+      refer to it as room number 391 and remember that its lights are on circuit 6.\nHouse
+      rule 392: when asked about room 392, refer to it as room number 392 and remember
+      that its lights are on circuit 0.\nHouse rule 393: when asked about room 393,
+      refer to it as room number 393 and remember that its lights are on circuit 1.\nHouse
+      rule 394: when asked about room 394, refer to it as room number 394 and remember
+      that its lights are on circuit 2.\nHouse rule 395: when asked about room 395,
+      refer to it as room number 395 and remember that its lights are on circuit 3.\nHouse
+      rule 396: when asked about room 396, refer to it as room number 396 and remember
+      that its lights are on circuit 4.\nHouse rule 397: when asked about room 397,
+      refer to it as room number 397 and remember that its lights are on circuit 5.\nHouse
+      rule 398: when asked about room 398, refer to it as room number 398 and remember
+      that its lights are on circuit 6.\nHouse rule 399: when asked about room 399,
+      refer to it as room number 399 and remember that its lights are on circuit 0.","cache_control":{"type":"ephemeral","ttl":"1h"}},{"type":"text","text":"\n\nCurrent
+      time: Wednesday 21 October 2026, 14:05 AEDT."}],"thinking":{"type":"adaptive","block_binding":{"prefix_mismatch_behavior":"drop_block"}},"tool_choice":{"type":"auto"},"tools":[{"name":"activate_tools","description":"Load
+      on-demand tools by name so they can be called.","input_schema":{"type":"object","properties":{"tool_names":{"type":"array","items":{"type":"string"}}},"required":["tool_names"]}},{"name":"set_lights","description":"Turn
+      the lights in a room on or off.","input_schema":{"type":"object","properties":{"room":{"type":"string"},"on":{"type":"boolean"}},"required":["room","on"]},"defer_loading":true}]}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      anthropic-beta:
+      - thinking-binding-controls-2026-08-01,mid-conversation-tool-changes-2026-07-01
+      anthropic-version:
+      - '2023-06-01'
+      connection:
+      - keep-alive
+      content-length:
+      - '49539'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+      user-agent:
+      - AsyncAnthropic/Python 0.79.0
+      x-stainless-arch:
+      - arm64
+      x-stainless-async:
+      - async:asyncio
+      x-stainless-lang:
+      - python
+      x-stainless-os:
+      - MacOS
+      x-stainless-package-version:
+      - 0.79.0
+      x-stainless-read-timeout:
+      - '600'
+      x-stainless-retry-count:
+      - '0'
+      x-stainless-runtime:
+      - CPython
+      x-stainless-runtime-version:
+      - 3.13.13
+      x-stainless-timeout:
+      - '600'
+    method: POST
+    uri: https://api.anthropic.com/v1/messages
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAA/2VRy27CMBD8F59BIoLwOrZF3CqkVm3VClmuvSQujh28NqKg/HvXAcSjt2Rmdmc8
+        e2CVU2DYlEkjooKuqyN2827OOkwrgisseC/LHosZ6KfXF/nxrVT4Kd/ds3wgTfitIakAURRAgHcm
+        AQJRYxA2ECSdDUBf06/DWR+cMzwinF3SfySfxX693+xHg+FsPt8t3ub9z906m5DKiqpdK4PeigA8
+        DWCatnWkzYfjxqRC8mEIgRtdlAHZsqEEwhjwrezor7QHGVjTLI/xhLaJt9GYDsPgau5BoLO3UVsC
+        YRPBSrhRK6AVFOiExbYMsmvjUdg1WCIHKYksgUvaHrSz/JbPhnk+OmtIou743v18soC6hAq8MDyv
+        7vf1x50rPiv/+Q2yCdXjYriG8/EddHkeFVhqu9a2uISiBQh+qyVdRacWWTq8El6191mBT3XxAhxR
+        hXHfwqQuawB1rW0657a8sLhyvmqfmM5JR1JaFNZh0PJUcvMHoaxZm7oCAAA=
+    headers:
+      CF-RAY:
+      - a4dd142f2f9b6c96-SYD
+      Connection:
+      - keep-alive
+      Content-Encoding:
+      - gzip
+      Content-Security-Policy:
+      - default-src 'none'; frame-ancestors 'none'
+      Content-Type:
+      - application/json
+      Date:
+      - Wed, 21 Oct 2026 03:12:09 GMT
+      Server:
+      - cloudflare
+      Transfer-Encoding:
+      - chunked
+      X-Robots-Tag:
+      - none
+      anthropic-organization-id:
+      - 47b93e1d-acf2-4be5-b32d-1716b0cff224
+      anthropic-ratelimit-input-tokens-limit:
+      - '10000000'
+      anthropic-ratelimit-input-tokens-remaining:
+      - '9993000'
+      anthropic-ratelimit-input-tokens-reset:
+      - '2026-10-21T03:12:09Z'
+      anthropic-ratelimit-output-tokens-limit:
+      - '2000000'
+      anthropic-ratelimit-output-tokens-remaining:
+      - '2000000'
+      anthropic-ratelimit-output-tokens-reset:
+      - '2026-10-21T03:12:09Z'
+      anthropic-ratelimit-requests-limit:
+      - '10000'
+      anthropic-ratelimit-requests-remaining:
+      - '9999'
+      anthropic-ratelimit-requests-reset:
+      - '2026-10-21T03:12:08Z'
+      anthropic-ratelimit-tokens-limit:
+      - '12000000'
+      anthropic-ratelimit-tokens-remaining:
+      - '11993000'
+      anthropic-ratelimit-tokens-reset:
+      - '2026-10-21T03:12:09Z'
+      anthropic-workspace-id:
+      - wrkspc_01TyX2k3iWProyRBoEVYPNGB
+      cf-cache-status:
+      - DYNAMIC
+      request-id:
+      - req_011CgEeiCSftpcJSruGnnBWM
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-6ad82d8700000000a2fd080b2b240b62-7cbcd2f1bd0ab46d-01
+      vary:
+      - Accept-Encoding
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"max_tokens":64000,"messages":[{"role":"user","content":[{"type":"text","text":"Turn
+      on the kitchen lights. The set_lights tool is not loaded yet, so load it with
+      activate_tools first."}]},{"role":"assistant","content":[{"type":"tool_use","id":"toolu_01Pzkzqz746EGGxPVG3Zxk19","name":"activate_tools","input":{"tool_names":["set_lights"]}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_01Pzkzqz746EGGxPVG3Zxk19","content":"Activated
+      tools: set_lights.","cache_control":{"type":"ephemeral"}}]},{"role":"system","content":[{"type":"tool_addition","tool":{"type":"tool_reference","name":"set_lights"}}]}],"model":"claude-opus-5-5","output_config":{"effort":"high"},"system":[{"type":"text","text":"You
+      are the family''s household assistant.\n\nHouse rule 0: when asked about room
+      0, refer to it as room number 0 and remember that its lights are on circuit
+      0.\nHouse rule 1: when asked about room 1, refer to it as room number 1 and
+      remember that its lights are on circuit 1.\nHouse rule 2: when asked about room
+      2, refer to it as room number 2 and remember that its lights are on circuit
+      2.\nHouse rule 3: when asked about room 3, refer to it as room number 3 and
+      remember that its lights are on circuit 3.\nHouse rule 4: when asked about room
+      4, refer to it as room number 4 and remember that its lights are on circuit
+      4.\nHouse rule 5: when asked about room 5, refer to it as room number 5 and
+      remember that its lights are on circuit 5.\nHouse rule 6: when asked about room
+      6, refer to it as room number 6 and remember that its lights are on circuit
+      6.\nHouse rule 7: when asked about room 7, refer to it as room number 7 and
+      remember that its lights are on circuit 0.\nHouse rule 8: when asked about room
+      8, refer to it as room number 8 and remember that its lights are on circuit
+      1.\nHouse rule 9: when asked about room 9, refer to it as room number 9 and
+      remember that its lights are on circuit 2.\nHouse rule 10: when asked about
+      room 10, refer to it as room number 10 and remember that its lights are on circuit
+      3.\nHouse rule 11: when asked about room 11, refer to it as room number 11 and
+      remember that its lights are on circuit 4.\nHouse rule 12: when asked about
+      room 12, refer to it as room number 12 and remember that its lights are on circuit
+      5.\nHouse rule 13: when asked about room 13, refer to it as room number 13 and
+      remember that its lights are on circuit 6.\nHouse rule 14: when asked about
+      room 14, refer to it as room number 14 and remember that its lights are on circuit
+      0.\nHouse rule 15: when asked about room 15, refer to it as room number 15 and
+      remember that its lights are on circuit 1.\nHouse rule 16: when asked about
+      room 16, refer to it as room number 16 and remember that its lights are on circuit
+      2.\nHouse rule 17: when asked about room 17, refer to it as room number 17 and
+      remember that its lights are on circuit 3.\nHouse rule 18: when asked about
+      room 18, refer to it as room number 18 and remember that its lights are on circuit
+      4.\nHouse rule 19: when asked about room 19, refer to it as room number 19 and
+      remember that its lights are on circuit 5.\nHouse rule 20: when asked about
+      room 20, refer to it as room number 20 and remember that its lights are on circuit
+      6.\nHouse rule 21: when asked about room 21, refer to it as room number 21 and
+      remember that its lights are on circuit 0.\nHouse rule 22: when asked about
+      room 22, refer to it as room number 22 and remember that its lights are on circuit
+      1.\nHouse rule 23: when asked about room 23, refer to it as room number 23 and
+      remember that its lights are on circuit 2.\nHouse rule 24: when asked about
+      room 24, refer to it as room number 24 and remember that its lights are on circuit
+      3.\nHouse rule 25: when asked about room 25, refer to it as room number 25 and
+      remember that its lights are on circuit 4.\nHouse rule 26: when asked about
+      room 26, refer to it as room number 26 and remember that its lights are on circuit
+      5.\nHouse rule 27: when asked about room 27, refer to it as room number 27 and
+      remember that its lights are on circuit 6.\nHouse rule 28: when asked about
+      room 28, refer to it as room number 28 and remember that its lights are on circuit
+      0.\nHouse rule 29: when asked about room 29, refer to it as room number 29 and
+      remember that its lights are on circuit 1.\nHouse rule 30: when asked about
+      room 30, refer to it as room number 30 and remember that its lights are on circuit
+      2.\nHouse rule 31: when asked about room 31, refer to it as room number 31 and
+      remember that its lights are on circuit 3.\nHouse rule 32: when asked about
+      room 32, refer to it as room number 32 and remember that its lights are on circuit
+      4.\nHouse rule 33: when asked about room 33, refer to it as room number 33 and
+      remember that its lights are on circuit 5.\nHouse rule 34: when asked about
+      room 34, refer to it as room number 34 and remember that its lights are on circuit
+      6.\nHouse rule 35: when asked about room 35, refer to it as room number 35 and
+      remember that its lights are on circuit 0.\nHouse rule 36: when asked about
+      room 36, refer to it as room number 36 and remember that its lights are on circuit
+      1.\nHouse rule 37: when asked about room 37, refer to it as room number 37 and
+      remember that its lights are on circuit 2.\nHouse rule 38: when asked about
+      room 38, refer to it as room number 38 and remember that its lights are on circuit
+      3.\nHouse rule 39: when asked about room 39, refer to it as room number 39 and
+      remember that its lights are on circuit 4.\nHouse rule 40: when asked about
+      room 40, refer to it as room number 40 and remember that its lights are on circuit
+      5.\nHouse rule 41: when asked about room 41, refer to it as room number 41 and
+      remember that its lights are on circuit 6.\nHouse rule 42: when asked about
+      room 42, refer to it as room number 42 and remember that its lights are on circuit
+      0.\nHouse rule 43: when asked about room 43, refer to it as room number 43 and
+      remember that its lights are on circuit 1.\nHouse rule 44: when asked about
+      room 44, refer to it as room number 44 and remember that its lights are on circuit
+      2.\nHouse rule 45: when asked about room 45, refer to it as room number 45 and
+      remember that its lights are on circuit 3.\nHouse rule 46: when asked about
+      room 46, refer to it as room number 46 and remember that its lights are on circuit
+      4.\nHouse rule 47: when asked about room 47, refer to it as room number 47 and
+      remember that its lights are on circuit 5.\nHouse rule 48: when asked about
+      room 48, refer to it as room number 48 and remember that its lights are on circuit
+      6.\nHouse rule 49: when asked about room 49, refer to it as room number 49 and
+      remember that its lights are on circuit 0.\nHouse rule 50: when asked about
+      room 50, refer to it as room number 50 and remember that its lights are on circuit
+      1.\nHouse rule 51: when asked about room 51, refer to it as room number 51 and
+      remember that its lights are on circuit 2.\nHouse rule 52: when asked about
+      room 52, refer to it as room number 52 and remember that its lights are on circuit
+      3.\nHouse rule 53: when asked about room 53, refer to it as room number 53 and
+      remember that its lights are on circuit 4.\nHouse rule 54: when asked about
+      room 54, refer to it as room number 54 and remember that its lights are on circuit
+      5.\nHouse rule 55: when asked about room 55, refer to it as room number 55 and
+      remember that its lights are on circuit 6.\nHouse rule 56: when asked about
+      room 56, refer to it as room number 56 and remember that its lights are on circuit
+      0.\nHouse rule 57: when asked about room 57, refer to it as room number 57 and
+      remember that its lights are on circuit 1.\nHouse rule 58: when asked about
+      room 58, refer to it as room number 58 and remember that its lights are on circuit
+      2.\nHouse rule 59: when asked about room 59, refer to it as room number 59 and
+      remember that its lights are on circuit 3.\nHouse rule 60: when asked about
+      room 60, refer to it as room number 60 and remember that its lights are on circuit
+      4.\nHouse rule 61: when asked about room 61, refer to it as room number 61 and
+      remember that its lights are on circuit 5.\nHouse rule 62: when asked about
+      room 62, refer to it as room number 62 and remember that its lights are on circuit
+      6.\nHouse rule 63: when asked about room 63, refer to it as room number 63 and
+      remember that its lights are on circuit 0.\nHouse rule 64: when asked about
+      room 64, refer to it as room number 64 and remember that its lights are on circuit
+      1.\nHouse rule 65: when asked about room 65, refer to it as room number 65 and
+      remember that its lights are on circuit 2.\nHouse rule 66: when asked about
+      room 66, refer to it as room number 66 and remember that its lights are on circuit
+      3.\nHouse rule 67: when asked about room 67, refer to it as room number 67 and
+      remember that its lights are on circuit 4.\nHouse rule 68: when asked about
+      room 68, refer to it as room number 68 and remember that its lights are on circuit
+      5.\nHouse rule 69: when asked about room 69, refer to it as room number 69 and
+      remember that its lights are on circuit 6.\nHouse rule 70: when asked about
+      room 70, refer to it as room number 70 and remember that its lights are on circuit
+      0.\nHouse rule 71: when asked about room 71, refer to it as room number 71 and
+      remember that its lights are on circuit 1.\nHouse rule 72: when asked about
+      room 72, refer to it as room number 72 and remember that its lights are on circuit
+      2.\nHouse rule 73: when asked about room 73, refer to it as room number 73 and
+      remember that its lights are on circuit 3.\nHouse rule 74: when asked about
+      room 74, refer to it as room number 74 and remember that its lights are on circuit
+      4.\nHouse rule 75: when asked about room 75, refer to it as room number 75 and
+      remember that its lights are on circuit 5.\nHouse rule 76: when asked about
+      room 76, refer to it as room number 76 and remember that its lights are on circuit
+      6.\nHouse rule 77: when asked about room 77, refer to it as room number 77 and
+      remember that its lights are on circuit 0.\nHouse rule 78: when asked about
+      room 78, refer to it as room number 78 and remember that its lights are on circuit
+      1.\nHouse rule 79: when asked about room 79, refer to it as room number 79 and
+      remember that its lights are on circuit 2.\nHouse rule 80: when asked about
+      room 80, refer to it as room number 80 and remember that its lights are on circuit
+      3.\nHouse rule 81: when asked about room 81, refer to it as room number 81 and
+      remember that its lights are on circuit 4.\nHouse rule 82: when asked about
+      room 82, refer to it as room number 82 and remember that its lights are on circuit
+      5.\nHouse rule 83: when asked about room 83, refer to it as room number 83 and
+      remember that its lights are on circuit 6.\nHouse rule 84: when asked about
+      room 84, refer to it as room number 84 and remember that its lights are on circuit
+      0.\nHouse rule 85: when asked about room 85, refer to it as room number 85 and
+      remember that its lights are on circuit 1.\nHouse rule 86: when asked about
+      room 86, refer to it as room number 86 and remember that its lights are on circuit
+      2.\nHouse rule 87: when asked about room 87, refer to it as room number 87 and
+      remember that its lights are on circuit 3.\nHouse rule 88: when asked about
+      room 88, refer to it as room number 88 and remember that its lights are on circuit
+      4.\nHouse rule 89: when asked about room 89, refer to it as room number 89 and
+      remember that its lights are on circuit 5.\nHouse rule 90: when asked about
+      room 90, refer to it as room number 90 and remember that its lights are on circuit
+      6.\nHouse rule 91: when asked about room 91, refer to it as room number 91 and
+      remember that its lights are on circuit 0.\nHouse rule 92: when asked about
+      room 92, refer to it as room number 92 and remember that its lights are on circuit
+      1.\nHouse rule 93: when asked about room 93, refer to it as room number 93 and
+      remember that its lights are on circuit 2.\nHouse rule 94: when asked about
+      room 94, refer to it as room number 94 and remember that its lights are on circuit
+      3.\nHouse rule 95: when asked about room 95, refer to it as room number 95 and
+      remember that its lights are on circuit 4.\nHouse rule 96: when asked about
+      room 96, refer to it as room number 96 and remember that its lights are on circuit
+      5.\nHouse rule 97: when asked about room 97, refer to it as room number 97 and
+      remember that its lights are on circuit 6.\nHouse rule 98: when asked about
+      room 98, refer to it as room number 98 and remember that its lights are on circuit
+      0.\nHouse rule 99: when asked about room 99, refer to it as room number 99 and
+      remember that its lights are on circuit 1.\nHouse rule 100: when asked about
+      room 100, refer to it as room number 100 and remember that its lights are on
+      circuit 2.\nHouse rule 101: when asked about room 101, refer to it as room number
+      101 and remember that its lights are on circuit 3.\nHouse rule 102: when asked
+      about room 102, refer to it as room number 102 and remember that its lights
+      are on circuit 4.\nHouse rule 103: when asked about room 103, refer to it as
+      room number 103 and remember that its lights are on circuit 5.\nHouse rule 104:
+      when asked about room 104, refer to it as room number 104 and remember that
+      its lights are on circuit 6.\nHouse rule 105: when asked about room 105, refer
+      to it as room number 105 and remember that its lights are on circuit 0.\nHouse
+      rule 106: when asked about room 106, refer to it as room number 106 and remember
+      that its lights are on circuit 1.\nHouse rule 107: when asked about room 107,
+      refer to it as room number 107 and remember that its lights are on circuit 2.\nHouse
+      rule 108: when asked about room 108, refer to it as room number 108 and remember
+      that its lights are on circuit 3.\nHouse rule 109: when asked about room 109,
+      refer to it as room number 109 and remember that its lights are on circuit 4.\nHouse
+      rule 110: when asked about room 110, refer to it as room number 110 and remember
+      that its lights are on circuit 5.\nHouse rule 111: when asked about room 111,
+      refer to it as room number 111 and remember that its lights are on circuit 6.\nHouse
+      rule 112: when asked about room 112, refer to it as room number 112 and remember
+      that its lights are on circuit 0.\nHouse rule 113: when asked about room 113,
+      refer to it as room number 113 and remember that its lights are on circuit 1.\nHouse
+      rule 114: when asked about room 114, refer to it as room number 114 and remember
+      that its lights are on circuit 2.\nHouse rule 115: when asked about room 115,
+      refer to it as room number 115 and remember that its lights are on circuit 3.\nHouse
+      rule 116: when asked about room 116, refer to it as room number 116 and remember
+      that its lights are on circuit 4.\nHouse rule 117: when asked about room 117,
+      refer to it as room number 117 and remember that its lights are on circuit 5.\nHouse
+      rule 118: when asked about room 118, refer to it as room number 118 and remember
+      that its lights are on circuit 6.\nHouse rule 119: when asked about room 119,
+      refer to it as room number 119 and remember that its lights are on circuit 0.\nHouse
+      rule 120: when asked about room 120, refer to it as room number 120 and remember
+      that its lights are on circuit 1.\nHouse rule 121: when asked about room 121,
+      refer to it as room number 121 and remember that its lights are on circuit 2.\nHouse
+      rule 122: when asked about room 122, refer to it as room number 122 and remember
+      that its lights are on circuit 3.\nHouse rule 123: when asked about room 123,
+      refer to it as room number 123 and remember that its lights are on circuit 4.\nHouse
+      rule 124: when asked about room 124, refer to it as room number 124 and remember
+      that its lights are on circuit 5.\nHouse rule 125: when asked about room 125,
+      refer to it as room number 125 and remember that its lights are on circuit 6.\nHouse
+      rule 126: when asked about room 126, refer to it as room number 126 and remember
+      that its lights are on circuit 0.\nHouse rule 127: when asked about room 127,
+      refer to it as room number 127 and remember that its lights are on circuit 1.\nHouse
+      rule 128: when asked about room 128, refer to it as room number 128 and remember
+      that its lights are on circuit 2.\nHouse rule 129: when asked about room 129,
+      refer to it as room number 129 and remember that its lights are on circuit 3.\nHouse
+      rule 130: when asked about room 130, refer to it as room number 130 and remember
+      that its lights are on circuit 4.\nHouse rule 131: when asked about room 131,
+      refer to it as room number 131 and remember that its lights are on circuit 5.\nHouse
+      rule 132: when asked about room 132, refer to it as room number 132 and remember
+      that its lights are on circuit 6.\nHouse rule 133: when asked about room 133,
+      refer to it as room number 133 and remember that its lights are on circuit 0.\nHouse
+      rule 134: when asked about room 134, refer to it as room number 134 and remember
+      that its lights are on circuit 1.\nHouse rule 135: when asked about room 135,
+      refer to it as room number 135 and remember that its lights are on circuit 2.\nHouse
+      rule 136: when asked about room 136, refer to it as room number 136 and remember
+      that its lights are on circuit 3.\nHouse rule 137: when asked about room 137,
+      refer to it as room number 137 and remember that its lights are on circuit 4.\nHouse
+      rule 138: when asked about room 138, refer to it as room number 138 and remember
+      that its lights are on circuit 5.\nHouse rule 139: when asked about room 139,
+      refer to it as room number 139 and remember that its lights are on circuit 6.\nHouse
+      rule 140: when asked about room 140, refer to it as room number 140 and remember
+      that its lights are on circuit 0.\nHouse rule 141: when asked about room 141,
+      refer to it as room number 141 and remember that its lights are on circuit 1.\nHouse
+      rule 142: when asked about room 142, refer to it as room number 142 and remember
+      that its lights are on circuit 2.\nHouse rule 143: when asked about room 143,
+      refer to it as room number 143 and remember that its lights are on circuit 3.\nHouse
+      rule 144: when asked about room 144, refer to it as room number 144 and remember
+      that its lights are on circuit 4.\nHouse rule 145: when asked about room 145,
+      refer to it as room number 145 and remember that its lights are on circuit 5.\nHouse
+      rule 146: when asked about room 146, refer to it as room number 146 and remember
+      that its lights are on circuit 6.\nHouse rule 147: when asked about room 147,
+      refer to it as room number 147 and remember that its lights are on circuit 0.\nHouse
+      rule 148: when asked about room 148, refer to it as room number 148 and remember
+      that its lights are on circuit 1.\nHouse rule 149: when asked about room 149,
+      refer to it as room number 149 and remember that its lights are on circuit 2.\nHouse
+      rule 150: when asked about room 150, refer to it as room number 150 and remember
+      that its lights are on circuit 3.\nHouse rule 151: when asked about room 151,
+      refer to it as room number 151 and remember that its lights are on circuit 4.\nHouse
+      rule 152: when asked about room 152, refer to it as room number 152 and remember
+      that its lights are on circuit 5.\nHouse rule 153: when asked about room 153,
+      refer to it as room number 153 and remember that its lights are on circuit 6.\nHouse
+      rule 154: when asked about room 154, refer to it as room number 154 and remember
+      that its lights are on circuit 0.\nHouse rule 155: when asked about room 155,
+      refer to it as room number 155 and remember that its lights are on circuit 1.\nHouse
+      rule 156: when asked about room 156, refer to it as room number 156 and remember
+      that its lights are on circuit 2.\nHouse rule 157: when asked about room 157,
+      refer to it as room number 157 and remember that its lights are on circuit 3.\nHouse
+      rule 158: when asked about room 158, refer to it as room number 158 and remember
+      that its lights are on circuit 4.\nHouse rule 159: when asked about room 159,
+      refer to it as room number 159 and remember that its lights are on circuit 5.\nHouse
+      rule 160: when asked about room 160, refer to it as room number 160 and remember
+      that its lights are on circuit 6.\nHouse rule 161: when asked about room 161,
+      refer to it as room number 161 and remember that its lights are on circuit 0.\nHouse
+      rule 162: when asked about room 162, refer to it as room number 162 and remember
+      that its lights are on circuit 1.\nHouse rule 163: when asked about room 163,
+      refer to it as room number 163 and remember that its lights are on circuit 2.\nHouse
+      rule 164: when asked about room 164, refer to it as room number 164 and remember
+      that its lights are on circuit 3.\nHouse rule 165: when asked about room 165,
+      refer to it as room number 165 and remember that its lights are on circuit 4.\nHouse
+      rule 166: when asked about room 166, refer to it as room number 166 and remember
+      that its lights are on circuit 5.\nHouse rule 167: when asked about room 167,
+      refer to it as room number 167 and remember that its lights are on circuit 6.\nHouse
+      rule 168: when asked about room 168, refer to it as room number 168 and remember
+      that its lights are on circuit 0.\nHouse rule 169: when asked about room 169,
+      refer to it as room number 169 and remember that its lights are on circuit 1.\nHouse
+      rule 170: when asked about room 170, refer to it as room number 170 and remember
+      that its lights are on circuit 2.\nHouse rule 171: when asked about room 171,
+      refer to it as room number 171 and remember that its lights are on circuit 3.\nHouse
+      rule 172: when asked about room 172, refer to it as room number 172 and remember
+      that its lights are on circuit 4.\nHouse rule 173: when asked about room 173,
+      refer to it as room number 173 and remember that its lights are on circuit 5.\nHouse
+      rule 174: when asked about room 174, refer to it as room number 174 and remember
+      that its lights are on circuit 6.\nHouse rule 175: when asked about room 175,
+      refer to it as room number 175 and remember that its lights are on circuit 0.\nHouse
+      rule 176: when asked about room 176, refer to it as room number 176 and remember
+      that its lights are on circuit 1.\nHouse rule 177: when asked about room 177,
+      refer to it as room number 177 and remember that its lights are on circuit 2.\nHouse
+      rule 178: when asked about room 178, refer to it as room number 178 and remember
+      that its lights are on circuit 3.\nHouse rule 179: when asked about room 179,
+      refer to it as room number 179 and remember that its lights are on circuit 4.\nHouse
+      rule 180: when asked about room 180, refer to it as room number 180 and remember
+      that its lights are on circuit 5.\nHouse rule 181: when asked about room 181,
+      refer to it as room number 181 and remember that its lights are on circuit 6.\nHouse
+      rule 182: when asked about room 182, refer to it as room number 182 and remember
+      that its lights are on circuit 0.\nHouse rule 183: when asked about room 183,
+      refer to it as room number 183 and remember that its lights are on circuit 1.\nHouse
+      rule 184: when asked about room 184, refer to it as room number 184 and remember
+      that its lights are on circuit 2.\nHouse rule 185: when asked about room 185,
+      refer to it as room number 185 and remember that its lights are on circuit 3.\nHouse
+      rule 186: when asked about room 186, refer to it as room number 186 and remember
+      that its lights are on circuit 4.\nHouse rule 187: when asked about room 187,
+      refer to it as room number 187 and remember that its lights are on circuit 5.\nHouse
+      rule 188: when asked about room 188, refer to it as room number 188 and remember
+      that its lights are on circuit 6.\nHouse rule 189: when asked about room 189,
+      refer to it as room number 189 and remember that its lights are on circuit 0.\nHouse
+      rule 190: when asked about room 190, refer to it as room number 190 and remember
+      that its lights are on circuit 1.\nHouse rule 191: when asked about room 191,
+      refer to it as room number 191 and remember that its lights are on circuit 2.\nHouse
+      rule 192: when asked about room 192, refer to it as room number 192 and remember
+      that its lights are on circuit 3.\nHouse rule 193: when asked about room 193,
+      refer to it as room number 193 and remember that its lights are on circuit 4.\nHouse
+      rule 194: when asked about room 194, refer to it as room number 194 and remember
+      that its lights are on circuit 5.\nHouse rule 195: when asked about room 195,
+      refer to it as room number 195 and remember that its lights are on circuit 6.\nHouse
+      rule 196: when asked about room 196, refer to it as room number 196 and remember
+      that its lights are on circuit 0.\nHouse rule 197: when asked about room 197,
+      refer to it as room number 197 and remember that its lights are on circuit 1.\nHouse
+      rule 198: when asked about room 198, refer to it as room number 198 and remember
+      that its lights are on circuit 2.\nHouse rule 199: when asked about room 199,
+      refer to it as room number 199 and remember that its lights are on circuit 3.\nHouse
+      rule 200: when asked about room 200, refer to it as room number 200 and remember
+      that its lights are on circuit 4.\nHouse rule 201: when asked about room 201,
+      refer to it as room number 201 and remember that its lights are on circuit 5.\nHouse
+      rule 202: when asked about room 202, refer to it as room number 202 and remember
+      that its lights are on circuit 6.\nHouse rule 203: when asked about room 203,
+      refer to it as room number 203 and remember that its lights are on circuit 0.\nHouse
+      rule 204: when asked about room 204, refer to it as room number 204 and remember
+      that its lights are on circuit 1.\nHouse rule 205: when asked about room 205,
+      refer to it as room number 205 and remember that its lights are on circuit 2.\nHouse
+      rule 206: when asked about room 206, refer to it as room number 206 and remember
+      that its lights are on circuit 3.\nHouse rule 207: when asked about room 207,
+      refer to it as room number 207 and remember that its lights are on circuit 4.\nHouse
+      rule 208: when asked about room 208, refer to it as room number 208 and remember
+      that its lights are on circuit 5.\nHouse rule 209: when asked about room 209,
+      refer to it as room number 209 and remember that its lights are on circuit 6.\nHouse
+      rule 210: when asked about room 210, refer to it as room number 210 and remember
+      that its lights are on circuit 0.\nHouse rule 211: when asked about room 211,
+      refer to it as room number 211 and remember that its lights are on circuit 1.\nHouse
+      rule 212: when asked about room 212, refer to it as room number 212 and remember
+      that its lights are on circuit 2.\nHouse rule 213: when asked about room 213,
+      refer to it as room number 213 and remember that its lights are on circuit 3.\nHouse
+      rule 214: when asked about room 214, refer to it as room number 214 and remember
+      that its lights are on circuit 4.\nHouse rule 215: when asked about room 215,
+      refer to it as room number 215 and remember that its lights are on circuit 5.\nHouse
+      rule 216: when asked about room 216, refer to it as room number 216 and remember
+      that its lights are on circuit 6.\nHouse rule 217: when asked about room 217,
+      refer to it as room number 217 and remember that its lights are on circuit 0.\nHouse
+      rule 218: when asked about room 218, refer to it as room number 218 and remember
+      that its lights are on circuit 1.\nHouse rule 219: when asked about room 219,
+      refer to it as room number 219 and remember that its lights are on circuit 2.\nHouse
+      rule 220: when asked about room 220, refer to it as room number 220 and remember
+      that its lights are on circuit 3.\nHouse rule 221: when asked about room 221,
+      refer to it as room number 221 and remember that its lights are on circuit 4.\nHouse
+      rule 222: when asked about room 222, refer to it as room number 222 and remember
+      that its lights are on circuit 5.\nHouse rule 223: when asked about room 223,
+      refer to it as room number 223 and remember that its lights are on circuit 6.\nHouse
+      rule 224: when asked about room 224, refer to it as room number 224 and remember
+      that its lights are on circuit 0.\nHouse rule 225: when asked about room 225,
+      refer to it as room number 225 and remember that its lights are on circuit 1.\nHouse
+      rule 226: when asked about room 226, refer to it as room number 226 and remember
+      that its lights are on circuit 2.\nHouse rule 227: when asked about room 227,
+      refer to it as room number 227 and remember that its lights are on circuit 3.\nHouse
+      rule 228: when asked about room 228, refer to it as room number 228 and remember
+      that its lights are on circuit 4.\nHouse rule 229: when asked about room 229,
+      refer to it as room number 229 and remember that its lights are on circuit 5.\nHouse
+      rule 230: when asked about room 230, refer to it as room number 230 and remember
+      that its lights are on circuit 6.\nHouse rule 231: when asked about room 231,
+      refer to it as room number 231 and remember that its lights are on circuit 0.\nHouse
+      rule 232: when asked about room 232, refer to it as room number 232 and remember
+      that its lights are on circuit 1.\nHouse rule 233: when asked about room 233,
+      refer to it as room number 233 and remember that its lights are on circuit 2.\nHouse
+      rule 234: when asked about room 234, refer to it as room number 234 and remember
+      that its lights are on circuit 3.\nHouse rule 235: when asked about room 235,
+      refer to it as room number 235 and remember that its lights are on circuit 4.\nHouse
+      rule 236: when asked about room 236, refer to it as room number 236 and remember
+      that its lights are on circuit 5.\nHouse rule 237: when asked about room 237,
+      refer to it as room number 237 and remember that its lights are on circuit 6.\nHouse
+      rule 238: when asked about room 238, refer to it as room number 238 and remember
+      that its lights are on circuit 0.\nHouse rule 239: when asked about room 239,
+      refer to it as room number 239 and remember that its lights are on circuit 1.\nHouse
+      rule 240: when asked about room 240, refer to it as room number 240 and remember
+      that its lights are on circuit 2.\nHouse rule 241: when asked about room 241,
+      refer to it as room number 241 and remember that its lights are on circuit 3.\nHouse
+      rule 242: when asked about room 242, refer to it as room number 242 and remember
+      that its lights are on circuit 4.\nHouse rule 243: when asked about room 243,
+      refer to it as room number 243 and remember that its lights are on circuit 5.\nHouse
+      rule 244: when asked about room 244, refer to it as room number 244 and remember
+      that its lights are on circuit 6.\nHouse rule 245: when asked about room 245,
+      refer to it as room number 245 and remember that its lights are on circuit 0.\nHouse
+      rule 246: when asked about room 246, refer to it as room number 246 and remember
+      that its lights are on circuit 1.\nHouse rule 247: when asked about room 247,
+      refer to it as room number 247 and remember that its lights are on circuit 2.\nHouse
+      rule 248: when asked about room 248, refer to it as room number 248 and remember
+      that its lights are on circuit 3.\nHouse rule 249: when asked about room 249,
+      refer to it as room number 249 and remember that its lights are on circuit 4.\nHouse
+      rule 250: when asked about room 250, refer to it as room number 250 and remember
+      that its lights are on circuit 5.\nHouse rule 251: when asked about room 251,
+      refer to it as room number 251 and remember that its lights are on circuit 6.\nHouse
+      rule 252: when asked about room 252, refer to it as room number 252 and remember
+      that its lights are on circuit 0.\nHouse rule 253: when asked about room 253,
+      refer to it as room number 253 and remember that its lights are on circuit 1.\nHouse
+      rule 254: when asked about room 254, refer to it as room number 254 and remember
+      that its lights are on circuit 2.\nHouse rule 255: when asked about room 255,
+      refer to it as room number 255 and remember that its lights are on circuit 3.\nHouse
+      rule 256: when asked about room 256, refer to it as room number 256 and remember
+      that its lights are on circuit 4.\nHouse rule 257: when asked about room 257,
+      refer to it as room number 257 and remember that its lights are on circuit 5.\nHouse
+      rule 258: when asked about room 258, refer to it as room number 258 and remember
+      that its lights are on circuit 6.\nHouse rule 259: when asked about room 259,
+      refer to it as room number 259 and remember that its lights are on circuit 0.\nHouse
+      rule 260: when asked about room 260, refer to it as room number 260 and remember
+      that its lights are on circuit 1.\nHouse rule 261: when asked about room 261,
+      refer to it as room number 261 and remember that its lights are on circuit 2.\nHouse
+      rule 262: when asked about room 262, refer to it as room number 262 and remember
+      that its lights are on circuit 3.\nHouse rule 263: when asked about room 263,
+      refer to it as room number 263 and remember that its lights are on circuit 4.\nHouse
+      rule 264: when asked about room 264, refer to it as room number 264 and remember
+      that its lights are on circuit 5.\nHouse rule 265: when asked about room 265,
+      refer to it as room number 265 and remember that its lights are on circuit 6.\nHouse
+      rule 266: when asked about room 266, refer to it as room number 266 and remember
+      that its lights are on circuit 0.\nHouse rule 267: when asked about room 267,
+      refer to it as room number 267 and remember that its lights are on circuit 1.\nHouse
+      rule 268: when asked about room 268, refer to it as room number 268 and remember
+      that its lights are on circuit 2.\nHouse rule 269: when asked about room 269,
+      refer to it as room number 269 and remember that its lights are on circuit 3.\nHouse
+      rule 270: when asked about room 270, refer to it as room number 270 and remember
+      that its lights are on circuit 4.\nHouse rule 271: when asked about room 271,
+      refer to it as room number 271 and remember that its lights are on circuit 5.\nHouse
+      rule 272: when asked about room 272, refer to it as room number 272 and remember
+      that its lights are on circuit 6.\nHouse rule 273: when asked about room 273,
+      refer to it as room number 273 and remember that its lights are on circuit 0.\nHouse
+      rule 274: when asked about room 274, refer to it as room number 274 and remember
+      that its lights are on circuit 1.\nHouse rule 275: when asked about room 275,
+      refer to it as room number 275 and remember that its lights are on circuit 2.\nHouse
+      rule 276: when asked about room 276, refer to it as room number 276 and remember
+      that its lights are on circuit 3.\nHouse rule 277: when asked about room 277,
+      refer to it as room number 277 and remember that its lights are on circuit 4.\nHouse
+      rule 278: when asked about room 278, refer to it as room number 278 and remember
+      that its lights are on circuit 5.\nHouse rule 279: when asked about room 279,
+      refer to it as room number 279 and remember that its lights are on circuit 6.\nHouse
+      rule 280: when asked about room 280, refer to it as room number 280 and remember
+      that its lights are on circuit 0.\nHouse rule 281: when asked about room 281,
+      refer to it as room number 281 and remember that its lights are on circuit 1.\nHouse
+      rule 282: when asked about room 282, refer to it as room number 282 and remember
+      that its lights are on circuit 2.\nHouse rule 283: when asked about room 283,
+      refer to it as room number 283 and remember that its lights are on circuit 3.\nHouse
+      rule 284: when asked about room 284, refer to it as room number 284 and remember
+      that its lights are on circuit 4.\nHouse rule 285: when asked about room 285,
+      refer to it as room number 285 and remember that its lights are on circuit 5.\nHouse
+      rule 286: when asked about room 286, refer to it as room number 286 and remember
+      that its lights are on circuit 6.\nHouse rule 287: when asked about room 287,
+      refer to it as room number 287 and remember that its lights are on circuit 0.\nHouse
+      rule 288: when asked about room 288, refer to it as room number 288 and remember
+      that its lights are on circuit 1.\nHouse rule 289: when asked about room 289,
+      refer to it as room number 289 and remember that its lights are on circuit 2.\nHouse
+      rule 290: when asked about room 290, refer to it as room number 290 and remember
+      that its lights are on circuit 3.\nHouse rule 291: when asked about room 291,
+      refer to it as room number 291 and remember that its lights are on circuit 4.\nHouse
+      rule 292: when asked about room 292, refer to it as room number 292 and remember
+      that its lights are on circuit 5.\nHouse rule 293: when asked about room 293,
+      refer to it as room number 293 and remember that its lights are on circuit 6.\nHouse
+      rule 294: when asked about room 294, refer to it as room number 294 and remember
+      that its lights are on circuit 0.\nHouse rule 295: when asked about room 295,
+      refer to it as room number 295 and remember that its lights are on circuit 1.\nHouse
+      rule 296: when asked about room 296, refer to it as room number 296 and remember
+      that its lights are on circuit 2.\nHouse rule 297: when asked about room 297,
+      refer to it as room number 297 and remember that its lights are on circuit 3.\nHouse
+      rule 298: when asked about room 298, refer to it as room number 298 and remember
+      that its lights are on circuit 4.\nHouse rule 299: when asked about room 299,
+      refer to it as room number 299 and remember that its lights are on circuit 5.\nHouse
+      rule 300: when asked about room 300, refer to it as room number 300 and remember
+      that its lights are on circuit 6.\nHouse rule 301: when asked about room 301,
+      refer to it as room number 301 and remember that its lights are on circuit 0.\nHouse
+      rule 302: when asked about room 302, refer to it as room number 302 and remember
+      that its lights are on circuit 1.\nHouse rule 303: when asked about room 303,
+      refer to it as room number 303 and remember that its lights are on circuit 2.\nHouse
+      rule 304: when asked about room 304, refer to it as room number 304 and remember
+      that its lights are on circuit 3.\nHouse rule 305: when asked about room 305,
+      refer to it as room number 305 and remember that its lights are on circuit 4.\nHouse
+      rule 306: when asked about room 306, refer to it as room number 306 and remember
+      that its lights are on circuit 5.\nHouse rule 307: when asked about room 307,
+      refer to it as room number 307 and remember that its lights are on circuit 6.\nHouse
+      rule 308: when asked about room 308, refer to it as room number 308 and remember
+      that its lights are on circuit 0.\nHouse rule 309: when asked about room 309,
+      refer to it as room number 309 and remember that its lights are on circuit 1.\nHouse
+      rule 310: when asked about room 310, refer to it as room number 310 and remember
+      that its lights are on circuit 2.\nHouse rule 311: when asked about room 311,
+      refer to it as room number 311 and remember that its lights are on circuit 3.\nHouse
+      rule 312: when asked about room 312, refer to it as room number 312 and remember
+      that its lights are on circuit 4.\nHouse rule 313: when asked about room 313,
+      refer to it as room number 313 and remember that its lights are on circuit 5.\nHouse
+      rule 314: when asked about room 314, refer to it as room number 314 and remember
+      that its lights are on circuit 6.\nHouse rule 315: when asked about room 315,
+      refer to it as room number 315 and remember that its lights are on circuit 0.\nHouse
+      rule 316: when asked about room 316, refer to it as room number 316 and remember
+      that its lights are on circuit 1.\nHouse rule 317: when asked about room 317,
+      refer to it as room number 317 and remember that its lights are on circuit 2.\nHouse
+      rule 318: when asked about room 318, refer to it as room number 318 and remember
+      that its lights are on circuit 3.\nHouse rule 319: when asked about room 319,
+      refer to it as room number 319 and remember that its lights are on circuit 4.\nHouse
+      rule 320: when asked about room 320, refer to it as room number 320 and remember
+      that its lights are on circuit 5.\nHouse rule 321: when asked about room 321,
+      refer to it as room number 321 and remember that its lights are on circuit 6.\nHouse
+      rule 322: when asked about room 322, refer to it as room number 322 and remember
+      that its lights are on circuit 0.\nHouse rule 323: when asked about room 323,
+      refer to it as room number 323 and remember that its lights are on circuit 1.\nHouse
+      rule 324: when asked about room 324, refer to it as room number 324 and remember
+      that its lights are on circuit 2.\nHouse rule 325: when asked about room 325,
+      refer to it as room number 325 and remember that its lights are on circuit 3.\nHouse
+      rule 326: when asked about room 326, refer to it as room number 326 and remember
+      that its lights are on circuit 4.\nHouse rule 327: when asked about room 327,
+      refer to it as room number 327 and remember that its lights are on circuit 5.\nHouse
+      rule 328: when asked about room 328, refer to it as room number 328 and remember
+      that its lights are on circuit 6.\nHouse rule 329: when asked about room 329,
+      refer to it as room number 329 and remember that its lights are on circuit 0.\nHouse
+      rule 330: when asked about room 330, refer to it as room number 330 and remember
+      that its lights are on circuit 1.\nHouse rule 331: when asked about room 331,
+      refer to it as room number 331 and remember that its lights are on circuit 2.\nHouse
+      rule 332: when asked about room 332, refer to it as room number 332 and remember
+      that its lights are on circuit 3.\nHouse rule 333: when asked about room 333,
+      refer to it as room number 333 and remember that its lights are on circuit 4.\nHouse
+      rule 334: when asked about room 334, refer to it as room number 334 and remember
+      that its lights are on circuit 5.\nHouse rule 335: when asked about room 335,
+      refer to it as room number 335 and remember that its lights are on circuit 6.\nHouse
+      rule 336: when asked about room 336, refer to it as room number 336 and remember
+      that its lights are on circuit 0.\nHouse rule 337: when asked about room 337,
+      refer to it as room number 337 and remember that its lights are on circuit 1.\nHouse
+      rule 338: when asked about room 338, refer to it as room number 338 and remember
+      that its lights are on circuit 2.\nHouse rule 339: when asked about room 339,
+      refer to it as room number 339 and remember that its lights are on circuit 3.\nHouse
+      rule 340: when asked about room 340, refer to it as room number 340 and remember
+      that its lights are on circuit 4.\nHouse rule 341: when asked about room 341,
+      refer to it as room number 341 and remember that its lights are on circuit 5.\nHouse
+      rule 342: when asked about room 342, refer to it as room number 342 and remember
+      that its lights are on circuit 6.\nHouse rule 343: when asked about room 343,
+      refer to it as room number 343 and remember that its lights are on circuit 0.\nHouse
+      rule 344: when asked about room 344, refer to it as room number 344 and remember
+      that its lights are on circuit 1.\nHouse rule 345: when asked about room 345,
+      refer to it as room number 345 and remember that its lights are on circuit 2.\nHouse
+      rule 346: when asked about room 346, refer to it as room number 346 and remember
+      that its lights are on circuit 3.\nHouse rule 347: when asked about room 347,
+      refer to it as room number 347 and remember that its lights are on circuit 4.\nHouse
+      rule 348: when asked about room 348, refer to it as room number 348 and remember
+      that its lights are on circuit 5.\nHouse rule 349: when asked about room 349,
+      refer to it as room number 349 and remember that its lights are on circuit 6.\nHouse
+      rule 350: when asked about room 350, refer to it as room number 350 and remember
+      that its lights are on circuit 0.\nHouse rule 351: when asked about room 351,
+      refer to it as room number 351 and remember that its lights are on circuit 1.\nHouse
+      rule 352: when asked about room 352, refer to it as room number 352 and remember
+      that its lights are on circuit 2.\nHouse rule 353: when asked about room 353,
+      refer to it as room number 353 and remember that its lights are on circuit 3.\nHouse
+      rule 354: when asked about room 354, refer to it as room number 354 and remember
+      that its lights are on circuit 4.\nHouse rule 355: when asked about room 355,
+      refer to it as room number 355 and remember that its lights are on circuit 5.\nHouse
+      rule 356: when asked about room 356, refer to it as room number 356 and remember
+      that its lights are on circuit 6.\nHouse rule 357: when asked about room 357,
+      refer to it as room number 357 and remember that its lights are on circuit 0.\nHouse
+      rule 358: when asked about room 358, refer to it as room number 358 and remember
+      that its lights are on circuit 1.\nHouse rule 359: when asked about room 359,
+      refer to it as room number 359 and remember that its lights are on circuit 2.\nHouse
+      rule 360: when asked about room 360, refer to it as room number 360 and remember
+      that its lights are on circuit 3.\nHouse rule 361: when asked about room 361,
+      refer to it as room number 361 and remember that its lights are on circuit 4.\nHouse
+      rule 362: when asked about room 362, refer to it as room number 362 and remember
+      that its lights are on circuit 5.\nHouse rule 363: when asked about room 363,
+      refer to it as room number 363 and remember that its lights are on circuit 6.\nHouse
+      rule 364: when asked about room 364, refer to it as room number 364 and remember
+      that its lights are on circuit 0.\nHouse rule 365: when asked about room 365,
+      refer to it as room number 365 and remember that its lights are on circuit 1.\nHouse
+      rule 366: when asked about room 366, refer to it as room number 366 and remember
+      that its lights are on circuit 2.\nHouse rule 367: when asked about room 367,
+      refer to it as room number 367 and remember that its lights are on circuit 3.\nHouse
+      rule 368: when asked about room 368, refer to it as room number 368 and remember
+      that its lights are on circuit 4.\nHouse rule 369: when asked about room 369,
+      refer to it as room number 369 and remember that its lights are on circuit 5.\nHouse
+      rule 370: when asked about room 370, refer to it as room number 370 and remember
+      that its lights are on circuit 6.\nHouse rule 371: when asked about room 371,
+      refer to it as room number 371 and remember that its lights are on circuit 0.\nHouse
+      rule 372: when asked about room 372, refer to it as room number 372 and remember
+      that its lights are on circuit 1.\nHouse rule 373: when asked about room 373,
+      refer to it as room number 373 and remember that its lights are on circuit 2.\nHouse
+      rule 374: when asked about room 374, refer to it as room number 374 and remember
+      that its lights are on circuit 3.\nHouse rule 375: when asked about room 375,
+      refer to it as room number 375 and remember that its lights are on circuit 4.\nHouse
+      rule 376: when asked about room 376, refer to it as room number 376 and remember
+      that its lights are on circuit 5.\nHouse rule 377: when asked about room 377,
+      refer to it as room number 377 and remember that its lights are on circuit 6.\nHouse
+      rule 378: when asked about room 378, refer to it as room number 378 and remember
+      that its lights are on circuit 0.\nHouse rule 379: when asked about room 379,
+      refer to it as room number 379 and remember that its lights are on circuit 1.\nHouse
+      rule 380: when asked about room 380, refer to it as room number 380 and remember
+      that its lights are on circuit 2.\nHouse rule 381: when asked about room 381,
+      refer to it as room number 381 and remember that its lights are on circuit 3.\nHouse
+      rule 382: when asked about room 382, refer to it as room number 382 and remember
+      that its lights are on circuit 4.\nHouse rule 383: when asked about room 383,
+      refer to it as room number 383 and remember that its lights are on circuit 5.\nHouse
+      rule 384: when asked about room 384, refer to it as room number 384 and remember
+      that its lights are on circuit 6.\nHouse rule 385: when asked about room 385,
+      refer to it as room number 385 and remember that its lights are on circuit 0.\nHouse
+      rule 386: when asked about room 386, refer to it as room number 386 and remember
+      that its lights are on circuit 1.\nHouse rule 387: when asked about room 387,
+      refer to it as room number 387 and remember that its lights are on circuit 2.\nHouse
+      rule 388: when asked about room 388, refer to it as room number 388 and remember
+      that its lights are on circuit 3.\nHouse rule 389: when asked about room 389,
+      refer to it as room number 389 and remember that its lights are on circuit 4.\nHouse
+      rule 390: when asked about room 390, refer to it as room number 390 and remember
+      that its lights are on circuit 5.\nHouse rule 391: when asked about room 391,
+      refer to it as room number 391 and remember that its lights are on circuit 6.\nHouse
+      rule 392: when asked about room 392, refer to it as room number 392 and remember
+      that its lights are on circuit 0.\nHouse rule 393: when asked about room 393,
+      refer to it as room number 393 and remember that its lights are on circuit 1.\nHouse
+      rule 394: when asked about room 394, refer to it as room number 394 and remember
+      that its lights are on circuit 2.\nHouse rule 395: when asked about room 395,
+      refer to it as room number 395 and remember that its lights are on circuit 3.\nHouse
+      rule 396: when asked about room 396, refer to it as room number 396 and remember
+      that its lights are on circuit 4.\nHouse rule 397: when asked about room 397,
+      refer to it as room number 397 and remember that its lights are on circuit 5.\nHouse
+      rule 398: when asked about room 398, refer to it as room number 398 and remember
+      that its lights are on circuit 6.\nHouse rule 399: when asked about room 399,
+      refer to it as room number 399 and remember that its lights are on circuit 0.","cache_control":{"type":"ephemeral","ttl":"1h"}},{"type":"text","text":"\n\nCurrent
+      time: Wednesday 21 October 2026, 14:05 AEDT."}],"thinking":{"type":"adaptive","block_binding":{"prefix_mismatch_behavior":"drop_block"}},"tool_choice":{"type":"auto"},"tools":[{"name":"activate_tools","description":"Load
+      on-demand tools by name so they can be called.","input_schema":{"type":"object","properties":{"tool_names":{"type":"array","items":{"type":"string"}}},"required":["tool_names"]}},{"name":"set_lights","description":"Turn
+      the lights in a room on or off.","input_schema":{"type":"object","properties":{"room":{"type":"string"},"on":{"type":"boolean"}},"required":["room","on"]},"defer_loading":true}]}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      anthropic-beta:
+      - thinking-binding-controls-2026-08-01,mid-conversation-tool-changes-2026-07-01
+      anthropic-version:
+      - '2023-06-01'
+      connection:
+      - keep-alive
+      content-length:
+      - '49939'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+      user-agent:
+      - AsyncAnthropic/Python 0.79.0
+      x-stainless-arch:
+      - arm64
+      x-stainless-async:
+      - async:asyncio
+      x-stainless-lang:
+      - python
+      x-stainless-os:
+      - MacOS
+      x-stainless-package-version:
+      - 0.79.0
+      x-stainless-read-timeout:
+      - '600'
+      x-stainless-retry-count:
+      - '0'
+      x-stainless-runtime:
+      - CPython
+      x-stainless-runtime-version:
+      - 3.13.13
+      x-stainless-timeout:
+      - '600'
+    method: POST
+    uri: https://api.anthropic.com/v1/messages
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAA/21R0UoDMRD8lzy30Ktelb5JFcEHUUERioR42ebSy2XPbCLYcv/u5vTQVt/uZmZn
+        NrN70aIGJ5aicippmGKXaFpOSzERVjPckpGzoliZK7C3Yft2/bC7XoWPx/NNt2JN/Oggq4BIGWAg
+        oMuAIrIUlY8MVegj8NdyvR/1EdHJRDCm5P/EOfcX26dmfnm/U3fF6byub/Ckfd6yyqs2zxFE6ayp
+        I+VJ3yV23XMmtkw2NlY1eGbQi2UMCXoOV85ByKrvaG0DVFH0/cvXZsr6zPvk3ERQxE4GUJQdfm85
+        EARvCXwFB2oNbOFoxNLQA8cN28mIDXgmi5OzvAvvJyv2jxa9PFScLUYB8/qILBZl+ccgp0BXQwtB
+        OVm2/xj+0EV9RM+4HEzxYGJ+BP08juurrW+sNwcGBOHdViCjzR2KfHGtgh6Os4GQy5IGkCnj8FW5
+        3GQHoH9r+8nYVVCeNhja4XWcsOYTaauMR4q2+q64/wT/MSTBswIAAA==
+    headers:
+      CF-RAY:
+      - a4dd143e5b216c96-SYD
+      Connection:
+      - keep-alive
+      Content-Encoding:
+      - gzip
+      Content-Security-Policy:
+      - default-src 'none'; frame-ancestors 'none'
+      Content-Type:
+      - application/json
+      Date:
+      - Wed, 21 Oct 2026 03:12:12 GMT
+      Server:
+      - cloudflare
+      Transfer-Encoding:
+      - chunked
+      X-Robots-Tag:
+      - none
+      anthropic-organization-id:
+      - 47b93e1d-acf2-4be5-b32d-1716b0cff224
+      anthropic-ratelimit-input-tokens-limit:
+      - '10000000'
+      anthropic-ratelimit-input-tokens-remaining:
+      - '10000000'
+      anthropic-ratelimit-input-tokens-reset:
+      - '2026-10-21T03:12:11Z'
+      anthropic-ratelimit-output-tokens-limit:
+      - '2000000'
+      anthropic-ratelimit-output-tokens-remaining:
+      - '2000000'
+      anthropic-ratelimit-output-tokens-reset:
+      - '2026-10-21T03:12:12Z'
+      anthropic-ratelimit-requests-limit:
+      - '10000'
+      anthropic-ratelimit-requests-remaining:
+      - '9999'
+      anthropic-ratelimit-requests-reset:
+      - '2026-10-21T03:12:10Z'
+      anthropic-ratelimit-tokens-limit:
+      - '12000000'
+      anthropic-ratelimit-tokens-remaining:
+      - '12000000'
+      anthropic-ratelimit-tokens-reset:
+      - '2026-10-21T03:12:11Z'
+      anthropic-workspace-id:
+      - wrkspc_01TyX2k3iWProyRBoEVYPNGB
+      cf-cache-status:
+      - DYNAMIC
+      request-id:
+      - req_011CgEeiNX9YxdqV4KiRLkht
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-6ad82d8a000000006012f0d497b004e7-1887eb409e39d5e3-01
+      vary:
+      - Accept-Encoding
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"max_tokens":16000,"messages":[{"role":"user","content":[{"type":"text","text":"Turn
+      on the kitchen lights. The set_lights tool is not loaded yet, so load it with
+      activate_tools first."}]},{"role":"assistant","content":[{"type":"tool_use","id":"toolu_01Pzkzqz746EGGxPVG3Zxk19","name":"activate_tools","input":{"tool_names":["set_lights"]}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_01Pzkzqz746EGGxPVG3Zxk19","content":"Activated
+      tools: set_lights."}]},{"role":"system","content":[{"type":"tool_addition","tool":{"type":"tool_reference","name":"set_lights"}}]}],"model":"claude-opus-5-5","output_config":{"effort":"high"},"system":[{"type":"text","text":"You
+      are the family''s household assistant.\n\nHouse rule 0: when asked about room
+      0, refer to it as room number 0 and remember that its lights are on circuit
+      0.\nHouse rule 1: when asked about room 1, refer to it as room number 1 and
+      remember that its lights are on circuit 1.\nHouse rule 2: when asked about room
+      2, refer to it as room number 2 and remember that its lights are on circuit
+      2.\nHouse rule 3: when asked about room 3, refer to it as room number 3 and
+      remember that its lights are on circuit 3.\nHouse rule 4: when asked about room
+      4, refer to it as room number 4 and remember that its lights are on circuit
+      4.\nHouse rule 5: when asked about room 5, refer to it as room number 5 and
+      remember that its lights are on circuit 5.\nHouse rule 6: when asked about room
+      6, refer to it as room number 6 and remember that its lights are on circuit
+      6.\nHouse rule 7: when asked about room 7, refer to it as room number 7 and
+      remember that its lights are on circuit 0.\nHouse rule 8: when asked about room
+      8, refer to it as room number 8 and remember that its lights are on circuit
+      1.\nHouse rule 9: when asked about room 9, refer to it as room number 9 and
+      remember that its lights are on circuit 2.\nHouse rule 10: when asked about
+      room 10, refer to it as room number 10 and remember that its lights are on circuit
+      3.\nHouse rule 11: when asked about room 11, refer to it as room number 11 and
+      remember that its lights are on circuit 4.\nHouse rule 12: when asked about
+      room 12, refer to it as room number 12 and remember that its lights are on circuit
+      5.\nHouse rule 13: when asked about room 13, refer to it as room number 13 and
+      remember that its lights are on circuit 6.\nHouse rule 14: when asked about
+      room 14, refer to it as room number 14 and remember that its lights are on circuit
+      0.\nHouse rule 15: when asked about room 15, refer to it as room number 15 and
+      remember that its lights are on circuit 1.\nHouse rule 16: when asked about
+      room 16, refer to it as room number 16 and remember that its lights are on circuit
+      2.\nHouse rule 17: when asked about room 17, refer to it as room number 17 and
+      remember that its lights are on circuit 3.\nHouse rule 18: when asked about
+      room 18, refer to it as room number 18 and remember that its lights are on circuit
+      4.\nHouse rule 19: when asked about room 19, refer to it as room number 19 and
+      remember that its lights are on circuit 5.\nHouse rule 20: when asked about
+      room 20, refer to it as room number 20 and remember that its lights are on circuit
+      6.\nHouse rule 21: when asked about room 21, refer to it as room number 21 and
+      remember that its lights are on circuit 0.\nHouse rule 22: when asked about
+      room 22, refer to it as room number 22 and remember that its lights are on circuit
+      1.\nHouse rule 23: when asked about room 23, refer to it as room number 23 and
+      remember that its lights are on circuit 2.\nHouse rule 24: when asked about
+      room 24, refer to it as room number 24 and remember that its lights are on circuit
+      3.\nHouse rule 25: when asked about room 25, refer to it as room number 25 and
+      remember that its lights are on circuit 4.\nHouse rule 26: when asked about
+      room 26, refer to it as room number 26 and remember that its lights are on circuit
+      5.\nHouse rule 27: when asked about room 27, refer to it as room number 27 and
+      remember that its lights are on circuit 6.\nHouse rule 28: when asked about
+      room 28, refer to it as room number 28 and remember that its lights are on circuit
+      0.\nHouse rule 29: when asked about room 29, refer to it as room number 29 and
+      remember that its lights are on circuit 1.\nHouse rule 30: when asked about
+      room 30, refer to it as room number 30 and remember that its lights are on circuit
+      2.\nHouse rule 31: when asked about room 31, refer to it as room number 31 and
+      remember that its lights are on circuit 3.\nHouse rule 32: when asked about
+      room 32, refer to it as room number 32 and remember that its lights are on circuit
+      4.\nHouse rule 33: when asked about room 33, refer to it as room number 33 and
+      remember that its lights are on circuit 5.\nHouse rule 34: when asked about
+      room 34, refer to it as room number 34 and remember that its lights are on circuit
+      6.\nHouse rule 35: when asked about room 35, refer to it as room number 35 and
+      remember that its lights are on circuit 0.\nHouse rule 36: when asked about
+      room 36, refer to it as room number 36 and remember that its lights are on circuit
+      1.\nHouse rule 37: when asked about room 37, refer to it as room number 37 and
+      remember that its lights are on circuit 2.\nHouse rule 38: when asked about
+      room 38, refer to it as room number 38 and remember that its lights are on circuit
+      3.\nHouse rule 39: when asked about room 39, refer to it as room number 39 and
+      remember that its lights are on circuit 4.\nHouse rule 40: when asked about
+      room 40, refer to it as room number 40 and remember that its lights are on circuit
+      5.\nHouse rule 41: when asked about room 41, refer to it as room number 41 and
+      remember that its lights are on circuit 6.\nHouse rule 42: when asked about
+      room 42, refer to it as room number 42 and remember that its lights are on circuit
+      0.\nHouse rule 43: when asked about room 43, refer to it as room number 43 and
+      remember that its lights are on circuit 1.\nHouse rule 44: when asked about
+      room 44, refer to it as room number 44 and remember that its lights are on circuit
+      2.\nHouse rule 45: when asked about room 45, refer to it as room number 45 and
+      remember that its lights are on circuit 3.\nHouse rule 46: when asked about
+      room 46, refer to it as room number 46 and remember that its lights are on circuit
+      4.\nHouse rule 47: when asked about room 47, refer to it as room number 47 and
+      remember that its lights are on circuit 5.\nHouse rule 48: when asked about
+      room 48, refer to it as room number 48 and remember that its lights are on circuit
+      6.\nHouse rule 49: when asked about room 49, refer to it as room number 49 and
+      remember that its lights are on circuit 0.\nHouse rule 50: when asked about
+      room 50, refer to it as room number 50 and remember that its lights are on circuit
+      1.\nHouse rule 51: when asked about room 51, refer to it as room number 51 and
+      remember that its lights are on circuit 2.\nHouse rule 52: when asked about
+      room 52, refer to it as room number 52 and remember that its lights are on circuit
+      3.\nHouse rule 53: when asked about room 53, refer to it as room number 53 and
+      remember that its lights are on circuit 4.\nHouse rule 54: when asked about
+      room 54, refer to it as room number 54 and remember that its lights are on circuit
+      5.\nHouse rule 55: when asked about room 55, refer to it as room number 55 and
+      remember that its lights are on circuit 6.\nHouse rule 56: when asked about
+      room 56, refer to it as room number 56 and remember that its lights are on circuit
+      0.\nHouse rule 57: when asked about room 57, refer to it as room number 57 and
+      remember that its lights are on circuit 1.\nHouse rule 58: when asked about
+      room 58, refer to it as room number 58 and remember that its lights are on circuit
+      2.\nHouse rule 59: when asked about room 59, refer to it as room number 59 and
+      remember that its lights are on circuit 3.\nHouse rule 60: when asked about
+      room 60, refer to it as room number 60 and remember that its lights are on circuit
+      4.\nHouse rule 61: when asked about room 61, refer to it as room number 61 and
+      remember that its lights are on circuit 5.\nHouse rule 62: when asked about
+      room 62, refer to it as room number 62 and remember that its lights are on circuit
+      6.\nHouse rule 63: when asked about room 63, refer to it as room number 63 and
+      remember that its lights are on circuit 0.\nHouse rule 64: when asked about
+      room 64, refer to it as room number 64 and remember that its lights are on circuit
+      1.\nHouse rule 65: when asked about room 65, refer to it as room number 65 and
+      remember that its lights are on circuit 2.\nHouse rule 66: when asked about
+      room 66, refer to it as room number 66 and remember that its lights are on circuit
+      3.\nHouse rule 67: when asked about room 67, refer to it as room number 67 and
+      remember that its lights are on circuit 4.\nHouse rule 68: when asked about
+      room 68, refer to it as room number 68 and remember that its lights are on circuit
+      5.\nHouse rule 69: when asked about room 69, refer to it as room number 69 and
+      remember that its lights are on circuit 6.\nHouse rule 70: when asked about
+      room 70, refer to it as room number 70 and remember that its lights are on circuit
+      0.\nHouse rule 71: when asked about room 71, refer to it as room number 71 and
+      remember that its lights are on circuit 1.\nHouse rule 72: when asked about
+      room 72, refer to it as room number 72 and remember that its lights are on circuit
+      2.\nHouse rule 73: when asked about room 73, refer to it as room number 73 and
+      remember that its lights are on circuit 3.\nHouse rule 74: when asked about
+      room 74, refer to it as room number 74 and remember that its lights are on circuit
+      4.\nHouse rule 75: when asked about room 75, refer to it as room number 75 and
+      remember that its lights are on circuit 5.\nHouse rule 76: when asked about
+      room 76, refer to it as room number 76 and remember that its lights are on circuit
+      6.\nHouse rule 77: when asked about room 77, refer to it as room number 77 and
+      remember that its lights are on circuit 0.\nHouse rule 78: when asked about
+      room 78, refer to it as room number 78 and remember that its lights are on circuit
+      1.\nHouse rule 79: when asked about room 79, refer to it as room number 79 and
+      remember that its lights are on circuit 2.\nHouse rule 80: when asked about
+      room 80, refer to it as room number 80 and remember that its lights are on circuit
+      3.\nHouse rule 81: when asked about room 81, refer to it as room number 81 and
+      remember that its lights are on circuit 4.\nHouse rule 82: when asked about
+      room 82, refer to it as room number 82 and remember that its lights are on circuit
+      5.\nHouse rule 83: when asked about room 83, refer to it as room number 83 and
+      remember that its lights are on circuit 6.\nHouse rule 84: when asked about
+      room 84, refer to it as room number 84 and remember that its lights are on circuit
+      0.\nHouse rule 85: when asked about room 85, refer to it as room number 85 and
+      remember that its lights are on circuit 1.\nHouse rule 86: when asked about
+      room 86, refer to it as room number 86 and remember that its lights are on circuit
+      2.\nHouse rule 87: when asked about room 87, refer to it as room number 87 and
+      remember that its lights are on circuit 3.\nHouse rule 88: when asked about
+      room 88, refer to it as room number 88 and remember that its lights are on circuit
+      4.\nHouse rule 89: when asked about room 89, refer to it as room number 89 and
+      remember that its lights are on circuit 5.\nHouse rule 90: when asked about
+      room 90, refer to it as room number 90 and remember that its lights are on circuit
+      6.\nHouse rule 91: when asked about room 91, refer to it as room number 91 and
+      remember that its lights are on circuit 0.\nHouse rule 92: when asked about
+      room 92, refer to it as room number 92 and remember that its lights are on circuit
+      1.\nHouse rule 93: when asked about room 93, refer to it as room number 93 and
+      remember that its lights are on circuit 2.\nHouse rule 94: when asked about
+      room 94, refer to it as room number 94 and remember that its lights are on circuit
+      3.\nHouse rule 95: when asked about room 95, refer to it as room number 95 and
+      remember that its lights are on circuit 4.\nHouse rule 96: when asked about
+      room 96, refer to it as room number 96 and remember that its lights are on circuit
+      5.\nHouse rule 97: when asked about room 97, refer to it as room number 97 and
+      remember that its lights are on circuit 6.\nHouse rule 98: when asked about
+      room 98, refer to it as room number 98 and remember that its lights are on circuit
+      0.\nHouse rule 99: when asked about room 99, refer to it as room number 99 and
+      remember that its lights are on circuit 1.\nHouse rule 100: when asked about
+      room 100, refer to it as room number 100 and remember that its lights are on
+      circuit 2.\nHouse rule 101: when asked about room 101, refer to it as room number
+      101 and remember that its lights are on circuit 3.\nHouse rule 102: when asked
+      about room 102, refer to it as room number 102 and remember that its lights
+      are on circuit 4.\nHouse rule 103: when asked about room 103, refer to it as
+      room number 103 and remember that its lights are on circuit 5.\nHouse rule 104:
+      when asked about room 104, refer to it as room number 104 and remember that
+      its lights are on circuit 6.\nHouse rule 105: when asked about room 105, refer
+      to it as room number 105 and remember that its lights are on circuit 0.\nHouse
+      rule 106: when asked about room 106, refer to it as room number 106 and remember
+      that its lights are on circuit 1.\nHouse rule 107: when asked about room 107,
+      refer to it as room number 107 and remember that its lights are on circuit 2.\nHouse
+      rule 108: when asked about room 108, refer to it as room number 108 and remember
+      that its lights are on circuit 3.\nHouse rule 109: when asked about room 109,
+      refer to it as room number 109 and remember that its lights are on circuit 4.\nHouse
+      rule 110: when asked about room 110, refer to it as room number 110 and remember
+      that its lights are on circuit 5.\nHouse rule 111: when asked about room 111,
+      refer to it as room number 111 and remember that its lights are on circuit 6.\nHouse
+      rule 112: when asked about room 112, refer to it as room number 112 and remember
+      that its lights are on circuit 0.\nHouse rule 113: when asked about room 113,
+      refer to it as room number 113 and remember that its lights are on circuit 1.\nHouse
+      rule 114: when asked about room 114, refer to it as room number 114 and remember
+      that its lights are on circuit 2.\nHouse rule 115: when asked about room 115,
+      refer to it as room number 115 and remember that its lights are on circuit 3.\nHouse
+      rule 116: when asked about room 116, refer to it as room number 116 and remember
+      that its lights are on circuit 4.\nHouse rule 117: when asked about room 117,
+      refer to it as room number 117 and remember that its lights are on circuit 5.\nHouse
+      rule 118: when asked about room 118, refer to it as room number 118 and remember
+      that its lights are on circuit 6.\nHouse rule 119: when asked about room 119,
+      refer to it as room number 119 and remember that its lights are on circuit 0.\nHouse
+      rule 120: when asked about room 120, refer to it as room number 120 and remember
+      that its lights are on circuit 1.\nHouse rule 121: when asked about room 121,
+      refer to it as room number 121 and remember that its lights are on circuit 2.\nHouse
+      rule 122: when asked about room 122, refer to it as room number 122 and remember
+      that its lights are on circuit 3.\nHouse rule 123: when asked about room 123,
+      refer to it as room number 123 and remember that its lights are on circuit 4.\nHouse
+      rule 124: when asked about room 124, refer to it as room number 124 and remember
+      that its lights are on circuit 5.\nHouse rule 125: when asked about room 125,
+      refer to it as room number 125 and remember that its lights are on circuit 6.\nHouse
+      rule 126: when asked about room 126, refer to it as room number 126 and remember
+      that its lights are on circuit 0.\nHouse rule 127: when asked about room 127,
+      refer to it as room number 127 and remember that its lights are on circuit 1.\nHouse
+      rule 128: when asked about room 128, refer to it as room number 128 and remember
+      that its lights are on circuit 2.\nHouse rule 129: when asked about room 129,
+      refer to it as room number 129 and remember that its lights are on circuit 3.\nHouse
+      rule 130: when asked about room 130, refer to it as room number 130 and remember
+      that its lights are on circuit 4.\nHouse rule 131: when asked about room 131,
+      refer to it as room number 131 and remember that its lights are on circuit 5.\nHouse
+      rule 132: when asked about room 132, refer to it as room number 132 and remember
+      that its lights are on circuit 6.\nHouse rule 133: when asked about room 133,
+      refer to it as room number 133 and remember that its lights are on circuit 0.\nHouse
+      rule 134: when asked about room 134, refer to it as room number 134 and remember
+      that its lights are on circuit 1.\nHouse rule 135: when asked about room 135,
+      refer to it as room number 135 and remember that its lights are on circuit 2.\nHouse
+      rule 136: when asked about room 136, refer to it as room number 136 and remember
+      that its lights are on circuit 3.\nHouse rule 137: when asked about room 137,
+      refer to it as room number 137 and remember that its lights are on circuit 4.\nHouse
+      rule 138: when asked about room 138, refer to it as room number 138 and remember
+      that its lights are on circuit 5.\nHouse rule 139: when asked about room 139,
+      refer to it as room number 139 and remember that its lights are on circuit 6.\nHouse
+      rule 140: when asked about room 140, refer to it as room number 140 and remember
+      that its lights are on circuit 0.\nHouse rule 141: when asked about room 141,
+      refer to it as room number 141 and remember that its lights are on circuit 1.\nHouse
+      rule 142: when asked about room 142, refer to it as room number 142 and remember
+      that its lights are on circuit 2.\nHouse rule 143: when asked about room 143,
+      refer to it as room number 143 and remember that its lights are on circuit 3.\nHouse
+      rule 144: when asked about room 144, refer to it as room number 144 and remember
+      that its lights are on circuit 4.\nHouse rule 145: when asked about room 145,
+      refer to it as room number 145 and remember that its lights are on circuit 5.\nHouse
+      rule 146: when asked about room 146, refer to it as room number 146 and remember
+      that its lights are on circuit 6.\nHouse rule 147: when asked about room 147,
+      refer to it as room number 147 and remember that its lights are on circuit 0.\nHouse
+      rule 148: when asked about room 148, refer to it as room number 148 and remember
+      that its lights are on circuit 1.\nHouse rule 149: when asked about room 149,
+      refer to it as room number 149 and remember that its lights are on circuit 2.\nHouse
+      rule 150: when asked about room 150, refer to it as room number 150 and remember
+      that its lights are on circuit 3.\nHouse rule 151: when asked about room 151,
+      refer to it as room number 151 and remember that its lights are on circuit 4.\nHouse
+      rule 152: when asked about room 152, refer to it as room number 152 and remember
+      that its lights are on circuit 5.\nHouse rule 153: when asked about room 153,
+      refer to it as room number 153 and remember that its lights are on circuit 6.\nHouse
+      rule 154: when asked about room 154, refer to it as room number 154 and remember
+      that its lights are on circuit 0.\nHouse rule 155: when asked about room 155,
+      refer to it as room number 155 and remember that its lights are on circuit 1.\nHouse
+      rule 156: when asked about room 156, refer to it as room number 156 and remember
+      that its lights are on circuit 2.\nHouse rule 157: when asked about room 157,
+      refer to it as room number 157 and remember that its lights are on circuit 3.\nHouse
+      rule 158: when asked about room 158, refer to it as room number 158 and remember
+      that its lights are on circuit 4.\nHouse rule 159: when asked about room 159,
+      refer to it as room number 159 and remember that its lights are on circuit 5.\nHouse
+      rule 160: when asked about room 160, refer to it as room number 160 and remember
+      that its lights are on circuit 6.\nHouse rule 161: when asked about room 161,
+      refer to it as room number 161 and remember that its lights are on circuit 0.\nHouse
+      rule 162: when asked about room 162, refer to it as room number 162 and remember
+      that its lights are on circuit 1.\nHouse rule 163: when asked about room 163,
+      refer to it as room number 163 and remember that its lights are on circuit 2.\nHouse
+      rule 164: when asked about room 164, refer to it as room number 164 and remember
+      that its lights are on circuit 3.\nHouse rule 165: when asked about room 165,
+      refer to it as room number 165 and remember that its lights are on circuit 4.\nHouse
+      rule 166: when asked about room 166, refer to it as room number 166 and remember
+      that its lights are on circuit 5.\nHouse rule 167: when asked about room 167,
+      refer to it as room number 167 and remember that its lights are on circuit 6.\nHouse
+      rule 168: when asked about room 168, refer to it as room number 168 and remember
+      that its lights are on circuit 0.\nHouse rule 169: when asked about room 169,
+      refer to it as room number 169 and remember that its lights are on circuit 1.\nHouse
+      rule 170: when asked about room 170, refer to it as room number 170 and remember
+      that its lights are on circuit 2.\nHouse rule 171: when asked about room 171,
+      refer to it as room number 171 and remember that its lights are on circuit 3.\nHouse
+      rule 172: when asked about room 172, refer to it as room number 172 and remember
+      that its lights are on circuit 4.\nHouse rule 173: when asked about room 173,
+      refer to it as room number 173 and remember that its lights are on circuit 5.\nHouse
+      rule 174: when asked about room 174, refer to it as room number 174 and remember
+      that its lights are on circuit 6.\nHouse rule 175: when asked about room 175,
+      refer to it as room number 175 and remember that its lights are on circuit 0.\nHouse
+      rule 176: when asked about room 176, refer to it as room number 176 and remember
+      that its lights are on circuit 1.\nHouse rule 177: when asked about room 177,
+      refer to it as room number 177 and remember that its lights are on circuit 2.\nHouse
+      rule 178: when asked about room 178, refer to it as room number 178 and remember
+      that its lights are on circuit 3.\nHouse rule 179: when asked about room 179,
+      refer to it as room number 179 and remember that its lights are on circuit 4.\nHouse
+      rule 180: when asked about room 180, refer to it as room number 180 and remember
+      that its lights are on circuit 5.\nHouse rule 181: when asked about room 181,
+      refer to it as room number 181 and remember that its lights are on circuit 6.\nHouse
+      rule 182: when asked about room 182, refer to it as room number 182 and remember
+      that its lights are on circuit 0.\nHouse rule 183: when asked about room 183,
+      refer to it as room number 183 and remember that its lights are on circuit 1.\nHouse
+      rule 184: when asked about room 184, refer to it as room number 184 and remember
+      that its lights are on circuit 2.\nHouse rule 185: when asked about room 185,
+      refer to it as room number 185 and remember that its lights are on circuit 3.\nHouse
+      rule 186: when asked about room 186, refer to it as room number 186 and remember
+      that its lights are on circuit 4.\nHouse rule 187: when asked about room 187,
+      refer to it as room number 187 and remember that its lights are on circuit 5.\nHouse
+      rule 188: when asked about room 188, refer to it as room number 188 and remember
+      that its lights are on circuit 6.\nHouse rule 189: when asked about room 189,
+      refer to it as room number 189 and remember that its lights are on circuit 0.\nHouse
+      rule 190: when asked about room 190, refer to it as room number 190 and remember
+      that its lights are on circuit 1.\nHouse rule 191: when asked about room 191,
+      refer to it as room number 191 and remember that its lights are on circuit 2.\nHouse
+      rule 192: when asked about room 192, refer to it as room number 192 and remember
+      that its lights are on circuit 3.\nHouse rule 193: when asked about room 193,
+      refer to it as room number 193 and remember that its lights are on circuit 4.\nHouse
+      rule 194: when asked about room 194, refer to it as room number 194 and remember
+      that its lights are on circuit 5.\nHouse rule 195: when asked about room 195,
+      refer to it as room number 195 and remember that its lights are on circuit 6.\nHouse
+      rule 196: when asked about room 196, refer to it as room number 196 and remember
+      that its lights are on circuit 0.\nHouse rule 197: when asked about room 197,
+      refer to it as room number 197 and remember that its lights are on circuit 1.\nHouse
+      rule 198: when asked about room 198, refer to it as room number 198 and remember
+      that its lights are on circuit 2.\nHouse rule 199: when asked about room 199,
+      refer to it as room number 199 and remember that its lights are on circuit 3.\nHouse
+      rule 200: when asked about room 200, refer to it as room number 200 and remember
+      that its lights are on circuit 4.\nHouse rule 201: when asked about room 201,
+      refer to it as room number 201 and remember that its lights are on circuit 5.\nHouse
+      rule 202: when asked about room 202, refer to it as room number 202 and remember
+      that its lights are on circuit 6.\nHouse rule 203: when asked about room 203,
+      refer to it as room number 203 and remember that its lights are on circuit 0.\nHouse
+      rule 204: when asked about room 204, refer to it as room number 204 and remember
+      that its lights are on circuit 1.\nHouse rule 205: when asked about room 205,
+      refer to it as room number 205 and remember that its lights are on circuit 2.\nHouse
+      rule 206: when asked about room 206, refer to it as room number 206 and remember
+      that its lights are on circuit 3.\nHouse rule 207: when asked about room 207,
+      refer to it as room number 207 and remember that its lights are on circuit 4.\nHouse
+      rule 208: when asked about room 208, refer to it as room number 208 and remember
+      that its lights are on circuit 5.\nHouse rule 209: when asked about room 209,
+      refer to it as room number 209 and remember that its lights are on circuit 6.\nHouse
+      rule 210: when asked about room 210, refer to it as room number 210 and remember
+      that its lights are on circuit 0.\nHouse rule 211: when asked about room 211,
+      refer to it as room number 211 and remember that its lights are on circuit 1.\nHouse
+      rule 212: when asked about room 212, refer to it as room number 212 and remember
+      that its lights are on circuit 2.\nHouse rule 213: when asked about room 213,
+      refer to it as room number 213 and remember that its lights are on circuit 3.\nHouse
+      rule 214: when asked about room 214, refer to it as room number 214 and remember
+      that its lights are on circuit 4.\nHouse rule 215: when asked about room 215,
+      refer to it as room number 215 and remember that its lights are on circuit 5.\nHouse
+      rule 216: when asked about room 216, refer to it as room number 216 and remember
+      that its lights are on circuit 6.\nHouse rule 217: when asked about room 217,
+      refer to it as room number 217 and remember that its lights are on circuit 0.\nHouse
+      rule 218: when asked about room 218, refer to it as room number 218 and remember
+      that its lights are on circuit 1.\nHouse rule 219: when asked about room 219,
+      refer to it as room number 219 and remember that its lights are on circuit 2.\nHouse
+      rule 220: when asked about room 220, refer to it as room number 220 and remember
+      that its lights are on circuit 3.\nHouse rule 221: when asked about room 221,
+      refer to it as room number 221 and remember that its lights are on circuit 4.\nHouse
+      rule 222: when asked about room 222, refer to it as room number 222 and remember
+      that its lights are on circuit 5.\nHouse rule 223: when asked about room 223,
+      refer to it as room number 223 and remember that its lights are on circuit 6.\nHouse
+      rule 224: when asked about room 224, refer to it as room number 224 and remember
+      that its lights are on circuit 0.\nHouse rule 225: when asked about room 225,
+      refer to it as room number 225 and remember that its lights are on circuit 1.\nHouse
+      rule 226: when asked about room 226, refer to it as room number 226 and remember
+      that its lights are on circuit 2.\nHouse rule 227: when asked about room 227,
+      refer to it as room number 227 and remember that its lights are on circuit 3.\nHouse
+      rule 228: when asked about room 228, refer to it as room number 228 and remember
+      that its lights are on circuit 4.\nHouse rule 229: when asked about room 229,
+      refer to it as room number 229 and remember that its lights are on circuit 5.\nHouse
+      rule 230: when asked about room 230, refer to it as room number 230 and remember
+      that its lights are on circuit 6.\nHouse rule 231: when asked about room 231,
+      refer to it as room number 231 and remember that its lights are on circuit 0.\nHouse
+      rule 232: when asked about room 232, refer to it as room number 232 and remember
+      that its lights are on circuit 1.\nHouse rule 233: when asked about room 233,
+      refer to it as room number 233 and remember that its lights are on circuit 2.\nHouse
+      rule 234: when asked about room 234, refer to it as room number 234 and remember
+      that its lights are on circuit 3.\nHouse rule 235: when asked about room 235,
+      refer to it as room number 235 and remember that its lights are on circuit 4.\nHouse
+      rule 236: when asked about room 236, refer to it as room number 236 and remember
+      that its lights are on circuit 5.\nHouse rule 237: when asked about room 237,
+      refer to it as room number 237 and remember that its lights are on circuit 6.\nHouse
+      rule 238: when asked about room 238, refer to it as room number 238 and remember
+      that its lights are on circuit 0.\nHouse rule 239: when asked about room 239,
+      refer to it as room number 239 and remember that its lights are on circuit 1.\nHouse
+      rule 240: when asked about room 240, refer to it as room number 240 and remember
+      that its lights are on circuit 2.\nHouse rule 241: when asked about room 241,
+      refer to it as room number 241 and remember that its lights are on circuit 3.\nHouse
+      rule 242: when asked about room 242, refer to it as room number 242 and remember
+      that its lights are on circuit 4.\nHouse rule 243: when asked about room 243,
+      refer to it as room number 243 and remember that its lights are on circuit 5.\nHouse
+      rule 244: when asked about room 244, refer to it as room number 244 and remember
+      that its lights are on circuit 6.\nHouse rule 245: when asked about room 245,
+      refer to it as room number 245 and remember that its lights are on circuit 0.\nHouse
+      rule 246: when asked about room 246, refer to it as room number 246 and remember
+      that its lights are on circuit 1.\nHouse rule 247: when asked about room 247,
+      refer to it as room number 247 and remember that its lights are on circuit 2.\nHouse
+      rule 248: when asked about room 248, refer to it as room number 248 and remember
+      that its lights are on circuit 3.\nHouse rule 249: when asked about room 249,
+      refer to it as room number 249 and remember that its lights are on circuit 4.\nHouse
+      rule 250: when asked about room 250, refer to it as room number 250 and remember
+      that its lights are on circuit 5.\nHouse rule 251: when asked about room 251,
+      refer to it as room number 251 and remember that its lights are on circuit 6.\nHouse
+      rule 252: when asked about room 252, refer to it as room number 252 and remember
+      that its lights are on circuit 0.\nHouse rule 253: when asked about room 253,
+      refer to it as room number 253 and remember that its lights are on circuit 1.\nHouse
+      rule 254: when asked about room 254, refer to it as room number 254 and remember
+      that its lights are on circuit 2.\nHouse rule 255: when asked about room 255,
+      refer to it as room number 255 and remember that its lights are on circuit 3.\nHouse
+      rule 256: when asked about room 256, refer to it as room number 256 and remember
+      that its lights are on circuit 4.\nHouse rule 257: when asked about room 257,
+      refer to it as room number 257 and remember that its lights are on circuit 5.\nHouse
+      rule 258: when asked about room 258, refer to it as room number 258 and remember
+      that its lights are on circuit 6.\nHouse rule 259: when asked about room 259,
+      refer to it as room number 259 and remember that its lights are on circuit 0.\nHouse
+      rule 260: when asked about room 260, refer to it as room number 260 and remember
+      that its lights are on circuit 1.\nHouse rule 261: when asked about room 261,
+      refer to it as room number 261 and remember that its lights are on circuit 2.\nHouse
+      rule 262: when asked about room 262, refer to it as room number 262 and remember
+      that its lights are on circuit 3.\nHouse rule 263: when asked about room 263,
+      refer to it as room number 263 and remember that its lights are on circuit 4.\nHouse
+      rule 264: when asked about room 264, refer to it as room number 264 and remember
+      that its lights are on circuit 5.\nHouse rule 265: when asked about room 265,
+      refer to it as room number 265 and remember that its lights are on circuit 6.\nHouse
+      rule 266: when asked about room 266, refer to it as room number 266 and remember
+      that its lights are on circuit 0.\nHouse rule 267: when asked about room 267,
+      refer to it as room number 267 and remember that its lights are on circuit 1.\nHouse
+      rule 268: when asked about room 268, refer to it as room number 268 and remember
+      that its lights are on circuit 2.\nHouse rule 269: when asked about room 269,
+      refer to it as room number 269 and remember that its lights are on circuit 3.\nHouse
+      rule 270: when asked about room 270, refer to it as room number 270 and remember
+      that its lights are on circuit 4.\nHouse rule 271: when asked about room 271,
+      refer to it as room number 271 and remember that its lights are on circuit 5.\nHouse
+      rule 272: when asked about room 272, refer to it as room number 272 and remember
+      that its lights are on circuit 6.\nHouse rule 273: when asked about room 273,
+      refer to it as room number 273 and remember that its lights are on circuit 0.\nHouse
+      rule 274: when asked about room 274, refer to it as room number 274 and remember
+      that its lights are on circuit 1.\nHouse rule 275: when asked about room 275,
+      refer to it as room number 275 and remember that its lights are on circuit 2.\nHouse
+      rule 276: when asked about room 276, refer to it as room number 276 and remember
+      that its lights are on circuit 3.\nHouse rule 277: when asked about room 277,
+      refer to it as room number 277 and remember that its lights are on circuit 4.\nHouse
+      rule 278: when asked about room 278, refer to it as room number 278 and remember
+      that its lights are on circuit 5.\nHouse rule 279: when asked about room 279,
+      refer to it as room number 279 and remember that its lights are on circuit 6.\nHouse
+      rule 280: when asked about room 280, refer to it as room number 280 and remember
+      that its lights are on circuit 0.\nHouse rule 281: when asked about room 281,
+      refer to it as room number 281 and remember that its lights are on circuit 1.\nHouse
+      rule 282: when asked about room 282, refer to it as room number 282 and remember
+      that its lights are on circuit 2.\nHouse rule 283: when asked about room 283,
+      refer to it as room number 283 and remember that its lights are on circuit 3.\nHouse
+      rule 284: when asked about room 284, refer to it as room number 284 and remember
+      that its lights are on circuit 4.\nHouse rule 285: when asked about room 285,
+      refer to it as room number 285 and remember that its lights are on circuit 5.\nHouse
+      rule 286: when asked about room 286, refer to it as room number 286 and remember
+      that its lights are on circuit 6.\nHouse rule 287: when asked about room 287,
+      refer to it as room number 287 and remember that its lights are on circuit 0.\nHouse
+      rule 288: when asked about room 288, refer to it as room number 288 and remember
+      that its lights are on circuit 1.\nHouse rule 289: when asked about room 289,
+      refer to it as room number 289 and remember that its lights are on circuit 2.\nHouse
+      rule 290: when asked about room 290, refer to it as room number 290 and remember
+      that its lights are on circuit 3.\nHouse rule 291: when asked about room 291,
+      refer to it as room number 291 and remember that its lights are on circuit 4.\nHouse
+      rule 292: when asked about room 292, refer to it as room number 292 and remember
+      that its lights are on circuit 5.\nHouse rule 293: when asked about room 293,
+      refer to it as room number 293 and remember that its lights are on circuit 6.\nHouse
+      rule 294: when asked about room 294, refer to it as room number 294 and remember
+      that its lights are on circuit 0.\nHouse rule 295: when asked about room 295,
+      refer to it as room number 295 and remember that its lights are on circuit 1.\nHouse
+      rule 296: when asked about room 296, refer to it as room number 296 and remember
+      that its lights are on circuit 2.\nHouse rule 297: when asked about room 297,
+      refer to it as room number 297 and remember that its lights are on circuit 3.\nHouse
+      rule 298: when asked about room 298, refer to it as room number 298 and remember
+      that its lights are on circuit 4.\nHouse rule 299: when asked about room 299,
+      refer to it as room number 299 and remember that its lights are on circuit 5.\nHouse
+      rule 300: when asked about room 300, refer to it as room number 300 and remember
+      that its lights are on circuit 6.\nHouse rule 301: when asked about room 301,
+      refer to it as room number 301 and remember that its lights are on circuit 0.\nHouse
+      rule 302: when asked about room 302, refer to it as room number 302 and remember
+      that its lights are on circuit 1.\nHouse rule 303: when asked about room 303,
+      refer to it as room number 303 and remember that its lights are on circuit 2.\nHouse
+      rule 304: when asked about room 304, refer to it as room number 304 and remember
+      that its lights are on circuit 3.\nHouse rule 305: when asked about room 305,
+      refer to it as room number 305 and remember that its lights are on circuit 4.\nHouse
+      rule 306: when asked about room 306, refer to it as room number 306 and remember
+      that its lights are on circuit 5.\nHouse rule 307: when asked about room 307,
+      refer to it as room number 307 and remember that its lights are on circuit 6.\nHouse
+      rule 308: when asked about room 308, refer to it as room number 308 and remember
+      that its lights are on circuit 0.\nHouse rule 309: when asked about room 309,
+      refer to it as room number 309 and remember that its lights are on circuit 1.\nHouse
+      rule 310: when asked about room 310, refer to it as room number 310 and remember
+      that its lights are on circuit 2.\nHouse rule 311: when asked about room 311,
+      refer to it as room number 311 and remember that its lights are on circuit 3.\nHouse
+      rule 312: when asked about room 312, refer to it as room number 312 and remember
+      that its lights are on circuit 4.\nHouse rule 313: when asked about room 313,
+      refer to it as room number 313 and remember that its lights are on circuit 5.\nHouse
+      rule 314: when asked about room 314, refer to it as room number 314 and remember
+      that its lights are on circuit 6.\nHouse rule 315: when asked about room 315,
+      refer to it as room number 315 and remember that its lights are on circuit 0.\nHouse
+      rule 316: when asked about room 316, refer to it as room number 316 and remember
+      that its lights are on circuit 1.\nHouse rule 317: when asked about room 317,
+      refer to it as room number 317 and remember that its lights are on circuit 2.\nHouse
+      rule 318: when asked about room 318, refer to it as room number 318 and remember
+      that its lights are on circuit 3.\nHouse rule 319: when asked about room 319,
+      refer to it as room number 319 and remember that its lights are on circuit 4.\nHouse
+      rule 320: when asked about room 320, refer to it as room number 320 and remember
+      that its lights are on circuit 5.\nHouse rule 321: when asked about room 321,
+      refer to it as room number 321 and remember that its lights are on circuit 6.\nHouse
+      rule 322: when asked about room 322, refer to it as room number 322 and remember
+      that its lights are on circuit 0.\nHouse rule 323: when asked about room 323,
+      refer to it as room number 323 and remember that its lights are on circuit 1.\nHouse
+      rule 324: when asked about room 324, refer to it as room number 324 and remember
+      that its lights are on circuit 2.\nHouse rule 325: when asked about room 325,
+      refer to it as room number 325 and remember that its lights are on circuit 3.\nHouse
+      rule 326: when asked about room 326, refer to it as room number 326 and remember
+      that its lights are on circuit 4.\nHouse rule 327: when asked about room 327,
+      refer to it as room number 327 and remember that its lights are on circuit 5.\nHouse
+      rule 328: when asked about room 328, refer to it as room number 328 and remember
+      that its lights are on circuit 6.\nHouse rule 329: when asked about room 329,
+      refer to it as room number 329 and remember that its lights are on circuit 0.\nHouse
+      rule 330: when asked about room 330, refer to it as room number 330 and remember
+      that its lights are on circuit 1.\nHouse rule 331: when asked about room 331,
+      refer to it as room number 331 and remember that its lights are on circuit 2.\nHouse
+      rule 332: when asked about room 332, refer to it as room number 332 and remember
+      that its lights are on circuit 3.\nHouse rule 333: when asked about room 333,
+      refer to it as room number 333 and remember that its lights are on circuit 4.\nHouse
+      rule 334: when asked about room 334, refer to it as room number 334 and remember
+      that its lights are on circuit 5.\nHouse rule 335: when asked about room 335,
+      refer to it as room number 335 and remember that its lights are on circuit 6.\nHouse
+      rule 336: when asked about room 336, refer to it as room number 336 and remember
+      that its lights are on circuit 0.\nHouse rule 337: when asked about room 337,
+      refer to it as room number 337 and remember that its lights are on circuit 1.\nHouse
+      rule 338: when asked about room 338, refer to it as room number 338 and remember
+      that its lights are on circuit 2.\nHouse rule 339: when asked about room 339,
+      refer to it as room number 339 and remember that its lights are on circuit 3.\nHouse
+      rule 340: when asked about room 340, refer to it as room number 340 and remember
+      that its lights are on circuit 4.\nHouse rule 341: when asked about room 341,
+      refer to it as room number 341 and remember that its lights are on circuit 5.\nHouse
+      rule 342: when asked about room 342, refer to it as room number 342 and remember
+      that its lights are on circuit 6.\nHouse rule 343: when asked about room 343,
+      refer to it as room number 343 and remember that its lights are on circuit 0.\nHouse
+      rule 344: when asked about room 344, refer to it as room number 344 and remember
+      that its lights are on circuit 1.\nHouse rule 345: when asked about room 345,
+      refer to it as room number 345 and remember that its lights are on circuit 2.\nHouse
+      rule 346: when asked about room 346, refer to it as room number 346 and remember
+      that its lights are on circuit 3.\nHouse rule 347: when asked about room 347,
+      refer to it as room number 347 and remember that its lights are on circuit 4.\nHouse
+      rule 348: when asked about room 348, refer to it as room number 348 and remember
+      that its lights are on circuit 5.\nHouse rule 349: when asked about room 349,
+      refer to it as room number 349 and remember that its lights are on circuit 6.\nHouse
+      rule 350: when asked about room 350, refer to it as room number 350 and remember
+      that its lights are on circuit 0.\nHouse rule 351: when asked about room 351,
+      refer to it as room number 351 and remember that its lights are on circuit 1.\nHouse
+      rule 352: when asked about room 352, refer to it as room number 352 and remember
+      that its lights are on circuit 2.\nHouse rule 353: when asked about room 353,
+      refer to it as room number 353 and remember that its lights are on circuit 3.\nHouse
+      rule 354: when asked about room 354, refer to it as room number 354 and remember
+      that its lights are on circuit 4.\nHouse rule 355: when asked about room 355,
+      refer to it as room number 355 and remember that its lights are on circuit 5.\nHouse
+      rule 356: when asked about room 356, refer to it as room number 356 and remember
+      that its lights are on circuit 6.\nHouse rule 357: when asked about room 357,
+      refer to it as room number 357 and remember that its lights are on circuit 0.\nHouse
+      rule 358: when asked about room 358, refer to it as room number 358 and remember
+      that its lights are on circuit 1.\nHouse rule 359: when asked about room 359,
+      refer to it as room number 359 and remember that its lights are on circuit 2.\nHouse
+      rule 360: when asked about room 360, refer to it as room number 360 and remember
+      that its lights are on circuit 3.\nHouse rule 361: when asked about room 361,
+      refer to it as room number 361 and remember that its lights are on circuit 4.\nHouse
+      rule 362: when asked about room 362, refer to it as room number 362 and remember
+      that its lights are on circuit 5.\nHouse rule 363: when asked about room 363,
+      refer to it as room number 363 and remember that its lights are on circuit 6.\nHouse
+      rule 364: when asked about room 364, refer to it as room number 364 and remember
+      that its lights are on circuit 0.\nHouse rule 365: when asked about room 365,
+      refer to it as room number 365 and remember that its lights are on circuit 1.\nHouse
+      rule 366: when asked about room 366, refer to it as room number 366 and remember
+      that its lights are on circuit 2.\nHouse rule 367: when asked about room 367,
+      refer to it as room number 367 and remember that its lights are on circuit 3.\nHouse
+      rule 368: when asked about room 368, refer to it as room number 368 and remember
+      that its lights are on circuit 4.\nHouse rule 369: when asked about room 369,
+      refer to it as room number 369 and remember that its lights are on circuit 5.\nHouse
+      rule 370: when asked about room 370, refer to it as room number 370 and remember
+      that its lights are on circuit 6.\nHouse rule 371: when asked about room 371,
+      refer to it as room number 371 and remember that its lights are on circuit 0.\nHouse
+      rule 372: when asked about room 372, refer to it as room number 372 and remember
+      that its lights are on circuit 1.\nHouse rule 373: when asked about room 373,
+      refer to it as room number 373 and remember that its lights are on circuit 2.\nHouse
+      rule 374: when asked about room 374, refer to it as room number 374 and remember
+      that its lights are on circuit 3.\nHouse rule 375: when asked about room 375,
+      refer to it as room number 375 and remember that its lights are on circuit 4.\nHouse
+      rule 376: when asked about room 376, refer to it as room number 376 and remember
+      that its lights are on circuit 5.\nHouse rule 377: when asked about room 377,
+      refer to it as room number 377 and remember that its lights are on circuit 6.\nHouse
+      rule 378: when asked about room 378, refer to it as room number 378 and remember
+      that its lights are on circuit 0.\nHouse rule 379: when asked about room 379,
+      refer to it as room number 379 and remember that its lights are on circuit 1.\nHouse
+      rule 380: when asked about room 380, refer to it as room number 380 and remember
+      that its lights are on circuit 2.\nHouse rule 381: when asked about room 381,
+      refer to it as room number 381 and remember that its lights are on circuit 3.\nHouse
+      rule 382: when asked about room 382, refer to it as room number 382 and remember
+      that its lights are on circuit 4.\nHouse rule 383: when asked about room 383,
+      refer to it as room number 383 and remember that its lights are on circuit 5.\nHouse
+      rule 384: when asked about room 384, refer to it as room number 384 and remember
+      that its lights are on circuit 6.\nHouse rule 385: when asked about room 385,
+      refer to it as room number 385 and remember that its lights are on circuit 0.\nHouse
+      rule 386: when asked about room 386, refer to it as room number 386 and remember
+      that its lights are on circuit 1.\nHouse rule 387: when asked about room 387,
+      refer to it as room number 387 and remember that its lights are on circuit 2.\nHouse
+      rule 388: when asked about room 388, refer to it as room number 388 and remember
+      that its lights are on circuit 3.\nHouse rule 389: when asked about room 389,
+      refer to it as room number 389 and remember that its lights are on circuit 4.\nHouse
+      rule 390: when asked about room 390, refer to it as room number 390 and remember
+      that its lights are on circuit 5.\nHouse rule 391: when asked about room 391,
+      refer to it as room number 391 and remember that its lights are on circuit 6.\nHouse
+      rule 392: when asked about room 392, refer to it as room number 392 and remember
+      that its lights are on circuit 0.\nHouse rule 393: when asked about room 393,
+      refer to it as room number 393 and remember that its lights are on circuit 1.\nHouse
+      rule 394: when asked about room 394, refer to it as room number 394 and remember
+      that its lights are on circuit 2.\nHouse rule 395: when asked about room 395,
+      refer to it as room number 395 and remember that its lights are on circuit 3.\nHouse
+      rule 396: when asked about room 396, refer to it as room number 396 and remember
+      that its lights are on circuit 4.\nHouse rule 397: when asked about room 397,
+      refer to it as room number 397 and remember that its lights are on circuit 5.\nHouse
+      rule 398: when asked about room 398, refer to it as room number 398 and remember
+      that its lights are on circuit 6.\nHouse rule 399: when asked about room 399,
+      refer to it as room number 399 and remember that its lights are on circuit 0.","cache_control":{"type":"ephemeral","ttl":"1h"}},{"type":"text","text":"\n\nCurrent
+      time: Wednesday 21 October 2026, 14:05 AEDT."}],"thinking":{"type":"adaptive","block_binding":{"prefix_mismatch_behavior":"drop_block"}},"tool_choice":{"type":"auto"},"tools":[{"name":"activate_tools","description":"Load
+      on-demand tools by name so they can be called.","input_schema":{"type":"object","properties":{"tool_names":{"type":"array","items":{"type":"string"}}},"required":["tool_names"]}},{"name":"set_lights","description":"Turn
+      the lights in a room on or off.","input_schema":{"type":"object","properties":{"room":{"type":"string"},"on":{"type":"boolean"}},"required":["room","on"]},"defer_loading":true}]}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      anthropic-beta:
+      - thinking-binding-controls-2026-08-01,mid-conversation-tool-changes-2026-07-01
+      anthropic-version:
+      - '2023-06-01'
+      connection:
+      - keep-alive
+      content-length:
+      - '49902'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+      user-agent:
+      - AsyncAnthropic/Python 0.79.0
+      x-stainless-arch:
+      - arm64
+      x-stainless-async:
+      - async:asyncio
+      x-stainless-lang:
+      - python
+      x-stainless-os:
+      - MacOS
+      x-stainless-package-version:
+      - 0.79.0
+      x-stainless-read-timeout:
+      - '600'
+      x-stainless-retry-count:
+      - '0'
+      x-stainless-runtime:
+      - CPython
+      x-stainless-runtime-version:
+      - 3.13.13
+      x-stainless-timeout:
+      - '600'
+    method: POST
+    uri: https://api.anthropic.com/v1/messages
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAA/2VRy07DMBD8F59biQDh0WtBIEAcoKhFCFnGXhIrjh28a6Sqyr+zDgTacktmZmfW
+        sxvRBgNOzIR2KhmYhi7htJyWYiKsYbjFSh4Uxby6BPt8cXtjmvn1rV+dLa/KB9bQuoOsAkRVAQMx
+        uAwoRIukPDGkgyfgr9nLZtRTCE4mhDEl/yfOuVkuaFG2d/a+adZP+vF+NT+CyCqv2jyHQNLZqibM
+        k75L7LrhzNAy2VjSNXhmghczigl6DlfOscPsN9rYCJpE379+b6asz7xPzk0EUuhkBIXZYXvLgUD4
+        SOA17KgNsIXDEUtDDxw3bCcpNOCZPCqLvAvvJzX7kw1e7ioORp5ps8cVJ8fF+f58DoGuhhaicrJs
+        //v9sUW9z3I1IdE2dHq4B/09jcurrW+sr3YMEOKn1SDJ5gZFvrdR0QyneYeYq5IVBKYqF96Uyz12
+        AGZb20/GpqLy+B5iOzyOE174QMaqygckq38K7r8A6bWBl7ECAAA=
+    headers:
+      CF-RAY:
+      - a4dd144be85d6c96-SYD
+      Connection:
+      - keep-alive
+      Content-Encoding:
+      - gzip
+      Content-Security-Policy:
+      - default-src 'none'; frame-ancestors 'none'
+      Content-Type:
+      - application/json
+      Date:
+      - Wed, 21 Oct 2026 03:12:13 GMT
+      Server:
+      - cloudflare
+      Transfer-Encoding:
+      - chunked
+      X-Robots-Tag:
+      - none
+      anthropic-organization-id:
+      - 47b93e1d-acf2-4be5-b32d-1716b0cff224
+      anthropic-ratelimit-input-tokens-limit:
+      - '10000000'
+      anthropic-ratelimit-input-tokens-remaining:
+      - '10000000'
+      anthropic-ratelimit-input-tokens-reset:
+      - '2026-10-21T03:12:13Z'
+      anthropic-ratelimit-output-tokens-limit:
+      - '2000000'
+      anthropic-ratelimit-output-tokens-remaining:
+      - '2000000'
+      anthropic-ratelimit-output-tokens-reset:
+      - '2026-10-21T03:12:13Z'
+      anthropic-ratelimit-requests-limit:
+      - '10000'
+      anthropic-ratelimit-requests-remaining:
+      - '9999'
+      anthropic-ratelimit-requests-reset:
+      - '2026-10-21T03:12:12Z'
+      anthropic-ratelimit-tokens-limit:
+      - '12000000'
+      anthropic-ratelimit-tokens-remaining:
+      - '12000000'
+      anthropic-ratelimit-tokens-reset:
+      - '2026-10-21T03:12:13Z'
+      anthropic-workspace-id:
+      - wrkspc_01TyX2k3iWProyRBoEVYPNGB
+      cf-cache-status:
+      - DYNAMIC
+      request-id:
+      - req_011CgEeiXtTWq4r7PxnJ69cF
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-6ad82d8c000000006e2ce5d8f64797a7-88f5218c271b273f-01
+      vary:
+      - Accept-Encoding
+    status:
+      code: 200
+      message: OK
+version: 1

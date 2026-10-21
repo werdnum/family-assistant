@@ -75,6 +75,7 @@ from family_assistant.task_worker import (
 from family_assistant.tools.confirmation import render_generic_tool_confirmation
 from family_assistant.tools.metadata import ToolDescriptor
 from family_assistant.tools.services import (
+    DELEGATED_PROFILE_RUN_TASK_TYPE,
     delegate_to_service_tool,
     get_delegation_status_tool,
     list_delegations_tool,
@@ -92,6 +93,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncEngine
 
+    from family_assistant.processing.delegation_turns import RunningDelegationTurns
     from family_assistant.storage.repositories.delegation_runs import (
         DelegationRunCreate,
         DelegationRunDict,
@@ -192,6 +194,7 @@ class FakeDelegatableService:
     """Minimal delegatable target service for async delegation tests."""
 
     kind = "local"
+    delegation_turns: RunningDelegationTurns | None = None
 
     def __init__(
         self,
@@ -481,8 +484,10 @@ def _source_processing_service(
     target_service: FakeDelegatableService,
     *,
     async_delegation_enabled: bool = True,
+    delegation_turns: RunningDelegationTurns | None = None,
 ) -> ProcessingService:
     source_service = SimpleNamespace(
+        delegation_turns=delegation_turns,
         service_config=SimpleNamespace(
             id="source_profile",
             tools_config=ToolsConfig(
@@ -817,6 +822,7 @@ def _build_worker(
     processing_service: ProcessingService,
     chat_interface: ChatInterface,
     confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None,
+    handler_timeout_overrides: dict[str, float] | None = None,
 ) -> TaskWorker:
     return TaskWorker(
         processing_service=processing_service,
@@ -826,6 +832,7 @@ def _build_worker(
         embedding_generator=MagicMock(),
         engine=db_engine,
         confirmation_ui_managers=confirmation_ui_managers,
+        handler_timeout_overrides=handler_timeout_overrides,
     )
 
 
@@ -1930,6 +1937,57 @@ async def test_running_run_is_failed_not_reexecuted(db_engine: AsyncEngine) -> N
     assert run is not None
     assert run["status"] == "failed"
     assert run["error"] is not None
+
+
+class _NeverFinishingService(FakeDelegatableService):
+    """A target whose turn runs until it is cancelled."""
+
+    async def handle_chat_interaction(self, **kwargs: Any) -> ChatInteractionResult:  # noqa: ANN401 - test fake accepts the ProcessingService keyword surface
+        self.calls.append(cast("FakeDelegationCall", kwargs))
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+
+@pytest.mark.asyncio
+async def test_a_run_that_outlasts_its_budget_is_failed_as_timed_out(
+    db_engine: AsyncEngine,
+) -> None:
+    """The run's own deadline fails it as timed out, before the worker cancels it.
+
+    Left to the worker's handler timeout, the run would stay ``running`` and the
+    retry would fail it as interrupted, which says nothing about why.
+    """
+    target_service = _NeverFinishingService()
+    processing_service = _source_processing_service(target_service)
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "external_message_id"
+
+    clock = SystemClock()
+    db_context = Database(engine=db_engine)
+    await _create_run(db_context, delegation_id="delegation_slow")
+    await db_context.delegation_runs.mark_handed_off("delegation_slow", clock.now())
+
+    worker = _build_worker(
+        db_engine,
+        processing_service,
+        chat_interface,
+        handler_timeout_overrides={DELEGATED_PROFILE_RUN_TASK_TYPE: 0.4},
+    )
+    await worker.handle_delegated_profile_run(
+        _tool_context(db_context, processing_service, chat_interface),
+        _payload("delegation_slow"),
+    )
+
+    assert len(target_service.calls) == 1
+    chat_interface.send_message.assert_awaited_once()
+    run = await Database(engine=db_engine).delegation_runs.get_by_delegation_id(
+        "delegation_slow"
+    )
+    assert run is not None
+    assert run["status"] == "failed"
+    assert run["local_failure_kind"] == "timeout"
+    assert run["error"] is not None
+    assert "timed out" in run["error"]
 
 
 @pytest.mark.asyncio
@@ -3620,6 +3678,8 @@ async def test_deep_research_delegation_polls_to_completion_and_notifies(
     completed_interaction.created = "2026-01-01T00:00:00+00:00"
     completed_interaction.updated = "2026-01-01T00:04:30+00:00"
     completed_interaction.usage = None
+    # Deep Research runs in no sandbox, so it leaves no files to collect.
+    completed_interaction.environment_id = None
     llm_client.get_agent_interaction = AsyncMock(
         side_effect=[pending_interaction, completed_interaction]
     )
@@ -3686,6 +3746,9 @@ async def test_coder_list_environment_delivers_result(
     llm_client = GoogleGenAIClient(api_key="test", model="antigravity-preview-09-2026")
     interaction_id = "inter_coder_env"
     sdk = MagicMock()
+    sdk.aio.environments.create_environment = AsyncMock(
+        return_value=SimpleNamespace(id="env_coder")
+    )
     sdk.aio.interactions.create = AsyncMock(
         return_value={
             "id": interaction_id,

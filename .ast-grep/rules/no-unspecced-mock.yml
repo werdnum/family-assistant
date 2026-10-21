@@ -1,0 +1,94 @@
+id: no-unspecced-mock
+language: python
+severity: error
+message: "Unspecced mock - use a real object or fake, or create_autospec(..., spec_set=True)"
+note: |
+  Mock, MagicMock, AsyncMock and their relatives accept any attribute access and
+  any call signature, so a test built on them keeps passing after the interface
+  it stands in for changes, and tends to assert the implementation back at itself.
+
+  In order of preference:
+    1. A real object (the test database, a real repository, a real service).
+    2. A fake implementation of the interface (see tests/mocks/), especially when
+       the test asserts nontrivial behaviour of the collaborator.
+    3. For external dependencies that cannot be faked practically, an autospecced
+       mock that rejects unknown attributes and wrong call signatures:
+         create_autospec(SomeClass, instance=True, spec_set=True)
+         patch("module.thing", autospec=True)
+         patch.object(obj, "attr", new=replacement)
+
+  Banned here: constructing Mock/MagicMock/AsyncMock/NonCallableMock/
+  NonCallableMagicMock/PropertyMock directly, create_autospec without
+  spec_set=True, and patch/patch.object without autospec=True or an explicit
+  replacement (which would otherwise substitute a bare MagicMock).
+utils:
+  mock-function:
+    regex: '^(((unittest\.)?mock|(\w+\.)*mocker)\.)?(Mock|MagicMock|AsyncMock|NonCallableMock|NonCallableMagicMock|PropertyMock|ThreadingMock)$'
+  spec-set-true:
+    kind: keyword_argument
+    all:
+      - has: {field: name, regex: '^spec_set$'}
+      - has: {field: value, regex: '^True$'}
+  autospec-true:
+    kind: keyword_argument
+    all:
+      - has: {field: name, regex: '^autospec$'}
+      - has: {field: value, regex: '^True$'}
+  new-keyword:
+    kind: keyword_argument
+    has: {field: name, regex: '^new$'}
+rule:
+  any:
+    - kind: call
+      any:
+        - has:
+            field: function
+            matches: mock-function
+        - has:
+            field: function
+            regex: '^(\w+\.)*mocker\.(stub|async_stub|patch\.context_manager)$'
+        # patch.multiple's DEFAULT entries create bare mocks; nothing here needs it.
+        - has:
+            field: function
+            regex: '^(((unittest\.)?mock|(\w+\.)*mocker)\.)?patch\.multiple$'
+        - all:
+            - has:
+                field: function
+                regex: '^(((unittest\.)?mock|(\w+\.)*mocker)\.)?create_autospec$'
+            - not:
+                has: {field: arguments, has: {matches: spec-set-true}}
+        - all:
+            - has:
+                field: function
+                regex: '^(((unittest\.)?mock|(\w+\.)*mocker)\.)?patch$'
+            - not:
+                has: {field: arguments, has: {any: [{matches: autospec-true}, {matches: new-keyword}]}}
+            - not:
+                has:
+                  field: arguments
+                  has: {nthChild: 2, not: {any: [{kind: keyword_argument}, {kind: list_splat}, {kind: dictionary_splat}]}}
+        - all:
+            - has:
+                field: function
+                regex: '^(((unittest\.)?mock|(\w+\.)*mocker)\.)?patch\.object$'
+            - not:
+                has: {field: arguments, has: {any: [{matches: autospec-true}, {matches: new-keyword}]}}
+            - not:
+                has:
+                  field: arguments
+                  has: {nthChild: 3, not: {any: [{kind: keyword_argument}, {kind: list_splat}, {kind: dictionary_splat}]}}
+    # An alias would hide every pattern above, so aliasing the mock module or
+    # any of its names is itself banned.
+    - kind: aliased_import
+      any:
+        - all:
+            - has: {field: name, regex: '^unittest\.mock$'}
+            - inside: {kind: import_statement}
+        - inside:
+            kind: import_from_statement
+            has: {field: module_name, regex: '^unittest\.mock$'}
+        - all:
+            - has: {field: name, regex: '^mock$'}
+            - inside:
+                kind: import_from_statement
+                has: {field: module_name, regex: '^unittest$'}

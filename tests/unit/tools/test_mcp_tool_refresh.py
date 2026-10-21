@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock
@@ -9,10 +10,10 @@ from unittest.mock import AsyncMock
 import pytest
 from mcp.types import ListToolsResult, Tool, ToolAnnotations
 
-from family_assistant.tools import MCPServerConfig, MCPToolsProvider
 from family_assistant.tools.mcp import (
     MCP_SERVER_STATUS_CONNECTED,
     MCP_SERVER_STATUS_FAILED,
+    MCPToolsProvider,
 )
 from family_assistant.tools.metadata import ToolTag
 
@@ -20,6 +21,8 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from mcp import ClientSession
+
+    from family_assistant.tools.types import MCPServerConfig
 
 SERVER_ID = "drifting-server"
 OTHER_SERVER_ID = "other-server"
@@ -263,3 +266,22 @@ async def test_failed_health_check_does_not_drop_the_cached_tools() -> None:
     await provider._run_health_checks()
 
     assert await _tool_names(provider) == {"search"}
+
+
+@pytest.mark.asyncio
+async def test_tool_order_survives_a_server_reconnecting() -> None:
+    """Tools lead the cached prompt prefix, so a reconnect must not reorder them."""
+    provider = _provider(SERVER_ID, OTHER_SERVER_ID)
+    _register(provider, SERVER_ID, [_tool("search"), _tool("fetch")])
+    _register(provider, OTHER_SERVER_ID, [_tool("other")])
+    before = json.dumps(await provider.get_tool_definitions())
+
+    provider._unregister_server_tools(SERVER_ID)
+    _register(provider, SERVER_ID, [_tool("search"), _tool("fetch")])
+
+    assert json.dumps(await provider.get_tool_definitions()) == before
+    assert [d.name for d in await provider.get_tool_descriptors()] == [
+        "fetch",
+        "search",
+        "other",
+    ]

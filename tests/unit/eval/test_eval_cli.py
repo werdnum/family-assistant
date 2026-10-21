@@ -25,7 +25,7 @@ from family_assistant.services.tool_call_review import (
     ToolCallReviewResponse,
     ToolCallReviewVerdict,
 )
-from family_assistant.tools import LOCAL_TOOL_DESCRIPTORS
+from family_assistant.tools.catalog import LOCAL_TOOL_DESCRIPTORS
 
 # pylint cannot resolve the tests namespace package, so it reports a
 # false no-name-in-module here only.

@@ -12,11 +12,12 @@ from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import LLMOutput
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
-from family_assistant.tools import MCPToolsProvider, ToolDescriptor
+from family_assistant.tools.mcp import MCPToolsProvider
 from family_assistant.web.routers.chat_api import chat_api_router
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
 if TYPE_CHECKING:
+    from family_assistant.tools.metadata import ToolDescriptor
     from family_assistant.tools.types import (
         MCPServerConfig,
         ToolDefinition,

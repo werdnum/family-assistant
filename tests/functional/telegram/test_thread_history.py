@@ -20,11 +20,11 @@ from family_assistant.security.taint import TurnTaintState
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.base import attachment_metadata_table
 from family_assistant.storage.database import Database
-from family_assistant.tools import (
+from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
     LocalToolsProvider,
-    MCPToolsProvider,
 )
+from family_assistant.tools.mcp import MCPToolsProvider
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
 

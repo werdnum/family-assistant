@@ -12,6 +12,7 @@ from family_assistant.scripting.apis.keychute import (
     get_keychute_config,
     keychute_external_function_names,
 )
+from family_assistant.scripting.validator import ScriptValidator
 from family_assistant.security.definition_records import authoring_taint_state
 from family_assistant.tools.types import ToolDefinition, ToolResult
 
@@ -153,11 +154,6 @@ async def validate_stored_script(
         schema_error = _validate_parameters_schema_shape(parameters_schema)
         if schema_error:
             return f"Invalid parameters_schema: {schema_error}"
-
-    # Validate script syntax before saving
-    from family_assistant.scripting.validator import (  # noqa: PLC0415 - lazy import to break circular: scripting → tools → stored_scripts → scripting
-        ScriptValidator,
-    )
 
     tool_definitions = None
     if tools_provider:

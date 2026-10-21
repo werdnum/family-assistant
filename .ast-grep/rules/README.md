@@ -67,6 +67,40 @@ await page.wait_for_selector('[data-testid*="tool-call"]', state="visible")
 await page.locator('[data-testid="assistant-message"]').first.wait_for(state="visible")
 ```
 
+### `no-unspecced-mock`
+
+**Pattern**: constructing `Mock`, `MagicMock`, `AsyncMock`, `NonCallableMock`,
+`NonCallableMagicMock` or `PropertyMock` directly; `create_autospec(...)` without `spec_set=True`;
+and `patch(...)` / `patch.object(...)` with neither `autospec=True` nor an explicit replacement
+(`new=` or the positional `new` argument), since those substitute a bare `MagicMock`. Aliasing
+`unittest.mock` or any name imported from it is banned too, because an alias would hide the call
+from every other pattern. pytest-mock's `mocker` spellings of the same calls (`mocker.patch`,
+`mocker.MagicMock`, `mocker.stub`, ...) are covered, and `patch.multiple` is banned outright.
+Applies to all Python files; `patch.dict` is not affected.
+
+The rule targets the ordinary ways of writing a bare mock. It is not built to catch deliberate
+evasion (a helper that wraps `MagicMock`, `getattr(mock, "MagicMock")`); review covers those.
+
+**Why it's banned**: a bare mock accepts any attribute and any call signature, so the test keeps
+passing after the interface it stands in for changes, and heavily mocked tests tend to assert the
+implementation back at itself.
+
+**Replacement**, in order of preference: a real object (the test database, a real repository or
+service); a fake implementation of the interface (see `tests/mocks/`), especially when the test
+asserts nontrivial behaviour of the collaborator; and, for external dependencies that cannot
+practically be faked, an autospecced mock:
+
+```python
+client = create_autospec(ExternalClient, instance=True, spec_set=True)
+with patch("family_assistant.module.ExternalClient", autospec=True) as client_cls: ...
+with patch.object(service, "fetch", new=fake_fetch): ...
+```
+
+Files that predate the rule are listed in the baseline exemption in `exemptions.yml`. The exemption
+is per file, so it does not stop new bare mocks inside a listed file; it exists only while the
+burn-down removes those files. The list only shrinks: remove a file once its mocks are replaced, and
+never add one.
+
 ## Datetime Correctness
 
 ### `no-naive-datetime-now`

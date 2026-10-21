@@ -24,15 +24,17 @@ from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
 from family_assistant.storage.events import EventActionType, EventSourceType
 from family_assistant.task_worker import handle_llm_callback, handle_script_execution
-from family_assistant.tools import (
-    ATTACHMENT_TOOLS_DEFINITION,
-    COMMUNICATION_TOOLS_DEFINITION,
-    MOCK_IMAGE_TOOLS_DEFINITION,
+from family_assistant.tools.attachments import ATTACHMENT_TOOLS_DEFINITION
+from family_assistant.tools.catalog import (
+    AVAILABLE_FUNCTIONS as local_tool_implementations,
+)
+from family_assistant.tools.communication import COMMUNICATION_TOOLS_DEFINITION
+from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
     LocalToolsProvider,
     ToolsProvider,
 )
-from family_assistant.tools import AVAILABLE_FUNCTIONS as local_tool_implementations
+from family_assistant.tools.mock_image_tools import MOCK_IMAGE_TOOLS_DEFINITION
 from family_assistant.tools.types import ToolExecutionContext, ToolResult
 from tests.helpers import seed_known_conversation, wait_for_tasks_to_complete
 from tests.mocks.mock_llm import (

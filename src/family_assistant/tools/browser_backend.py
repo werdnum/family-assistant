@@ -1037,11 +1037,7 @@ class RemoteBrowserBackend:
         self, command_type: str, args: JsonDict | None = None
     ) -> JsonDict:
         session_id = await self._ensure_session()
-        resp = await self._client.post(
-            f"{self._base_url}/v1/sessions/{session_id}/agent-command",
-            headers=self._headers(),
-            json={"type": command_type, "args": args or {}},
-        )
+        resp = await self._post_command(session_id, command_type, args)
         # A gone session (eviction/expiry) or a handed-off session (the agent lost
         # the lease) both mean the cached session can't serve this command. For
         # navigate (browser_open) we transparently start a fresh session so the
@@ -1061,17 +1057,32 @@ class RemoteBrowserBackend:
                 raise self._session_lost_error(f"command {command_type}", session_id)
             self._clear_remote_session(session_id)
             session_id = await self._ensure_session()
-            resp = await self._client.post(
-                f"{self._base_url}/v1/sessions/{session_id}/agent-command",
-                headers=self._headers(),
-                json={"type": command_type, "args": args or {}},
-            )
+            resp = await self._post_command(session_id, command_type, args)
         self._raise_for_status(resp, f"command {command_type}")
         result = resp.json().get("result", {})
         url = result.get("url")
         if isinstance(url, str) and url:
             self._last_url = url
         return result
+
+    async def _post_command(
+        self, session_id: str, command_type: str, args: JsonDict | None
+    ) -> httpx.Response:
+        try:
+            return await self._client.post(
+                f"{self._base_url}/v1/sessions/{session_id}/agent-command",
+                headers=self._headers(),
+                json={"type": command_type, "args": args or {}},
+            )
+        except httpx.TimeoutException as exc:
+            # httpx timeouts stringify to an empty message, which reaches the
+            # model as a bare "Error executing tool ...:".
+            raise BrowserBackendError(
+                f"browser-server did not respond to command {command_type} "
+                f"within {self._config.timeout_seconds:g}s. The action may "
+                "still have taken effect; take a snapshot to check the page "
+                "before retrying."
+            ) from exc
 
     def _raise_for_status(self, resp: httpx.Response, action: str) -> None:
         if resp.is_success:

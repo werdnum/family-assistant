@@ -9,6 +9,8 @@ capacity that has to run the task releasing it.
 from family_assistant.task_worker import (
     DEFAULT_TASK_HANDLER_BUDGETS,
     DEFAULT_TASK_HANDLER_TIMEOUT_OVERRIDES,
+    DELEGATED_RUN_TURN_BUDGET_SECONDS,
+    DELEGATION_RUN_STALE_SECONDS,
     PARKING_TASK_TYPES,
     TASK_HANDLER_TIMEOUT,
     TaskHandlerBudget,
@@ -58,3 +60,11 @@ def test_the_delegated_run_is_declared_as_parking() -> None:
         DEFAULT_TASK_HANDLER_TIMEOUT_OVERRIDES["delegated_profile_run"]
         > TASK_HANDLER_TIMEOUT
     )
+
+
+def test_the_delegated_run_deadline_expires_before_the_worker_cancels_it() -> None:
+    """The run fails itself as timed out, and the reaper never races a live run."""
+    handler_timeout = DEFAULT_TASK_HANDLER_TIMEOUT_OVERRIDES["delegated_profile_run"]
+    assert DELEGATED_RUN_TURN_BUDGET_SECONDS >= 1800
+    assert handler_timeout > DELEGATED_RUN_TURN_BUDGET_SECONDS
+    assert handler_timeout < DELEGATION_RUN_STALE_SECONDS

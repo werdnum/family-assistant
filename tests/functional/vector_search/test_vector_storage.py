@@ -35,13 +35,12 @@ from family_assistant.storage.vector_search import (
     VectorSearchQuery,
     query_vector_store,
 )
-from family_assistant.tools import (  # Import tool components
-    LocalToolsProvider,
-    ToolExecutionContext,  # To get tool definitions (though not strictly needed for execution)
+from family_assistant.tools.documents import (
+    get_full_document_content_tool,
     search_documents_tool,
 )
-from family_assistant.tools.documents import get_full_document_content_tool
-from family_assistant.tools.types import ToolResult
+from family_assistant.tools.infrastructure import LocalToolsProvider
+from family_assistant.tools.types import ToolExecutionContext, ToolResult
 
 logger = logging.getLogger(__name__)
 

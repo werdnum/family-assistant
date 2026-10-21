@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import importlib
 import json
 import logging
 import os
@@ -189,11 +188,6 @@ def _require_empty_out_dir(out_dir: Path) -> None:
 async def _read_history(
     database_url: str, *, since: datetime | None
 ) -> dict[tuple[str, str], list[MessageHistoryRow]]:
-    # A cold import of the storage repositories enters an import cycle at
-    # observability.metrics -> llm -> tools -> plugins -> llm.typesafe ->
-    # observability.metrics and fails; initialising the llm package first
-    # enters the cycle from the end that completes.
-    importlib.import_module("family_assistant.llm")
     engine = open_read_only_engine(database_url)
     try:
         return await Database(engine).message_history.get_all_grouped(

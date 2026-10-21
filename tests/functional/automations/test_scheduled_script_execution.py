@@ -21,17 +21,15 @@ from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.notes import NoteReadPolicy
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.task_worker import TaskWorker, handle_script_execution
-from family_assistant.tools import (
+from family_assistant.tools.catalog import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
-from family_assistant.tools import (
-    TOOLS_DEFINITION as local_tools_definition,
-)
-from family_assistant.tools import (
+from family_assistant.tools.catalog import TOOLS_DEFINITION as local_tools_definition
+from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
     LocalToolsProvider,
-    MCPToolsProvider,
 )
+from family_assistant.tools.mcp import MCPToolsProvider
 from family_assistant.utils.clock import MockClock
 from tests.helpers import wait_for_tasks_to_complete
 from tests.mocks.mock_llm import (

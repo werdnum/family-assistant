@@ -13,18 +13,17 @@ from family_assistant.services.effective_tool_registry import (
     build_effective_local_tool_registrations,
 )
 from family_assistant.services.oauth_integration_state import OAuthIntegrationState
-from family_assistant.tools import (
-    TOOLS_DEFINITION,
-    LocalToolsProvider,
-    build_local_tool_descriptors,
-)
+from family_assistant.tools.catalog import TOOLS_DEFINITION
 from family_assistant.tools.google_data import GOOGLE_TOOL_REQUIRED_SCOPES
+from family_assistant.tools.infrastructure import LocalToolsProvider
+from family_assistant.tools.metadata import build_local_tool_descriptors
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from family_assistant.config_models import AppConfig
-    from family_assistant.tools import ToolDefinition, ToolRegistration
+    from family_assistant.tools.metadata import ToolRegistration
+    from family_assistant.tools.types import ToolDefinition
 
 pytestmark = pytest.mark.no_db
 

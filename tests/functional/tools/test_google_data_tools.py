@@ -39,8 +39,8 @@ from family_assistant.services.oauth_credentials import (
     OAuthScopeNotGrantedError,
 )
 from family_assistant.storage.database import Database
-from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS
 from family_assistant.tools.attachment_utils import fetch_attachment_object
+from family_assistant.tools.catalog import LOCAL_TOOL_REGISTRATIONS
 from family_assistant.tools.google_data import (
     GOOGLE_TOOL_REQUIRED_SCOPES,
     drive_get_file_tool,
@@ -59,6 +59,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncEngine
 
+    from family_assistant.scripting.apis.attachments import ScriptAttachment
     from family_assistant.services.api_backend import ApiBackend
     from family_assistant.services.oauth_credentials import OAuthCredentialResolver
     from family_assistant.tools.metadata import ToolDescriptor
@@ -81,15 +82,19 @@ class FakeApiBackend:
     ``routes`` maps ``access_token -> {(method, url_substring): payload_dict}``.
     A ``scripted`` sequence of ``(status_code, body_bytes)`` responses, when set,
     takes precedence and is consumed one entry per request (used for 401 retry
-    tests).
+    tests). ``scripted_headers`` maps a scripted entry's index to its response
+    headers.
     """
 
     routes: dict[str, dict[tuple[str, str], object]] = field(default_factory=dict)
     scripted: list[tuple[int, bytes]] = field(default_factory=list)
+    scripted_headers: dict[int, dict[str, str]] = field(default_factory=dict)
     requests: list[tuple[str, str, str]] = field(default_factory=list)
     request_params: list[Mapping[str, str] | None] = field(default_factory=list)
     request_bodies: list[tuple[bytes | None, str | None]] = field(default_factory=list)
+    request_headers: list[Mapping[str, str] | None] = field(default_factory=list)
     transport_error: Exception | None = None
+    _scripted_served: int = 0
 
     async def request(
         self,
@@ -100,15 +105,21 @@ class FakeApiBackend:
         params: Mapping[str, str] | None = None,
         content: bytes | None = None,
         content_type: str | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> ApiResponse:
         self.requests.append((method, url, access_token))
         self.request_params.append(params)
         self.request_bodies.append((content, content_type))
+        self.request_headers.append(headers)
         if self.transport_error is not None:
             raise self.transport_error
         if self.scripted:
             status, body = self.scripted.pop(0)
-            return ApiResponse(status_code=status, content=body)
+            response_headers = self.scripted_headers.get(self._scripted_served, {})
+            self._scripted_served += 1
+            return ApiResponse(
+                status_code=status, content=body, headers=response_headers
+            )
         # Match on the URL path suffix (ignoring query string) so a list route
         # (`.../messages`) does not also match a detail route
         # (`.../messages/{id}`).
@@ -190,6 +201,7 @@ class ConcurrentDriveApiBackend(FakeApiBackend):
         params: Mapping[str, str] | None = None,
         content: bytes | None = None,
         content_type: str | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> ApiResponse:
         query = (params or {}).get("q", "")
         is_folder_search = method == "GET" and "google-apps.folder" in query
@@ -221,6 +233,7 @@ class ConcurrentDriveApiBackend(FakeApiBackend):
             params=params,
             content=content,
             content_type=content_type,
+            headers=headers,
         )
 
 
@@ -1486,8 +1499,163 @@ async def test_drive_write_overwrites_only_discovered_same_type_file(
     assert b"Replacement" in request_body
 
 
+_DRIVE_SESSION_URI = (
+    "https://www.googleapis.com/upload/drive/v3/files"
+    "?uploadType=resumable&upload_id=session-1"
+)
+
+
+async def _large_attachment_context(
+    db_engine: AsyncEngine, backend: FakeApiBackend, content: bytes
+) -> tuple[ToolExecutionContext, ScriptAttachment]:
+    registry = _registry(db_engine)
+    db = Database(engine=db_engine)
+    attachment = await registry.store_and_register_tool_attachment(
+        file_content=content,
+        filename="bookmark.3mf",
+        content_type="model/3mf",
+        tool_name="test",
+        owner_user_id="user-a",
+        db_context=db,
+        taint_state=TurnTaintState.empty(),
+    )
+    context = _make_context(
+        db,
+        user_id="user-a",
+        resolver=FakeCredentialResolver(tokens={"user-a": "token-a"}),
+        backend=backend,
+        attachment_registry=registry,
+    )
+    attachment_object = await fetch_attachment_object(attachment.attachment_id, context)
+    assert attachment_object is not None
+    return context, attachment_object
+
+
 @pytest.mark.asyncio
-async def test_drive_write_rejects_content_over_multipart_limit(
+async def test_drive_write_uploads_large_attachment_through_resumable_session(
+    db_engine: AsyncEngine,
+) -> None:
+    content = b"3MF" + bytes(range(256)) * (12 * 1024 * 1024 // 256)
+    backend = FakeApiBackend(
+        scripted=[
+            (200, b'{"files":[{"id":"folder-1","name":"Family Assistant"}]}'),
+            (200, b'{"files":[]}'),
+            (200, b""),
+            (
+                200,
+                b'{"id":"file-1","name":"bookmark.3mf","mimeType":"model/3mf"}',
+            ),
+        ],
+        scripted_headers={2: {"location": _DRIVE_SESSION_URI}},
+    )
+    context, attachment = await _large_attachment_context(db_engine, backend, content)
+
+    result = await drive_write_file_tool(context, attachment_id=attachment)
+
+    data = result.get_data()
+    assert isinstance(data, dict), result.get_text()
+    assert data["status"] == "created"
+    assert data["file_id"] == "file-1"
+    initiate_method, initiate_url, _ = backend.requests[2]
+    assert (initiate_method, initiate_url) == (
+        "POST",
+        "https://www.googleapis.com/upload/drive/v3/files",
+    )
+    initiate_params = backend.request_params[2]
+    assert initiate_params is not None
+    assert initiate_params["uploadType"] == "resumable"
+    initiate_body, initiate_content_type = backend.request_bodies[2]
+    assert initiate_body is not None
+    assert json.loads(initiate_body) == {
+        "name": "bookmark.3mf",
+        "mimeType": "model/3mf",
+        "appProperties": {"family_assistant": "app_file_v1"},
+        "parents": ["folder-1"],
+    }
+    assert initiate_content_type == "application/json; charset=UTF-8"
+    assert backend.request_headers[2] == {
+        "X-Upload-Content-Type": "model/3mf",
+        "X-Upload-Content-Length": str(len(content)),
+    }
+    assert backend.requests[3] == ("PUT", _DRIVE_SESSION_URI, "token-a")
+    assert backend.request_bodies[3] == (content, "model/3mf")
+    assert len(backend.requests) == 4
+
+
+@pytest.mark.asyncio
+async def test_drive_write_overwrite_of_large_file_opens_patch_session(
+    db_engine: AsyncEngine,
+) -> None:
+    content = b"x" * (5 * 1024 * 1024 + 1)
+    backend = FakeApiBackend(
+        scripted=[
+            (200, b'{"files":[{"id":"folder-1","name":"Family Assistant"}]}'),
+            (
+                200,
+                b'{"files":[{"id":"file-1","name":"bookmark.3mf",'
+                b'"mimeType":"model/3mf"}]}',
+            ),
+            (200, b""),
+            (
+                200,
+                b'{"id":"file-1","name":"bookmark.3mf","mimeType":"model/3mf"}',
+            ),
+        ],
+        scripted_headers={2: {"location": _DRIVE_SESSION_URI}},
+    )
+    context, attachment = await _large_attachment_context(db_engine, backend, content)
+
+    result = await drive_write_file_tool(
+        context, attachment_id=attachment, overwrite=True
+    )
+
+    data = result.get_data()
+    assert isinstance(data, dict), result.get_text()
+    assert data["status"] == "replaced"
+    assert backend.requests[2][:2] == (
+        "PATCH",
+        "https://www.googleapis.com/upload/drive/v3/files/file-1",
+    )
+    initiate_body, _ = backend.request_bodies[2]
+    assert initiate_body is not None
+    assert "parents" not in json.loads(initiate_body)
+    assert backend.requests[3][:2] == ("PUT", _DRIVE_SESSION_URI)
+    assert backend.request_bodies[3][0] == content
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "location",
+    [
+        None,
+        "https://attacker.example/upload/drive/v3/files?upload_id=x",
+        "http://www.googleapis.com/upload/drive/v3/files?upload_id=x",
+        "https://www.googleapis.com/drive/v3/files/other",
+    ],
+)
+async def test_drive_write_refuses_session_uri_off_drive_upload_endpoint(
+    db_engine: AsyncEngine, location: str | None
+) -> None:
+    backend = FakeApiBackend(
+        scripted=[
+            (200, b'{"files":[{"id":"folder-1","name":"Family Assistant"}]}'),
+            (200, b'{"files":[]}'),
+            (200, b""),
+        ],
+        scripted_headers={2: {"location": location}} if location else {},
+    )
+    context, attachment = await _large_attachment_context(
+        db_engine, backend, b"x" * (5 * 1024 * 1024 + 1)
+    )
+
+    result = await drive_write_file_tool(context, attachment_id=attachment)
+
+    assert "valid resumable upload session" in result.get_text()
+    assert [request[0] for request in backend.requests] == ["GET", "GET", "POST"]
+
+
+@pytest.mark.asyncio
+async def test_drive_write_rejects_content_over_upload_limit(
     db_engine: AsyncEngine,
 ) -> None:
     backend = FakeApiBackend()
@@ -1497,10 +1665,10 @@ async def test_drive_write_rejects_content_over_multipart_limit(
     result = await drive_write_file_tool(
         context,
         name="Too large",
-        content="x" * (5 * 1024 * 1024 + 1),
+        content="x" * (100 * 1024 * 1024 + 1),
     )
 
-    assert "limited to 5242880 bytes" in result.get_text()
+    assert "limited to 104857600 bytes" in result.get_text()
     assert backend.requests == []
 
 

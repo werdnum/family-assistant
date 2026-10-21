@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import ValidationError
 
 from family_assistant.memory.actor import MemoryActor, MemoryActorKind
+from family_assistant.memory.apply import apply_memory_edits_atomically
 from family_assistant.memory.edits import (
     CITING_OPS,
     EvidenceScope,
@@ -166,12 +167,6 @@ async def propose_memory_edits_tool(
     edits: list[dict[str, Any]],
 ) -> ToolResult:
     """Validate and apply a proposed list of memory edits."""
-    # Local import: the apply path reaches the notes repository, whose package
-    # transitively imports the tools package, so a top-level import here would
-    # be circular (``tools.notes`` does the same for the same reason).
-    from family_assistant.memory.apply import (  # noqa: PLC0415
-        apply_memory_edits_atomically,
-    )
 
     if not exec_context.memory_read:
         return ToolResult(

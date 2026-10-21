@@ -29,10 +29,13 @@ from family_assistant.security.taint import (
 from family_assistant.storage.database import Database
 from family_assistant.storage.scripts import scripts_table
 from family_assistant.task_worker import handle_script_execution
-from family_assistant.tools import CompositeToolsProvider, LocalToolsProvider
 from family_assistant.tools.execute_script import (
     SCRIPT_TOOLS_DEFINITION,
     execute_script_tool,
+)
+from family_assistant.tools.infrastructure import (
+    CompositeToolsProvider,
+    LocalToolsProvider,
 )
 from family_assistant.tools.types import (
     ToolDefinition,

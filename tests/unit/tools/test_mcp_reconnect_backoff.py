@@ -10,11 +10,11 @@ from unittest.mock import AsyncMock
 import pytest
 from mcp.types import ListToolsResult
 
-from family_assistant.tools import MCPServerConfig, MCPToolsProvider
 from family_assistant.tools.mcp import (
     DEFAULT_RECONNECT_BACKOFF_MAX_SECONDS,
     MCP_SERVER_STATUS_CONNECTED,
     MCP_SERVER_STATUS_FAILED,
+    MCPToolsProvider,
     reconnect_backoff_delay,
 )
 
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from mcp import ClientSession
 
     from family_assistant.tools.metadata import ToolDescriptor
-    from family_assistant.tools.types import ToolDefinition
+    from family_assistant.tools.types import MCPServerConfig, ToolDefinition
 
 SERVER_ID = "flaky-server"
 

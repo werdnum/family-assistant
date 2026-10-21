@@ -21,7 +21,7 @@ from family_assistant.plugins.reolink.instance import ReolinkInstance
 from family_assistant.plugins.reolink.plugin import REOLINK_PLUGIN
 from family_assistant.plugins.reolink.tools import list_cameras_tool
 from family_assistant.plugins.runtime import PluginRuntime, ProfilePlugins
-from family_assistant.tools import LOCAL_TOOL_METADATA_BY_NAME
+from family_assistant.tools.catalog import LOCAL_TOOL_METADATA_BY_NAME
 from family_assistant.tools.types import ToolExecutionContext
 
 CAMERA = {"host": "192.168.1.100", "username": "admin", "password": "cam-secret"}

@@ -20,17 +20,17 @@ from family_assistant.security.taint import (
     TurnTaintState,
     resolve_tool_sink_class,
 )
-from family_assistant.tools import (
+from family_assistant.tools.catalog import (
     AVAILABLE_FUNCTIONS,
     LOCAL_TOOL_DESCRIPTORS,
     LOCAL_TOOL_METADATA_BY_NAME,
     LOCAL_TOOL_REGISTRATIONS,
     TOOLS_DEFINITION,
-    ToolRegistration,
 )
 from family_assistant.tools.infrastructure import LocalToolsProvider
 from family_assistant.tools.metadata import (
     OUTPUT_TRUST_TAGS,
+    ToolRegistration,
     ToolTag,
     build_local_tool_registrations,
     derive_mcp_annotation_tags,

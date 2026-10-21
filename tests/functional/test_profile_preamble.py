@@ -19,7 +19,7 @@ from family_assistant.llm.content_parts import text_content
 from family_assistant.llm.messages import SystemMessage
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.database import Database
-from family_assistant.tools import LocalToolsProvider
+from family_assistant.tools.infrastructure import LocalToolsProvider
 from tests.mocks.mock_llm import LLMOutput as MockLLMOutput
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
 

@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
     from family_assistant.llm import LLMInterface
-    from family_assistant.tools import MCPServerConfig
+    from family_assistant.tools.types import MCPServerConfig
 
 # Import necessary components from the application
 from family_assistant.config_models import AppConfig, ToolsConfig
@@ -30,17 +30,15 @@ from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.llm.messages import ContentPartDict, text_content
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.database import Database
-from family_assistant.tools import (
+from family_assistant.tools.catalog import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
-from family_assistant.tools import (
-    TOOLS_DEFINITION as local_tools_definition,
-)
-from family_assistant.tools import (
+from family_assistant.tools.catalog import TOOLS_DEFINITION as local_tools_definition
+from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
     LocalToolsProvider,
-    MCPToolsProvider,
 )
+from family_assistant.tools.mcp import MCPToolsProvider
 from family_assistant.tools.types import ToolExecutionContext
 from tests.helpers import find_free_port, require_executable, wait_for_server
 from tests.mocks.mock_llm import (

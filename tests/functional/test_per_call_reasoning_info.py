@@ -20,7 +20,7 @@ from family_assistant.llm.content_parts import text_content
 from family_assistant.llm.messages import LLMMessage
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.database import Database
-from family_assistant.tools import LocalToolsProvider
+from family_assistant.tools.infrastructure import LocalToolsProvider
 from family_assistant.tools.types import ToolDefinition, ToolResult
 from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module
     RuleBasedMockLLMClient,

@@ -31,6 +31,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Restricted profile that event-triggered wakes run under, whether the event
+# listener's action is wake_llm or a script that calls wake_llm(). Event content
+# is untrusted (attacker-influenced email/webhook data), and the woken LLM is the
+# injectable component, so it must not run under a full-trust profile.
+EVENT_HANDLER_PROFILE_ID = "event_handler"
+
 
 class ActionType(StrEnum):
     """Action types supported by the system."""
@@ -45,11 +51,13 @@ class WakeLlmProfileError(RuntimeError):
     A woken turn does not necessarily run under the profile that scheduled it.
     Schedule automations, ``schedule_action`` and a script's built-in
     ``wake_llm()`` stamp their originating profile and ``handle_llm_callback``
-    resolves it, but event listeners deliberately route to the restricted
-    ``event_handler`` profile because the triggering event is untrusted.
+    resolves it, but event-triggered wakes -- an event listener's wake_llm
+    action, or ``wake_llm()`` from an event listener's script -- deliberately
+    route to the restricted ``event_handler`` profile because the triggering
+    event is untrusted.
 
     Either way a confined profile must not be able to enqueue a wake: via an
-    event listener it would escalate to ``event_handler``, and via a stamped wake
+    event it would escalate to ``event_handler``, and via a stamped wake
     it would fail at fire time, when ``handle_llm_callback`` re-checks the flag.
     Profiles that must stay confined set ``allow_wake_llm=False`` and are refused
     here, at creation, instead of either.

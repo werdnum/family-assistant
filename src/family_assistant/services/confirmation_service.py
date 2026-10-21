@@ -14,6 +14,8 @@ from family_assistant.services.notifier import (
 from family_assistant.storage.tasks import TaskPriority
 
 if TYPE_CHECKING:
+    from collections.abc import Collection
+
     from family_assistant.security.taint import TaintMetadata
     from family_assistant.services.notifier import Notifier
     from family_assistant.storage.database import (
@@ -329,6 +331,52 @@ class ConfirmationService:
     ) -> list[ConfirmationRequestRow]:
         """List pending requests for a user."""
         return await self._db.confirmation_requests.list_pending_for_user(user_id)
+
+    async def withdraw_pending_for_messages(
+        self,
+        *,
+        user_id: str,
+        source_message_internal_ids: Collection[int],
+        interface: str,
+    ) -> int:
+        """Reject a stopped turn's still-pending requests; return how many could not be.
+
+        Every confirmation raised within a turn carries that turn's user message
+        as its ``source_message_internal_id``, so this touches exactly the
+        stopped turn's requests and none of a concurrent turn's. A request
+        already resolved or expired elsewhere is not a failure. A failure to
+        list them at all raises.
+        """
+        if not source_message_internal_ids:
+            return 0
+        pending = await self.list_pending_for_user(user_id=user_id)
+        unrejected = 0
+        for confirmation in pending:
+            if confirmation["source_message_internal_id"] not in (
+                source_message_internal_ids
+            ):
+                continue
+            try:
+                await self.reject(
+                    request_id=confirmation["id"],
+                    rejecting_user_id=user_id,
+                    rejecting_interface=interface,
+                    by_system=True,
+                )
+            except (
+                ConfirmationExpiredError,
+                ConfirmationAlreadyResolvedError,
+                ConfirmationNotFoundError,
+            ):
+                continue
+            except Exception:
+                unrejected += 1
+                logger.warning(
+                    "Failed to reject confirmation %s for a stopped turn",
+                    confirmation["id"],
+                    exc_info=True,
+                )
+        return unrejected
 
     async def get_for_user(
         self,

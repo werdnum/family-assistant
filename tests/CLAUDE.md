@@ -14,7 +14,10 @@ organized by feature area, not by implementation.
   clients of the protocols we implement. Use high-fidelity fakes (in-memory implementations built on
   official SDKs) for services that are complex or slow. Mocks are a last resort, reserved for
   external third-party services that cannot be controlled or faked. Heavily-mocked unit tests tend
-  to repeat the implementation's own mistakes back at you.
+  to repeat the implementation's own mistakes back at you. Where a mock is warranted it must be
+  specced: `create_autospec(Cls, instance=True, spec_set=True)` or `patch(..., autospec=True)`. Bare
+  `Mock`/`MagicMock`/`AsyncMock` and unspecced `patch()` are rejected by the `no-unspecced-mock`
+  conformance rule.
 
 - **Each test tests one independent behaviour** of the system under test. Arrange, Act, Assert.
   Never Arrange, Act, Assert, Act, Assert.
@@ -87,7 +90,7 @@ the delegation and schedule-automation handlers by default (opt out with
 ```python
 async def test_task(task_worker_manager):
     worker, new_task_event, shutdown_event = task_worker_manager(
-        processing_service=service, chat_interface=MagicMock()
+        processing_service=service, chat_interface=chat_interface
     )
     worker.register_task_handler("my_task", my_handler)
 ```

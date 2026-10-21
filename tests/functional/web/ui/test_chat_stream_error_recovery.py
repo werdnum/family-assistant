@@ -9,7 +9,7 @@ from playwright.async_api import expect
 
 from family_assistant.llm import LLMStreamEvent, ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService
-from family_assistant.tools import OnDemandToolsView
+from family_assistant.tools.on_demand import OnDemandToolsView
 from tests.functional.web.pages.chat_page import ChatPage
 
 if TYPE_CHECKING:

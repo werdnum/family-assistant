@@ -32,7 +32,7 @@ from family_assistant.storage.message_history import (
     get_recent_history,
     update_message_interface_id,
 )
-from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS
+from family_assistant.tools.catalog import LOCAL_TOOL_REGISTRATIONS
 from family_assistant.tools.infrastructure import (
     LocalToolsProvider,
     PolicyEnforcingToolsProvider,

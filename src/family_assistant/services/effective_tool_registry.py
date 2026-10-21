@@ -19,7 +19,8 @@ from family_assistant.plugins.registry import PLUGINS
 from family_assistant.services.oauth_integration_state import (
     filter_oauth_tool_registrations,
 )
-from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS, _scan_user_docs
+from family_assistant.tools.catalog import LOCAL_TOOL_REGISTRATIONS
+from family_assistant.tools.documents import _scan_user_docs
 from family_assistant.tools.weather import (
     GET_WEATHER_FORECAST_TOOL_NAME,
     bind_weather_service,
@@ -29,7 +30,7 @@ from family_assistant.weather import is_weather_configured
 if TYPE_CHECKING:
     from family_assistant.config_models import AppConfig
     from family_assistant.services.oauth_integration_state import OAuthIntegrationState
-    from family_assistant.tools import ToolRegistration
+    from family_assistant.tools.metadata import ToolRegistration
     from family_assistant.weather import WeatherService
 
 logger = logging.getLogger(__name__)

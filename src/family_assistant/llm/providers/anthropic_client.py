@@ -33,6 +33,7 @@ import anthropic
 from anthropic.types import (
     Base64ImageSourceParam,
     Base64PDFSourceParam,
+    CacheControlEphemeralParam,
     DocumentBlockParam,
     ImageBlockParam,
     TextBlockParam,
@@ -592,7 +593,7 @@ class AnthropicClient(BaseLLMClient):
         """Request a JSON object as the input of a tool the model is asked to call."""
         processed_messages = self._process_tool_messages(attempt_messages)
         system_blocks, api_messages = self._convert_messages_to_anthropic_format(
-            processed_messages
+            processed_messages, cache_conversation=False
         )
         # ast-grep-ignore: no-dict-any - kwargs dict for client.messages.create(**params) requires heterogeneous values
         params: dict[str, Any] = {
@@ -638,7 +639,7 @@ class AnthropicClient(BaseLLMClient):
         """
         processed_messages = self._process_tool_messages(attempt_messages)
         system_blocks, api_messages = self._convert_messages_to_anthropic_format(
-            processed_messages
+            processed_messages, cache_conversation=False
         )
         model_params = self._get_model_specific_params(self.model)
         output_config = model_params.get("output_config") or {}
@@ -828,11 +829,19 @@ class AnthropicClient(BaseLLMClient):
         self,
         messages: Sequence[LLMMessage],
         activations: Mapping[str, Sequence[str]] | None = None,
+        *,
+        cache_conversation: bool,
         # ast-grep-ignore: no-dict-any - MessageParam TypedDict incompatible with dynamic content merging in _merge_consecutive_roles
     ) -> tuple[str | list[TextBlockParam] | None, list[dict[str, Any]]]:
         """Convert typed messages to Anthropic API format.
 
         Returns (system_blocks, api_messages).
+
+        ``cache_conversation`` puts a cache breakpoint at the end of the
+        conversation. Only a request that a later request will extend should
+        set it: a breakpoint is a cache write billed above the input price, and
+        a one-shot request (a tool-call review, a summary) writes an entry
+        nothing ever reads.
 
         Key differences from OpenAI:
         - System messages are extracted to the top-level `system` parameter
@@ -920,10 +929,11 @@ class AnthropicClient(BaseLLMClient):
         # this one and is read back; this one is what the next request reads.
         # A trailing tool-addition message cannot carry one, so it goes on the
         # user turn before it.
-        for api_message in reversed(api_messages):
-            if api_message["role"] != "system":
-                self._mark_cache_breakpoint(api_message)
-                break
+        if cache_conversation:
+            for api_message in reversed(api_messages):
+                if api_message["role"] != "system":
+                    self._mark_cache_breakpoint(api_message)
+                    break
 
         system_blocks = self._build_system_blocks(system_parts, stable_prefix_len)
         return system_blocks, api_messages
@@ -1058,6 +1068,14 @@ class AnthropicClient(BaseLLMClient):
         emitted as one cacheable block. Only when there is no boundary at all is
         the plain string returned, since a breakpoint over volatile text buys
         cache writes and no reads.
+
+        The breakpoint lives for an hour rather than the default five minutes.
+        It covers the tools and the stable system prompt, which every turn of
+        every conversation on the profile shares, and people routinely reply
+        more than five minutes apart. An hour-long write costs 2x the input
+        price rather than 1.25x, which this prefix repays after a few reads.
+        Anthropic requires a longer-lived breakpoint to precede a shorter one,
+        and this one comes before every conversation breakpoint.
         """
         if not system_parts:
             return None
@@ -1071,7 +1089,9 @@ class AnthropicClient(BaseLLMClient):
                 TextBlockParam(
                     type="text",
                     text=system_prompt,
-                    cache_control={"type": "ephemeral"},
+                    cache_control=CacheControlEphemeralParam(
+                        type="ephemeral", ttl="1h"
+                    ),
                 )
             ]
 
@@ -1079,7 +1099,7 @@ class AnthropicClient(BaseLLMClient):
             TextBlockParam(
                 type="text",
                 text=system_prompt[:stable_prefix_len],
-                cache_control={"type": "ephemeral"},
+                cache_control=CacheControlEphemeralParam(type="ephemeral", ttl="1h"),
             ),
             TextBlockParam(type="text", text=system_prompt[stable_prefix_len:]),
         ]
@@ -1225,8 +1245,10 @@ class AnthropicClient(BaseLLMClient):
             if isinstance(message, ToolMessage) and message.activated_tools
         }
         processed_messages = self._process_tool_messages(list(messages))
+        # Only the agent loop streams, and only the agent loop sends a next
+        # request that extends this one; a non-streaming call is one-shot.
         system_blocks, api_messages = self._convert_messages_to_anthropic_format(
-            processed_messages, activations=activations
+            processed_messages, activations=activations, cache_conversation=streaming
         )
         params = self._build_request_params(
             api_messages, system_blocks, tools, tool_choice, streaming=streaming

@@ -91,7 +91,9 @@ async def test_round_tripped_message_replays_thinking_first(
     restored = await _round_trip(db_context)
     client = AnthropicClient(api_key="test-key", model="claude-sonnet-4-6")
 
-    _system, api_messages = client._convert_messages_to_anthropic_format([restored])
+    _system, api_messages = client._convert_messages_to_anthropic_format(
+        [restored], cache_conversation=True
+    )
 
     content = api_messages[0]["content"]
     assert [block["type"] for block in content] == ["thinking", "tool_use"]

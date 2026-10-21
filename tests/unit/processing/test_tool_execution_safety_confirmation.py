@@ -36,7 +36,7 @@ from family_assistant.utils.clock import SystemClock
 
 if TYPE_CHECKING:
     from family_assistant.skills.registry import NoteRegistry
-    from family_assistant.tools import ToolExecutionContext
+    from family_assistant.tools.types import ToolExecutionContext
 
 
 class MinimalToolsProvider:

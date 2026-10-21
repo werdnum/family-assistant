@@ -32,7 +32,7 @@ from family_assistant.storage.email import (
     received_emails_table,
 )
 from family_assistant.storage.vector import Document, get_document_by_id
-from family_assistant.tools import ToolExecutionContext
+from family_assistant.tools.types import ToolExecutionContext
 
 
 class EmailIndexPayload(TypedDict):

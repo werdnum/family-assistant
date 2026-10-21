@@ -45,8 +45,11 @@ from family_assistant.task_worker import (
 from family_assistant.threads.home import find_home
 from family_assistant.threads.listing import list_home_threads
 from family_assistant.threads.wakes import discard_wake_thread, ensure_wake_thread
-from family_assistant.tools import CompositeToolsProvider, LocalToolsProvider
 from family_assistant.tools.automations import create_automation_tool
+from family_assistant.tools.infrastructure import (
+    CompositeToolsProvider,
+    LocalToolsProvider,
+)
 from family_assistant.tools.types import ToolExecutionContext
 from family_assistant.web.web_chat_interface import WebChatInterface
 from tests.helpers import wait_for_condition, wait_for_tasks_to_complete

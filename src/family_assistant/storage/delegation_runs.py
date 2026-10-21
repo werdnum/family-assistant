@@ -44,6 +44,19 @@ TERMINAL_DELEGATION_STATUSES: frozenset[DelegationRunStatus] = frozenset({
     "failed",
 })
 
+CANCELLABLE_DELEGATION_STATUSES: frozenset[DelegationRunStatus] = frozenset({
+    "queued",
+    "running",
+    "awaiting_remote",
+})
+"""Where a run can be stopped: not started yet, mid-turn, or held by a provider.
+
+A ``running`` turn executes in this process and is stopped by cancelling its
+task (see ``RunningDelegationTurns``). An
+``awaiting_children`` run is not here: stopping it would leave its children
+running with nobody to answer to.
+"""
+
 DelegationLocalFailureKind = Literal[
     "timeout",
     "transport",
@@ -52,6 +65,7 @@ DelegationLocalFailureKind = Literal[
     "internal_error",
     "not_pollable",
     "stranded",
+    "cancelled",
 ]
 """Why *Family Assistant* failed a run, which is not why the provider did.
 
@@ -61,7 +75,9 @@ agreeing, ``remote_status`` is a terminal status the provider reported,
 ``empty_completion`` is a provider "completed" that carried nothing,
 ``internal_error`` is a fault on this side, ``not_pollable`` is a target that
 stopped being pollable under a live run, and ``stranded`` is the cleanup
-reaper failing a run that never reached a provider at all.
+reaper failing a run that never reached a provider at all. ``cancelled`` is
+a run stopped at the assistant's request: whatever the provider goes on to do
+with it is no longer wanted, so it is never re-read.
 """
 
 RECONCILABLE_FAILURE_KINDS: frozenset[DelegationLocalFailureKind] = frozenset({

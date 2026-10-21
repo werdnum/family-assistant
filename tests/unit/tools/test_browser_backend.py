@@ -603,3 +603,26 @@ async def test_credential_browser_requires_enabled_remote_backend() -> None:
     ctx = _exec_context(enabled=False, profile_id="credential_browser_profile")
     with pytest.raises(BrowserBackendError, match="requires browser-server"):
         await get_browser_backend(ctx)
+
+
+@pytest.mark.asyncio
+async def test_remote_backend_command_timeout_names_the_command() -> None:
+    """A read timeout reaches the model as a clear error, not an empty one."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/sessions":
+            return httpx.Response(
+                200, json={"session_id": "bs_slow", "state": "agent_active"}
+            )
+        if request.url.path.endswith("/agent-command"):
+            raise httpx.ReadTimeout("", request=request)
+        return httpx.Response(200, json={})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=5.0)
+    backend = RemoteBrowserBackend(_config(), "conv_slow", client=client)
+    try:
+        with pytest.raises(BrowserBackendError) as exc:
+            await backend.click("e1")
+        assert "did not respond to command click within 30s" in str(exc.value)
+    finally:
+        await backend.close()

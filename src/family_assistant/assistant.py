@@ -117,6 +117,7 @@ from family_assistant.processing import (
     ProcessingService,
     ProcessingServiceConfig,
 )
+from family_assistant.processing.delegation_turns import RunningDelegationTurns
 from family_assistant.processing.history_relevance import (
     JevTurnRelevance,
     TurnRelevance,
@@ -132,6 +133,10 @@ from family_assistant.services.api_backend import (
     HttpApiBackend,
 )
 from family_assistant.services.apns import APNsService, load_apns_auth_key
+from family_assistant.services.attachment_registry import (
+    AttachmentRegistry,
+    AttachmentRegistryConfig,
+)
 from family_assistant.services.confirmation_service import (
     CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
     ConfirmationService,
@@ -181,24 +186,25 @@ from family_assistant.task_worker import (
 from family_assistant.task_worker import (
     handle_log_message as original_handle_log_message,
 )
-from family_assistant.tools import (
-    MAX_POLICY_RULE_PRIORITY,
+from family_assistant.tools.calendar import GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES
+from family_assistant.tools.google_data import GOOGLE_TOOL_REQUIRED_SCOPES
+from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
     LocalToolsProvider,
-    MCPServerConfig,
-    MCPToolsProvider,
-    OnDemandToolsView,
     PolicyEnforcingToolsProvider,
+    TaintTrackingToolsProvider,
+)
+from family_assistant.tools.mcp import MCPToolsProvider
+from family_assistant.tools.memory import MEMORY_WRITE_TOOL_NAMES
+from family_assistant.tools.on_demand import OnDemandToolsView
+from family_assistant.tools.policy import (
+    MAX_POLICY_RULE_PRIORITY,
     PolicyEngine,
     PolicyRule,
-    TaintTrackingToolsProvider,
     ToolMatcher,
     ToolPolicyConfig,
     ToolPolicyDecision,
 )
-from family_assistant.tools.calendar import GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES
-from family_assistant.tools.google_data import GOOGLE_TOOL_REQUIRED_SCOPES
-from family_assistant.tools.memory import MEMORY_WRITE_TOOL_NAMES
 from family_assistant.tools.threads import THREAD_TOOL_NAMES
 from family_assistant.utils.logging_handler import setup_error_logging
 from family_assistant.utils.scraping import PlaywrightScraper
@@ -229,10 +235,9 @@ if TYPE_CHECKING:
     from family_assistant.context_providers import ContextProvider
     from family_assistant.llm import LLMInterface
     from family_assistant.security.taint import SinkClass
-    from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.storage.types import EventConditionEvaluatorConfig
     from family_assistant.tools.types import CalendarConfig as CalendarConfigDict
-    from family_assistant.tools.types import ToolExecutionContext
+    from family_assistant.tools.types import MCPServerConfig, ToolExecutionContext
 
 logger = logging.getLogger(__name__)
 
@@ -626,6 +631,7 @@ class Assistant:
         self.weather_service: WeatherService | None = None
         self.embedding_generator: EmbeddingGenerator | None = None
         self.processing_services_registry: dict[str, DelegatableService] = {}
+        self.delegation_turns = RunningDelegationTurns()
         # One client per tier, shared by every profile that may run on it: a
         # tier's client is configured from the tier alone, so per-profile copies
         # would be identical objects multiplied by the profile count.
@@ -1114,12 +1120,6 @@ class Assistant:
             or self.config.attachment_config.storage_path
         )
         attachment_config = self.config.attachment_config
-
-        # Import locally to avoid circular imports
-        from family_assistant.services.attachment_registry import (  # noqa: PLC0415
-            AttachmentRegistry,
-            AttachmentRegistryConfig,
-        )
 
         # Include the mailbox base so legacy email attachments with a
         # relative ``storage_path`` resolve against a stable directory
@@ -1665,6 +1665,7 @@ class Assistant:
                 if self.fastapi_app is not None
                 else None
             ),
+            delegation_turns=self.delegation_turns,
         )
 
         # Render once now so a template referencing a placeholder that no

@@ -15,7 +15,10 @@ from family_assistant.processing import ProcessingService, ProcessingServiceConf
 from family_assistant.storage.database import Database
 from family_assistant.storage.tasks import TaskPriority
 from family_assistant.task_worker import TaskWorker, handle_script_execution
-from family_assistant.tools import CompositeToolsProvider, LocalToolsProvider
+from family_assistant.tools.infrastructure import (
+    CompositeToolsProvider,
+    LocalToolsProvider,
+)
 from family_assistant.tools.types import (
     ToolDefinition,
     ToolExecutionContext,

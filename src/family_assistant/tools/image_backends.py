@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 from family_assistant.llm.messages import MessageReasoningInfo
+from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.observability.metrics import instrumented_llm_request
 
 if TYPE_CHECKING:
@@ -168,12 +169,6 @@ def _gemini_image_usage(
     usage = getattr(response, "usage_metadata", None)
     if usage is None:
         return None
-    # Imported here rather than at module scope: the provider client reaches
-    # config_models, which reaches back to this module through the tool
-    # registry. Same cycle-breaking local import as plugins/reolink/tools.py.
-    from family_assistant.llm.providers.google_genai_client import (  # noqa: PLC0415
-        GoogleGenAIClient,
-    )
 
     # One canonical Gemini usage mapping, reused rather than duplicated here.
     # It carries the per-modality split too, which an image call always has.

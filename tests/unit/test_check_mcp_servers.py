@@ -19,8 +19,7 @@ from family_assistant.tools.mcp import MCP_SERVER_STATUS_CONNECTED, MCPServerSta
 if TYPE_CHECKING:
     from types import ModuleType
 
-    from family_assistant.tools import MCPServerConfig
-    from family_assistant.tools.types import MCPServerStdIOConfig
+    from family_assistant.tools.types import MCPServerConfig, MCPServerStdIOConfig
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "check_mcp_servers.py"
 

@@ -7,8 +7,7 @@ from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.database import Database
-from family_assistant.tools import ToolExecutionContext
-from family_assistant.tools.types import ToolResult
+from family_assistant.tools.types import ToolExecutionContext, ToolResult
 from tests.mocks.mock_llm import (
     LLMOutput as MockLLMOutput,
 )

@@ -23,6 +23,7 @@ from email.headerregistry import Address
 from email.message import EmailMessage
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 import filetype  # type: ignore[import-untyped]
 from markdownify import markdownify
@@ -73,12 +74,17 @@ _DRIVE_INLINE_TEXT_LIMIT = 200 * 1024
 # response-body cap (``HttpApiBackend.max_response_bytes``), which is the
 # defense for Google-native exports that report no size.
 _DRIVE_DOWNLOAD_LIMIT = 25 * 1024 * 1024
-# Write requests are intentionally limited to the APIs' non-resumable upload
-# budgets. Gmail attachments expand inside MIME and the API's base64url JSON;
-# Drive multipart uploads are the documented small-file path (up to 5 MiB).
+# Gmail draft writes are limited to the API's non-resumable upload budget;
+# attachments expand inside MIME and the API's base64url JSON.
 _GMAIL_DRAFT_ATTACHMENT_BYTES_LIMIT = 18 * 1024 * 1024
 _GMAIL_DRAFT_RAW_MESSAGE_LIMIT = 25 * 1024 * 1024
+# Drive multipart uploads are the documented small-file path (up to 5 MiB);
+# larger content goes through a resumable upload session, up to the attachment
+# registry's default file-size ceiling.
 _DRIVE_MULTIPART_CONTENT_LIMIT = 5 * 1024 * 1024
+_DRIVE_UPLOAD_CONTENT_LIMIT = 100 * 1024 * 1024
+_DRIVE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3/files"
+_DRIVE_WRITE_FIELDS = "id,name,mimeType,webViewLink,parents"
 _GMAIL_DRAFT_ATTACHMENT_CAP = 10
 
 _DRIVE_FOLDER_MIME = "application/vnd.google-apps.folder"
@@ -364,8 +370,9 @@ GOOGLE_DATA_TOOLS_DEFINITION: list[ToolDefinition] = [
                     "attachment_id": {
                         "type": "attachment",
                         "description": (
-                            "Owned attachment to upload as an ordinary Drive file. "
-                            "Do not provide content at the same time."
+                            "Owned attachment to upload as an ordinary Drive file, "
+                            "up to 100 MB; upload large files whole rather than "
+                            "splitting them. Do not provide content at the same time."
                         ),
                     },
                     "overwrite": {
@@ -407,6 +414,7 @@ async def _google_request(
     params: Mapping[str, str] | None = None,
     content: bytes | None = None,
     content_type: str | None = None,
+    headers: Mapping[str, str] | None = None,
 ) -> ApiResponse:
     """Issue an authenticated Google REST request for the tool's acting user.
 
@@ -430,6 +438,7 @@ async def _google_request(
         params=params,
         content=content,
         content_type=content_type,
+        headers=headers,
     )
 
 
@@ -1472,34 +1481,90 @@ async def _drive_write_payload(
         "appProperties": {_APP_PROPERTY_KEY: _APP_FILE_PROPERTY_VALUE},
     }
     method = "POST"
-    url = "https://www.googleapis.com/upload/drive/v3/files"
+    url = _DRIVE_UPLOAD_API
     status = "created"
     if existing is None:
         metadata["parents"] = [folder_id]
     else:
         method = "PATCH"
-        url = f"https://www.googleapis.com/upload/drive/v3/files/{existing['id']}"
+        url = f"{_DRIVE_UPLOAD_API}/{existing['id']}"
         status = "replaced"
-    request_body, request_content_type = _multipart_related(
-        metadata,
-        content,
-        "text/plain; charset=UTF-8" if mime_type == _GOOGLE_DOC_MIME else mime_type,
+    media_type = (
+        "text/plain; charset=UTF-8" if mime_type == _GOOGLE_DOC_MIME else mime_type
     )
-    result = (
-        await _google_request(
+    if len(content) <= _DRIVE_MULTIPART_CONTENT_LIMIT:
+        request_body, request_content_type = _multipart_related(
+            metadata, content, media_type
+        )
+        response = await _google_request(
             exec_context,
             GoogleScope.DRIVE_FILE,
             method=method,
             url=url,
-            params={
-                "uploadType": "multipart",
-                "fields": "id,name,mimeType,webViewLink,parents",
-            },
+            params={"uploadType": "multipart", "fields": _DRIVE_WRITE_FIELDS},
             content=request_body,
             content_type=request_content_type,
         )
-    ).json()
-    return result, status
+    else:
+        response = await _drive_resumable_upload(
+            exec_context,
+            method=method,
+            url=url,
+            metadata=metadata,
+            content=content,
+            media_type=media_type,
+        )
+    return response.json(), status
+
+
+async def _drive_resumable_upload(
+    exec_context: ToolExecutionContext,
+    *,
+    method: str,
+    url: str,
+    metadata: GoogleJson,
+    content: bytes,
+    media_type: str,
+) -> ApiResponse:
+    """Upload ``content`` through a Drive resumable session in one request.
+
+    The session is opened with the metadata, then the whole body is sent to the
+    session URI Drive returns. A failed transfer is reported rather than resumed;
+    the next write starts a fresh session.
+    """
+    session = await _google_request(
+        exec_context,
+        GoogleScope.DRIVE_FILE,
+        method=method,
+        url=url,
+        params={"uploadType": "resumable", "fields": _DRIVE_WRITE_FIELDS},
+        content=json.dumps(metadata, separators=(",", ":")).encode("utf-8"),
+        content_type="application/json; charset=UTF-8",
+        headers={
+            "X-Upload-Content-Type": media_type,
+            "X-Upload-Content-Length": str(len(content)),
+        },
+    )
+    session_uri = session.headers.get("location", "")
+    # The session URI receives the bearer token, so it must stay on Drive's
+    # upload endpoint whatever the response claims.
+    parsed_uri = urlsplit(session_uri)
+    if (
+        parsed_uri.scheme != "https"
+        or parsed_uri.netloc != "www.googleapis.com"
+        or not parsed_uri.path.startswith("/upload/drive/v3/files")
+    ):
+        raise GoogleApiError(
+            "Google Drive did not return a valid resumable upload session."
+        )
+    return await _google_request(
+        exec_context,
+        GoogleScope.DRIVE_FILE,
+        method="PUT",
+        url=session_uri,
+        content=content,
+        content_type=media_type,
+    )
 
 
 async def drive_write_file_tool(
@@ -1521,7 +1586,7 @@ async def drive_write_file_tool(
             file_content, attachment_name, mime_type = await _load_owned_attachment(
                 exec_context,
                 attachment_id,
-                max_bytes=_DRIVE_MULTIPART_CONTENT_LIMIT,
+                max_bytes=_DRIVE_UPLOAD_CONTENT_LIMIT,
             )
             resolved_name = _validated_drive_name(name or attachment_name)
         else:
@@ -1541,9 +1606,9 @@ async def drive_write_file_tool(
                 raise GoogleApiError(
                     "file_type must be google_doc, text, or markdown."
                 ) from exc
-        if len(file_content) > _DRIVE_MULTIPART_CONTENT_LIMIT:
+        if len(file_content) > _DRIVE_UPLOAD_CONTENT_LIMIT:
             raise GoogleApiError(
-                f"Drive writes are limited to {_DRIVE_MULTIPART_CONTENT_LIMIT} bytes."
+                f"Drive writes are limited to {_DRIVE_UPLOAD_CONTENT_LIMIT} bytes."
             )
 
         async with _google_user_operation_lock(exec_context, "drive_write"):

@@ -34,7 +34,7 @@ from family_assistant.indexing.processors.network_processors import (
 from family_assistant.indexing.processors.text_processors import TextChunker
 from family_assistant.llm import LLMInterface
 from family_assistant.storage.vector import get_document_by_id
-from family_assistant.tools import ToolExecutionContext
+from family_assistant.tools.types import ToolExecutionContext
 from family_assistant.utils.scraping import Scraper
 
 if TYPE_CHECKING:

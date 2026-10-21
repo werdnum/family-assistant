@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, ValidationError, field_validator
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.storage import api_tokens as api_tokens_storage
 from family_assistant.storage.database import Database
 from family_assistant.web.auth import (
     api_authentication_enabled,
@@ -204,12 +205,6 @@ def _session_bound_token_id(request: Request) -> int | None:
 
 
 async def _token_bound_session_is_valid(engine: AsyncEngine, token_id: int) -> bool:
-    from family_assistant.storage import (  # noqa: PLC0415 - deferred to avoid circular import at module level
-        api_tokens as api_tokens_storage,
-    )
-    from family_assistant.storage.database import (  # noqa: PLC0415 - deferred to avoid circular import at module level
-        Database,
-    )
 
     return await api_tokens_storage.is_token_valid(Database(engine), token_id)
 

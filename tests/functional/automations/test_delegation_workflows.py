@@ -25,15 +25,13 @@ from family_assistant.processing import (
 )
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
-from family_assistant.tools import (
+from family_assistant.tools.catalog import (
     AVAILABLE_FUNCTIONS as local_tool_implementations_map,
 )
-from family_assistant.tools import (
+from family_assistant.tools.catalog import (
     TOOLS_DEFINITION as local_tools_definition_list,
 )
-from family_assistant.tools import (
-    LocalToolsProvider,
-)
+from family_assistant.tools.infrastructure import LocalToolsProvider
 from tests.mocks.mock_llm import (
     LLMOutput as MockLLMOutput,
 )

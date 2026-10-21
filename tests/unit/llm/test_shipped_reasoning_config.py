@@ -78,9 +78,9 @@ def test_shipped_opus_5_request_carries_thinking_and_survives_validation(
     once a conversation is already underway.
     """
     client = _anthropic_client_for(shipped_config, "claude-opus-5")
-    system_blocks, api_messages = client._convert_messages_to_anthropic_format([
-        UserMessage(content="hello")
-    ])
+    system_blocks, api_messages = client._convert_messages_to_anthropic_format(
+        [UserMessage(content="hello")], cache_conversation=True
+    )
 
     params = client._build_request_params(
         api_messages=api_messages,

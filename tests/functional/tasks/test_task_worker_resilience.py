@@ -27,7 +27,7 @@ from family_assistant.task_worker import (
     TaskWorker,
     handle_llm_callback,
 )
-from family_assistant.tools import ToolExecutionContext
+from family_assistant.tools.types import ToolExecutionContext
 from family_assistant.utils.clock import MockClock
 from tests.helpers import wait_for_condition, wait_for_tasks_to_complete
 

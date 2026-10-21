@@ -42,7 +42,7 @@ from .errors import ScriptExecutionError, ScriptSyntaxError, ScriptTimeoutError
 if TYPE_CHECKING:
     from family_assistant.llm.one_shot import LLMParameters
     from family_assistant.llm.typesafe import JevClient
-    from family_assistant.tools import ToolsProvider
+    from family_assistant.tools.infrastructure import ToolsProvider
     from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
 

@@ -32,16 +32,18 @@ from family_assistant.processing.message_time import strip_sent_at_label
 from family_assistant.storage import delegation_runs_table
 from family_assistant.storage.database import Database
 from family_assistant.task_worker import TaskWorker
-from family_assistant.tools import (
-    LOCAL_TOOL_REGISTRATIONS,
+from family_assistant.tools.catalog import LOCAL_TOOL_REGISTRATIONS
+from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
     LocalToolsProvider,
-    MCPToolsProvider,
     PolicyEnforcingToolsProvider,
+    ToolsProvider,
+)
+from family_assistant.tools.mcp import MCPToolsProvider
+from family_assistant.tools.policy import (
     PolicyEngine,
     ToolPolicyConfig,
     ToolPolicyDecision,
-    ToolsProvider,
 )
 from tests.conftest import cleanup_task_worker
 from tests.helpers import wait_for_condition

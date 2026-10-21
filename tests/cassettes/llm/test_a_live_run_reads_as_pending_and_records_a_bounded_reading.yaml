@@ -1,110 +1,170 @@
 interactions:
-  - request:
-      body: '{"agent":"antigravity-preview-05-2026","input":"Using Python, print the numbers 1 to 3, one per line, then stop.","stream":false,"background":true,"system_instruction":"You are a coding agent. Run the code and report the output.","environment":{"type":"remote"},"agent_config":{"model":"gemini-3.7-flash","type":"antigravity"}}'
-      headers:
-        accept:
-          - application/json
-        accept-encoding:
-          - gzip, deflate
-        connection:
-          - keep-alive
-        content-length:
-          - '335'
-        content-type:
-          - application/json
-        host:
-          - generativelanguage.googleapis.com
-        user-agent:
-          - speakeasy-sdk/python 2.4.1-preview.5 2.924.0 v1beta google-genai
-        x-goog-api-client:
-          - google-genai-sdk/2.18.1 gl-python/3.13.12
-      method: POST
-      uri: https://generativelanguage.googleapis.com/v1beta/interactions
-    response:
-      body:
-        string: !!binary |
-          H4sIAAAAAAAC/5SPS07EMBBE7+ItGLWdxCFZgpgdI/ERw7CJ/GkHI+FETscjhLg7zlwAsX1VXV31
-          zYJjPctiuH1/8y/CrcfXfbDweDrsjmRh93B/uJZPsL+5+0Nnl2whTetS4kIc5jSNCZelYJtQE25v
-          JEjFoeOifoaqF6Jv2ivZNbJqlZQXAD1A8a+z+5cfYw5pip8YaTiv8doaUwllRO2V79q6k0Zp6aBy
-          3goltqqYcrA4UMBULkrz6HRyRZnMB1o6jyBM2lKYYsF6LPGF6khhTDoH+uJzwhzwxKHhW1P28wsA
-          AP//AwCRVTpvTgEAAA==
-      headers:
-        Content-Encoding:
-          - gzip
-        Content-Type:
-          - application/json
-        Date:
-          - Mon, 14 Sep 2026 03:11:57 GMT
-        Server:
-          - scaffolding on HTTPServer2
-        Server-Timing:
-          - gfet4t7; dur=6988
-        Transfer-Encoding:
-          - chunked
-        Vary:
-          - Origin
-          - X-Origin
-          - Referer
-        X-Content-Type-Options:
-          - nosniff
-        X-Frame-Options:
-          - SAMEORIGIN
-        X-XSS-Protection:
-          - '0'
-      status:
-        code: 200
-        message: OK
-  - request:
-      body: ''
-      headers:
-        accept:
-          - application/json
-        accept-encoding:
-          - gzip, deflate
-        connection:
-          - keep-alive
-        content-type:
-          - application/json
-        host:
-          - generativelanguage.googleapis.com
-        user-agent:
-          - speakeasy-sdk/python 2.4.1-preview.5 2.924.0 v1beta google-genai
-        x-goog-api-client:
-          - google-genai-sdk/2.18.1 gl-python/3.13.12
-      method: GET
-      uri: https://generativelanguage.googleapis.com/v1beta/interactions/v1_ChZfV1duYXNic0RwWFYtc0FQMW82S0NBEhZfV1duYXNic0RwWFYtc0FQMW82S0NB?stream=false
-    response:
-      body:
-        string: !!binary |
-          H4sIAAAAAAAC/4yPzU7DMBCE38VXMFo7qUNyBNEblfgRpVwi/6yDK9WJnI0rhHh3nL4AXGdmZ7/5
-          ZsGxjmXR339++DfhlsP7Llh4Pu+3B7KwfXrc38oX2N09/OGzazaTpmUudSH2UxqHhPNcZJtQE65v
-          JEjFoeWifoWqE6LbNDdNVUNzBdABlOwyuX9nMeaQxnjCSP1lhdfWmEooI2qvfNvUrTRKSweV81Yo
-          sSJiysFiTwFTuSjE0enkijOaI1q6wBMmbSmMsch6KPVF1ZHCkHQO9MWnhDngmcOGr5Ts5xcAAP//
-          AwBvh4CxRgEAAA==
-      headers:
-        Content-Encoding:
-          - gzip
-        Content-Type:
-          - application/json
-        Date:
-          - Mon, 14 Sep 2026 03:11:58 GMT
-        Server:
-          - scaffolding on HTTPServer2
-        Server-Timing:
-          - gfet4t7; dur=286
-        Transfer-Encoding:
-          - chunked
-        Vary:
-          - Origin
-          - X-Origin
-          - Referer
-        X-Content-Type-Options:
-          - nosniff
-        X-Frame-Options:
-          - SAMEORIGIN
-        X-XSS-Protection:
-          - '0'
-      status:
-        code: 200
-        message: OK
+- request:
+    body: '{}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '2'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - speakeasy-sdk/python 2.4.1-preview.5 internal v1beta google-genai
+      x-goog-api-client:
+      - google-genai-sdk/2.24.0 gl-python/3.13.13
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/environments
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/6tWykxRslJKMrCwTDQ2T0w0MEpNSjVNTTZOMjAzNQbC5OQUS8M0JR2l4pLEktJi
+        oNrE5JLMslSlWgAmOzWEOwAAAA==
+    headers:
+      Alt-Svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      Content-Encoding:
+      - gzip
+      Content-Type:
+      - application/json
+      Date:
+      - Wed, 21 Oct 2026 05:40:57 GMT
+      Server:
+      - scaffolding on HTTPServer2
+      Server-Timing:
+      - gfet4t7; dur=2309
+      Transfer-Encoding:
+      - chunked
+      Vary:
+      - Origin
+      - X-Origin
+      - Referer
+      X-Content-Type-Options:
+      - nosniff
+      X-Frame-Options:
+      - SAMEORIGIN
+      X-XSS-Protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"agent":"antigravity-preview-05-2026","input":"Using Python, print the
+      numbers 1 to 3, one per line, then stop.","agent_config":{"model":"gemini-3.7-flash","type":"antigravity"},"background":true,"environment":{"environment_id":"b089a37aa02ebe5ec3b0653535ccd91f","type":"remote"},"stream":false,"system_instruction":"You
+      are a coding agent. Run the code and report the output."}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '379'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - speakeasy-sdk/python 2.4.1-preview.5 internal v1beta google-genai
+      x-goog-api-client:
+      - google-genai-sdk/2.24.0 gl-python/3.13.13
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/5SPzW6DMBCE34VrS7WGGALH/FRCaqpSJYFwQcbegBNqqHFI06rvXpM3qPY2Ozv7
+        zY8jhRM7IymXjWj25/fikL9+7tbRkW2T60tm0s2pWWHeLoqvJD/si3WWPX+zdvGWe+fbZkn0bpXM
+        Ur+lacadR2cwzFwGmyhV2euu1jgMVuYamcHpkwde4BJwPbIFGs8gpuFTFAbzEGhIHgBiAOu/9OJf
+        flSj1J36QGXKe6EK5hHzQ8bAwwopcr+CgPp2OBcROU6oqEfJsTQStb2w5EowLeymq07Izb2EQc24
+        kZ2yMqttvFWZMrLWbJTm5vYaR4lXF6g7kTq/fwAAAP//AwAYZuWEUQEAAA==
+    headers:
+      Alt-Svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      Content-Encoding:
+      - gzip
+      Content-Type:
+      - application/json
+      Date:
+      - Wed, 21 Oct 2026 05:41:03 GMT
+      Server:
+      - scaffolding on HTTPServer2
+      Server-Timing:
+      - gfet4t7; dur=6274
+      Transfer-Encoding:
+      - chunked
+      Vary:
+      - Origin
+      - X-Origin
+      - Referer
+      X-Content-Type-Options:
+      - nosniff
+      X-Frame-Options:
+      - SAMEORIGIN
+      X-XSS-Protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - speakeasy-sdk/python 2.4.1-preview.5 internal v1beta google-genai
+      x-goog-api-client:
+      - google-genai-sdk/2.24.0 gl-python/3.13.13
+    method: GET
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions/v1_ChdhVkRZYXNqUE9faTIwLWtQMjhDeXlBZxIXYVZEWWFzalBPX2kyMC1rUDI4Q3l5QWc?stream=false
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/4yPzW6DMBCE38XXlmrNTygc81MJqalKlQTCBRl7A06oocYhTau8e02eoNrb7Ozs
+        N79EChKTkZaLRjS700exz9++tqvowDbJ5TUz6frYLDFv58V3ku93xSrLXn5YO3/P3dN1vaB6u0z8
+        1GuDNOPkkQyGmfNgE6Uqe93VGofBylwjMzh9csGdORQcl24giH2Ig+gpBKB++AAQA1jzuRf/N6Ma
+        pe7UJypT3qtU8BwxL2QMXKwwQO5VMAs8O5yLiB4mSNSj5FgaidpeWGYlmBZ201VH5OaOb1AzbmSn
+        rMxqG29VpoysNRuluTq9xlHixYHAmTDJ7Q8AAP//AwD9QL/jSwEAAA==
+    headers:
+      Alt-Svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      Content-Encoding:
+      - gzip
+      Content-Type:
+      - application/json
+      Date:
+      - Wed, 21 Oct 2026 05:41:04 GMT
+      Server:
+      - scaffolding on HTTPServer2
+      Server-Timing:
+      - gfet4t7; dur=1343
+      Transfer-Encoding:
+      - chunked
+      Vary:
+      - Origin
+      - X-Origin
+      - Referer
+      X-Content-Type-Options:
+      - nosniff
+      X-Frame-Options:
+      - SAMEORIGIN
+      X-XSS-Protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
 version: 1

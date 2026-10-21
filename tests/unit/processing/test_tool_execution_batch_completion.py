@@ -14,7 +14,7 @@ import pytest
 
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.storage.database import Database
-from family_assistant.tools import ToolPolicyDeniedError
+from family_assistant.tools.infrastructure import ToolPolicyDeniedError
 from family_assistant.tools.types import ToolCallBatch, ToolResult
 
 from .test_tool_execution_safety_confirmation import (

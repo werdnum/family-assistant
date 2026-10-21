@@ -17,11 +17,11 @@ import anyio
 import pytest
 from mcp.types import ListToolsResult
 
-from family_assistant.tools import MCPServerConfig, MCPToolsProvider
 from family_assistant.tools.mcp import (
     CONSECUTIVE_PING_TIMEOUTS_BEFORE_RECONNECT,
     MCP_SERVER_STATUS_CONNECTED,
     MCP_SERVER_STATUS_FAILED,
+    MCPToolsProvider,
 )
 
 if TYPE_CHECKING:
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from mcp import ClientSession
 
     from family_assistant.tools.metadata import ToolDescriptor
-    from family_assistant.tools.types import ToolDefinition
+    from family_assistant.tools.types import MCPServerConfig, ToolDefinition
 
 SERVER_ID = "code-execution"
 WAIT_SECONDS = 5.0

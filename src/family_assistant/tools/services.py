@@ -38,6 +38,7 @@ from family_assistant.services.tool_call_review import (
     build_delegation_review_trigger,
 )
 from family_assistant.storage.delegation_runs import (
+    CANCELLABLE_DELEGATION_STATUSES,
     TERMINAL_DELEGATION_STATUSES,
     delegated_subconversation_id,
 )
@@ -61,6 +62,7 @@ if TYPE_CHECKING:
     from family_assistant.llm.content_parts import ContentPartDict
     from family_assistant.processing.protocol import DelegatableService
     from family_assistant.storage.database import (
+        Database,
         DatabaseExecutor,
         DatabaseTransaction,
     )
@@ -1583,6 +1585,32 @@ SERVICE_TOOLS_DEFINITION: list[ToolDefinition] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "cancel_delegation",
+            "description": (
+                "Stops an asynchronous profile delegation that is no longer wanted -- a duplicate, "
+                "or one the user has called off -- so its result is never delivered. Works on a "
+                "delegation that is queued, running a turn here, or running on a remote agent (such "
+                "as coder or research). A running turn stops at once. A remote agent is asked to "
+                "stop but may still run to the end; its result is ignored either way. Anything "
+                "already done stays done. A delegation waiting on delegations of its own cannot be cancelled "
+                "until they finish. Use list_delegations to find the reference. This is distinct "
+                "from cancel_worker_task, which stops spawn_worker jobs."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "delegation_id": {
+                        "type": "string",
+                        "description": "The delegation reference ID to cancel, e.g. delegation_abc123.",
+                    },
+                },
+                "required": ["delegation_id"],
+            },
+        },
+    },
 ]
 
 
@@ -1916,4 +1944,268 @@ async def list_delegations_tool(
     return ToolResult(
         text=text,
         data=summaries,
+    )
+
+
+async def queue_continuation_if_ready(
+    txn: DatabaseTransaction,
+    parent: DelegationRunDict,
+    now: datetime,
+    priority: TaskPriority,
+) -> bool:
+    """Requeue a waiting run and enqueue its next turn, once its children are done."""
+    children = await txn.delegation_runs.list_undelivered_children(parent)
+    if any(child["status"] not in TERMINAL_DELEGATION_STATUSES for child in children):
+        return False
+    if not await txn.delegation_runs.requeue_for_continuation(
+        parent["delegation_id"], now
+    ):
+        return False
+    await txn.tasks.enqueue(
+        task_id=f"{parent['task_id']}_continue_{uuid.uuid4().hex}",
+        task_type=DELEGATED_PROFILE_RUN_TASK_TYPE,
+        payload={
+            "delegation_id": parent["delegation_id"],
+            "interface_type": parent["interface_type"],
+            "conversation_id": parent["conversation_id"],
+            "user_name": parent["user_name"] or "",
+            "continuation": True,
+        },
+        max_retries_override=1,
+        priority=priority,
+    )
+    logger.info(
+        "Delegations started by run %s have finished; queued its next turn.",
+        parent["delegation_id"],
+    )
+    return True
+
+
+async def continue_waiting_parent(
+    db: Database,
+    run: DelegationRunDict,
+    now: datetime,
+    priority: Callable[[], TaskPriority],
+) -> bool:
+    """Queue the next turn of the run that started ``run``, if it is waiting on it.
+
+    Called whenever a child run finishes, however it finished, so whichever
+    finish leaves the parent with nothing outstanding queues its turn; the
+    conditional requeue is what makes that happen once. Returns False when
+    there is no live parent -- a top-level turn started the run, or the parent
+    has already finished -- and the run answers to the person instead.
+    ``priority`` is asked for the continuation's lane only when there is a
+    parent to continue.
+    """
+    parent_subconversation_id = run["source_subconversation_id"]
+    if parent_subconversation_id is None:
+        return False
+    parent = await db.delegation_runs.get_active_for_subconversation(
+        conversation_id=run["conversation_id"],
+        subconversation_id=parent_subconversation_id,
+    )
+    # A resumed run reuses its history, so a child the earlier run started
+    # is not this run's: it predates it, and is delivered the ordinary way.
+    if parent is None or run["created_at"] < parent["created_at"]:
+        return False
+
+    # Attempted whatever status was read: the requeue is conditioned on the
+    # parent waiting, and it waits on a parent parking in the same instant, so
+    # one of the two always sees this child finished. A parent still in its
+    # turn picks the result up when the turn ends.
+    lane = priority()
+
+    async def _requeue(txn: DatabaseTransaction) -> bool:
+        return await queue_continuation_if_ready(txn, parent, now, lane)
+
+    await db.atomic(_requeue)
+    return True
+
+
+async def cancel_delegation_tool(
+    exec_context: ToolExecutionContext,
+    delegation_id: str,
+) -> ToolResult:
+    """Stop a delegation and drop its result.
+
+    The run is failed first, as a compare-and-set on a cancellable status, so a
+    poll or turn that finishes it at the same moment wins or loses cleanly
+    rather than both landing. A turn running here is then cancelled, and a
+    worker about to start one finds the run no longer ``running``; a provider
+    is asked to stop, and only that it was asked is recorded. A top-level run
+    is marked delivered on the spot: the caller learns the outcome from this
+    result, so no failure notification follows.
+    """
+    if not delegation_tools_config(exec_context).async_delegation_enabled:
+        return ToolResult(
+            text=(
+                "Async profile delegation is disabled; delegations run synchronously "
+                "and there is nothing running in the background to cancel."
+            ),
+            attachments=None,
+        )
+    db = exec_context.db_context
+    run = await db.delegation_runs.get_by_delegation_id(delegation_id)
+    if run is None or (
+        run["conversation_id"] != exec_context.conversation_id
+        or run["interface_type"] != delegation_interface_type(exec_context)
+        or run["user_id"] != exec_context.user_id
+    ):
+        return ToolResult(
+            text=f"Error: Delegation '{delegation_id}' not found in this conversation.",
+            attachments=None,
+        )
+    if run["status"] in TERMINAL_DELEGATION_STATUSES:
+        return ToolResult(
+            text=(
+                f"Delegation '{delegation_id}' has already {run['status']}; "
+                "there is nothing to cancel."
+            ),
+            attachments=None,
+        )
+    if run["authenticated_site_json"] is not None:
+        return ToolResult(
+            text=(
+                f"Error: Delegation '{delegation_id}' is an authenticated-website task, "
+                "which holds a signed-in browser session and cannot be cancelled this way."
+            ),
+            attachments=None,
+        )
+    if run["run_kind"] == "thread":
+        return ToolResult(
+            text=(
+                f"Error: Delegation '{delegation_id}' runs as a conversation thread; "
+                "the user can stop it from the thread itself."
+            ),
+            attachments=None,
+        )
+    # A turn with delegations of its own still out -- handed off, or awaited
+    # inline -- is still ``running``, and stopping it would leave them to
+    # report to nobody.
+    if (
+        run["status"] not in CANCELLABLE_DELEGATION_STATUSES
+        or await db.delegation_runs.has_active_children(run)
+    ):
+        return ToolResult(
+            text=(
+                f"Error: Delegation '{delegation_id}' is waiting on delegations of its "
+                "own and cannot be cancelled until they finish. Cancel those first, "
+                "or check back with get_delegation_status."
+            ),
+            attachments=None,
+        )
+
+    now = _now(exec_context)
+    cancelled = await db.delegation_runs.mark_failed(
+        delegation_id=delegation_id,
+        error="Cancelled at the assistant's request.",
+        completed_at=now,
+        local_failure_kind="cancelled",
+    )
+    if cancelled is None:
+        current = await db.delegation_runs.get_by_delegation_id(delegation_id)
+        current_status = current["status"] if current is not None else "gone"
+        return ToolResult(
+            text=(
+                f"Delegation '{delegation_id}' could not be cancelled: it moved on to "
+                f"'{current_status}' while the request was being made. Check it with "
+                "get_delegation_status."
+            ),
+            attachments=None,
+        )
+    # A run started by another delegation answers to that run, whose next turn
+    # must learn the branch was cancelled rather than find it gone -- and must
+    # be queued, since no completion of this run is coming to do it. Any other
+    # run's outcome is this result, so it is marked delivered; so is a child
+    # cancelled by its own parent's turn, which is reading this result now.
+    cancelled_by_parent = (
+        cancelled["source_subconversation_id"] is not None
+        and cancelled["source_subconversation_id"] == exec_context.subconversation_id
+    )
+    # Outside a task -- a person's own turn -- the cancel is made by someone
+    # waiting on the answer.
+    if cancelled_by_parent or not await continue_waiting_parent(
+        db,
+        cancelled,
+        now,
+        lambda: exec_context.task_priority or TaskPriority.INTERACTIVE,
+    ):
+        await db.delegation_runs.mark_notified(
+            delegation_id=delegation_id,
+            result_message_internal_id=None,
+            notified_at=now,
+        )
+
+    remote_note = ""
+    if cancelled["remote_task_id"] is None and run["status"] != "awaiting_remote":
+        processing_service = exec_context.processing_service
+        delegation_turns = (
+            processing_service.delegation_turns
+            if processing_service is not None
+            else None
+        )
+        if delegation_turns is not None and delegation_turns.stop(delegation_id):
+            remote_note = " Its turn was stopped partway; anything it had already done stays done."
+    elif remote_task_id := cancelled["remote_task_id"]:
+        remote_note = await _request_remote_cancel(
+            exec_context, cancelled, remote_task_id, now
+        )
+    elif run["status"] == "awaiting_remote":
+        remote_note = (
+            " Its submission to the remote agent was still in flight, so if that "
+            "agent starts the work it will run to the end unobserved."
+        )
+    return ToolResult(
+        text=(
+            f"Cancelled delegation '{delegation_id}' to "
+            f"'{run['target_service_id']}'. Its result will not be delivered.{remote_note}"
+        ),
+        data={"delegation_id": delegation_id, "cancelled": True},
+    )
+
+
+async def _request_remote_cancel(
+    exec_context: ToolExecutionContext,
+    run: DelegationRunDict,
+    remote_task_id: str,
+    now: datetime,
+) -> str:
+    """Ask the provider holding a cancelled run to stop it; say what that means.
+
+    The run is already cancelled here whatever the provider does, so the
+    caller is told only that the agent was asked and may carry on.
+    """
+    # Local import: the processing package imports the tools package.
+    from family_assistant.processing.protocol import (  # noqa: PLC0415
+        PollableDelegationService,
+    )
+
+    processing_service = exec_context.processing_service
+    registry = (
+        processing_service.processing_services_registry
+        if processing_service is not None
+        else None
+    )
+    target = registry.get(run["target_service_id"]) if registry else None
+    if not isinstance(target, PollableDelegationService):
+        return (
+            " The remote agent could not be reached to stop it, so it may run to "
+            "the end; its result will be ignored."
+        )
+    # Best-effort by contract: providers log a failed request rather than
+    # raise, so whether it reached the agent is not known here.
+    await target.cancel_async(remote_task_id)
+    await exec_context.db_context.delegation_runs.mark_cancel_requested(
+        run["delegation_id"], now=now
+    )
+    # This cancellation won the terminal CAS and no poll will read the run
+    # again, so it owes the run's accounting, as the worker's timeout path
+    # does. Probed for the reason the worker gives in
+    # ``_terminal_metrics_recorder``.
+    record = getattr(target, "record_terminal_metrics", None)
+    if record is not None:
+        await record(remote_task_id, cancelled=True)
+    return (
+        " The remote agent was asked to stop; it may still carry on to the end, "
+        "but its result will be ignored."
     )

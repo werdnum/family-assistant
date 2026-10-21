@@ -580,7 +580,9 @@ class TestAnthropicClient:
         ]
 
         processed = client._process_tool_messages(messages)
-        _system, api_messages = client._convert_messages_to_anthropic_format(processed)
+        _system, api_messages = client._convert_messages_to_anthropic_format(
+            processed, cache_conversation=True
+        )
 
         # The tool_result should contain the multimodal content list
         # Find the tool_result block
@@ -655,4 +657,6 @@ class TestAnthropicClient:
         ]
 
         with pytest.raises(InvalidRequestError, match="Malformed tool call arguments"):
-            client._convert_messages_to_anthropic_format(messages)
+            client._convert_messages_to_anthropic_format(
+                messages, cache_conversation=True
+            )

@@ -240,6 +240,9 @@ _PHRASES: dict[str, _Phrase] = {
         "Checking on delegated task", "Checked on delegated task"
     ),
     "list_delegations": _Phrase("Listing delegated tasks", "Listed delegated tasks"),
+    "cancel_delegation": _Phrase(
+        "Cancelling delegated task", "Cancelled delegated task", changes=True
+    ),
     "gmail_search": _Phrase(
         "Searching email", "Searched email", _quoted("for", "query")
     ),

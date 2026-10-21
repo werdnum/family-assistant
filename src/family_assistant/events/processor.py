@@ -12,11 +12,15 @@ from typing import Any, TypedDict, cast
 
 from sqlalchemy import select, text
 
-from family_assistant.actions import ActionType, execute_action
+from family_assistant.actions import (
+    EVENT_HANDLER_PROFILE_ID,
+    ActionType,
+    execute_action,
+)
 from family_assistant.events.condition_evaluator import EventConditionEvaluator
 from family_assistant.events.sources import EventSource
 from family_assistant.events.storage import EventStorage
-from family_assistant.scripting import ScriptExecutionError
+from family_assistant.scripting.errors import ScriptExecutionError
 from family_assistant.storage.database import (
     Database,
     DatabaseTransaction,
@@ -32,11 +36,6 @@ from family_assistant.storage.types import (
 )
 
 logger = logging.getLogger(__name__)
-
-# Restricted profile that event-triggered wake_llm turns run under. Event content
-# is untrusted (attacker-influenced email/webhook data), and the woken LLM is the
-# injectable component, so it must not run under a full-trust profile.
-EVENT_HANDLER_PROFILE_ID = "event_handler"
 
 
 class SourceHealthInfoDict(TypedDict, total=False):

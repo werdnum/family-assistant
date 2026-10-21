@@ -23,7 +23,7 @@ from family_assistant.eval.tool_call_review.scrub import (
     declared_argument_shapes,
 )
 from family_assistant.paths import PROJECT_ROOT
-from family_assistant.tools import LOCAL_TOOL_DESCRIPTORS
+from family_assistant.tools.catalog import LOCAL_TOOL_DESCRIPTORS
 from family_assistant.tools.google_data import GOOGLE_TOOL_REQUIRED_SCOPES
 from family_assistant.tools.metadata import ToolDescriptor, ToolTag
 

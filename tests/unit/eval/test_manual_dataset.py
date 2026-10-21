@@ -37,7 +37,7 @@ from family_assistant.services.tool_call_review import (
     ToolCallReviewVerdict,
     assemble_tool_call_review_messages,
 )
-from family_assistant.tools import LOCAL_TOOL_DESCRIPTORS
+from family_assistant.tools.catalog import LOCAL_TOOL_DESCRIPTORS
 from family_assistant.tools.infrastructure import (
     LocalToolsProvider,
     TaintTrackingToolsProvider,

@@ -18,7 +18,7 @@ from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
-from family_assistant.tools import AVAILABLE_FUNCTIONS, TOOLS_DEFINITION
+from family_assistant.tools.catalog import AVAILABLE_FUNCTIONS, TOOLS_DEFINITION
 from family_assistant.tools.data_manipulation import jq_query_tool
 from family_assistant.tools.execute_script import execute_script_tool
 from family_assistant.tools.infrastructure import LocalToolsProvider

@@ -45,13 +45,12 @@ search the calendar and documents, query recent events, publish MQTT, and messag
 cannot browse, delegate, run scripts, or touch the calendar and automations. Scope an event
 `wake_llm` to that list.
 
-**An event script must not call `wake_llm()`.** An event *script* does run under the creating
-profile, and that is safe on its own: a script is deterministic, so an attacker who controls the
-event can influence the arguments but not which tools get called. Waking the assistant from inside
-one breaks that. The wake carries the raw triggering event into a turn running with the creating
-profile's full tools — untrusted input, private data and the ability to act, all at once, which is
-exactly the combination the `event_handler` routing exists to prevent. Do not treat it as a way to
-give an event automation more capability.
+**An event script's `wake_llm()` also wakes `event_handler`.** The script itself runs under the
+creating profile, which is safe on its own: a script is deterministic, so an attacker who controls
+the event can influence the arguments but not which tools get called. The turn it wakes reads the
+event, though, so that turn gets the same confinement as an event `wake_llm`. A script is a good way
+to filter events cheaply and wake only for the ones worth looking at, but it is not a way to give an
+event automation more capability than the list above.
 
 So when an event response needs more than `event_handler` can do, have the script do the work
 deterministically and leave the outcome in data — a note the user (or a later scheduled automation)
@@ -120,9 +119,10 @@ Use `action_type="wake_llm"` when the response needs judgement — when what to 
 the situation. For an event automation, check the wake against what `event_handler` can reach (see
 above) before choosing it.
 
-In a **schedule** automation a script can also call `wake_llm()` conditionally, which is often the
-best of both: cheap deterministic filtering, waking only when something is actually worth the user's
-attention. Do not do this in an event automation — see above.
+A script can also call `wake_llm()` conditionally, which is often the best of both: cheap
+deterministic filtering, waking only when something is actually worth the user's attention. In a
+schedule automation the wake runs under the creating profile; in an event automation it runs under
+`event_handler` (see above).
 
 Prefer a script where a script suffices.
 

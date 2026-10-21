@@ -15,8 +15,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from family_assistant.tools import AVAILABLE_FUNCTIONS
 from family_assistant.tools.browser_session import BROWSER_TOOL_NAMES, BrowserSession
+from family_assistant.tools.catalog import AVAILABLE_FUNCTIONS
 from family_assistant.tools.types import ToolCallBatch, ToolExecutionContext
 
 if TYPE_CHECKING:

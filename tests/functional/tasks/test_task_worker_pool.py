@@ -41,7 +41,7 @@ from family_assistant.storage.tasks import (
     unregister_worker_wake_event,
 )
 from family_assistant.task_worker import PARKING_TASK_TYPES, TaskWorker
-from family_assistant.tools import ToolExecutionContext
+from family_assistant.tools.types import ToolExecutionContext
 from tests.conftest import cleanup_task_worker
 from tests.helpers import wait_for_condition, wait_for_tasks_to_complete
 

@@ -360,6 +360,25 @@ async def test_a_first_turn_that_errors_fails_the_run(
 
 
 @pytest.mark.asyncio
+async def test_a_first_turn_that_outlasts_its_budget_fails_the_run_as_timed_out(
+    queued_thread: QueuedThread,
+) -> None:
+    queued_thread.worker.handler_timeout_overrides["delegated_profile_run"] = 1.0
+
+    await queued_thread.run_worker()
+
+    [run] = await queued_thread.db.fetch_all(
+        select(
+            delegation_runs_table.c.status,
+            delegation_runs_table.c.local_failure_kind,
+            delegation_runs_table.c.error,
+        ).where(delegation_runs_table.c.run_kind == "thread")
+    )
+    assert (run["status"], run["local_failure_kind"]) == ("failed", "timeout")
+    assert "timed out" in run["error"]
+
+
+@pytest.mark.asyncio
 async def test_the_first_turn_is_reviewed_against_the_threads_request(
     queued_thread: QueuedThread, monkeypatch: pytest.MonkeyPatch
 ) -> None:

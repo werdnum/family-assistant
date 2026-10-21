@@ -117,6 +117,7 @@ class FakeCalendarBackend:
         params: Mapping[str, str] | None = None,
         content: bytes | None = None,
         content_type: str | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> ApiResponse:
         del content_type
         path = unquote(url.removeprefix(CALENDAR_API))

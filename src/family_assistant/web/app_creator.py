@@ -279,7 +279,7 @@ def create_app() -> FastAPI:
     # For development, we load them directly here
     if not hasattr(new_app.state, "tool_definitions"):
         try:
-            from family_assistant.tools import TOOLS_DEFINITION  # noqa: PLC0415
+            from family_assistant.tools.catalog import TOOLS_DEFINITION  # noqa: PLC0415
 
             new_app.state.tool_definitions = TOOLS_DEFINITION
         except ImportError as e:
