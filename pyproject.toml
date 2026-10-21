@@ -206,6 +206,7 @@ dev = [
     "browser-handoff-service",
     "pyarrow>=25.0.1",
     "jsonschema-specifications>=2025.4.1",
+    "time-machine>=2.16",
 ]
 local-embeddings = [
     "sentence-transformers>=3.0.1",
