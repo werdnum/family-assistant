@@ -56,6 +56,7 @@ _EVENT_BLOCK = re.compile(
 )
 _DISPLAY_TIME = re.compile(r"^(\d{4}-\d{2}-\d{2}) (\d{2}):(\d{2})(?: \S+)?$")
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_SYNTHETIC_PREFIX = "eval-"
 _KINDS: dict[str, CalendarKind] = {
     "CalDAV": "caldav",
     "iCal feed": "ical",
@@ -158,7 +159,7 @@ def _synthetic_uid(arguments: Mapping[str, object]) -> str:
     digest = hashlib.sha256(
         json.dumps(arguments, sort_keys=True, default=str).encode()
     ).hexdigest()
-    return f"eval-{digest[:24]}"
+    return f"{_SYNTHETIC_PREFIX}{digest[:24]}"
 
 
 def _span(observation: EventObservation) -> tuple[str, str, timedelta | None]:
@@ -311,7 +312,35 @@ class _Builder:
         if isinstance(uid, str) and uid in self.events:
             self.events[uid].deleted_at = seen
 
+    def _reconcile_creations(self) -> None:
+        """Fold a UID-less creation into the event later seen under its real UID.
+
+        CalDAV creations report no UID, so a creation is first given a
+        synthetic one; when a search later shows an event with the same title
+        and start, that is the same event, and keeping both would serve it
+        twice -- once before it was created.
+        """
+        observed = {
+            (o.summary, o.start): event
+            for event in self.events.values()
+            if not event.uid.startswith(_SYNTHETIC_PREFIX)
+            for o in event.observations
+        }
+        for uid in [u for u in self.events if u.startswith(_SYNTHETIC_PREFIX)]:
+            created = self.events[uid]
+            first = created.observations[0]
+            match = observed.get((first.summary, first.start))
+            if match is None:
+                continue
+            match.created_at = min(
+                t for t in (match.created_at, created.created_at) if t is not None
+            )
+            match.observations.extend(created.observations)
+            match.observations.sort(key=lambda o: o.seen_at)
+            del self.events[uid]
+
     def finish(self) -> CalendarWorld:
+        self._reconcile_creations()
         default = next(
             (c.source_id for c in self.calendars.values() if c.is_default), None
         )

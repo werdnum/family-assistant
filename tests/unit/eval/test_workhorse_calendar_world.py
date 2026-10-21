@@ -257,3 +257,29 @@ def test_a_moved_appointment_is_an_edit() -> None:
     after = dentist.as_of(_T + timedelta(days=2))
     assert dentist.occurrence_starts == []
     assert after is not None and after.start.startswith("2026-10-22T12:30")
+
+
+def test_a_creation_without_a_uid_is_the_event_later_seen_with_one() -> None:
+    created: dict[str, object] = {
+        "summary": "Dentist",
+        "start_time": "2026-10-20T09:00:00+11:00",
+        "end_time": "2026-10-20T10:00:00+11:00",
+    }
+    world = build_calendar_world(
+        _history([
+            (_T, "list_calendars", {}, _LISTING),
+            (
+                _T,
+                "add_calendar_event",
+                created,
+                "OK. Event 'Dentist' added to the calendar.",
+            ),
+            (_T + timedelta(days=1), "search_calendar_events", {}, _SEARCH),
+        ]),
+        timezone=_SYDNEY,
+    )
+
+    dentist = [e for e in world.events if e.observations[0].summary == "Dentist"]
+    assert [e.uid for e in dentist] == ["dentist-1"]
+    assert dentist[0].created_at == _T
+    assert dentist[0].as_of(_T - timedelta(hours=1)) is None

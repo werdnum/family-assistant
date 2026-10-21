@@ -143,6 +143,30 @@ def test_without_earlier_evidence_the_next_read_stands_in() -> None:
     assert (state.quality, state.content) == ("inferred", "old")
 
 
+def test_a_note_created_after_the_moment_did_not_exist_at_it() -> None:
+    timelines = build_note_timelines(
+        _history([
+            (
+                _T + timedelta(hours=1),
+                "add_or_update_note",
+                {"title": "New", "content": "fresh"},
+                "Note 'New' has been created successfully.",
+            ),
+            (
+                _T + timedelta(hours=2),
+                "get_note",
+                {"title": "New"},
+                _read("New", "fresh"),
+            ),
+        ])
+    )
+
+    state = timelines.state_at("New", _T)
+
+    assert state is not None
+    assert state.quality == "unknown"
+
+
 def test_failed_writes_are_not_history() -> None:
     timelines = build_note_timelines(
         _history([

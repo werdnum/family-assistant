@@ -175,10 +175,9 @@ def build_note_timelines(
                     ),
                 )
             elif name == "add_or_update_note" and isinstance(title, str):
-                if (
-                    "updated successfully" not in content
-                    and content.strip() != "Success"
-                ):
+                # Created, updated, or a bare "Success": anything else (an error,
+                # a refused write) changed nothing.
+                if "successfully" not in content and content.strip() != "Success":
                     continue
                 text = arguments.get("content")
                 timelines.add(
