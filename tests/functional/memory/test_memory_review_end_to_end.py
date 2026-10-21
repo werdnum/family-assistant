@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 from datetime import timedelta
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock
 
 import pytest
 import sqlalchemy as sa
@@ -61,6 +60,7 @@ from tests.functional.memory.curator_harness import (
     tool_results,
 )
 from tests.helpers import wait_for_condition, wait_for_tasks_to_complete
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -159,7 +159,7 @@ async def test_an_idle_conversation_becomes_memory_entries(
     service = curator_service(db_engine, curator_llm(script))
 
     worker, new_task_event, _ = task_worker_manager(
-        processing_service=service, chat_interface=MagicMock()
+        processing_service=service, chat_interface=RecordingChatInterface()
     )
     worker.register_task_handler(
         MEMORY_REVIEW_TASK_TYPE,

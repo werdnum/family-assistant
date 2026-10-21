@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -22,7 +21,6 @@ from family_assistant.config_models import (
     ToolsConfig,
 )
 from family_assistant.delegation_security import DelegationSecurityLevel
-from family_assistant.interfaces import ChatInterface
 from family_assistant.llm.messages import UserMessage
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.database import Database
@@ -53,6 +51,7 @@ from family_assistant.tools.types import ToolExecutionContext
 from family_assistant.web.web_chat_interface import WebChatInterface
 from tests.helpers import wait_for_tasks_to_complete
 from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
+from tests.mocks.recording_chat_interface import ScriptedChatInterface
 
 if TYPE_CHECKING:
     import asyncio
@@ -60,6 +59,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncEngine
 
+    from family_assistant.interfaces import ChatInterface
     from family_assistant.services.notifier import NotificationMetadata
     from family_assistant.storage.types import ActionConfig
     from family_assistant.utils.clock import MockClock
@@ -106,9 +106,7 @@ async def _start_worker(
 ) -> tuple[ChatInterface, asyncio.Event]:
     await service.tools_provider.get_tool_definitions()
     if chat_interface is None:
-        mock_interface = AsyncMock(spec=ChatInterface)
-        mock_interface.send_message.return_value = "sent_message_id"
-        chat_interface = mock_interface
+        chat_interface = ScriptedChatInterface(otherwise="sent_message_id")
     task_worker, new_task_event, _ = task_worker_manager(
         processing_service=service,
         chat_interface=chat_interface,
@@ -147,11 +145,8 @@ def _exec_context(
 
 
 def _sent_conversation_ids(chat_interface: ChatInterface) -> list[str]:
-    assert isinstance(chat_interface, AsyncMock)
-    return [
-        call.kwargs["conversation_id"]
-        for call in chat_interface.send_message.call_args_list
-    ]
+    assert isinstance(chat_interface, ScriptedChatInterface)
+    return [sent.conversation_id for sent in chat_interface.sent]
 
 
 async def _fire_pending(

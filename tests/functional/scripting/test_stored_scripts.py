@@ -9,7 +9,6 @@ Tests the CRUD operations and execution of stored scripts including:
 """
 
 import logging
-from unittest.mock import Mock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -26,6 +25,7 @@ from family_assistant.tools.stored_scripts import (
     save_script_tool,
 )
 from family_assistant.tools.types import ToolExecutionContext
+from tests.mocks.idle_processing_service import make_idle_processing_service
 
 
 @pytest.mark.asyncio
@@ -80,13 +80,13 @@ async def test_save_script_accepts_configured_keychute_api(
 ) -> None:
     """Stored-script validation uses the configured runtime API namespace."""
     db = Database(engine=db_engine)
-    processing_service = Mock()
-    processing_service.tools_provider = None
-    processing_service.app_config = AppConfig(
-        keychute_config=KeychuteConfig(
-            enabled=True,
-            url="https://keychute.test",
-            token=SecretStr("client-token"),
+    processing_service = make_idle_processing_service(
+        app_config=AppConfig(
+            keychute_config=KeychuteConfig(
+                enabled=True,
+                url="https://keychute.test",
+                token=SecretStr("client-token"),
+            )
         )
     )
     context = ToolExecutionContext(

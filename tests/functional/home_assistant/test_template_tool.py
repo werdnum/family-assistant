@@ -3,7 +3,6 @@
 import json
 import logging
 import uuid
-from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -26,6 +25,7 @@ from family_assistant.tools.infrastructure import (
     LocalToolsProvider,
 )
 from family_assistant.tools.mcp import MCPToolsProvider
+from tests.mocks.home_assistant_client import make_home_assistant_client
 from tests.mocks.mock_llm import (
     LLMOutput as MockLLMOutput,
 )
@@ -34,6 +34,7 @@ from tests.mocks.mock_llm import (
     RuleBasedMockLLMClient,
     get_last_message_text,
 )
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 logger = logging.getLogger(__name__)
 
@@ -63,9 +64,9 @@ async def test_render_home_assistant_template_success(
     rendered_by_home_assistant = "\n  Temperature: 22.5°C\nStatus: Comfortable\n\n"
     expected_result = "Temperature: 22.5°C\nStatus: Comfortable"
 
-    mock_ha_client = MagicMock()
-    mock_ha_client.async_get_rendered_template = AsyncMock(
-        return_value=rendered_by_home_assistant
+    home_assistant = make_home_assistant_client()
+    home_assistant.api.async_get_rendered_template.return_value = (
+        rendered_by_home_assistant
     )
 
     tool_call_id = f"call_ha_template_{uuid.uuid4()}"
@@ -160,9 +161,8 @@ async def test_render_home_assistant_template_success(
         app_config=AppConfig(),
     )
 
-    # Inject the mock HA client
     processing_service.plugins = ProfilePlugins((
-        HomeAssistantInstance(mock_ha_client),
+        HomeAssistantInstance(home_assistant.wrapper),
     ))
 
     # --- Simulate User Interaction ---
@@ -170,7 +170,7 @@ async def test_render_home_assistant_template_success(
     db_context = Database(engine=db_engine)
     result = await processing_service.handle_chat_interaction(
         db_context=db_context,
-        chat_interface=MagicMock(),
+        chat_interface=RecordingChatInterface(),
         interface_type="test",
         conversation_id=TEST_CHAT_ID,
         trigger_content_parts=[{"type": "text", "text": user_message}],
@@ -181,7 +181,7 @@ async def test_render_home_assistant_template_success(
     error = result.error_traceback
 
     assert error is None, f"Error during interaction: {error}"
-    mock_ha_client.async_get_rendered_template.assert_awaited_once_with(
+    home_assistant.api.async_get_rendered_template.assert_awaited_once_with(
         template=template_str
     )
     tool_messages = [
@@ -302,7 +302,7 @@ async def test_render_home_assistant_template_no_client(
     db_context = Database(engine=db_engine)
     result = await processing_service.handle_chat_interaction(
         db_context=db_context,
-        chat_interface=MagicMock(),
+        chat_interface=RecordingChatInterface(),
         interface_type="test",
         conversation_id=TEST_CHAT_ID,
         trigger_content_parts=[{"type": "text", "text": user_message}],
@@ -332,9 +332,9 @@ async def test_render_home_assistant_template_api_error(
     # Import the error type
 
     # Create mock Home Assistant client that raises an error
-    mock_ha_client = MagicMock()
-    mock_ha_client.async_get_rendered_template = AsyncMock(
-        side_effect=HomeassistantAPIError("Connection timeout")
+    home_assistant = make_home_assistant_client()
+    home_assistant.api.async_get_rendered_template.side_effect = HomeassistantAPIError(
+        "Connection timeout"
     )
 
     tool_call_id = f"call_ha_error_{uuid.uuid4()}"
@@ -429,9 +429,8 @@ async def test_render_home_assistant_template_api_error(
         app_config=AppConfig(),
     )
 
-    # Inject the mock HA client
     processing_service.plugins = ProfilePlugins((
-        HomeAssistantInstance(mock_ha_client),
+        HomeAssistantInstance(home_assistant.wrapper),
     ))
 
     # --- Simulate User Interaction ---
@@ -439,7 +438,7 @@ async def test_render_home_assistant_template_api_error(
     db_context = Database(engine=db_engine)
     result = await processing_service.handle_chat_interaction(
         db_context=db_context,
-        chat_interface=MagicMock(),
+        chat_interface=RecordingChatInterface(),
         interface_type="test",
         conversation_id=TEST_CHAT_ID,
         trigger_content_parts=[{"type": "text", "text": user_message}],

@@ -3,7 +3,6 @@
 import json
 import logging
 import uuid
-from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -31,6 +30,7 @@ from family_assistant.tools.infrastructure import (
     LocalToolsProvider,
 )
 from family_assistant.tools.mcp import MCPToolsProvider
+from tests.mocks.home_assistant_client import make_home_assistant_client
 from tests.mocks.mock_llm import (
     LLMOutput as MockLLMOutput,
 )
@@ -39,6 +39,7 @@ from tests.mocks.mock_llm import (
     RuleBasedMockLLMClient,
     get_last_message_text,
 )
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 logger = logging.getLogger(__name__)
 
@@ -98,10 +99,10 @@ async def test_list_home_assistant_entities_with_filter(
         },
     ]
 
-    # Create mock Home Assistant client
-    mock_ha_client = MagicMock()
-    mock_ha_client.async_get_entity_list_with_metadata = AsyncMock(
-        return_value=mock_entities
+    home_assistant = make_home_assistant_client()
+    # The wrapper fetches entity metadata by rendering a template that emits JSON.
+    home_assistant.api.async_get_rendered_template.return_value = json.dumps(
+        mock_entities
     )
 
     tool_call_id = f"call_ha_list_{uuid.uuid4()}"
@@ -200,9 +201,8 @@ async def test_list_home_assistant_entities_with_filter(
         app_config=AppConfig(),
     )
 
-    # Inject the mock HA client
     processing_service.plugins = ProfilePlugins((
-        HomeAssistantInstance(mock_ha_client),
+        HomeAssistantInstance(home_assistant.wrapper),
     ))
 
     # --- Simulate User Interaction ---
@@ -210,7 +210,7 @@ async def test_list_home_assistant_entities_with_filter(
     db_context = Database(engine=db_engine)
     result = await processing_service.handle_chat_interaction(
         db_context=db_context,
-        chat_interface=MagicMock(),
+        chat_interface=RecordingChatInterface(),
         interface_type="test",
         conversation_id=TEST_CHAT_ID,
         trigger_content_parts=[{"type": "text", "text": user_message}],
@@ -271,9 +271,10 @@ async def test_list_home_assistant_entities_with_area_filter(
         },
     ]
 
-    mock_ha_client = MagicMock()
-    mock_ha_client.async_get_entity_list_with_metadata = AsyncMock(
-        return_value=mock_entities
+    home_assistant = make_home_assistant_client()
+    # The wrapper fetches entity metadata by rendering a template that emits JSON.
+    home_assistant.api.async_get_rendered_template.return_value = json.dumps(
+        mock_entities
     )
 
     tool_call_id = f"call_ha_area_{uuid.uuid4()}"
@@ -383,9 +384,8 @@ async def test_list_home_assistant_entities_with_area_filter(
         app_config=AppConfig(),
     )
 
-    # Inject the mock HA client
     processing_service.plugins = ProfilePlugins((
-        HomeAssistantInstance(mock_ha_client),
+        HomeAssistantInstance(home_assistant.wrapper),
     ))
 
     # --- Simulate User Interaction ---
@@ -393,7 +393,7 @@ async def test_list_home_assistant_entities_with_area_filter(
     db_context = Database(engine=db_engine)
     result = await processing_service.handle_chat_interaction(
         db_context=db_context,
-        chat_interface=MagicMock(),
+        chat_interface=RecordingChatInterface(),
         interface_type="test",
         conversation_id=TEST_CHAT_ID,
         trigger_content_parts=[{"type": "text", "text": user_message}],
@@ -524,7 +524,7 @@ async def test_list_home_assistant_entities_no_client(
     db_context = Database(engine=db_engine)
     result = await processing_service.handle_chat_interaction(
         db_context=db_context,
-        chat_interface=MagicMock(),
+        chat_interface=RecordingChatInterface(),
         interface_type="test",
         conversation_id=TEST_CHAT_ID,
         trigger_content_parts=[{"type": "text", "text": user_message}],

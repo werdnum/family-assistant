@@ -18,7 +18,6 @@ import time
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
 import anyio
@@ -154,8 +153,7 @@ async def test_email_indexer_registers_email_attachment(
         db_engine=db_engine,
         config=None,
     )
-    pipeline = MagicMock(spec=IndexingPipeline)
-    pipeline.run = AsyncMock(return_value=None)
+    pipeline = IndexingPipeline(processors=[], config={})
     indexer = EmailIndexer(pipeline=pipeline, attachment_registry=registry)
 
     message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
@@ -237,8 +235,7 @@ async def test_email_indexer_registration_is_idempotent(
         db_engine=db_engine,
         config=None,
     )
-    pipeline = MagicMock(spec=IndexingPipeline)
-    pipeline.run = AsyncMock(return_value=None)
+    pipeline = IndexingPipeline(processors=[], config={})
     indexer = EmailIndexer(pipeline=pipeline, attachment_registry=registry)
 
     message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
@@ -384,8 +381,7 @@ async def test_webhook_persists_duplicate_filenames_as_distinct_parts(
     # Indexer dedupes on identity_hash(source_id, storage_path). With
     # distinct storage paths the two parts must produce two distinct
     # registry rows, not collapse into one.
-    pipeline = MagicMock(spec=IndexingPipeline)
-    pipeline.run = AsyncMock(return_value=None)
+    pipeline = IndexingPipeline(processors=[], config={})
     indexer = EmailIndexer(pipeline=pipeline, attachment_registry=registry)
     email_db_row = await db_context.fetch_one(
         select(received_emails_table.c.id).where(
@@ -481,8 +477,7 @@ async def test_email_indexer_dedups_on_retry(
         db_engine=db_engine,
         config=None,
     )
-    pipeline = MagicMock(spec=IndexingPipeline)
-    pipeline.run = AsyncMock(return_value=None)
+    pipeline = IndexingPipeline(processors=[], config={})
     indexer = EmailIndexer(pipeline=pipeline, attachment_registry=registry)
 
     message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
@@ -678,8 +673,7 @@ async def test_reindex_email_then_get_full_document_content_populates_ids(
         db_engine=db_engine,
         config=None,
     )
-    pipeline = MagicMock(spec=IndexingPipeline)
-    pipeline.run = AsyncMock(return_value=None)
+    pipeline = IndexingPipeline(processors=[], config={})
     indexer = EmailIndexer(pipeline=pipeline, attachment_registry=registry)
 
     message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
@@ -876,8 +870,7 @@ async def test_delete_email_attachment_clears_email_row(
         db_engine=db_engine,
         config=None,
     )
-    pipeline = MagicMock(spec=IndexingPipeline)
-    pipeline.run = AsyncMock(return_value=None)
+    pipeline = IndexingPipeline(processors=[], config={})
     indexer = EmailIndexer(pipeline=pipeline, attachment_registry=registry)
 
     message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
@@ -960,8 +953,7 @@ async def test_email_indexer_clears_stale_attachment_id_when_file_missing(
         db_engine=db_engine,
         config=None,
     )
-    pipeline = MagicMock(spec=IndexingPipeline)
-    pipeline.run = AsyncMock(return_value=None)
+    pipeline = IndexingPipeline(processors=[], config={})
     indexer = EmailIndexer(pipeline=pipeline, attachment_registry=registry)
 
     message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
@@ -1110,8 +1102,7 @@ async def test_email_indexer_preserves_malformed_sibling_attachment_info(
         db_engine=db_engine,
         config=None,
     )
-    pipeline = MagicMock(spec=IndexingPipeline)
-    pipeline.run = AsyncMock(return_value=None)
+    pipeline = IndexingPipeline(processors=[], config={})
     indexer = EmailIndexer(pipeline=pipeline, attachment_registry=registry)
 
     malformed_entry = {"filename": "legacy-no-path.bin", "size": 123}
@@ -1465,8 +1456,7 @@ async def test_email_indexer_reregisters_when_stored_id_is_dangling(
         db_engine=db_engine,
         config=None,
     )
-    pipeline = MagicMock(spec=IndexingPipeline)
-    pipeline.run = AsyncMock(return_value=None)
+    pipeline = IndexingPipeline(processors=[], config={})
     indexer = EmailIndexer(pipeline=pipeline, attachment_registry=registry)
 
     dangling_id = str(uuid.uuid4())

@@ -5,7 +5,6 @@ import logging
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -13,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
-from family_assistant.interfaces import ChatInterface
 from family_assistant.llm import (
     ToolCallFunction,
     ToolCallItem,
@@ -44,6 +42,7 @@ from tests.mocks.mock_llm import (
     get_message_role,
     last_real_message,
 )
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 logger = logging.getLogger(__name__)
 
@@ -238,7 +237,7 @@ async def test_delegate_to_service_with_attachments(
     specialized_service.processing_services_registry = registry
     task_worker_manager(
         primary_service,
-        MagicMock(spec=ChatInterface),
+        RecordingChatInterface(),
         register_delegation_handler=True,
     )
 
@@ -256,7 +255,7 @@ async def test_delegate_to_service_with_attachments(
         ],
         trigger_interface_message_id="msg_attach",
         user_name=TEST_USER_NAME,
-        chat_interface=MagicMock(spec=ChatInterface),
+        chat_interface=RecordingChatInterface(),
         request_confirmation_callback=None,
     )
 
@@ -354,7 +353,7 @@ async def test_delegate_to_service_cross_conversation_attachment_allowed(
     specialized_service.processing_services_registry = registry
     task_worker_manager(
         primary_service,
-        MagicMock(spec=ChatInterface),
+        RecordingChatInterface(),
         register_delegation_handler=True,
     )
 
@@ -369,7 +368,7 @@ async def test_delegate_to_service_cross_conversation_attachment_allowed(
         trigger_content_parts=[{"type": "text", "text": user_query}],
         trigger_interface_message_id="msg_security_test",
         user_name=TEST_USER_NAME,
-        chat_interface=MagicMock(spec=ChatInterface),
+        chat_interface=RecordingChatInterface(),
         request_confirmation_callback=None,
     )
 
@@ -543,7 +542,7 @@ async def test_delegate_to_service_propagates_generated_attachments(
     specialized_service.processing_services_registry = registry
     task_worker_manager(
         primary_service,
-        MagicMock(spec=ChatInterface),
+        RecordingChatInterface(),
         register_delegation_handler=True,
     )
 
@@ -558,7 +557,7 @@ async def test_delegate_to_service_propagates_generated_attachments(
         trigger_content_parts=[{"type": "text", "text": user_query}],
         trigger_interface_message_id="msg_delegation_test",
         user_name=TEST_USER_NAME,
-        chat_interface=MagicMock(spec=ChatInterface),
+        chat_interface=RecordingChatInterface(),
         request_confirmation_callback=None,
     )
 

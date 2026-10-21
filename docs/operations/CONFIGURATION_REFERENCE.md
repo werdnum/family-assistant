@@ -2013,7 +2013,7 @@ must **Reconnect** to grant calendar access.
 
 The draft tool never sends email, although Google's `gmail.compose` scope itself also authorizes
 sending. Drive writes are deterministically confined to the app-created Family Assistant folder and
-app-marked files within it.
+the app-marked subfolders and files within it.
 
 **Enablement conditions** (validated at startup):
 

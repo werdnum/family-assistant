@@ -5,13 +5,13 @@ image attachments into Telegram media groups when sending multiple images.
 """
 
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from family_assistant.security.taint import TurnTaintState
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.telegram.interface import TelegramChatInterface
+from tests.mocks.telegram_bot_autospec import make_autospecced_telegram, sent_message
 
 
 @pytest.mark.asyncio
@@ -20,18 +20,14 @@ async def test_multiple_images_sent_as_media_group(
     tmp_path: Path,
 ) -> None:
     """Test that multiple consecutive image attachments are sent as a media group."""
-    # Setup mock application and bot
-    mock_app = MagicMock()
-    mock_bot = AsyncMock()
-    mock_app.bot = mock_bot
+    mock_app, mock_bot = make_autospecced_telegram()
 
     # Mock send_media_group to return list of messages
-    mock_sent_messages = [
-        MagicMock(message_id=201),
-        MagicMock(message_id=202),
-        MagicMock(message_id=203),
-    ]
-    mock_bot.send_media_group = AsyncMock(return_value=mock_sent_messages)
+    mock_bot.send_media_group.return_value = (
+        sent_message(201),
+        sent_message(202),
+        sent_message(203),
+    )
 
     # Create attachment registry with mocked methods
 
@@ -108,14 +104,10 @@ async def test_single_image_sent_individually(
     tmp_path: Path,
 ) -> None:
     """Test that a single image is sent using send_photo, not as a media group."""
-    # Setup mock application and bot
-    mock_app = MagicMock()
-    mock_bot = AsyncMock()
-    mock_app.bot = mock_bot
+    mock_app, mock_bot = make_autospecced_telegram()
 
     # Mock send_photo to return a message
-    mock_sent_message = MagicMock(message_id=201)
-    mock_bot.send_photo = AsyncMock(return_value=mock_sent_message)
+    mock_bot.send_photo.return_value = sent_message(201)
 
     # Create attachment registry
 
@@ -171,16 +163,12 @@ async def test_mixed_attachments_grouped_correctly(
 
     Images should be grouped together, but separated by documents.
     """
-    # Setup mock application and bot
-    mock_app = MagicMock()
-    mock_bot = AsyncMock()
-    mock_app.bot = mock_bot
+    mock_app, mock_bot = make_autospecced_telegram()
 
     # Mock send methods
-    mock_sent_image_group = [MagicMock(message_id=201), MagicMock(message_id=202)]
-    mock_bot.send_media_group = AsyncMock(return_value=mock_sent_image_group)
-    mock_bot.send_document = AsyncMock(return_value=MagicMock(message_id=203))
-    mock_bot.send_photo = AsyncMock(return_value=MagicMock(message_id=204))
+    mock_bot.send_media_group.return_value = (sent_message(201), sent_message(202))
+    mock_bot.send_document.return_value = sent_message(203)
+    mock_bot.send_photo.return_value = sent_message(204)
 
     # Create attachment registry
 
@@ -271,14 +259,10 @@ async def test_media_group_with_reply_to(
     tmp_path: Path,
 ) -> None:
     """Test that media groups properly include reply_to_message_id."""
-    # Setup mock application and bot
-    mock_app = MagicMock()
-    mock_bot = AsyncMock()
-    mock_app.bot = mock_bot
+    mock_app, mock_bot = make_autospecced_telegram()
 
     # Mock send_media_group
-    mock_sent_messages = [MagicMock(message_id=201), MagicMock(message_id=202)]
-    mock_bot.send_media_group = AsyncMock(return_value=mock_sent_messages)
+    mock_bot.send_media_group.return_value = (sent_message(201), sent_message(202))
 
     # Create attachment registry
 

@@ -16,14 +16,13 @@ import uuid
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
-from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import select, update
 
 from family_assistant.config_models import AppConfig, ConversationThreadsConfig
-from family_assistant.interfaces import ChatInterface
+from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService
 from family_assistant.storage import delegation_runs_table, tasks_table
@@ -40,6 +39,7 @@ from family_assistant.utils.clock import SystemClock
 from family_assistant.web.thread_turns import WebThreadTurnRunner
 from tests.helpers import wait_for_condition
 from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, AsyncIterator
@@ -198,10 +198,10 @@ async def queued_thread(
     delegation_id, turn_id = await _create_thread_run(db, home, target_service)
     worker = TaskWorker(
         processing_service=api_test_processing_service,
-        chat_interface=MagicMock(spec=ChatInterface),
+        chat_interface=RecordingChatInterface(),
         calendar_config={},
         timezone=ZoneInfo("UTC"),
-        embedding_generator=MagicMock(),
+        embedding_generator=MockEmbeddingGenerator(),
         engine=db_engine,
         stream_hub=app_fixture.state.conversation_stream_hub,
         thread_turn_runner=WebThreadTurnRunner(app_fixture.state),

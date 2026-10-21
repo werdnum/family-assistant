@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from functools import partial
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.events.processor import EventProcessor
 from family_assistant.events.storage import EventStorage
+from family_assistant.plugins.home_assistant.client import create_home_assistant_client
 from family_assistant.plugins.home_assistant.events import HomeAssistantSource
 from family_assistant.storage import Database
 from family_assistant.storage.events import (
@@ -133,13 +134,12 @@ async def test_event_storage_sampling(db_engine: AsyncEngine) -> None:
 @pytest.mark.asyncio
 async def test_home_assistant_event_processing(db_engine: AsyncEngine) -> None:
     """A state change fired over the HA websocket is stored and queryable."""
-    mock_client = MagicMock()
-    mock_client.api_url = "http://localhost:8123/api"
-    mock_client.token = "test_token"
-    mock_client.verify_ssl = True
+    ha_client = create_home_assistant_client(
+        api_url="http://home-assistant.invalid:8123", token="test_token"
+    )
 
     processor = EventProcessor(
-        sources={"ha_test": HomeAssistantSource(client=mock_client)},
+        sources={"ha_test": HomeAssistantSource(client=ha_client)},
         sample_interval_hours=1.0,
         get_db_context_func=lambda: Database(db_engine),
         timezone=ZoneInfo("Australia/Sydney"),

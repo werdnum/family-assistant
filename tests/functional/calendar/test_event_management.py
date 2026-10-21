@@ -5,7 +5,6 @@ import re
 import uuid
 from datetime import date, datetime, timedelta
 from typing import Any, NamedTuple, cast
-from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
 import caldav
@@ -51,6 +50,7 @@ from tests.mocks.mock_llm import (
     RuleBasedMockLLMClient,
     get_last_message_text,
 )
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 logger = logging.getLogger(__name__)
 
@@ -329,7 +329,7 @@ async def test_modify_event(
     db_context = Database(engine=pg_vector_db_engine)
     result = await processing_service_for_add.handle_chat_interaction(
         db_context=db_context,
-        chat_interface=MagicMock(),  # Mock interface for this interaction
+        chat_interface=RecordingChatInterface(),
         interface_type="test_initial_add",  # Distinguish interface type
         conversation_id=f"{TEST_CHAT_ID}_initial_add",  # Distinguish conversation
         trigger_content_parts=[{"type": "text", "text": user_message_create_original}],
@@ -537,7 +537,7 @@ async def test_modify_event(
     db_context = Database(engine=pg_vector_db_engine)
     result = await processing_service.handle_chat_interaction(
         db_context=db_context,
-        chat_interface=MagicMock(),
+        chat_interface=RecordingChatInterface(),
         interface_type="test",
         conversation_id=TEST_CHAT_ID,
         trigger_content_parts=[{"type": "text", "text": user_message_modify}],
@@ -681,7 +681,7 @@ async def test_delete_event(
         calendar_config=test_calendar_config,
     )
     processing_service = ProcessingService(
-        llm_client=MagicMock(),  # Will be replaced
+        llm_client=RuleBasedMockLLMClient(rules=[]),
         tools_provider=composite_provider,
         context_providers=[],
         service_config=service_config,
@@ -708,7 +708,7 @@ async def test_delete_event(
     db_context = Database(engine=pg_vector_db_engine)
     result = await processing_service.handle_chat_interaction(
         db_context=db_context,
-        chat_interface=MagicMock(),
+        chat_interface=RecordingChatInterface(),
         interface_type="test",
         conversation_id=TEST_CHAT_ID,
         trigger_content_parts=[{"type": "text", "text": user_message_create_to_delete}],
@@ -795,7 +795,7 @@ async def test_delete_event(
     db_context = Database(engine=pg_vector_db_engine)
     result = await processing_service.handle_chat_interaction(
         db_context=db_context,
-        chat_interface=MagicMock(),
+        chat_interface=RecordingChatInterface(),
         interface_type="test",
         conversation_id=TEST_CHAT_ID,
         trigger_content_parts=[{"type": "text", "text": user_message_delete}],
@@ -894,7 +894,7 @@ async def test_search_events(
         calendar_config=test_calendar_config,
     )
     processing_service = ProcessingService(
-        llm_client=MagicMock(),  # Will be replaced for each phase
+        llm_client=RuleBasedMockLLMClient(rules=[]),
         tools_provider=composite_provider,
         context_providers=[],
         service_config=service_config,
@@ -954,7 +954,7 @@ async def test_search_events(
     db_context = Database(engine=pg_vector_db_engine)
     result = await processing_service.handle_chat_interaction(
         db_context=db_context,
-        chat_interface=MagicMock(),
+        chat_interface=RecordingChatInterface(),
         interface_type="test_search",
         conversation_id=f"{TEST_CHAT_ID}_add1",
         trigger_content_parts=[
@@ -1023,7 +1023,7 @@ async def test_search_events(
     db_context = Database(engine=pg_vector_db_engine)
     result = await processing_service.handle_chat_interaction(
         db_context=db_context,
-        chat_interface=MagicMock(),
+        chat_interface=RecordingChatInterface(),
         interface_type="test_search",
         conversation_id=f"{TEST_CHAT_ID}_add2",
         trigger_content_parts=[
@@ -1141,7 +1141,7 @@ async def test_search_events(
     db_context = Database(engine=pg_vector_db_engine)
     result = await processing_service.handle_chat_interaction(
         db_context=db_context,
-        chat_interface=MagicMock(),
+        chat_interface=RecordingChatInterface(),
         interface_type="test",
         conversation_id=TEST_CHAT_ID,
         trigger_content_parts=[{"type": "text", "text": user_message_search}],
@@ -1363,7 +1363,7 @@ async def test_similarity_based_search_finds_similar_events(
         calendar_config=test_calendar_config,
     )
     processing_service = ProcessingService(
-        llm_client=MagicMock(),  # Will be replaced
+        llm_client=RuleBasedMockLLMClient(rules=[]),
         tools_provider=composite_provider,
         context_providers=[],
         service_config=service_config,
@@ -1423,7 +1423,7 @@ async def test_similarity_based_search_finds_similar_events(
     db_context = Database(engine=pg_vector_db_engine)
     result = await processing_service.handle_chat_interaction(
         db_context=db_context,
-        chat_interface=MagicMock(),
+        chat_interface=RecordingChatInterface(),
         interface_type="test_similarity",
         conversation_id=f"{TEST_CHAT_ID}_similarity_add1",
         trigger_content_parts=[{"type": "text", "text": f"schedule {event1_summary}"}],
@@ -1485,7 +1485,7 @@ async def test_similarity_based_search_finds_similar_events(
     db_context = Database(engine=pg_vector_db_engine)
     result = await processing_service.handle_chat_interaction(
         db_context=db_context,
-        chat_interface=MagicMock(),
+        chat_interface=RecordingChatInterface(),
         interface_type="test_similarity",
         conversation_id=f"{TEST_CHAT_ID}_similarity_add2",
         trigger_content_parts=[{"type": "text", "text": f"schedule {event2_summary}"}],
@@ -1551,7 +1551,7 @@ async def test_similarity_based_search_finds_similar_events(
     db_context = Database(engine=pg_vector_db_engine)
     result = await processing_service.handle_chat_interaction(
         db_context=db_context,
-        chat_interface=MagicMock(),
+        chat_interface=RecordingChatInterface(),
         interface_type="test_similarity",
         conversation_id=f"{TEST_CHAT_ID}_similarity_add3",
         trigger_content_parts=[{"type": "text", "text": f"schedule {event3_summary}"}],

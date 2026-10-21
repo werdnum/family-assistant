@@ -4,7 +4,6 @@ Tests the complete flow: note creation -> automatic indexing -> vector search.
 """
 
 import asyncio
-from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -21,6 +20,8 @@ from family_assistant.storage.repositories.notes import NoteReadPolicy, NoteWrit
 from family_assistant.storage.vector import query_vectors
 from family_assistant.task_worker import TaskWorker
 from tests.helpers import wait_for_tasks_to_complete
+from tests.mocks.idle_processing_service import make_idle_processing_service
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 TEST_EMBEDDING_MODEL = "mock-notes-model"
 TEST_EMBEDDING_DIMENSION = 128
@@ -100,8 +101,8 @@ async def test_notes_indexing_e2e(pg_vector_db_engine: AsyncEngine) -> None:
     shutdown_event = asyncio.Event()
     new_task_event = asyncio.Event()
     worker = TaskWorker(
-        processing_service=MagicMock(),
-        chat_interface=MagicMock(),
+        processing_service=make_idle_processing_service(),
+        chat_interface=RecordingChatInterface(),
         calendar_config={},
         timezone=ZoneInfo("UTC"),
         embedding_generator=_TopicEmbeddingGenerator(),

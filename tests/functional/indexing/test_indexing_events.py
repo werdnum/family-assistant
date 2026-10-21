@@ -9,7 +9,6 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
-from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -35,6 +34,8 @@ from family_assistant.storage.vector import add_document
 from family_assistant.task_worker import TaskWorker
 from family_assistant.tools.types import ToolExecutionContext
 from tests.helpers import wait_for_condition
+from tests.mocks.idle_processing_service import make_idle_processing_service
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 if TYPE_CHECKING:
     from family_assistant.storage.types import ActionConfig
@@ -87,8 +88,8 @@ def _indexing_worker(
 ) -> TaskWorker:
     """A task worker wired for indexing, used to run claimed tasks to completion."""
     worker = TaskWorker(
-        processing_service=MagicMock(),
-        chat_interface=MagicMock(),
+        processing_service=make_idle_processing_service(),
+        chat_interface=RecordingChatInterface(),
         calendar_config={},
         timezone=ZoneInfo("UTC"),
         embedding_generator=embedding_generator,

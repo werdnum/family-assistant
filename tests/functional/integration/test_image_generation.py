@@ -2,16 +2,24 @@
 
 import io
 import os
+import uuid
 from dataclasses import dataclass
-from unittest.mock import AsyncMock, Mock
+from pathlib import Path
 
+import aiofiles
 import pytest
 from PIL import Image
 from pydantic import SecretStr
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import AppConfig
+from family_assistant.scripting.apis.attachments import ScriptAttachment
+from family_assistant.services.attachment_registry import AttachmentRegistry
+from family_assistant.storage.database import Database
 from family_assistant.tools.image_backends import (
     ImageGenerationBackend,
+    ImageReference,
+    ImageReferenceInputs,
     MockImageBackend,
 )
 from family_assistant.tools.image_generation import (
@@ -53,6 +61,54 @@ class StyleRecordingImageBackend(MockImageBackend):
     async def generate_image(self, prompt: str, style: str = "auto") -> bytes:
         self.generate_requests.append((prompt, style))
         return await super().generate_image(prompt, style)
+
+
+class TransformRecordingImageBackend(MockImageBackend):
+    """Mock backend that records the image references each transform receives."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.transform_inputs: list[ImageReferenceInputs] = []
+
+    async def transform_image(
+        self, image_bytes: ImageReferenceInputs, instruction: str
+    ) -> bytes:
+        self.transform_inputs.append(image_bytes)
+        return await super().transform_image(image_bytes, instruction)
+
+
+async def _stored_image_attachment(
+    db_engine: AsyncEngine, storage_root: Path, image_bytes: bytes
+) -> ScriptAttachment:
+    """Store ``image_bytes`` as a PNG attachment and wrap it the way scripts see it."""
+    db_context = Database(db_engine)
+    registry = AttachmentRegistry(
+        storage_path=str(storage_root), db_engine=db_engine, config=None
+    )
+    attachment_id = str(uuid.uuid4())
+    storage_dir = storage_root / attachment_id[:2]
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    storage_path = storage_dir / f"{attachment_id}.png"
+    async with aiofiles.open(storage_path, "wb") as f:
+        await f.write(image_bytes)
+    await registry.register_attachment(
+        db_context=db_context,
+        attachment_id=attachment_id,
+        source_type="user",
+        source_id="test_user",
+        mime_type="image/png",
+        description="Test image",
+        size=len(image_bytes),
+        storage_path=str(storage_path),
+        conversation_id="test_conversation",
+    )
+    metadata = await registry.get_attachment(
+        db_context, attachment_id, acting_user_id=None
+    )
+    assert metadata is not None
+    return ScriptAttachment(
+        metadata=metadata, registry=registry, db_context_getter=lambda: db_context
+    )
 
 
 class QuotaExhaustedImageBackend(MockImageBackend):
@@ -148,27 +204,21 @@ async def test_generate_image_no_api_key() -> None:
 
 
 @pytest.mark.asyncio
-async def test_transform_image_mock_mode() -> None:
+async def test_transform_image_mock_mode(
+    db_engine: AsyncEngine, tmp_path: Path
+) -> None:
     """Test image transformation in mock mode."""
 
-    # Create mock context with injected mock backend
-    mock_backend = MockImageBackend()
+    mock_backend = TransformRecordingImageBackend()
     mock_context = MockExecutionContext(backend=mock_backend)
 
-    # Create mock attachment with test image
-    mock_attachment = AsyncMock()
-    mock_attachment.get_id = Mock(return_value="test-attachment-id")
-    mock_attachment.get_description = Mock(return_value="Test image")
-    mock_attachment.get_mime_type = Mock(return_value="image/png")
-
-    # Generate test image content using mock backend
     test_image_bytes = await mock_backend.generate_image("original test image", "auto")
-    mock_attachment.get_content_async.return_value = test_image_bytes
+    attachment = await _stored_image_attachment(db_engine, tmp_path, test_image_bytes)
 
     # Test image transformation
     result = await transform_image_tool(
         mock_context,  # type: ignore[arg-type]
-        image=mock_attachment,
+        image=attachment,
         instruction="make it black and white",
     )
 
@@ -180,8 +230,14 @@ async def test_transform_image_mock_mode() -> None:
     assert result.attachments[0].content is not None
     assert len(result.attachments[0].content) > 1000
 
-    # Verify attachment was accessed
-    mock_attachment.get_content_async.assert_called_once()
+    # The stored attachment's content is what reached the backend
+    assert len(mock_backend.transform_inputs) == 1
+    transform_input = mock_backend.transform_inputs[0]
+    assert isinstance(transform_input, list)
+    [reference] = transform_input
+    assert isinstance(reference, ImageReference)
+    assert reference.content == test_image_bytes
+    assert reference.mime_type == "image/png"
 
 
 @pytest.mark.parametrize("style", ["auto", "photorealistic", "artistic"])

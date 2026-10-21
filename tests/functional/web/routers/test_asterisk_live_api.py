@@ -4,15 +4,21 @@ import asyncio
 import json
 import os
 from collections.abc import AsyncIterator, Generator
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from family_assistant.tools.infrastructure import ToolsProvider
 from family_assistant.web.app_creator import app
+from family_assistant.web.jwt_tokens import JWTTokenService
 from tests.helpers import wait_for_condition
+from tests.mocks.mock_tools_provider import MockToolsProvider
 
 
 def _read_call_trace(dump_dir: Path) -> list[dict[str, object]]:
@@ -21,49 +27,104 @@ def _read_call_trace(dump_dir: Path) -> list[dict[str, object]]:
     return [json.loads(line) for line in trace_paths[0].read_text().splitlines()]
 
 
+class _FakeLiveSession:
+    """A Gemini Live session that records what is sent and never replies."""
+
+    def __init__(self) -> None:
+        self.realtime_inputs: list[dict[str, object]] = []
+
+    async def send_realtime_input(self, **kwargs: object) -> None:
+        self.realtime_inputs.append(kwargs)
+
+    async def send_tool_response(self, **kwargs: object) -> None:
+        raise AssertionError(f"No tool call was made, got a response: {kwargs}")
+
+    async def receive(self) -> AsyncIterator[object]:
+        for _ in ():
+            yield
+
+
+class _FakeLive:
+    def __init__(self, session: _FakeLiveSession) -> None:
+        self._session = session
+        self.connect_calls: list[dict[str, object]] = []
+
+    @asynccontextmanager
+    async def connect(
+        self, *, model: str, config: object
+    ) -> AsyncIterator[_FakeLiveSession]:
+        self.connect_calls.append({"model": model, "config": config})
+        yield self._session
+
+
+@dataclass
+class _FakeAio:
+    live: _FakeLive
+
+
+@dataclass
+class _FakeGenaiClient:
+    aio: _FakeAio
+
+
+class FakeGenai:
+    """Stands in for ``google.genai.Client`` at the API boundary.
+
+    Records each client construction and Live connection, and hands every
+    connection the same session so a test can see the audio it forwarded.
+    """
+
+    def __init__(self) -> None:
+        self.session = _FakeLiveSession()
+        self.live = _FakeLive(self.session)
+        self.client_kwargs: list[dict[str, object]] = []
+
+    def client(self, **kwargs: object) -> _FakeGenaiClient:
+        self.client_kwargs.append(kwargs)
+        return _FakeGenaiClient(aio=_FakeAio(live=self.live))
+
+
 @pytest.fixture
 def mock_gemini_client(
     monkeypatch: pytest.MonkeyPatch,
-) -> Generator[tuple[MagicMock, MagicMock]]:
-    """Mock the google.genai.Client at the API boundary.
+) -> Generator[FakeGenai]:
+    """Replace google.genai.Client at the API boundary.
 
-    This fixture mocks the Google GenAI Client class, allowing us to test
-    the full dependency injection chain including:
+    This lets us test the full dependency injection chain including:
     - get_live_audio_client dependency (with WebSocket parameter injection)
     - GoogleGeminiLiveClient construction with api_key and model
     - genai.Client instantiation with correct parameters
     - client.aio.live.connect call
 
-    By mocking at the API client boundary rather than the dependency level,
-    we ensure our code is exercised up to the point of making API calls.
+    By replacing the API client rather than the dependency, we ensure our code
+    is exercised up to the point of making API calls.
     """
-    # Create the mock session that would be returned by client.aio.live.connect
-    mock_session = MagicMock()
-    mock_session.send = AsyncMock()
-    mock_session.send_realtime_input = AsyncMock()
-
-    async def empty_receive() -> AsyncIterator[None]:
-        # Empty async iterator - must have yield to be a generator
-        # Using standard pattern for empty async generators
-        for _ in []:
-            yield
-
-    mock_session.receive.return_value = empty_receive()
-
-    # Create the async context manager for connect
-    mock_connect_cm = AsyncMock()
-    mock_connect_cm.__aenter__.return_value = mock_session
-    mock_connect_cm.__aexit__.return_value = None
-
-    # Create the mock client
-    mock_client_instance = MagicMock()
-    mock_client_instance.aio.live.connect.return_value = mock_connect_cm
+    fake = FakeGenai()
 
     # Set GEMINI_API_KEY so the dependency doesn't fail
     monkeypatch.setenv("GEMINI_API_KEY", "test-api-key-for-testing")
 
-    with patch("google.genai.Client", return_value=mock_client_instance) as mock_client:
-        yield mock_client, mock_session
+    with patch("google.genai.Client", new=fake.client):
+        yield fake
+
+
+@dataclass
+class _ServiceConfig:
+    prompts: dict[str, str]
+
+
+class _MisconfiguredTelephoneService:
+    """A local profile whose live tool surface cannot be assembled."""
+
+    kind = "local"
+
+    def __init__(self) -> None:
+        self.service_config = _ServiceConfig(prompts={})
+        self.tools_provider = MockToolsProvider()
+
+    @property
+    def live_tools_provider(self) -> ToolsProvider:
+        raise ValueError("reserved tool name collision")
 
 
 @pytest.fixture
@@ -90,7 +151,7 @@ def asterisk_env_cleanup() -> Generator[None]:
 @pytest.mark.no_db
 @pytest.mark.asyncio
 async def test_asterisk_connection_flow(
-    mock_gemini_client: tuple[MagicMock, MagicMock],
+    mock_gemini_client: FakeGenai,
 ) -> None:
     """Test the basic flow of connecting from Asterisk.
 
@@ -101,7 +162,7 @@ async def test_asterisk_connection_flow(
     - genai.Client is instantiated with correct parameters
     - client.aio.live.connect is called with the model
     """
-    mock_client_class, mock_session = mock_gemini_client
+    fake_genai = mock_gemini_client
 
     with (
         TestClient(app) as client,
@@ -113,27 +174,28 @@ async def test_asterisk_connection_flow(
         )
 
         # Allow async loop to process message and connect to Gemini
-        await wait_for_condition(lambda: mock_client_class.called)
+        await wait_for_condition(lambda: bool(fake_genai.live.connect_calls))
 
         # Verify that genai.Client was instantiated with correct parameters
-        assert mock_client_class.called
-        call_kwargs = mock_client_class.call_args[1]
-        assert call_kwargs["api_key"] == "test-api-key-for-testing"
-        assert call_kwargs["http_options"] == {"api_version": "v1alpha"}
+        assert fake_genai.client_kwargs == [
+            {
+                "api_key": "test-api-key-for-testing",
+                "http_options": {"api_version": "v1alpha"},
+            }
+        ]
 
         # Verify that connect was called with a model
-        mock_client_instance = mock_client_class.return_value
-        assert mock_client_instance.aio.live.connect.called
+        assert fake_genai.live.connect_calls[0]["model"]
 
         # 2. Send Audio (Asterisk -> Server)
         audio_chunk = b"\x00" * 320
         websocket.send_bytes(audio_chunk)
 
         # Give time for async processing
-        await wait_for_condition(lambda: mock_session.send_realtime_input.called)
+        await wait_for_condition(lambda: bool(fake_genai.session.realtime_inputs))
 
         # Check that audio was forwarded to Gemini
-        assert mock_session.send_realtime_input.called
+        assert fake_genai.session.realtime_inputs
 
         # 3. Send HANGUP
         websocket.send_text("HANGUP")
@@ -148,10 +210,10 @@ async def test_asterisk_connection_flow(
 @pytest.mark.no_db
 @pytest.mark.asyncio
 async def test_asterisk_json_protocol(
-    mock_gemini_client: tuple[MagicMock, MagicMock],
+    mock_gemini_client: FakeGenai,
 ) -> None:
     """Test using JSON protocol for Asterisk control messages."""
-    mock_client_class, mock_session = mock_gemini_client
+    fake_genai = mock_gemini_client
 
     with (
         TestClient(app) as client,
@@ -166,17 +228,17 @@ async def test_asterisk_json_protocol(
         }
         websocket.send_text(json.dumps(start_event))
 
-        await wait_for_condition(lambda: mock_client_class.called)
-        assert mock_client_class.called
+        await wait_for_condition(lambda: bool(fake_genai.client_kwargs))
+        assert fake_genai.client_kwargs
 
         # Send Audio
         websocket.send_bytes(b"\x00" * 320)
 
         # Give time for async processing
-        await wait_for_condition(lambda: mock_session.send_realtime_input.called)
+        await wait_for_condition(lambda: bool(fake_genai.session.realtime_inputs))
 
         # Verify send called
-        assert mock_session.send_realtime_input.called
+        assert fake_genai.session.realtime_inputs
 
 
 # --- Authentication Tests ---
@@ -184,7 +246,7 @@ async def test_asterisk_json_protocol(
 
 @pytest.mark.no_db
 def test_asterisk_rejects_missing_token(
-    mock_gemini_client: tuple[MagicMock, MagicMock],
+    mock_gemini_client: FakeGenai,
     asterisk_env_cleanup: None,
 ) -> None:
     """Connection rejected when token is required but not provided."""
@@ -202,7 +264,7 @@ def test_asterisk_rejects_missing_token(
 
 @pytest.mark.no_db
 def test_asterisk_rejects_invalid_token(
-    mock_gemini_client: tuple[MagicMock, MagicMock],
+    mock_gemini_client: FakeGenai,
     asterisk_env_cleanup: None,
 ) -> None:
     """Connection rejected with wrong token."""
@@ -220,7 +282,7 @@ def test_asterisk_rejects_invalid_token(
 
 @pytest.mark.no_db
 def test_asterisk_requires_secret_when_jwt_edge_auth_is_enabled(
-    mock_gemini_client: tuple[MagicMock, MagicMock],
+    mock_gemini_client: FakeGenai,
     asterisk_env_cleanup: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -229,7 +291,7 @@ def test_asterisk_requires_secret_when_jwt_edge_auth_is_enabled(
         monkeypatch.setattr(
             app.state,
             "jwt_token_service",
-            MagicMock(enabled=True),
+            JWTTokenService(ec.generate_private_key(ec.SECP256R1()), "test-kid"),
             raising=False,
         )
         with (
@@ -243,7 +305,7 @@ def test_asterisk_requires_secret_when_jwt_edge_auth_is_enabled(
 
 @pytest.mark.no_db
 def test_asterisk_rejects_unauthorized_extension(
-    mock_gemini_client: tuple[MagicMock, MagicMock],
+    mock_gemini_client: FakeGenai,
     asterisk_env_cleanup: None,
 ) -> None:
     """Connection rejected when extension not in allow-list."""
@@ -263,11 +325,11 @@ def test_asterisk_rejects_unauthorized_extension(
 @pytest.mark.no_db
 @pytest.mark.asyncio
 async def test_asterisk_accepts_valid_token(
-    mock_gemini_client: tuple[MagicMock, MagicMock],
+    mock_gemini_client: FakeGenai,
     asterisk_env_cleanup: None,
 ) -> None:
     """Connection accepted with valid token."""
-    mock_client_class, _mock_session = mock_gemini_client
+    fake_genai = mock_gemini_client
     os.environ["ASTERISK_SECRET_TOKEN"] = "valid_token"
     # No extension allow-list = all extensions allowed
     os.environ.pop("ASTERISK_ALLOWED_EXTENSIONS", None)
@@ -278,18 +340,18 @@ async def test_asterisk_accepts_valid_token(
     ):
         # Send MEDIA_START to establish connection
         websocket.send_text("MEDIA_START format:slin16")
-        await wait_for_condition(lambda: mock_client_class.called)
-        assert mock_client_class.called
+        await wait_for_condition(lambda: bool(fake_genai.client_kwargs))
+        assert fake_genai.client_kwargs
 
 
 @pytest.mark.no_db
 @pytest.mark.asyncio
 async def test_asterisk_accepts_authorized_extension(
-    mock_gemini_client: tuple[MagicMock, MagicMock],
+    mock_gemini_client: FakeGenai,
     asterisk_env_cleanup: None,
 ) -> None:
     """Connection accepted when extension is in allow-list."""
-    mock_client_class, _mock_session = mock_gemini_client
+    fake_genai = mock_gemini_client
     os.environ["ASTERISK_SECRET_TOKEN"] = "test_token"
     os.environ["ASTERISK_ALLOWED_EXTENSIONS"] = "101,102,103"
 
@@ -300,18 +362,18 @@ async def test_asterisk_accepts_authorized_extension(
         ) as websocket,
     ):
         websocket.send_text("MEDIA_START format:slin16")
-        await wait_for_condition(lambda: mock_client_class.called)
-        assert mock_client_class.called
+        await wait_for_condition(lambda: bool(fake_genai.client_kwargs))
+        assert fake_genai.client_kwargs
 
 
 @pytest.mark.no_db
 @pytest.mark.asyncio
 async def test_asterisk_allows_all_when_no_auth_configured(
-    mock_gemini_client: tuple[MagicMock, MagicMock],
+    mock_gemini_client: FakeGenai,
     asterisk_env_cleanup: None,
 ) -> None:
     """Connection allowed when no authentication is configured (backward compatible)."""
-    mock_client_class, _mock_session = mock_gemini_client
+    fake_genai = mock_gemini_client
     # Clear all auth config
     os.environ.pop("ASTERISK_SECRET_TOKEN", None)
     os.environ.pop("ASTERISK_ALLOWED_EXTENSIONS", None)
@@ -321,20 +383,20 @@ async def test_asterisk_allows_all_when_no_auth_configured(
         client.websocket_connect("/api/asterisk/live") as websocket,
     ):
         websocket.send_text("MEDIA_START format:slin16")
-        await wait_for_condition(lambda: mock_client_class.called)
-        assert mock_client_class.called
+        await wait_for_condition(lambda: bool(fake_genai.client_kwargs))
+        assert fake_genai.client_kwargs
 
 
 @pytest.mark.no_db
 @pytest.mark.asyncio
 async def test_asterisk_passes_extension_and_channel_to_handler(
-    mock_gemini_client: tuple[MagicMock, MagicMock],
+    mock_gemini_client: FakeGenai,
     asterisk_env_cleanup: None,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     """The call trace identifies the caller and Asterisk channel."""
-    mock_client_class, _mock_session = mock_gemini_client
+    fake_genai = mock_gemini_client
     os.environ.pop("ASTERISK_SECRET_TOKEN", None)
     os.environ.pop("ASTERISK_ALLOWED_EXTENSIONS", None)
     monkeypatch.setenv("ASTERISK_LIVE_DUMP_DIR", str(tmp_path))
@@ -346,7 +408,7 @@ async def test_asterisk_passes_extension_and_channel_to_handler(
         ) as websocket,
     ):
         websocket.send_text("MEDIA_START format:slin16")
-        await wait_for_condition(lambda: mock_client_class.called)
+        await wait_for_condition(lambda: bool(fake_genai.client_kwargs))
 
     trace = await asyncio.to_thread(_read_call_trace, tmp_path)
     assert any(
@@ -360,8 +422,9 @@ async def test_asterisk_passes_extension_and_channel_to_handler(
 
 @pytest.mark.no_db
 def test_asterisk_rejects_call_when_profile_configuration_fails(
-    mock_gemini_client: tuple[MagicMock, MagicMock],
+    mock_gemini_client: FakeGenai,
     asterisk_env_cleanup: None,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A call must not be answered by an assistant that silently has no tools.
 
@@ -370,19 +433,11 @@ def test_asterisk_rejects_call_when_profile_configuration_fails(
     possibly no system prompt — with nothing to tell them or the operator that
     anything is wrong.
     """
-    telephone_service = MagicMock()
-    telephone_service.kind = "local"
-    telephone_service.service_config.prompts = {}
-
     with TestClient(app) as client:
         original_services = getattr(app.state, "processing_services", {})
-        app.state.processing_services = {"telephone": telephone_service}
+        app.state.processing_services = {"telephone": _MisconfiguredTelephoneService()}
         try:
             with (
-                patch(
-                    "family_assistant.web.routers.asterisk_live_api.resolve_live_tools",
-                    side_effect=ValueError("reserved tool name collision"),
-                ),
                 pytest.raises(WebSocketDisconnect) as exc_info,
                 client.websocket_connect("/api/asterisk/live"),
             ):
@@ -391,3 +446,4 @@ def test_asterisk_rejects_call_when_profile_configuration_fails(
             app.state.processing_services = original_services
 
     assert exc_info.value.code == 1011
+    assert "reserved tool name collision" in caplog.text

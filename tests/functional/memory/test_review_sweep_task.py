@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from datetime import timedelta
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -27,6 +26,8 @@ from family_assistant.memory.sweep import (
 from family_assistant.storage.database import Database
 from family_assistant.storage.tasks import TaskPriority
 from tests.helpers import wait_for_condition
+from tests.mocks.idle_processing_service import make_idle_processing_service
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 if TYPE_CHECKING:
     import asyncio
@@ -50,7 +51,8 @@ async def test_a_sweep_occurrence_enqueues_a_review(
     mock_clock: MockClock,
 ) -> None:
     worker, new_task_event, _ = task_worker_manager(
-        processing_service=MagicMock(), chat_interface=MagicMock()
+        processing_service=make_idle_processing_service(),
+        chat_interface=RecordingChatInterface(),
     )
     engine = worker.engine
     assert engine is not None

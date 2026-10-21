@@ -10,7 +10,6 @@ import asyncio
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -22,6 +21,8 @@ from family_assistant.storage.tasks import TaskPriority, tasks_table
 from family_assistant.task_worker import TaskWorker
 from family_assistant.tools.types import ToolExecutionContext
 from tests.helpers import wait_for_tasks_to_complete
+from tests.mocks.idle_processing_service import make_idle_processing_service
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 CHILD_TASK_TYPE = "priority_inheritance_child"
 
@@ -51,8 +52,8 @@ async def test_handler_context_carries_the_dequeued_rows_lane(
     """The worker is the one place a running task's lane becomes known."""
     db = Database(db_engine)
     worker, new_task_event, _shutdown_event = task_worker_manager(
-        processing_service=MagicMock(),
-        chat_interface=MagicMock(),
+        processing_service=make_idle_processing_service(),
+        chat_interface=RecordingChatInterface(),
     )
     seen: list[TaskPriority | None] = []
 
@@ -85,8 +86,8 @@ async def test_work_a_handler_enqueues_stays_in_its_lane(
     """A continuation inherits rather than re-deciding, so a chain cannot escape."""
     db = Database(db_engine)
     worker, new_task_event, _shutdown_event = task_worker_manager(
-        processing_service=MagicMock(),
-        chat_interface=MagicMock(),
+        processing_service=make_idle_processing_service(),
+        chat_interface=RecordingChatInterface(),
     )
 
     async def handler(
@@ -122,8 +123,8 @@ async def test_the_next_occurrence_of_a_recurring_task_keeps_its_lane(
     """Recurrence copies the row, so the lane comes with it."""
     db = Database(db_engine)
     worker, new_task_event, _shutdown_event = task_worker_manager(
-        processing_service=MagicMock(),
-        chat_interface=MagicMock(),
+        processing_service=make_idle_processing_service(),
+        chat_interface=RecordingChatInterface(),
     )
 
     async def handler(

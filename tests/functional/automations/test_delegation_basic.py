@@ -2,8 +2,8 @@ import json
 import logging
 import uuid
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -16,7 +16,6 @@ from family_assistant.assistant import (
 )
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.context_providers import KnownUsersContextProvider
-from family_assistant.interfaces import ChatInterface
 from family_assistant.llm import (
     ToolCallFunction,
     ToolCallItem,
@@ -44,7 +43,11 @@ from family_assistant.tools.policy import (
     ToolPolicyConfig,
     ToolPolicyDecision,
 )
-from family_assistant.tools.types import ConfirmationOutcome
+from family_assistant.tools.types import (
+    ConfirmationOutcome,
+    ToolArguments,
+    ToolExecutionContext,
+)
 from tests.mocks.mock_llm import (
     LLMOutput as MockLLMOutput,
 )
@@ -54,6 +57,7 @@ from tests.mocks.mock_llm import (
     get_last_message_text,
     last_real_message,
 )
+from tests.mocks.recording_chat_interface import ScriptedChatInterface
 
 logger = logging.getLogger(__name__)
 
@@ -329,9 +333,50 @@ def specialized_llm_mock() -> RuleBasedMockLLMClient:
     )
 
 
+@dataclass(frozen=True)
+class ConfirmationRequestCall:
+    conversation_id: str
+    tool_name: str
+    tool_args: ToolArguments
+    timeout_seconds: float
+
+
+class RecordingConfirmationCallback:
+    """Answers each confirmation request with ``outcome`` and records its arguments."""
+
+    def __init__(self) -> None:
+        self.outcome: ConfirmationOutcome | None = None
+        self.calls: list[ConfirmationRequestCall] = []
+
+    async def __call__(
+        self,
+        interface_type: str,
+        conversation_id: str,
+        turn_id: str | None,
+        tool_name: str,
+        call_id: str,
+        tool_args: ToolArguments,
+        timeout_seconds: float,
+        context: ToolExecutionContext,
+    ) -> ConfirmationOutcome:
+        _ = (interface_type, turn_id, call_id, context)
+        self.calls.append(
+            ConfirmationRequestCall(
+                conversation_id=conversation_id,
+                tool_name=tool_name,
+                tool_args=tool_args,
+                timeout_seconds=timeout_seconds,
+            )
+        )
+        assert self.outcome is not None, (
+            f"unexpected confirmation request for {tool_name}"
+        )
+        return self.outcome
+
+
 @pytest_asyncio.fixture
-async def mock_confirmation_callback() -> AsyncMock:
-    return AsyncMock(spec=Callable[..., Awaitable[ConfirmationOutcome]])
+async def confirmation_callback() -> RecordingConfirmationCallback:
+    return RecordingConfirmationCallback()
 
 
 def create_tools_provider(
@@ -486,7 +531,7 @@ async def test_delegation_unrestricted_target_no_forced_confirm(
     task_worker_manager: Callable[..., tuple[Any, Any, Any]],
     primary_processing_service_factory: PrimaryServiceFactory,
     specialized_processing_service: ProcessingService,
-    mock_confirmation_callback: AsyncMock,
+    confirmation_callback: RecordingConfirmationCallback,
     confirm_tool_arg: bool | None,
 ) -> None:
     """No policy rule gates delegating to the target and confirm_delegation is False or omitted: delegation runs without asking."""
@@ -503,7 +548,7 @@ async def test_delegation_unrestricted_target_no_forced_confirm(
     target_service.processing_services_registry = registry
     task_worker_manager(
         primary_service,
-        MagicMock(spec=ChatInterface),
+        ScriptedChatInterface(),
         register_delegation_handler=True,
     )
 
@@ -517,8 +562,8 @@ async def test_delegation_unrestricted_target_no_forced_confirm(
         trigger_content_parts=[{"type": "text", "text": user_query}],
         trigger_interface_message_id="msg1",
         user_name=TEST_USER_NAME,
-        chat_interface=MagicMock(spec=ChatInterface),
-        request_confirmation_callback=mock_confirmation_callback,
+        chat_interface=ScriptedChatInterface(),
+        request_confirmation_callback=confirmation_callback,
     )
     final_reply = result.text_reply
     error = result.error_traceback
@@ -527,7 +572,7 @@ async def test_delegation_unrestricted_target_no_forced_confirm(
     assert final_reply is not None
     assert f"Response from {SPECIALIZED_PROFILE_ID}" in final_reply
     assert DELEGATED_TASK_DESCRIPTION in final_reply
-    mock_confirmation_callback.assert_not_called()
+    assert confirmation_callback.calls == []
 
     # DB Assertions
     db_context = Database(engine=db_engine)
@@ -553,7 +598,7 @@ async def test_delegation_confirm_target_granted(
     task_worker_manager: Callable[..., tuple[Any, Any, Any]],
     primary_processing_service_factory: PrimaryServiceFactory,
     specialized_processing_service: ProcessingService,
-    mock_confirmation_callback: AsyncMock,
+    confirmation_callback: RecordingConfirmationCallback,
 ) -> None:
     """A confirm rule in the delegating profile's tools_policy asks the user even with confirm_delegation=False, waiting the profile's confirmation timeout, and delegates once approved."""
     primary_service = await primary_processing_service_factory(
@@ -561,7 +606,7 @@ async def test_delegation_confirm_target_granted(
         delegation_rule_policy(ToolPolicyDecision.CONFIRM, CONFIRM_DELEGATION_REASON),
     )
     target_service = specialized_processing_service
-    mock_confirmation_callback.return_value = ConfirmationOutcome(kind="approved")
+    confirmation_callback.outcome = ConfirmationOutcome(kind="approved")
 
     registry = {
         PRIMARY_PROFILE_ID: primary_service,
@@ -571,7 +616,7 @@ async def test_delegation_confirm_target_granted(
     target_service.processing_services_registry = registry
     task_worker_manager(
         primary_service,
-        MagicMock(spec=ChatInterface),
+        ScriptedChatInterface(),
         register_delegation_handler=True,
     )
 
@@ -585,8 +630,8 @@ async def test_delegation_confirm_target_granted(
         trigger_content_parts=[{"type": "text", "text": user_query}],
         trigger_interface_message_id="msg2",
         user_name=TEST_USER_NAME,
-        chat_interface=MagicMock(spec=ChatInterface),
-        request_confirmation_callback=mock_confirmation_callback,
+        chat_interface=ScriptedChatInterface(),
+        request_confirmation_callback=confirmation_callback,
     )
     final_reply = result.text_reply
     error = result.error_traceback
@@ -594,16 +639,16 @@ async def test_delegation_confirm_target_granted(
     assert error is None, f"Error during interaction: {error}"
     assert final_reply is not None
     assert f"Response from {SPECIALIZED_PROFILE_ID}" in final_reply
-    mock_confirmation_callback.assert_called_once()
-    call_kwargs = mock_confirmation_callback.call_args.kwargs
-    assert call_kwargs.get("tool_name") == "delegate_to_service"
-    assert call_kwargs.get("conversation_id") == str(TEST_CHAT_ID)
-    confirmed_tool_args = call_kwargs.get("tool_args", {})
+    assert len(confirmation_callback.calls) == 1
+    (confirmation_call,) = confirmation_callback.calls
+    assert confirmation_call.tool_name == "delegate_to_service"
+    assert confirmation_call.conversation_id == str(TEST_CHAT_ID)
+    confirmed_tool_args = confirmation_call.tool_args
     assert isinstance(confirmed_tool_args, dict)
     assert confirmed_tool_args.get("target_service_id") == SPECIALIZED_PROFILE_ID
     assert confirmed_tool_args.get("user_request") == DELEGATED_TASK_DESCRIPTION
     assert confirmed_tool_args.get("confirm_delegation") is False
-    assert call_kwargs.get("timeout_seconds") == CONFIRMATION_TIMEOUT_SECONDS
+    assert confirmation_call.timeout_seconds == CONFIRMATION_TIMEOUT_SECONDS
 
 
 @pytest.mark.asyncio
@@ -612,7 +657,7 @@ async def test_delegation_confirm_target_denied(
     primary_processing_service_factory: PrimaryServiceFactory,
     specialized_processing_service: ProcessingService,
     specialized_llm_mock: RuleBasedMockLLMClient,
-    mock_confirmation_callback: AsyncMock,
+    confirmation_callback: RecordingConfirmationCallback,
 ) -> None:
     """A confirm rule in the delegating profile's tools_policy asks the user, and a rejection cancels the delegation."""
     primary_service = await primary_processing_service_factory(
@@ -620,7 +665,7 @@ async def test_delegation_confirm_target_denied(
         delegation_rule_policy(ToolPolicyDecision.CONFIRM, CONFIRM_DELEGATION_REASON),
     )
     target_service = specialized_processing_service
-    mock_confirmation_callback.return_value = ConfirmationOutcome(kind="rejected")
+    confirmation_callback.outcome = ConfirmationOutcome(kind="rejected")
 
     registry = {
         PRIMARY_PROFILE_ID: primary_service,
@@ -639,8 +684,8 @@ async def test_delegation_confirm_target_denied(
         trigger_content_parts=[{"type": "text", "text": user_query}],
         trigger_interface_message_id="msg3",
         user_name=TEST_USER_NAME,
-        chat_interface=MagicMock(spec=ChatInterface),
-        request_confirmation_callback=mock_confirmation_callback,
+        chat_interface=ScriptedChatInterface(),
+        request_confirmation_callback=confirmation_callback,
     )
     final_reply = result.text_reply
     error = result.error_traceback
@@ -651,7 +696,7 @@ async def test_delegation_confirm_target_denied(
     assert "delegate_to_service" in final_reply.lower()
     assert f"Response from {SPECIALIZED_PROFILE_ID}" not in final_reply
     assert specialized_llm_mock.get_calls() == []
-    mock_confirmation_callback.assert_called_once()
+    assert len(confirmation_callback.calls) == 1
 
 
 @pytest.mark.asyncio
@@ -660,7 +705,7 @@ async def test_delegation_blocked_target(
     primary_processing_service_factory: PrimaryServiceFactory,
     specialized_processing_service: ProcessingService,
     specialized_llm_mock: RuleBasedMockLLMClient,
-    mock_confirmation_callback: AsyncMock,
+    confirmation_callback: RecordingConfirmationCallback,
 ) -> None:
     """A deny rule in the delegating profile's tools_policy refuses the delegation without asking the user."""
     primary_service = await primary_processing_service_factory(
@@ -686,8 +731,8 @@ async def test_delegation_blocked_target(
         trigger_content_parts=[{"type": "text", "text": user_query}],
         trigger_interface_message_id="msg4",
         user_name=TEST_USER_NAME,
-        chat_interface=MagicMock(spec=ChatInterface),
-        request_confirmation_callback=mock_confirmation_callback,
+        chat_interface=ScriptedChatInterface(),
+        request_confirmation_callback=confirmation_callback,
     )
     final_reply = result.text_reply
     error = result.error_traceback
@@ -698,7 +743,7 @@ async def test_delegation_blocked_target(
     assert "delegate_to_service" in final_reply.lower()
     assert f"Response from {SPECIALIZED_PROFILE_ID}" not in final_reply
     assert specialized_llm_mock.get_calls() == []
-    mock_confirmation_callback.assert_not_called()
+    assert confirmation_callback.calls == []
 
 
 @pytest.mark.asyncio
@@ -707,14 +752,14 @@ async def test_delegation_unrestricted_confirm_arg_granted(
     task_worker_manager: Callable[..., tuple[Any, Any, Any]],
     primary_processing_service_factory: PrimaryServiceFactory,
     specialized_processing_service: ProcessingService,
-    mock_confirmation_callback: AsyncMock,
+    confirmation_callback: RecordingConfirmationCallback,
 ) -> None:
     """No policy rule gates delegating to the target, but confirm_delegation=True asks the user, waiting the profile's confirmation timeout, and delegates once approved."""
     primary_service = await primary_processing_service_factory(
         True, allow_all_tools_policy()
     )
     target_service = specialized_processing_service
-    mock_confirmation_callback.return_value = ConfirmationOutcome(kind="approved")
+    confirmation_callback.outcome = ConfirmationOutcome(kind="approved")
 
     registry = {
         PRIMARY_PROFILE_ID: primary_service,
@@ -724,7 +769,7 @@ async def test_delegation_unrestricted_confirm_arg_granted(
     target_service.processing_services_registry = registry
     task_worker_manager(
         primary_service,
-        MagicMock(spec=ChatInterface),
+        ScriptedChatInterface(),
         register_delegation_handler=True,
     )
 
@@ -738,8 +783,8 @@ async def test_delegation_unrestricted_confirm_arg_granted(
         trigger_content_parts=[{"type": "text", "text": user_query}],
         trigger_interface_message_id="msg5",
         user_name=TEST_USER_NAME,
-        chat_interface=MagicMock(spec=ChatInterface),
-        request_confirmation_callback=mock_confirmation_callback,
+        chat_interface=ScriptedChatInterface(),
+        request_confirmation_callback=confirmation_callback,
     )
     final_reply = result.text_reply
     error = result.error_traceback
@@ -747,9 +792,9 @@ async def test_delegation_unrestricted_confirm_arg_granted(
     assert error is None, f"Error during interaction: {error}"
     assert final_reply is not None
     assert f"Response from {SPECIALIZED_PROFILE_ID}" in final_reply
-    mock_confirmation_callback.assert_called_once()
-    call_kwargs = mock_confirmation_callback.call_args.kwargs
-    confirmed_tool_args = call_kwargs.get("tool_args", {})
+    assert len(confirmation_callback.calls) == 1
+    (confirmation_call,) = confirmation_callback.calls
+    confirmed_tool_args = confirmation_call.tool_args
     assert isinstance(confirmed_tool_args, dict)
     assert confirmed_tool_args.get("confirm_delegation") is True
-    assert call_kwargs.get("timeout_seconds") == CONFIRMATION_TIMEOUT_SECONDS
+    assert confirmation_call.timeout_seconds == CONFIRMATION_TIMEOUT_SECONDS

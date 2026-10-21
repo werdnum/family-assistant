@@ -1,13 +1,18 @@
 """Test Home Assistant camera snapshot tool."""
 
+import contextlib
 import io
 import json
 import uuid
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestServer
+from homeassistant_api.models.states import State
 from PIL import Image
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -31,10 +36,11 @@ from family_assistant.tools.infrastructure import (
     LocalToolsProvider,
 )
 from family_assistant.tools.mcp import MCPToolsProvider
-
-if TYPE_CHECKING:
-    from family_assistant.llm import LLMInterface
-
+from tests.mocks.home_assistant_client import (
+    HA_TEST_TOKEN,
+    SpeccedHomeAssistant,
+    make_home_assistant_client,
+)
 from tests.mocks.mock_llm import (
     LLMOutput as MockLLMOutput,
 )
@@ -43,6 +49,10 @@ from tests.mocks.mock_llm import (
     RuleBasedMockLLMClient,
     get_last_message_text,
 )
+from tests.mocks.recording_chat_interface import RecordingChatInterface
+
+if TYPE_CHECKING:
+    from family_assistant.llm import LLMInterface
 
 TEST_CHAT_ID = "ha_camera_test_123"
 TEST_USER_NAME = "HACameraTestUser"
@@ -83,6 +93,49 @@ def create_test_image(format_name: str, size: tuple[int, int] = (10, 10)) -> byt
         image.save(buffer, format=format_name)
 
     return buffer.getvalue()
+
+
+@contextlib.asynccontextmanager
+async def home_assistant_serving_snapshots(
+    snapshots: dict[str, bytes],
+) -> AsyncIterator[SpeccedHomeAssistant]:
+    """A Home Assistant client whose camera proxy endpoint is a local HTTP server.
+
+    The server answers ``/api/camera_proxy/<entity_id>`` with the given image
+    bytes, and with 404 for any camera it was not given.
+    """
+
+    async def camera_proxy(request: web.Request) -> web.Response:
+        if request.headers.get("Authorization") != f"Bearer {HA_TEST_TOKEN}":
+            raise web.HTTPUnauthorized
+        entity_id = request.match_info["entity_id"]
+        if entity_id not in snapshots:
+            raise web.HTTPNotFound(reason="Camera not found")
+        return web.Response(body=snapshots[entity_id], content_type="image/jpeg")
+
+    app = web.Application()
+    app.router.add_get("/api/camera_proxy/{entity_id}", camera_proxy)
+    server = TestServer(app)
+    await server.start_server()
+    try:
+        yield make_home_assistant_client(
+            api_url=str(server.make_url("/")).rstrip("/"), token=HA_TEST_TOKEN
+        )
+    finally:
+        await server.close()
+
+
+def camera_state(entity_id: str, friendly_name: str | None) -> State:
+    """A Home Assistant entity state as the states endpoint returns it."""
+    now = datetime.now(UTC)
+    return State(
+        entity_id=entity_id,
+        state="idle",
+        attributes={} if friendly_name is None else {"friendly_name": friendly_name},
+        last_changed=now,
+        last_updated=now,
+        context=None,
+    )
 
 
 async def create_processing_service_for_camera_tests(
@@ -146,10 +199,7 @@ async def test_get_camera_snapshot_success(
     """
     camera_entity_id = "camera.front_door"
 
-    # Create mock Home Assistant client wrapper
-    mock_ha_client = MagicMock()
     test_jpeg_data = create_test_image("JPEG")
-    mock_ha_client.async_get_camera_snapshot = AsyncMock(return_value=test_jpeg_data)
 
     tool_call_id = f"call_camera_snapshot_{uuid.uuid4()}"
 
@@ -225,23 +275,24 @@ async def test_get_camera_snapshot_success(
         llm_client, "test_ha_camera_profile"
     )
 
-    # Inject the mock HA client
-    processing_service.plugins = ProfilePlugins((
-        HomeAssistantInstance(mock_ha_client),
-    ))
-
     # --- Simulate User Interaction ---
     user_message = "Can you get a snapshot from the front door camera?"
     db_context = Database(engine=db_engine)
-    result = await processing_service.handle_chat_interaction(
-        db_context=db_context,
-        chat_interface=MagicMock(),
-        interface_type="test",
-        conversation_id=TEST_CHAT_ID,
-        trigger_content_parts=[{"type": "text", "text": user_message}],
-        trigger_interface_message_id="msg_ha_camera_test",
-        user_name=TEST_USER_NAME,
-    )
+    async with home_assistant_serving_snapshots({
+        camera_entity_id: test_jpeg_data
+    }) as home_assistant:
+        processing_service.plugins = ProfilePlugins((
+            HomeAssistantInstance(home_assistant.wrapper),
+        ))
+        result = await processing_service.handle_chat_interaction(
+            db_context=db_context,
+            chat_interface=RecordingChatInterface(),
+            interface_type="test",
+            conversation_id=TEST_CHAT_ID,
+            trigger_content_parts=[{"type": "text", "text": user_message}],
+            trigger_interface_message_id="msg_ha_camera_test",
+            user_name=TEST_USER_NAME,
+        )
     final_reply = result.text_reply
     error = result.error_traceback
 
@@ -258,29 +309,13 @@ async def test_get_camera_snapshot_list_cameras(
     """
     Test listing available cameras when no entity_id is provided.
     """
-    # Create mock Home Assistant client
-    mock_ha_client = MagicMock()
-
-    # Mock state objects
-    mock_camera_states = [
-        MagicMock(
-            entity_id="camera.front_door",
-            attributes={"friendly_name": "Front Door Camera"},
-        ),
-        MagicMock(
-            entity_id="camera.backyard", attributes={"friendly_name": "Backyard Camera"}
-        ),
-        MagicMock(
-            entity_id="camera.driveway",
-            attributes={},  # No friendly name
-        ),
-        MagicMock(
-            entity_id="sensor.temperature",  # Non-camera entity
-            attributes={"friendly_name": "Temperature Sensor"},
-        ),
-    ]
-
-    mock_ha_client.async_get_states = AsyncMock(return_value=mock_camera_states)
+    home_assistant = make_home_assistant_client()
+    home_assistant.api.async_get_states.return_value = (
+        camera_state("camera.front_door", "Front Door Camera"),
+        camera_state("camera.backyard", "Backyard Camera"),
+        camera_state("camera.driveway", None),
+        camera_state("sensor.temperature", "Temperature Sensor"),
+    )
 
     tool_call_id = f"call_list_cameras_{uuid.uuid4()}"
 
@@ -352,9 +387,8 @@ async def test_get_camera_snapshot_list_cameras(
         llm_client, "test_ha_list_cameras_profile"
     )
 
-    # Inject the mock HA client
     processing_service.plugins = ProfilePlugins((
-        HomeAssistantInstance(mock_ha_client),
+        HomeAssistantInstance(home_assistant.wrapper),
     ))
 
     # --- Simulate User Interaction ---
@@ -362,7 +396,7 @@ async def test_get_camera_snapshot_list_cameras(
     db_context = Database(engine=db_engine)
     result = await processing_service.handle_chat_interaction(
         db_context=db_context,
-        chat_interface=MagicMock(),
+        chat_interface=RecordingChatInterface(),
         interface_type="test",
         conversation_id=TEST_CHAT_ID,
         trigger_content_parts=[{"type": "text", "text": user_message}],
@@ -447,7 +481,7 @@ async def test_get_camera_snapshot_no_client(
     db_context = Database(engine=db_engine)
     result = await processing_service.handle_chat_interaction(
         db_context=db_context,
-        chat_interface=MagicMock(),
+        chat_interface=RecordingChatInterface(),
         interface_type="test",
         conversation_id=TEST_CHAT_ID,
         trigger_content_parts=[{"type": "text", "text": user_message}],
@@ -470,12 +504,6 @@ async def test_get_camera_snapshot_api_error(
     """
     Test handling of Home Assistant API errors.
     """
-    # Create mock Home Assistant client wrapper that raises an error
-    mock_ha_client = MagicMock()
-    mock_ha_client.async_get_camera_snapshot = AsyncMock(
-        side_effect=Exception("Camera not found")
-    )
-
     tool_call_id = f"call_camera_error_{uuid.uuid4()}"
 
     # --- LLM Rules ---
@@ -529,23 +557,22 @@ async def test_get_camera_snapshot_api_error(
         llm_client, "test_ha_camera_api_error_profile"
     )
 
-    # Inject the mock HA client
-    processing_service.plugins = ProfilePlugins((
-        HomeAssistantInstance(mock_ha_client),
-    ))
-
     # --- Simulate User Interaction ---
     user_message = "Check the broken camera"
     db_context = Database(engine=db_engine)
-    result = await processing_service.handle_chat_interaction(
-        db_context=db_context,
-        chat_interface=MagicMock(),
-        interface_type="test",
-        conversation_id=TEST_CHAT_ID,
-        trigger_content_parts=[{"type": "text", "text": user_message}],
-        trigger_interface_message_id="msg_ha_camera_api_error_test",
-        user_name=TEST_USER_NAME,
-    )
+    async with home_assistant_serving_snapshots({}) as home_assistant:
+        processing_service.plugins = ProfilePlugins((
+            HomeAssistantInstance(home_assistant.wrapper),
+        ))
+        result = await processing_service.handle_chat_interaction(
+            db_context=db_context,
+            chat_interface=RecordingChatInterface(),
+            interface_type="test",
+            conversation_id=TEST_CHAT_ID,
+            trigger_content_parts=[{"type": "text", "text": user_message}],
+            trigger_interface_message_id="msg_ha_camera_api_error_test",
+            user_name=TEST_USER_NAME,
+        )
     final_reply = result.text_reply
     error = result.error_traceback
 

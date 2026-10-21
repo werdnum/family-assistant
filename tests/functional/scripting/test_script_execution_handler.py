@@ -6,7 +6,6 @@ import asyncio
 import logging
 import uuid
 from collections.abc import Callable
-from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -15,7 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.events.processor import EventProcessor
-from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.security.note_provenance import NoteProvenanceStamp
 from family_assistant.storage.database import Database
@@ -34,6 +32,7 @@ from family_assistant.tools.stored_scripts import save_script_tool
 from family_assistant.tools.types import ToolExecutionContext
 from tests.helpers import wait_for_tasks_to_complete
 from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +114,7 @@ add_or_update_note(
     # Start task worker using the fixture
     worker, new_task_event, shutdown_event = task_worker_manager(
         processing_service,
-        AsyncMock(spec=ChatInterface),
+        RecordingChatInterface(),
     )
     worker.register_task_handler("script_execution", handle_script_execution)
 
@@ -255,7 +254,7 @@ async def test_script_execution_by_stored_name(
 
     worker, new_task_event, _shutdown_event = task_worker_manager(
         processing_service,
-        AsyncMock(spec=ChatInterface),
+        RecordingChatInterface(),
     )
     worker.register_task_handler("script_execution", handle_script_execution)
 
@@ -349,7 +348,7 @@ async def test_script_with_syntax_error_creates_no_note(
     # Start task worker using the fixture
     worker, new_task_event, shutdown_event = task_worker_manager(
         processing_service,
-        AsyncMock(spec=ChatInterface),
+        RecordingChatInterface(),
     )
     worker.register_task_handler("script_execution", handle_script_execution)
 
@@ -461,7 +460,7 @@ add_or_update_note(
     # Start task worker using the fixture
     worker, new_task_event, shutdown_event = task_worker_manager(
         processing_service,
-        AsyncMock(spec=ChatInterface),
+        RecordingChatInterface(),
     )
     worker.register_task_handler("script_execution", handle_script_execution)
 
@@ -599,7 +598,7 @@ add_or_update_note(
 
     worker, new_task_event, shutdown_event = task_worker_manager(
         processing_service,
-        AsyncMock(spec=ChatInterface),
+        RecordingChatInterface(),
     )
     worker.register_task_handler("script_execution", handle_script_execution)
 

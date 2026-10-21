@@ -6,13 +6,14 @@ import json
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import pytest
 from pydantic import SecretStr
 
 from family_assistant.config_models import AppConfig, KeychuteConfig
+from family_assistant.llm.factory import LLMClientFactory
 from family_assistant.llm.messages import AssistantMessage, ToolMessage
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.security.note_provenance import NoteProvenanceStamp
@@ -29,10 +30,14 @@ from family_assistant.tools.metadata import (
 )
 from family_assistant.tools.script_testing import test_script_with_simulated_tools_tool
 from family_assistant.tools.types import ToolExecutionContext, ToolResult
+from tests.mocks.idle_processing_service import make_idle_processing_service
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
     from sqlalchemy.ext.asyncio import AsyncEngine
+
+    from family_assistant.scripting.apis.keychute import KeychuteHttpResponse
 
 
 class FakeStructuredClient:
@@ -78,11 +83,13 @@ def _build_exec_context(
     conversation_id: str,
     user_id: str,
     subconversation_id: str | None = None,
-    chat_interface: AsyncMock | None = None,
+    chat_interface: RecordingChatInterface | None = None,
+    app_config: AppConfig | None = None,
 ) -> ToolExecutionContext:
     """Create a tool execution context with a real tools provider."""
-    processing_service = Mock()
-    processing_service.tools_provider = tools_provider
+    processing_service = make_idle_processing_service(
+        tools_provider=tools_provider, app_config=app_config
+    )
 
     typed_chat_interface = cast("Any", chat_interface)
     chat_interfaces = (
@@ -205,7 +212,7 @@ async def test_script_testing_simulates_actions_and_keeps_reads_real(
         "add_or_update_note",
         "send_message_to_user",
     )
-    chat_interface = AsyncMock()
+    chat_interface = RecordingChatInterface()
     exec_context = _build_exec_context(
         db=db,
         tools_provider=tools_provider,
@@ -224,8 +231,10 @@ async def test_script_testing_simulates_actions_and_keeps_reads_real(
         )
     )
 
-    with patch(
-        "family_assistant.llm.one_shot.LLMClientFactory.create_client",
+    with patch.object(
+        LLMClientFactory,
+        "create_client",
+        autospec=True,
         return_value=fake_client,
     ):
         result = await test_script_with_simulated_tools_tool(
@@ -265,7 +274,7 @@ notified = send_message_to_user(
         read_policy=NoteReadPolicy.UNRESTRICTED,
     )
     assert created_note is None
-    assert chat_interface.mock_calls == []
+    assert chat_interface.sent == []
 
     assert [entry["mode"] for entry in transcript] == [
         "passthrough",
@@ -298,7 +307,7 @@ async def test_script_testing_uses_same_conversation_history_examples(
     )
 
     tools_provider = _build_tools_provider("send_message_to_user")
-    chat_interface = AsyncMock()
+    chat_interface = RecordingChatInterface()
     exec_context = _build_exec_context(
         db=db,
         tools_provider=tools_provider,
@@ -320,8 +329,10 @@ async def test_script_testing_uses_same_conversation_history_examples(
 
     fake_client = FakeStructuredClient(handler)
 
-    with patch(
-        "family_assistant.llm.one_shot.LLMClientFactory.create_client",
+    with patch.object(
+        LLMClientFactory,
+        "create_client",
+        autospec=True,
         return_value=fake_client,
     ):
         result = await test_script_with_simulated_tools_tool(
@@ -339,7 +350,7 @@ send_message_to_user(
     transcript = result.data["transcript"]
     assert transcript[0]["mode"] == "simulated"
     assert transcript[0]["historical_examples_used"] == 1
-    assert chat_interface.mock_calls == []
+    assert chat_interface.sent == []
 
 
 @pytest.mark.asyncio
@@ -382,8 +393,10 @@ async def test_script_testing_falls_back_to_same_user_history(
 
     fake_client = FakeStructuredClient(handler)
 
-    with patch(
-        "family_assistant.llm.one_shot.LLMClientFactory.create_client",
+    with patch.object(
+        LLMClientFactory,
+        "create_client",
+        autospec=True,
         return_value=fake_client,
     ):
         result = await test_script_with_simulated_tools_tool(
@@ -447,8 +460,10 @@ async def test_script_testing_does_not_fall_back_across_users(
 
     fake_client = FakeStructuredClient(handler)
 
-    with patch(
-        "family_assistant.llm.one_shot.LLMClientFactory.create_client",
+    with patch.object(
+        LLMClientFactory,
+        "create_client",
+        autospec=True,
         return_value=fake_client,
     ):
         result = await test_script_with_simulated_tools_tool(
@@ -508,8 +523,10 @@ async def test_script_testing_same_user_fallback_stays_on_same_interface(
 
     fake_client = FakeStructuredClient(handler)
 
-    with patch(
-        "family_assistant.llm.one_shot.LLMClientFactory.create_client",
+    with patch.object(
+        LLMClientFactory,
+        "create_client",
+        autospec=True,
         return_value=fake_client,
     ):
         result = await test_script_with_simulated_tools_tool(
@@ -578,8 +595,10 @@ async def test_script_testing_keeps_subconversation_history_isolated(
 
     fake_client = FakeStructuredClient(handler)
 
-    with patch(
-        "family_assistant.llm.one_shot.LLMClientFactory.create_client",
+    with patch.object(
+        LLMClientFactory,
+        "create_client",
+        autospec=True,
         return_value=fake_client,
     ):
         result = await test_script_with_simulated_tools_tool(
@@ -641,8 +660,10 @@ async def test_script_testing_rejects_null_simulated_results(
         lambda prompt, response_model: response_model(return_value_json="null")
     )
 
-    with patch(
-        "family_assistant.llm.one_shot.LLMClientFactory.create_client",
+    with patch.object(
+        LLMClientFactory,
+        "create_client",
+        autospec=True,
         return_value=fake_client,
     ):
         result = await test_script_with_simulated_tools_tool(
@@ -775,8 +796,10 @@ async def test_script_testing_serializes_non_json_passthrough_results_in_simulat
         )
 
     fake_client = FakeStructuredClient(handler)
-    with patch(
-        "family_assistant.llm.one_shot.LLMClientFactory.create_client",
+    with patch.object(
+        LLMClientFactory,
+        "create_client",
+        autospec=True,
         return_value=fake_client,
     ):
         result = await test_script_with_simulated_tools_tool(
@@ -887,16 +910,20 @@ async def test_script_testing_does_not_expose_keychute(
         tools_provider=tools_provider,
         conversation_id="conv-keychute-simulation",
         user_id="user-1",
+        app_config=AppConfig(
+            keychute_config=KeychuteConfig(
+                enabled=True,
+                url="https://keychute.test",
+                token=SecretStr("client-token"),
+            )
+        ),
     )
-    assert exec_context.processing_service is not None
-    exec_context.processing_service.app_config = AppConfig(
-        keychute_config=KeychuteConfig(
-            enabled=True,
-            url="https://keychute.test",
-            token=SecretStr("client-token"),
-        )
-    )
-    request = AsyncMock(side_effect=AssertionError("real Keychute call attempted"))
+    attempted_requests: list[tuple[object, ...]] = []
+
+    async def request(*args: object, **_kwargs: object) -> KeychuteHttpResponse:
+        attempted_requests.append(args)
+        raise AssertionError("real Keychute call attempted")
+
     monkeypatch.setattr(
         "family_assistant.scripting.apis.keychute.KeychuteScriptHttpClient.request",
         request,
@@ -912,7 +939,7 @@ async def test_script_testing_does_not_expose_keychute(
     assert result.data["status"] == "error"
     assert result.data["transcript"] == []
     assert "keychute_http_request" in result.data["error"]
-    request.assert_not_awaited()
+    assert attempted_requests == []
 
 
 @pytest.mark.asyncio

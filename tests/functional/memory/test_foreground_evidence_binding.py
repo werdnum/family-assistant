@@ -16,7 +16,6 @@ from __future__ import annotations
 import json
 import uuid
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -45,6 +44,7 @@ from tests.functional.memory.curator_harness import (
     review_limits,
 )
 from tests.mocks.mock_llm import MatcherArgs, RuleBasedMockLLMClient
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -146,7 +146,7 @@ async def _say(
 ) -> None:
     result = await service.handle_chat_interaction(
         db_context=Database(engine=engine),
-        chat_interface=MagicMock(),
+        chat_interface=RecordingChatInterface(),
         interface_type="web",
         conversation_id=CONVERSATION,
         trigger_content_parts=[text_content(said)],

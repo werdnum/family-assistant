@@ -11,9 +11,8 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
-from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -24,7 +23,6 @@ from family_assistant.assistant import (
 )
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.context_providers import KnownUsersContextProvider
-from family_assistant.interfaces import ChatInterface
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.processing.types import DelegationSecurityLevel
@@ -44,7 +42,11 @@ from family_assistant.tools.policy import (
     ToolPolicyConfig,
     ToolPolicyDecision,
 )
-from family_assistant.tools.types import ConfirmationOutcome
+from family_assistant.tools.types import (
+    ConfirmationOutcome,
+    ToolArguments,
+    ToolExecutionContext,
+)
 from tests.mocks.mock_llm import (
     LLMOutput as MockLLMOutput,
 )
@@ -53,8 +55,11 @@ from tests.mocks.mock_llm import (
     RuleBasedMockLLMClient,
     last_real_message,
 )
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from sqlalchemy.ext.asyncio import AsyncEngine
 
 logger = logging.getLogger(__name__)
@@ -166,18 +171,53 @@ def _make_service_config(profile_id: str) -> ProcessingServiceConfig:
     )
 
 
+@dataclass(frozen=True)
+class ConfirmationRequestCall:
+    tool_name: str
+    tool_args: ToolArguments
+
+
+class ApprovingConfirmationCallback:
+    """Approves every confirmation request and records what it was asked."""
+
+    def __init__(self) -> None:
+        self.calls: list[ConfirmationRequestCall] = []
+
+    async def __call__(
+        self,
+        interface_type: str,
+        conversation_id: str,
+        turn_id: str | None,
+        tool_name: str,
+        call_id: str,
+        tool_args: ToolArguments,
+        timeout_seconds: float,
+        context: ToolExecutionContext,
+    ) -> ConfirmationOutcome:
+        _ = (
+            interface_type,
+            conversation_id,
+            turn_id,
+            call_id,
+            timeout_seconds,
+            context,
+        )
+        self.calls.append(
+            ConfirmationRequestCall(tool_name=tool_name, tool_args=tool_args)
+        )
+        return ConfirmationOutcome(kind="approved")
+
+
 @pytest_asyncio.fixture
-async def mock_confirmation_callback() -> AsyncMock:
-    callback = AsyncMock(spec=Callable[..., Awaitable[ConfirmationOutcome]])
-    callback.return_value = ConfirmationOutcome(kind="approved")
-    return callback
+async def confirmation_callback() -> ApprovingConfirmationCallback:
+    return ApprovingConfirmationCallback()
 
 
 @pytest.mark.asyncio
 async def test_self_delegation_succeeds_without_confirmation(
     db_engine: AsyncEngine,
     task_worker_manager: Callable[..., tuple[Any, Any, Any]],
-    mock_confirmation_callback: AsyncMock,
+    confirmation_callback: ApprovingConfirmationCallback,
 ) -> None:
     """When a profile delegates to itself, no confirmation is required."""
     config = _make_service_config(PROFILE_ID)
@@ -244,7 +284,7 @@ async def test_self_delegation_succeeds_without_confirmation(
     target_service.processing_services_registry = registry
     task_worker_manager(
         primary_service,
-        MagicMock(spec=ChatInterface),
+        RecordingChatInterface(),
         register_delegation_handler=True,
     )
 
@@ -256,21 +296,21 @@ async def test_self_delegation_succeeds_without_confirmation(
         trigger_content_parts=[{"type": "text", "text": "Please delegate this."}],
         trigger_interface_message_id="msg_self",
         user_name=TEST_USER_NAME,
-        chat_interface=MagicMock(spec=ChatInterface),
-        request_confirmation_callback=mock_confirmation_callback,
+        chat_interface=RecordingChatInterface(),
+        request_confirmation_callback=confirmation_callback,
     )
 
     assert result.error_traceback is None, f"Error: {result.error_traceback}"
     assert result.text_reply is not None
     assert "Handled by target" in result.text_reply
-    mock_confirmation_callback.assert_not_called()
+    assert confirmation_callback.calls == []
 
 
 @pytest.mark.asyncio
 async def test_cross_profile_delegation_still_requires_confirmation(
     db_engine: AsyncEngine,
     task_worker_manager: Callable[..., tuple[Any, Any, Any]],
-    mock_confirmation_callback: AsyncMock,
+    confirmation_callback: ApprovingConfirmationCallback,
 ) -> None:
     """Delegating to a different profile with a confirm rule still triggers confirmation."""
     config = _make_service_config(PROFILE_ID)
@@ -335,7 +375,7 @@ async def test_cross_profile_delegation_still_requires_confirmation(
     target_service.processing_services_registry = registry
     task_worker_manager(
         primary_service,
-        MagicMock(spec=ChatInterface),
+        RecordingChatInterface(),
         register_delegation_handler=True,
     )
 
@@ -347,24 +387,23 @@ async def test_cross_profile_delegation_still_requires_confirmation(
         trigger_content_parts=[{"type": "text", "text": "Please delegate this."}],
         trigger_interface_message_id="msg_cross",
         user_name=TEST_USER_NAME,
-        chat_interface=MagicMock(spec=ChatInterface),
-        request_confirmation_callback=mock_confirmation_callback,
+        chat_interface=RecordingChatInterface(),
+        request_confirmation_callback=confirmation_callback,
     )
 
     assert result.error_traceback is None, f"Error: {result.error_traceback}"
     assert result.text_reply is not None
     assert "Handled by target" in result.text_reply
-    mock_confirmation_callback.assert_called_once()
-    call_kwargs = mock_confirmation_callback.call_args.kwargs
-    assert call_kwargs["tool_name"] == "delegate_to_service"
-    confirmed_args = call_kwargs["tool_args"]
-    assert confirmed_args["target_service_id"] == OTHER_PROFILE_ID
+    assert len(confirmation_callback.calls) == 1
+    confirmation_request = confirmation_callback.calls[0]
+    assert confirmation_request.tool_name == "delegate_to_service"
+    assert confirmation_request.tool_args["target_service_id"] == OTHER_PROFILE_ID
 
 
 @pytest.mark.asyncio
 async def test_operator_deny_overrides_self_delegation(
     db_engine: AsyncEngine,
-    mock_confirmation_callback: AsyncMock,
+    confirmation_callback: ApprovingConfirmationCallback,
 ) -> None:
     """An operator-layer deny rule blocks self-delegation even though
     the synthetic profile-layer rule allows it."""
@@ -421,12 +460,12 @@ async def test_operator_deny_overrides_self_delegation(
         trigger_content_parts=[{"type": "text", "text": "Please delegate this."}],
         trigger_interface_message_id="msg_blocked",
         user_name=TEST_USER_NAME,
-        chat_interface=MagicMock(spec=ChatInterface),
-        request_confirmation_callback=mock_confirmation_callback,
+        chat_interface=RecordingChatInterface(),
+        request_confirmation_callback=confirmation_callback,
     )
 
     assert result.error_traceback is None, f"Error: {result.error_traceback}"
     assert result.text_reply is not None
     assert "not allowed" in result.text_reply.lower()
     assert "Operator blocks self-delegation" in result.text_reply
-    mock_confirmation_callback.assert_not_called()
+    assert confirmation_callback.calls == []

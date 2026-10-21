@@ -8,7 +8,6 @@ streaming and non-streaming chat endpoints.
 import base64
 import io
 import json
-from unittest.mock import AsyncMock
 
 import pytest
 from httpx import AsyncClient
@@ -16,30 +15,9 @@ from PIL import Image
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.services.attachment_registry import (
-    AttachmentMetadata,
-    AttachmentRegistry,
-)
 from family_assistant.storage.base import attachment_metadata_table
 from family_assistant.storage.database import Database
 from tests.functional.web.conftest import run_chat_turn_stream
-
-
-@pytest.fixture
-async def mock_attachment_registry() -> AsyncMock:
-    """Mock attachment registry for testing."""
-    registry = AsyncMock(spec=AttachmentRegistry)
-    registry.register_user_attachment.return_value = AttachmentMetadata(
-        attachment_id="test-attachment-id",
-        source_type="user",
-        source_id="api_user",
-        mime_type="image/png",
-        description="Test attachment",
-        size=1000,
-        content_url="http://localhost:8000/api/v1/attachments/test-attachment-id",
-        storage_path="/tmp/test-attachment-id.png",
-    )
-    return registry
 
 
 @pytest.fixture

@@ -11,7 +11,7 @@ import re
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import create_autospec
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -22,6 +22,7 @@ from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.llm.messages import LLMMessage, ToolMessage, UserMessage
+from family_assistant.plugins.home_assistant.client import HomeAssistantClientWrapper
 from family_assistant.plugins.home_assistant.instance import HomeAssistantInstance
 from family_assistant.plugins.runtime import ProfilePlugins
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
@@ -49,6 +50,7 @@ from tests.mocks.mock_llm import (
     get_last_message_text,
     last_real_message,
 )
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 TEST_CHAT_ID = "attachment_id_test"
 TEST_USER_NAME = "AttachmentTestUser"
@@ -147,8 +149,10 @@ async def test_attachment_id_injected_and_referenceable(
     test_image_data = create_test_image()
     captured_attachment_id: str | None = None
 
-    mock_ha_client = MagicMock()
-    mock_ha_client.async_get_camera_snapshot = AsyncMock(return_value=test_image_data)
+    mock_ha_client = create_autospec(
+        HomeAssistantClientWrapper, instance=True, spec_set=True
+    )
+    mock_ha_client.async_get_camera_snapshot.return_value = test_image_data
 
     tool_call_id_snapshot = f"call_snapshot_{uuid.uuid4()}"
     tool_call_id_highlight = f"call_highlight_{uuid.uuid4()}"
@@ -247,7 +251,7 @@ async def test_attachment_id_injected_and_referenceable(
     db_context = Database(engine=db_engine)
     result = await processing_service.handle_chat_interaction(
         db_context=db_context,
-        chat_interface=MagicMock(),
+        chat_interface=RecordingChatInterface(),
         interface_type="test",
         conversation_id=TEST_CHAT_ID,
         trigger_content_parts=[{"type": "text", "text": user_message}],

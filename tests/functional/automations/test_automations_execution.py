@@ -3,7 +3,6 @@
 import asyncio
 import uuid
 from collections.abc import Callable
-from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -14,7 +13,6 @@ from family_assistant.actions import ActionType, execute_action
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.events.processor import EventProcessor
-from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.scripting.errors import ScriptError
 from family_assistant.services.tool_call_review import TriggerReviewInput
@@ -42,6 +40,7 @@ from family_assistant.tools.notes import NOTE_TOOLS_DEFINITION
 from family_assistant.tools.types import ToolExecutionContext
 from tests.helpers import wait_for_tasks_to_complete
 from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 
 def _make_processing_service(
@@ -656,10 +655,10 @@ log_event()
         server_url=None,
     )
 
-    mock_chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface = RecordingChatInterface()
     task_worker, new_task_event, shutdown_event = task_worker_manager(
         processing_service=processing_service,
-        chat_interface=mock_chat_interface,
+        chat_interface=chat_interface,
     )
     task_worker.register_task_handler("script_execution", handle_script_execution)
 

@@ -460,6 +460,9 @@ async def render_drive_write_file_confirmation(
     _ = context
     fields = [
         confirmation_field("Name", args.get("name") or "Use the attachment filename"),
+        confirmation_field(
+            "Subfolder", args.get("folder") or "Top of the Family Assistant folder"
+        ),
         confirmation_field("Overwrite existing app file", bool(args.get("overwrite"))),
     ]
     if args.get("attachment_id"):

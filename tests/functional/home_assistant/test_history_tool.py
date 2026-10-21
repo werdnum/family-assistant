@@ -8,7 +8,6 @@ import json
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -36,6 +35,7 @@ from family_assistant.tools.infrastructure import (
 )
 from family_assistant.tools.mcp import MCPToolsProvider
 from family_assistant.tools.types import ToolExecutionContext
+from tests.mocks.home_assistant_client import make_home_assistant_client
 from tests.mocks.mock_llm import (
     LLMOutput as MockLLMOutput,
 )
@@ -44,6 +44,7 @@ from tests.mocks.mock_llm import (
     RuleBasedMockLLMClient,
     get_last_message_text,
 )
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -117,8 +118,7 @@ async def test_download_state_history_success(
     start_time = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
     end_time = datetime.now(UTC).isoformat()
 
-    # Create mock Home Assistant client wrapper
-    mock_ha_client = MagicMock()
+    home_assistant = make_home_assistant_client()
 
     # Mock async generator for history data using library's models
     async def mock_history_generator() -> AsyncGenerator[History]:
@@ -162,20 +162,9 @@ async def test_download_state_history_success(
         ]
         yield History(states=tuple(humidity_states))
 
-    # Set the mock to return the generator when called
-    # Mock the inner _client's async_get_entity_histories method
-    mock_ha_client._client = MagicMock()
-    mock_ha_client._client.async_get_entity_histories = MagicMock(
-        return_value=mock_history_generator()
+    home_assistant.api.async_get_entity_histories.return_value = (
+        mock_history_generator()
     )
-
-    # Create proper async mock for async_get_entity
-    async def mock_get_entity(entity_id: str) -> MagicMock:
-        mock_entity = MagicMock()
-        mock_entity.entity_id = entity_id
-        return mock_entity
-
-    mock_ha_client._client.async_get_entity = mock_get_entity
 
     # Mock async_get_states to return the entities we're querying for
     async def mock_get_states() -> list[State]:
@@ -201,7 +190,7 @@ async def test_download_state_history_success(
             ),
         ]
 
-    mock_ha_client.async_get_states = mock_get_states
+    home_assistant.api.async_get_states.side_effect = mock_get_states
 
     tool_call_id = f"call_history_{uuid.uuid4()}"
 
@@ -286,7 +275,7 @@ async def test_download_state_history_success(
 
     # Inject the mock HA client
     processing_service.plugins = ProfilePlugins((
-        HomeAssistantInstance(mock_ha_client),
+        HomeAssistantInstance(home_assistant.wrapper),
     ))
 
     # --- Simulate User Interaction ---
@@ -294,7 +283,7 @@ async def test_download_state_history_success(
     db_context = Database(engine=db_engine)
     result = await processing_service.handle_chat_interaction(
         db_context=db_context,
-        chat_interface=MagicMock(),
+        chat_interface=RecordingChatInterface(),
         interface_type="test",
         conversation_id=TEST_CHAT_ID,
         trigger_content_parts=[{"type": "text", "text": user_message}],
@@ -311,12 +300,13 @@ async def test_download_state_history_success(
 
 
 @pytest.mark.asyncio
-async def test_download_state_history_direct_call() -> None:
+async def test_download_state_history_direct_call(
+    db_engine: AsyncEngine,
+) -> None:
     """
     Test direct call to download_state_history_tool function.
     """
-    # Create mock Home Assistant client wrapper
-    mock_ha_client = MagicMock()
+    home_assistant = make_home_assistant_client()
 
     # Mock async generator for history data using library's models
     async def mock_history_generator() -> AsyncGenerator[History]:
@@ -332,20 +322,9 @@ async def test_download_state_history_direct_call() -> None:
         ]
         yield History(states=tuple(states))
 
-    # Set the mock to return the generator when called
-    # Mock the inner _client's async_get_entity_histories method
-    mock_ha_client._client = MagicMock()
-    mock_ha_client._client.async_get_entity_histories = MagicMock(
-        return_value=mock_history_generator()
+    home_assistant.api.async_get_entity_histories.return_value = (
+        mock_history_generator()
     )
-
-    # Create proper async mock for async_get_entity that returns an object with entity_id
-    async def mock_get_entity(entity_id: str) -> MagicMock:
-        mock_entity = MagicMock()
-        mock_entity.entity_id = entity_id
-        return mock_entity
-
-    mock_ha_client._client.async_get_entity = mock_get_entity
 
     # Mock async_get_states to return the entities we're querying for
     async def mock_get_states() -> list[State]:
@@ -360,7 +339,7 @@ async def test_download_state_history_direct_call() -> None:
             ),
         ]
 
-    mock_ha_client.async_get_states = mock_get_states
+    home_assistant.api.async_get_states.side_effect = mock_get_states
 
     # Create tool execution context
     exec_context = ToolExecutionContext(
@@ -368,10 +347,10 @@ async def test_download_state_history_direct_call() -> None:
         conversation_id="test_conv",
         user_name="test_user",
         turn_id=None,
-        db_context=MagicMock(),
+        db_context=Database(engine=db_engine),
         processing_service=None,
         clock=None,
-        plugins=ProfilePlugins((HomeAssistantInstance(mock_ha_client),)),
+        plugins=ProfilePlugins((HomeAssistantInstance(home_assistant.wrapper),)),
         event_sources=None,
         attachment_registry=None,
         timezone=ZoneInfo("UTC"),
@@ -400,10 +379,16 @@ async def test_download_state_history_direct_call() -> None:
     assert len(json_data["entities"]) == 1
     assert json_data["entities"][0]["entity_id"] == "light.living_room"
     assert len(json_data["entities"][0]["states"]) == 1
+    history_call = home_assistant.api.async_get_entity_histories.call_args
+    assert [state.entity_id for state in history_call.kwargs["entities"]] == [
+        "light.living_room"
+    ]
 
 
 @pytest.mark.asyncio
-async def test_download_state_history_no_client() -> None:
+async def test_download_state_history_no_client(
+    db_engine: AsyncEngine,
+) -> None:
     """
     Test download_state_history_tool when no HA client is available.
     """
@@ -413,7 +398,7 @@ async def test_download_state_history_no_client() -> None:
         conversation_id="test_conv",
         user_name="test_user",
         turn_id=None,
-        db_context=MagicMock(),
+        db_context=Database(engine=db_engine),
         processing_service=None,
         clock=None,
         plugins=None,
@@ -436,31 +421,20 @@ async def test_download_state_history_no_client() -> None:
 
 
 @pytest.mark.asyncio
-async def test_download_state_history_empty() -> None:
+async def test_download_state_history_empty(
+    db_engine: AsyncEngine,
+) -> None:
     """
     Test download_state_history_tool when no history data is returned.
     """
-    mock_ha_client = MagicMock()
+    home_assistant = make_home_assistant_client()
 
     # Mock empty async generator that yields nothing
     async def mock_empty_generator() -> AsyncGenerator[History]:
         if False:  # pylint: disable=using-constant-test
             yield History(states=())
 
-    # Set the mock to return the generator when called
-    # Mock the inner _client's async_get_entity_histories method
-    mock_ha_client._client = MagicMock()
-    mock_ha_client._client.async_get_entity_histories = MagicMock(
-        return_value=mock_empty_generator()
-    )
-
-    # Create proper async mock for async_get_entity
-    async def mock_get_entity(entity_id: str) -> MagicMock:
-        mock_entity = MagicMock()
-        mock_entity.entity_id = entity_id
-        return mock_entity
-
-    mock_ha_client._client.async_get_entity = mock_get_entity
+    home_assistant.api.async_get_entity_histories.return_value = mock_empty_generator()
 
     # Mock async_get_states to return the entities we're querying for
     async def mock_get_states() -> list[State]:
@@ -475,7 +449,7 @@ async def test_download_state_history_empty() -> None:
             ),
         ]
 
-    mock_ha_client.async_get_states = mock_get_states
+    home_assistant.api.async_get_states.side_effect = mock_get_states
 
     # Create tool execution context
     exec_context = ToolExecutionContext(
@@ -483,10 +457,10 @@ async def test_download_state_history_empty() -> None:
         conversation_id="test_conv",
         user_name="test_user",
         turn_id=None,
-        db_context=MagicMock(),
+        db_context=Database(engine=db_engine),
         processing_service=None,
         clock=None,
-        plugins=ProfilePlugins((HomeAssistantInstance(mock_ha_client),)),
+        plugins=ProfilePlugins((HomeAssistantInstance(home_assistant.wrapper),)),
         event_sources=None,
         attachment_registry=None,
         timezone=ZoneInfo("UTC"),
@@ -506,12 +480,13 @@ async def test_download_state_history_empty() -> None:
 
 
 @pytest.mark.asyncio
-async def test_download_state_history_missing_entity() -> None:
+async def test_download_state_history_missing_entity(
+    db_engine: AsyncEngine,
+) -> None:
     """
     Test download_state_history_tool when a requested entity is not found.
     """
-    # Create mock Home Assistant client wrapper
-    mock_ha_client = MagicMock()
+    home_assistant = make_home_assistant_client()
 
     # Mock async_get_states to return a list that doesn't contain all requested entities
     async def mock_get_states() -> list[State]:
@@ -526,7 +501,7 @@ async def test_download_state_history_missing_entity() -> None:
             ),
         ]
 
-    mock_ha_client.async_get_states = mock_get_states
+    home_assistant.api.async_get_states.side_effect = mock_get_states
 
     # Create tool execution context
     exec_context = ToolExecutionContext(
@@ -534,10 +509,10 @@ async def test_download_state_history_missing_entity() -> None:
         conversation_id="test_conv",
         user_name="test_user",
         turn_id=None,
-        db_context=MagicMock(),
+        db_context=Database(engine=db_engine),
         processing_service=None,
         clock=None,
-        plugins=ProfilePlugins((HomeAssistantInstance(mock_ha_client),)),
+        plugins=ProfilePlugins((HomeAssistantInstance(home_assistant.wrapper),)),
         event_sources=None,
         attachment_registry=None,
         timezone=ZoneInfo("UTC"),

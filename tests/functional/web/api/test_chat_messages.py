@@ -4,7 +4,6 @@ import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -45,7 +44,6 @@ from family_assistant.tools.infrastructure import (
     PolicyEnforcingToolsProvider,
     ToolsProvider,
 )
-from family_assistant.tools.mcp import MCPToolsProvider
 from family_assistant.tools.policy import (
     PolicyEngine,
     ToolPolicyConfig,
@@ -109,15 +107,8 @@ async def test_tools_provider(
         registrations=local_tool_registrations,
         embedding_generator=None,  # Not needed for add_note
     )
-    # Mock MCP provider as it's not the focus here
-    mock_mcp_provider = AsyncMock(spec=MCPToolsProvider)
-    mock_mcp_provider.get_tool_definitions.return_value = []
-    mock_mcp_provider.execute_tool.return_value = "MCP tool executed (mock)."
-    mock_mcp_provider.close.return_value = None
 
-    composite_provider = CompositeToolsProvider(
-        providers=[local_provider, mock_mcp_provider]
-    )
+    composite_provider = CompositeToolsProvider(providers=[local_provider])
     await composite_provider.get_tool_definitions()  # Initialize
 
     policy_provider = PolicyEnforcingToolsProvider(

@@ -5,8 +5,7 @@ import logging
 import uuid
 from collections.abc import Callable
 from dataclasses import replace
-from typing import Any, TypedDict, cast
-from unittest.mock import MagicMock
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -16,7 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
-from family_assistant.interfaces import ChatInterface
 from family_assistant.llm import (
     ToolCallFunction,
     ToolCallItem,
@@ -54,6 +52,9 @@ from tests.mocks.mock_llm import (
     get_last_message_text,
 )
 
+if TYPE_CHECKING:
+    from family_assistant.interfaces import ChatInterface
+
 logger = logging.getLogger(__name__)
 
 # --- Test Constants ---
@@ -88,7 +89,7 @@ class RecordingChatInterface:
         attachment_ids: list[str] | None = None,
         on_behalf_of_user_id: str | None = None,
         taint_metadata: TaintMetadata | None = None,
-    ) -> str | None:
+    ) -> str:
         _ = (parse_mode, reply_to_interface_id, on_behalf_of_user_id, taint_metadata)
         self.messages.append(
             RecordedChatMessage(
@@ -269,7 +270,7 @@ async def test_subconversation_isolation(
     delegated_processing_service.processing_services_registry = registry
     task_worker_manager(
         primary_processing_service,
-        MagicMock(spec=ChatInterface),
+        RecordingChatInterface(),
         register_delegation_handler=True,
     )
 
@@ -287,7 +288,7 @@ async def test_subconversation_isolation(
         ],
         trigger_interface_message_id="msg1",
         user_name=TEST_USER_NAME,
-        chat_interface=MagicMock(spec=ChatInterface),
+        chat_interface=RecordingChatInterface(),
         request_confirmation_callback=None,
     )
 

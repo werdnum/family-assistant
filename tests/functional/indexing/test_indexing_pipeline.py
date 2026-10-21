@@ -10,7 +10,6 @@ import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -44,13 +43,8 @@ from family_assistant.task_worker import TaskWorker  # For running the task work
 from family_assistant.tools.types import ToolExecutionContext
 from tests.conftest import cleanup_task_worker
 from tests.helpers import wait_for_tasks_to_complete
-
-
-def _create_mock_processing_service() -> MagicMock:
-    """Create a mock ProcessingService with required attributes."""
-    mock = MagicMock()
-    return mock
-
+from tests.mocks.idle_processing_service import make_idle_processing_service
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 logger = logging.getLogger(__name__)
 
@@ -147,12 +141,12 @@ async def indexing_task_worker(
     # mock_application is no longer needed here as embedding_generator is passed directly to TaskWorker
     # and ToolExecutionContext.
 
-    mock_chat_interface_for_worker = MagicMock()
+    mock_chat_interface_for_worker = RecordingChatInterface()
     shutdown_event = asyncio.Event()
     new_task_event = asyncio.Event()
 
     worker = TaskWorker(
-        processing_service=_create_mock_processing_service(),  # Use MagicMock for ProcessingService
+        processing_service=make_idle_processing_service(),
         chat_interface=mock_chat_interface_for_worker,
         embedding_generator=mock_pipeline_embedding_generator,  # Pass directly
         calendar_config={},
@@ -234,7 +228,7 @@ async def test_indexing_pipeline_e2e(
             plugins=None,
             event_sources=None,
             attachment_registry=None,
-            chat_interface=MagicMock(),  # Provide a mock ChatInterface
+            chat_interface=RecordingChatInterface(),
             embedding_generator=mock_pipeline_embedding_generator,
             timezone=ZoneInfo("UTC"),
             credential_resolvers=None,
@@ -427,7 +421,7 @@ async def test_indexing_pipeline_pdf_processing(
             plugins=None,
             event_sources=None,
             attachment_registry=None,
-            chat_interface=MagicMock(),  # Provide a mock ChatInterface
+            chat_interface=RecordingChatInterface(),
             embedding_generator=mock_pipeline_embedding_generator,
             timezone=ZoneInfo("UTC"),
             credential_resolvers=None,

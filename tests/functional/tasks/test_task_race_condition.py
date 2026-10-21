@@ -7,17 +7,19 @@ import contextlib
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.storage.database import Database
 from family_assistant.storage.tasks import TaskPriority
 from family_assistant.task_worker import TaskWorker
 from family_assistant.tools.types import ToolExecutionContext
 from family_assistant.utils.clock import MockClock
+from tests.mocks.idle_processing_service import make_idle_processing_service
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 logger = logging.getLogger(__name__)
 
@@ -96,11 +98,11 @@ async def test_stale_task_pickup_prevented_by_timeout_buffer(
 
     # Setup workers
     worker_a = TaskWorker(
-        processing_service=MagicMock(),
-        chat_interface=MagicMock(),
+        processing_service=make_idle_processing_service(),
+        chat_interface=RecordingChatInterface(),
         calendar_config={},
         timezone=ZoneInfo("UTC"),
-        embedding_generator=MagicMock(),
+        embedding_generator=MockEmbeddingGenerator(),
         shutdown_event_instance=shutdown_event,
         engine=db_engine,
         clock=clock_a,
@@ -109,11 +111,11 @@ async def test_stale_task_pickup_prevented_by_timeout_buffer(
     worker_a.worker_id = "worker_a"
 
     worker_b = TaskWorker(
-        processing_service=MagicMock(),
-        chat_interface=MagicMock(),
+        processing_service=make_idle_processing_service(),
+        chat_interface=RecordingChatInterface(),
         calendar_config={},
         timezone=ZoneInfo("UTC"),
-        embedding_generator=MagicMock(),
+        embedding_generator=MockEmbeddingGenerator(),
         shutdown_event_instance=shutdown_event,
         engine=db_engine,
         clock=clock_b,

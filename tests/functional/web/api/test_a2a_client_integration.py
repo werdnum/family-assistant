@@ -12,7 +12,6 @@ import contextlib
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
-from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
@@ -740,6 +739,7 @@ class TestA2AClientConnectionErrors:
     @pytest.mark.asyncio
     async def test_remote_service_handles_connection_error(
         self,
+        api_db_context: Database,
     ) -> None:
         """RemoteA2AService returns error result on connection failure."""
         wrapper = A2AClientWrapper(agent_url="http://localhost:1", timeout=1.0)
@@ -750,9 +750,8 @@ class TestA2AClientConnectionErrors:
         )
         service = RemoteA2AService(service_config=config, client=wrapper)
 
-        mock_db = AsyncMock()
         result = await service.handle_chat_interaction(
-            db_context=mock_db,
+            db_context=api_db_context,
             interface_type="test",
             conversation_id="err-conv",
             trigger_content_parts=[text_content("Hello")],

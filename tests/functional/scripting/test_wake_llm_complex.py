@@ -10,7 +10,6 @@ import re
 import uuid
 from collections.abc import Callable
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
 import aiofiles
@@ -20,7 +19,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.events.processor import EventProcessor
-from family_assistant.interfaces import ChatInterface
 from family_assistant.llm.messages import ImageUrlContentPart
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
@@ -53,6 +51,7 @@ from tests.mocks.mock_llm import (
     get_message_content,
     last_real_message,
 )
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 logger = logging.getLogger(__name__)
 
@@ -160,8 +159,7 @@ if motion_detected:
         default_response=LLMOutput(content="Default wake_llm response"),
     )
 
-    mock_chat_interface = MagicMock(spec=ChatInterface)
-    mock_chat_interface.send_message = AsyncMock(return_value="msg-id")
+    chat_interface = RecordingChatInterface()
 
     # An event script's wake_llm() runs under event_handler.
     mock_processing_service = ProcessingService(
@@ -197,7 +195,7 @@ if motion_detected:
 
     task_worker, new_task_event, _ = task_worker_manager(
         processing_service=mock_processing_service,
-        chat_interface=mock_chat_interface,
+        chat_interface=chat_interface,
         register_delegation_handler=False,
     )
     task_worker.register_task_handler("script_execution", handle_script_execution)
@@ -229,8 +227,8 @@ if motion_detected:
     )
 
     # Step 5: Verify the LLM was woken with the alert and replied to the user
-    mock_chat_interface.send_message.assert_called_once()
-    sent_text = mock_chat_interface.send_message.call_args.kwargs["text"]
+    assert len(chat_interface.sent) == 1
+    sent_text = chat_interface.sent[0].text
     assert "Security alert acknowledged" in sent_text
     assert "camera snapshot" in sent_text
     assert "front entrance" in sent_text
@@ -359,8 +357,7 @@ wake_llm({
         default_response=LLMOutput(content="Default response"),
     )
 
-    mock_chat_interface = MagicMock(spec=ChatInterface)
-    mock_chat_interface.send_message = AsyncMock(return_value="msg-id")
+    chat_interface = RecordingChatInterface()
 
     tools_provider = CompositeToolsProvider(
         providers=[
@@ -403,7 +400,7 @@ wake_llm({
 
     task_worker, new_task_event, _ = task_worker_manager(
         processing_service=mock_processing_service,
-        chat_interface=mock_chat_interface,
+        chat_interface=chat_interface,
         register_delegation_handler=False,
     )
     task_worker.register_task_handler("script_execution", handle_script_execution)
@@ -432,8 +429,8 @@ wake_llm({
     )
 
     # Verify LLM was called with attachment
-    mock_chat_interface.send_message.assert_called_once()
-    sent_text = mock_chat_interface.send_message.call_args.kwargs["text"]
+    assert len(chat_interface.sent) == 1
+    sent_text = chat_interface.sent[0].text
     assert "camera snapshot" in sent_text.lower()
 
     assert received_attachment_id is not None, (

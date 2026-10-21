@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 from telegram.error import BadRequest
@@ -21,9 +21,24 @@ from tests.functional.telegram.test_telegram_handler import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Coroutine
+
+    from telegram import Bot, File
+
     from tests.functional.telegram.conftest import TelegramHandlerTestFixture
 
 logger = logging.getLogger(__name__)
+
+
+def _get_file_failing(
+    message: str,
+) -> Callable[..., Coroutine[object, object, File]]:
+    """A ``Bot.get_file`` replacement that fails as Telegram does with ``message``."""
+
+    async def get_file(_bot: Bot, *_args: object, **_kwargs: object) -> File:
+        raise BadRequest(message)
+
+    return get_file
 
 
 @pytest.mark.asyncio
@@ -42,10 +57,7 @@ async def test_photo_file_too_big_shows_specific_error(
     )
     context = create_context(fix.application)
 
-    with patch(
-        "telegram.Bot.get_file",
-        AsyncMock(side_effect=BadRequest("File is too big")),
-    ):
+    with patch("telegram.Bot.get_file", new=_get_file_failing("File is too big")):
         await fix.handler.message_handler(photo_update, context)
 
     response = await assert_bot_sent_message(
@@ -73,11 +85,7 @@ async def test_other_bad_request_shows_generic_error(
 
     with patch(
         "telegram.Bot.get_file",
-        AsyncMock(
-            side_effect=BadRequest(
-                "Wrong file_id or the file is temporarily unavailable"
-            )
-        ),
+        new=_get_file_failing("Wrong file_id or the file is temporarily unavailable"),
     ):
         await fix.handler.message_handler(photo_update, context)
 

@@ -5,7 +5,8 @@ import os
 import socket
 from collections.abc import AsyncGenerator
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 import pytest
 from google.genai import types
@@ -61,18 +62,43 @@ async def gemini_client() -> AsyncGenerator[GoogleGenAIClient]:
     await client.close()
 
 
-@pytest.fixture
-def mock_exec_context() -> ToolExecutionContext:
-    """Create a mock ToolExecutionContext for testing."""
-    # A bare mock would hand the browser chokepoint a mock batch to await; a
-    # context outside any tool-call batch has neither field set.
-    return MagicMock(
-        spec=ToolExecutionContext,
-        conversation_id="test-conversation",
-        subconversation_id=None,
-        tool_call_id=None,
-        tool_call_batch=None,
+def _browser_exec_context(
+    conversation_id: str, db_context: Database
+) -> ToolExecutionContext:
+    """A top-level turn's context, outside any tool-call batch."""
+    return ToolExecutionContext(
+        interface_type="test",
+        conversation_id=conversation_id,
+        user_name="test_user",
+        turn_id=None,
+        db_context=db_context,
+        processing_service=None,
+        clock=None,
+        plugins=None,
+        event_sources=None,
+        attachment_registry=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
     )
+
+
+@pytest.fixture
+def mock_exec_context(db_engine: AsyncEngine) -> ToolExecutionContext:
+    """A ToolExecutionContext for driving the browser tools directly."""
+    return _browser_exec_context("test-conversation", Database(engine=db_engine))
+
+
+class _RecordingGenerateContent:
+    """Stands in for the SDK's async generate_content, returning a fixed response."""
+
+    def __init__(self, response: types.GenerateContentResponse) -> None:
+        self.response = response
+        self.calls: list[dict[str, object]] = []
+
+    async def __call__(self, **kwargs: object) -> types.GenerateContentResponse:
+        self.calls.append(kwargs)
+        return self.response
 
 
 @pytest.fixture
@@ -93,21 +119,21 @@ async def test_computer_use_tool_injection(gemini_client: GoogleGenAIClient) -> 
     # Verify the enable_computer_use flag is set
     assert gemini_client.enable_computer_use
 
-    # Mock the underlying SDK client generate_content method
     # We want to verify that `tools` in the config contains the ComputerUse tool
+    generate_content = _RecordingGenerateContent(
+        types.GenerateContentResponse(
+            candidates=[
+                types.Candidate(
+                    content=types.Content(
+                        role="model", parts=[types.Part(text="Response")]
+                    )
+                )
+            ]
+        )
+    )
     with patch.object(
-        gemini_client.client.aio.models, "generate_content"
-    ) as mock_generate:
-        # Mock response to avoid actual API call failure if key is dummy
-        part_mock = MagicMock(text="Response")
-        # Ensure thought_signature is None so it doesn't trigger processing
-        part_mock.thought_signature = None
-        part_mock.function_call = None
-
-        mock_response = MagicMock()
-        mock_response.candidates = [MagicMock(content=MagicMock(parts=[part_mock]))]
-        mock_generate.return_value = mock_response
-
+        gemini_client.client.aio.models, "generate_content", new=generate_content
+    ):
         # Call generate_response with some dummy messages
         messages = [UserMessage(content="Navigate to google.com")]
 
@@ -134,11 +160,8 @@ async def test_computer_use_tool_injection(gemini_client: GoogleGenAIClient) -> 
         await gemini_client.generate_response(messages, tools=dummy_tools)
 
         # Verify arguments passed to generate_content
-        call_args = mock_generate.call_args
-        assert call_args is not None
-        _, kwargs = call_args
-
-        config = kwargs.get("config")
+        assert len(generate_content.calls) == 1
+        config = generate_content.calls[0].get("config")
         assert config is not None
         assert isinstance(config, types.GenerateContentConfig)
 
@@ -187,30 +210,31 @@ async def test_computer_use_end_to_end_flow(gemini_client: GoogleGenAIClient) ->
     # This test verifies that the client correctly processes a Computer Use function call
     # and prepares the next request.
 
-    # 1. Mock the model returning a 'click' call
+    # 1. The model returns a 'click' call
+    generate_content = _RecordingGenerateContent(
+        types.GenerateContentResponse(
+            candidates=[
+                types.Candidate(
+                    content=types.Content(
+                        role="model",
+                        parts=[
+                            types.Part(
+                                function_call=types.FunctionCall(
+                                    name="click",
+                                    args={"x": 500, "y": 300},
+                                    id="call_123",
+                                )
+                            )
+                        ],
+                    )
+                )
+            ],
+            usage_metadata=types.GenerateContentResponseUsageMetadata(),
+        )
+    )
     with patch.object(
-        gemini_client.client.aio.models, "generate_content"
-    ) as mock_generate:
-        # Construct a response with a function call
-        mock_response = MagicMock()
-
-        # Mock Part with function_call
-        function_call_part = MagicMock()
-        function_call_part.text = None
-        function_call_part.function_call = MagicMock()
-        function_call_part.function_call.name = "click"
-        function_call_part.function_call.args = {"x": 500, "y": 300}
-        function_call_part.function_call.id = "call_123"
-        function_call_part.thought_signature = None  # Optional thought signature
-
-        # Mock Candidate
-        candidate = MagicMock()
-        candidate.content.parts = [function_call_part]
-        mock_response.candidates = [candidate]
-        mock_response.usage_metadata = MagicMock()
-
-        mock_generate.return_value = mock_response
-
+        gemini_client.client.aio.models, "generate_content", new=generate_content
+    ):
         # Execute
         messages = [UserMessage(content="Click the button")]
         response = await gemini_client.generate_response(messages)
@@ -534,12 +558,9 @@ async def test_computer_use_browser_navigation_e2e(db_engine: AsyncEngine) -> No
     finally:
         # Cleanup: close any browser sessions
         # The conversation_id used by ProcessingService for tool context
-        cleanup_context = MagicMock(
-            spec=ToolExecutionContext,
-            conversation_id="e2e-browser-test",
-            subconversation_id=None,
+        await close_browser_session(
+            _browser_exec_context("e2e-browser-test", Database(engine=db_engine))
         )
-        await close_browser_session(cleanup_context)
 
         # Shutdown assistant
         await assistant.stop_services()
@@ -705,10 +726,7 @@ async def test_grab_screenshot_of_website(db_engine: AsyncEngine) -> None:
         )
 
     finally:
-        cleanup_context = MagicMock(
-            spec=ToolExecutionContext,
-            conversation_id="screenshot-test",
-            subconversation_id=None,
+        await close_browser_session(
+            _browser_exec_context("screenshot-test", Database(engine=db_engine))
         )
-        await close_browser_session(cleanup_context)
         await assistant.stop_services()

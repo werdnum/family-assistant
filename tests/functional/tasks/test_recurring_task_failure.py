@@ -2,7 +2,6 @@ import asyncio
 import logging
 from collections.abc import Callable
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import select
@@ -12,6 +11,8 @@ from family_assistant.storage.tasks import TaskPriority, tasks_table
 from family_assistant.task_worker import TaskWorker
 from family_assistant.tools.types import ToolExecutionContext
 from tests.helpers import wait_for_condition
+from tests.mocks.idle_processing_service import make_idle_processing_service
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 logger = logging.getLogger(__name__)
 
@@ -24,8 +25,8 @@ async def test_recurring_task_failure_continues_recurrence(
 
     # Create worker using the fixture factory with short timeout
     worker, new_task_event, shutdown_event = task_worker_manager(
-        processing_service=MagicMock(),
-        chat_interface=MagicMock(),
+        processing_service=make_idle_processing_service(),
+        chat_interface=RecordingChatInterface(),
         handler_timeout=1.0,
     )
     engine = worker.engine

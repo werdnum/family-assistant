@@ -2,7 +2,6 @@
 
 import asyncio
 from collections.abc import Callable
-from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -10,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
-from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.database import Database
 from family_assistant.storage.tasks import TaskPriority
@@ -26,6 +24,7 @@ from family_assistant.tools.types import (
 )
 from tests.helpers import wait_for_tasks_to_complete
 from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 FAILING_TOOL_DEFINITION: list[ToolDefinition] = [
     {
@@ -81,7 +80,7 @@ async def test_script_run_records_tool_errors_on_finished_task(
 ) -> None:
     """A script that ignores a tool error still finishes, with the error noted."""
     worker, new_task_event, _ = task_worker_manager(
-        _processing_service(), AsyncMock(spec=ChatInterface)
+        _processing_service(), RecordingChatInterface()
     )
     worker.register_task_handler("script_execution", handle_script_execution)
 

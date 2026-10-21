@@ -5,9 +5,9 @@ Test Home Assistant event source reconnection and health checking.
 import asyncio
 import contextlib
 import logging
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import janus
@@ -18,6 +18,10 @@ from family_assistant.events.processor import EventProcessor
 from family_assistant.events.webhook_source import WebhookEventSource
 from family_assistant.plugins.home_assistant.events import HomeAssistantSource
 from family_assistant.storage.database import Database
+from tests.mocks.home_assistant_client import (
+    HA_TEST_TOKEN,
+    make_home_assistant_client,
+)
 
 
 class _SilentWebsocketClient:
@@ -41,13 +45,7 @@ class _SilentWebsocketClient:
 @pytest.mark.asyncio
 async def test_exponential_backoff_reconnection() -> None:
     """Test that reconnection uses exponential backoff."""
-    # Create mock client
-    mock_client = MagicMock()
-    mock_client.api_url = "http://localhost:8123/api"
-    mock_client.token = "test_token"
-    mock_client.verify_ssl = True
-
-    source = HomeAssistantSource(mock_client)
+    source = HomeAssistantSource(make_home_assistant_client().wrapper)
 
     # Verify initial state
     assert source._reconnect_delay == source._base_reconnect_delay
@@ -63,11 +61,13 @@ async def test_exponential_backoff_reconnection() -> None:
         # Yield to the observer without waiting through the production backoff.
         await original_sleep(0)
 
+    async def failing_to_thread(
+        func: Callable[..., object], *args: object, **kwargs: object
+    ) -> object:
+        raise RuntimeError("Connection failed")
+
     original_sleep = asyncio.sleep
-    source_asyncio = SimpleNamespace(
-        sleep=mock_sleep,
-        to_thread=AsyncMock(side_effect=RuntimeError("Connection failed")),
-    )
+    source_asyncio = SimpleNamespace(sleep=mock_sleep, to_thread=failing_to_thread)
     # Patch only the source's module reference, leaving other session tasks alone.
     with patch(
         "family_assistant.plugins.home_assistant.events.asyncio", source_asyncio
@@ -106,14 +106,12 @@ async def test_exponential_backoff_reconnection() -> None:
 @pytest.mark.asyncio
 async def test_health_check_triggers_reconnection() -> None:
     """A silent connection whose API probe fails is marked unhealthy and its websocket is torn down."""
-    mock_client = MagicMock()
-    mock_client.api_url = "http://localhost:8123/api"
-    mock_client.token = "test_token"
-    mock_client.async_get_states.side_effect = ConnectionError(
+    home_assistant = make_home_assistant_client()
+    home_assistant.api.async_get_states.side_effect = ConnectionError(
         "Home Assistant unreachable"
     )
 
-    source = HomeAssistantSource(mock_client)
+    source = HomeAssistantSource(home_assistant.wrapper)
     source._connection_healthy = True
     source._last_event_time = 0
     source._health_check_interval = 0
@@ -130,38 +128,29 @@ async def test_health_check_triggers_reconnection() -> None:
 @pytest.mark.asyncio
 async def test_successful_reconnection_resets_attempts() -> None:
     """Test that successful connection resets reconnection attempts."""
-    # Create mock client
-    mock_client = MagicMock()
-    mock_client.api_url = "http://localhost:8123/api"
-    mock_client.token = "test_token"
-
-    source = HomeAssistantSource(mock_client)
+    source = HomeAssistantSource(
+        make_home_assistant_client("http://localhost:8123").wrapper
+    )
 
     # Simulate some failed attempts
     source._reconnect_attempts = 5
     source._reconnect_delay = 80.0  # Would be high after 5 attempts
 
-    # Mock successful WebSocket connection
+    connected: list[_SilentWebsocketClient] = []
+
+    def connect(api_url: str, token: str) -> _SilentWebsocketClient:
+        client = _SilentWebsocketClient(api_url, token)
+        connected.append(client)
+        return client
+
     with patch(
-        "family_assistant.plugins.home_assistant.events.WebsocketClient"
-    ) as mock_ws_class:
-        mock_ws = MagicMock()
-        mock_ws.__enter__ = MagicMock(return_value=mock_ws)
-        mock_ws.__exit__ = MagicMock(return_value=None)
-
-        # Mock the listen_events method
-        mock_event_listener = MagicMock()
-        mock_event_listener.__enter__ = MagicMock(return_value=iter([]))
-        mock_event_listener.__exit__ = MagicMock(return_value=None)
-        mock_ws.listen_events = MagicMock(return_value=mock_event_listener)
-
-        mock_ws_class.return_value = mock_ws
-
-        # Call connect method which should succeed
+        "family_assistant.plugins.home_assistant.events.WebsocketClient", connect
+    ):
         source._connect_and_listen()
 
-        # Verify WebsocketClient was instantiated with correct parameters
-        assert mock_ws_class.called
+        assert [(c.api_url, c.token) for c in connected] == [
+            ("ws://localhost:8123/api/websocket", HA_TEST_TOKEN)
+        ]
 
         # Verify connection state was reset
         assert source._connection_healthy
@@ -172,10 +161,7 @@ async def test_successful_reconnection_resets_attempts() -> None:
 @pytest.mark.asyncio
 async def test_event_processor_health_status() -> None:
     """Health status reports a connected Home Assistant source's state, and 'unknown' for untracked sources."""
-    mock_client = MagicMock()
-    mock_client.api_url = "http://localhost:8123/api"
-    mock_client.token = "test_token"
-    ha_source = HomeAssistantSource(mock_client)
+    ha_source = HomeAssistantSource(make_home_assistant_client().wrapper)
     with patch(
         "family_assistant.plugins.home_assistant.events.WebsocketClient",
         _SilentWebsocketClient,
@@ -232,7 +218,7 @@ async def test_event_processor_exits_quietly_when_queue_shuts_down(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Shutting the queue down in stop() is teardown, not a processing error."""
-    source = HomeAssistantSource(MagicMock())
+    source = HomeAssistantSource(make_home_assistant_client().wrapper)
     source._running = True
     source._event_queue = janus.Queue()
     source._event_queue.shutdown()

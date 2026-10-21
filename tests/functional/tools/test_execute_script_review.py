@@ -590,7 +590,7 @@ async def test_approved_program_covers_keychute_named_sink_once(
 
     with patch(
         "family_assistant.scripting.apis.keychute.httpx.AsyncClient",
-        side_effect=lambda **kwargs: async_client_class(transport=transport, **kwargs),
+        new=lambda **kwargs: async_client_class(transport=transport, **kwargs),
     ):
         result = await _execute_script(provider, context, script=source)
 
@@ -662,7 +662,7 @@ async def _run_watched_keychute_program(
 
     with patch(
         "family_assistant.scripting.apis.keychute.httpx.AsyncClient",
-        side_effect=lambda **kwargs: async_client_class(transport=transport, **kwargs),
+        new=lambda **kwargs: async_client_class(transport=transport, **kwargs),
     ):
         await _execute_script(provider, context, script=source)
     return proxy_requests, reviewer
@@ -1267,6 +1267,7 @@ async def test_model_result_continues_under_program_approval(
 
     with patch(
         "family_assistant.llm.one_shot.LLMClientFactory.create_client",
+        autospec=True,
         return_value=llm_client,
     ):
         await _execute_script(provider, context, script=source)
@@ -2642,9 +2643,7 @@ async def test_watched_keychute_request_in_a_firing_cannot_be_confirmed_later(
     with (
         patch(
             "family_assistant.scripting.apis.keychute.httpx.AsyncClient",
-            side_effect=lambda **kwargs: async_client_class(
-                transport=transport, **kwargs
-            ),
+            new=lambda **kwargs: async_client_class(transport=transport, **kwargs),
         ),
         pytest.raises(ScriptExecutionError, match="denied"),
     ):
@@ -2742,6 +2741,7 @@ async def test_model_result_followed_by_a_fixed_send_inherits(
 
     with patch(
         "family_assistant.llm.one_shot.LLMClientFactory.create_client",
+        autospec=True,
         return_value=llm_client,
     ):
         await _execute_script(provider, context, script=source)
@@ -2813,6 +2813,7 @@ async def test_watched_send_after_model_result_is_reviewed_each_time(
 
     with patch(
         "family_assistant.llm.one_shot.LLMClientFactory.create_client",
+        autospec=True,
         return_value=llm_client,
     ):
         await _execute_script(provider, context, script=source)
@@ -2935,12 +2936,11 @@ async def test_keychute_request_after_model_result_inherits(
     with (
         patch(
             "family_assistant.scripting.apis.keychute.httpx.AsyncClient",
-            side_effect=lambda **kwargs: async_client_class(
-                transport=transport, **kwargs
-            ),
+            new=lambda **kwargs: async_client_class(transport=transport, **kwargs),
         ),
         patch(
             "family_assistant.llm.one_shot.LLMClientFactory.create_client",
+            autospec=True,
             return_value=llm_client,
         ),
     ):
@@ -3166,6 +3166,7 @@ async def test_bound_child_send_after_model_result_inherits(
 
     with patch(
         "family_assistant.llm.one_shot.LLMClientFactory.create_client",
+        autospec=True,
         return_value=llm_client,
     ):
         await _execute_script(provider, context, script=source)
@@ -3798,7 +3799,7 @@ async def test_observe_program_reaching_keychute_is_reviewed_before_it_runs(
 
     with patch(
         "family_assistant.scripting.apis.keychute.httpx.AsyncClient",
-        side_effect=lambda **kwargs: async_client_class(transport=transport, **kwargs),
+        new=lambda **kwargs: async_client_class(transport=transport, **kwargs),
     ):
         result = await _execute_script(provider, context, script=source)
     await provider.close()

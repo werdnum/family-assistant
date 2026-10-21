@@ -1,7 +1,6 @@
 """Tests for execute_script tool attachment propagation."""
 
 from pathlib import Path
-from unittest.mock import Mock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -32,6 +31,7 @@ from family_assistant.tools.types import (
     ToolExecutionContext,
     ToolResult,
 )
+from tests.mocks.idle_processing_service import make_idle_processing_service
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
 
@@ -196,8 +196,7 @@ async def test_execute_script_return_attachment_from_tool(
     )
     tools_provider = CompositeToolsProvider([local_provider])
 
-    mock_service = Mock()
-    mock_service.tools_provider = tools_provider
+    processing_service = make_idle_processing_service(tools_provider=tools_provider)
 
     ctx = ToolExecutionContext(
         interface_type="test",
@@ -209,7 +208,7 @@ async def test_execute_script_return_attachment_from_tool(
         plugins=None,
         event_sources=None,
         attachment_registry=attachment_registry,
-        processing_service=mock_service,
+        processing_service=processing_service,
         timezone=ZoneInfo("UTC"),
         credential_resolvers=None,
         api_backend=None,
@@ -339,8 +338,7 @@ async def test_execute_script_functional_composition(
     )
     tools_provider = CompositeToolsProvider([local_provider])
 
-    mock_service = Mock()
-    mock_service.tools_provider = tools_provider
+    processing_service = make_idle_processing_service(tools_provider=tools_provider)
 
     ctx = ToolExecutionContext(
         interface_type="test",
@@ -352,7 +350,7 @@ async def test_execute_script_functional_composition(
         plugins=None,
         event_sources=None,
         attachment_registry=attachment_registry,
-        processing_service=mock_service,
+        processing_service=processing_service,
         timezone=ZoneInfo("UTC"),
         credential_resolvers=None,
         api_backend=None,
@@ -440,8 +438,7 @@ async def test_execute_script_mixed_attachment_sources(
     )
     tools_provider = CompositeToolsProvider([local_provider])
 
-    mock_service = Mock()
-    mock_service.tools_provider = tools_provider
+    processing_service = make_idle_processing_service(tools_provider=tools_provider)
 
     ctx = ToolExecutionContext(
         interface_type="test",
@@ -453,7 +450,7 @@ async def test_execute_script_mixed_attachment_sources(
         plugins=None,
         event_sources=None,
         attachment_registry=attachment_registry,
-        processing_service=mock_service,
+        processing_service=processing_service,
         timezone=ZoneInfo("UTC"),
         credential_resolvers=None,
         api_backend=None,

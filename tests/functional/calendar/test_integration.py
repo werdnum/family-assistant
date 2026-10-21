@@ -4,7 +4,6 @@ import logging
 import uuid
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, cast
-from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
 import caldav
@@ -40,6 +39,7 @@ from tests.mocks.mock_llm import (
     RuleBasedMockLLMClient,
     get_last_message_text,
 )
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 if TYPE_CHECKING:
     from family_assistant.tools.types import CalendarConfig
@@ -238,7 +238,7 @@ async def test_add_event(
     db_context = Database(engine=db_engine)
     result = await processing_service.handle_chat_interaction(
         db_context=db_context,
-        chat_interface=MagicMock(),
+        chat_interface=RecordingChatInterface(),
         interface_type="test",
         conversation_id=TEST_CHAT_ID,
         trigger_content_parts=[{"type": "text", "text": user_message_create}],

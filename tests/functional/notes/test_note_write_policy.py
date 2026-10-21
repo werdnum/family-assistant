@@ -17,6 +17,7 @@ from family_assistant.security.note_provenance import NoteProvenanceStamp
 from family_assistant.storage.database import Database
 from family_assistant.storage.notes import notes_table
 from family_assistant.storage.repositories.notes import (
+    NoteModel,
     NoteReadPolicy,
     NotesRepository,
     NoteWritePolicy,
@@ -427,6 +428,14 @@ async def test_confirmation_prompt_reports_hidden_note_rejection(
     assert "insufficient visibility permissions" in prompt
 
 
+async def _preflight_sees_nothing(
+    _self: NotesRepository, _title: str, *, read_policy: NoteReadPolicy
+) -> NoteModel | None:
+    """A ``get_by_title`` that finds nothing, as a preflight losing a race would."""
+    del read_policy
+    return None
+
+
 @pytest.mark.asyncio
 async def test_policy_enforced_atomically_on_title_race(db_engine: AsyncEngine) -> None:
     """A same-title note created after the preflight cannot be overwritten.
@@ -446,9 +455,7 @@ async def test_policy_enforced_atomically_on_title_race(db_engine: AsyncEngine) 
         provenance=NoteProvenanceStamp.internal(),
     )
     with (
-        mock.patch.object(
-            NotesRepository, "get_by_title", new=mock.AsyncMock(return_value=None)
-        ),
+        mock.patch.object(NotesRepository, "get_by_title", new=_preflight_sees_nothing),
         pytest.raises(NoteWritePolicyError, match="concurrently"),
     ):
         db = Database(engine=db_engine)
@@ -483,7 +490,7 @@ async def test_atomic_policy_allows_racing_in_confinement_note(
         provenance=NoteProvenanceStamp.internal(),
     )
     with mock.patch.object(
-        NotesRepository, "get_by_title", new=mock.AsyncMock(return_value=None)
+        NotesRepository, "get_by_title", new=_preflight_sees_nothing
     ):
         db = Database(engine=db_engine)
         await db.notes.add_or_update(

@@ -1,7 +1,7 @@
 import uuid
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, NamedTuple
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, create_autospec
 
 import pytest
 import pytest_asyncio
@@ -196,16 +196,16 @@ async def telegram_handler_fixture(
         assistant_app.telegram_service.chat_interface, TelegramChatInterface
     )
 
-    # Create an AsyncMock for the method itself
-    mock_request_confirmation_method = AsyncMock(
-        return_value=False
-    )  # Default to no confirmation
-
     # Patch the method on the confirmation_manager instance within TelegramService
     assert assistant_app.telegram_service is not None  # Ensure telegram_service exists
     assert assistant_app.telegram_service.confirmation_manager is not None
     original_request_confirmation = (
         assistant_app.telegram_service.confirmation_manager.request_confirmation
+    )
+    # Autospecced against the real method, so a call with the wrong signature
+    # fails; defaults to no confirmation.
+    mock_request_confirmation_method = create_autospec(
+        original_request_confirmation, spec_set=True, return_value=False
     )
     assistant_app.telegram_service.confirmation_manager.request_confirmation = (
         mock_request_confirmation_method

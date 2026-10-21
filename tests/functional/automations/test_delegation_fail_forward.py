@@ -15,17 +15,18 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
-from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import update
 
+from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.interfaces import ChatDeliveryError, ChatInterface
 from family_assistant.storage.database import Database
 from family_assistant.storage.delegation_runs import delegation_runs_table
 from family_assistant.task_worker import DelegationRunCleanupPayload, TaskWorker
 from family_assistant.utils.clock import SystemClock
+from tests.mocks.recording_chat_interface import ScriptedChatInterface
 
 from .test_async_delegation import (
     TEST_CONVERSATION_ID,
@@ -80,7 +81,7 @@ def _worker(
         chat_interface=chat_interface,
         calendar_config={},
         timezone=ZoneInfo("UTC"),
-        embedding_generator=MagicMock(),
+        embedding_generator=MockEmbeddingGenerator(),
         engine=db_engine,
     )
 
@@ -116,11 +117,10 @@ async def test_a_permanent_failure_asks_the_model_for_something_deliverable(
     db_engine: AsyncEngine,
 ) -> None:
     processing_service = _TriggerRecordingSourceService(FakeDelegatableService())
-    chat_interface = AsyncMock(spec=ChatInterface)
-    chat_interface.send_message.side_effect = [
+    chat_interface = ScriptedChatInterface.exactly(
         ChatDeliveryError("Message is too long", transient=False),
         "delivered_after_fail_forward",
-    ]
+    )
     await _terminal_run(db_engine, "delegation_permanent")
 
     await _run_cleanup(
@@ -146,9 +146,8 @@ async def test_a_transient_failure_is_left_for_a_later_retry(
 ) -> None:
     """Rewriting a fine reply because the network blipped would burn a turn."""
     processing_service = _TriggerRecordingSourceService(FakeDelegatableService())
-    chat_interface = AsyncMock(spec=ChatInterface)
-    chat_interface.send_message.side_effect = ChatDeliveryError(
-        "connection reset", transient=True
+    chat_interface = ScriptedChatInterface.failing_with(
+        ChatDeliveryError("connection reset", transient=True)
     )
     await _terminal_run(db_engine, "delegation_transient")
 
@@ -172,21 +171,20 @@ async def test_a_run_that_just_failed_is_not_retried_by_the_next_pass(
 ) -> None:
     """The failure a pass records holds off the pass that follows it."""
     processing_service = _TriggerRecordingSourceService(FakeDelegatableService())
-    chat_interface = AsyncMock(spec=ChatInterface)
-    chat_interface.send_message.side_effect = ChatDeliveryError(
-        "connection reset", transient=True
+    chat_interface = ScriptedChatInterface.failing_with(
+        ChatDeliveryError("connection reset", transient=True)
     )
     await _terminal_run(db_engine, "delegation_just_failed")
     await _run_cleanup(
         db_engine, cast("ProcessingService", processing_service), chat_interface
     )
-    sends_after_first_failure = chat_interface.send_message.await_count
+    sends_after_first_failure = len(chat_interface.sent)
 
     await _run_cleanup(
         db_engine, cast("ProcessingService", processing_service), chat_interface
     )
 
-    assert chat_interface.send_message.await_count == sends_after_first_failure
+    assert len(chat_interface.sent) == sends_after_first_failure
 
 
 @pytest.mark.asyncio
@@ -198,8 +196,7 @@ async def test_a_failing_run_is_not_retried_every_hour(db_engine: AsyncEngine) -
     same gap after which a momentary burst of failures is retried.
     """
     processing_service = _TriggerRecordingSourceService(FakeDelegatableService())
-    chat_interface = AsyncMock(spec=ChatInterface)
-    chat_interface.send_message.return_value = "delivered_if_it_had_been_tried"
+    chat_interface = ScriptedChatInterface(otherwise="delivered_if_it_had_been_tried")
     await _terminal_run(db_engine, "delegation_backoff")
     db_context = Database(engine=db_engine)
     now = datetime.now(UTC)
@@ -214,7 +211,7 @@ async def test_a_failing_run_is_not_retried_every_hour(db_engine: AsyncEngine) -
         db_engine, cast("ProcessingService", processing_service), chat_interface
     )
 
-    chat_interface.send_message.assert_not_awaited()
+    assert chat_interface.sent == []
     assert processing_service.wake_call_count == 0
     run = await db_context.delegation_runs.get_by_delegation_id("delegation_backoff")
     assert run is not None
@@ -231,8 +228,9 @@ async def test_a_burst_of_task_retries_does_not_delay_the_next_cleanup(
     as hours of it and leave the result undelivered for most of a day.
     """
     processing_service = _TriggerRecordingSourceService(FakeDelegatableService())
-    chat_interface = AsyncMock(spec=ChatInterface)
-    chat_interface.send_message.return_value = "delivered_once_the_channel_returned"
+    chat_interface = ScriptedChatInterface(
+        otherwise="delivered_once_the_channel_returned"
+    )
     await _terminal_run(db_engine, "delegation_retry_burst")
     db_context = Database(engine=db_engine)
     # Four failures milliseconds apart, as the finishing task's own retries
@@ -261,14 +259,13 @@ async def test_a_transient_failure_that_never_recovers_stops_being_treated_as_on
 ) -> None:
     """A day of 'try again later' is an outage, not a blip."""
     processing_service = _TriggerRecordingSourceService(FakeDelegatableService())
-    chat_interface = AsyncMock(spec=ChatInterface)
-    chat_interface.send_message.side_effect = [
+    chat_interface = ScriptedChatInterface.exactly(
         # The reply, then the standard notice it falls back to: the whole
         # channel is down, not just this one message.
         ChatDeliveryError("connection reset", transient=True),
         ChatDeliveryError("connection reset", transient=True),
         "delivered_after_fail_forward",
-    ]
+    )
     await _terminal_run(db_engine, "delegation_long_outage")
     db_context = Database(engine=db_engine)
     await db_context.execute(
@@ -299,9 +296,8 @@ async def test_an_undeliverable_run_ends_in_gave_up_rather_than_notified(
     was reached, which is the silent failure this whole path exists to remove.
     """
     processing_service = _TriggerRecordingSourceService(FakeDelegatableService())
-    chat_interface = AsyncMock(spec=ChatInterface)
-    chat_interface.send_message.side_effect = ChatDeliveryError(
-        "Forbidden: bot was blocked by the user", transient=False
+    chat_interface = ScriptedChatInterface.failing_with(
+        ChatDeliveryError("Forbidden: bot was blocked by the user", transient=False)
     )
     await _terminal_run(db_engine, "delegation_dead_channel")
 
@@ -317,7 +313,7 @@ async def test_an_undeliverable_run_ends_in_gave_up_rather_than_notified(
     assert run["notified_at"] is None
     assert "blocked" in (run["notify_error"] or "")
     # The result reply, the fail-forward reply, and the canned notice: no more.
-    assert chat_interface.send_message.await_count == 3
+    assert len(chat_interface.sent) == 3
     assert processing_service.wake_call_count == 2
 
 
@@ -331,9 +327,8 @@ async def test_the_last_resort_notice_carries_neither_result_nor_attachments(
     it here would be refused for the same reason that got the run to this stage.
     """
     processing_service = _TriggerRecordingSourceService(FakeDelegatableService())
-    chat_interface = AsyncMock(spec=ChatInterface)
-    chat_interface.send_message.side_effect = ChatDeliveryError(
-        "Message is too long", transient=False
+    chat_interface = ScriptedChatInterface.failing_with(
+        ChatDeliveryError("Message is too long", transient=False)
     )
     await _terminal_run(db_engine, "delegation_last_resort")
 
@@ -341,10 +336,10 @@ async def test_the_last_resort_notice_carries_neither_result_nor_attachments(
         db_engine, cast("ProcessingService", processing_service), chat_interface
     )
 
-    last_send = chat_interface.send_message.await_args_list[-1].kwargs
-    assert "the delegated work, in full" not in last_send["text"]
-    assert "could not be delivered here" in last_send["text"]
-    assert last_send["attachment_ids"] is None
+    last_send = chat_interface.last_sent
+    assert "the delegated work, in full" not in last_send.text
+    assert "could not be delivered here" in last_send.text
+    assert last_send.attachment_ids is None
 
 
 @pytest.mark.asyncio
@@ -357,9 +352,8 @@ async def test_a_run_that_gave_up_still_leaves_its_result_in_the_conversation(
     with no source profile loaded writes nothing on the direct path, which
     records only after a successful send.
     """
-    chat_interface = AsyncMock(spec=ChatInterface)
-    chat_interface.send_message.side_effect = ChatDeliveryError(
-        "chat not found", transient=False
+    chat_interface = ScriptedChatInterface.failing_with(
+        ChatDeliveryError("chat not found", transient=False)
     )
     await _terminal_run(db_engine, "delegation_no_source_profile")
     orphaned_service = _NoSourceProfileService()
@@ -388,11 +382,10 @@ async def test_the_fail_forward_reply_drops_the_attachments_just_refused(
     refusal however well the model rewrote the text.
     """
     processing_service = _TriggerRecordingSourceService(FakeDelegatableService())
-    chat_interface = AsyncMock(spec=ChatInterface)
-    chat_interface.send_message.side_effect = [
+    chat_interface = ScriptedChatInterface.exactly(
         ChatDeliveryError("attachments are not supported", transient=False),
         "delivered_after_fail_forward",
-    ]
+    )
     db_context = Database(engine=db_engine)
     clock = SystemClock()
     await _create_run(db_context, delegation_id="delegation_with_attachments")
@@ -410,9 +403,10 @@ async def test_the_fail_forward_reply_drops_the_attachments_just_refused(
         db_engine, cast("ProcessingService", processing_service), chat_interface
     )
 
-    first_send, second_send = chat_interface.send_message.await_args_list
-    assert first_send.kwargs["attachment_ids"] == ["attachment-that-was-refused"]
-    assert second_send.kwargs["attachment_ids"] is None
+    assert len(chat_interface.sent) == 2
+    first_send, second_send = chat_interface.sent[0], chat_interface.sent[1]
+    assert first_send.attachment_ids == ["attachment-that-was-refused"]
+    assert second_send.attachment_ids is None
 
 
 @pytest.mark.asyncio
@@ -425,11 +419,10 @@ async def test_a_permanent_failure_on_the_finishing_task_fails_forward_immediate
     for the cleanup to notice just delays the only thing that can help.
     """
     processing_service = _TriggerRecordingSourceService(FakeDelegatableService())
-    chat_interface = AsyncMock(spec=ChatInterface)
-    chat_interface.send_message.side_effect = [
+    chat_interface = ScriptedChatInterface.exactly(
         ChatDeliveryError("Message is too long", transient=False),
         "delivered_after_fail_forward",
-    ]
+    )
     await _terminal_run(db_engine, "delegation_finishing_task")
 
     worker = _worker(
@@ -463,11 +456,10 @@ async def test_a_delivered_pointer_has_something_to_point_at(
     the line: if the result were not in the conversation by then, nothing would
     put it there and the notice would be pointing at nothing.
     """
-    chat_interface = AsyncMock(spec=ChatInterface)
-    chat_interface.send_message.side_effect = [
+    chat_interface = ScriptedChatInterface.exactly(
         ChatDeliveryError("Message is too long", transient=False),
         "the_short_notice_got_through",
-    ]
+    )
     await _terminal_run(db_engine, "delegation_pointer_only")
 
     await _run_cleanup(
@@ -499,11 +491,10 @@ async def test_a_transient_failure_delivering_the_rewrite_keeps_the_rewrite(
     the line.
     """
     processing_service = _TriggerRecordingSourceService(FakeDelegatableService())
-    chat_interface = AsyncMock(spec=ChatInterface)
-    chat_interface.send_message.side_effect = [
+    chat_interface = ScriptedChatInterface.exactly(
         ChatDeliveryError("Message is too long", transient=False),
         ChatDeliveryError("connection reset", transient=True),
-    ]
+    )
     await _terminal_run(db_engine, "delegation_rewrite_hiccup")
 
     await _run_cleanup(
@@ -511,7 +502,7 @@ async def test_a_transient_failure_delivering_the_rewrite_keeps_the_rewrite(
     )
 
     # The result, then the rewrite. Not a third send of the refused result.
-    assert chat_interface.send_message.await_count == 2
+    assert len(chat_interface.sent) == 2
     run = await Database(engine=db_engine).delegation_runs.get_by_delegation_id(
         "delegation_rewrite_hiccup"
     )
@@ -530,8 +521,7 @@ async def test_a_given_up_run_is_not_redelivered_by_a_task_retry(
     or a worker that died after giving up would wake the model again.
     """
     processing_service = _TriggerRecordingSourceService(FakeDelegatableService())
-    chat_interface = AsyncMock(spec=ChatInterface)
-    chat_interface.send_message.return_value = "should_not_be_sent"
+    chat_interface = ScriptedChatInterface(otherwise="should_not_be_sent")
     await _terminal_run(db_engine, "delegation_already_given_up")
     db_context = Database(engine=db_engine)
     await db_context.delegation_runs.advance_notify_stage(
@@ -550,7 +540,7 @@ async def test_a_given_up_run_is_not_redelivered_by_a_task_retry(
         _payload("delegation_already_given_up"),
     )
 
-    chat_interface.send_message.assert_not_awaited()
+    assert chat_interface.sent == []
     assert processing_service.wake_call_count == 0
 
 
@@ -558,15 +548,14 @@ async def test_a_given_up_run_is_not_redelivered_by_a_task_retry(
 async def test_a_gave_up_run_is_not_picked_up_again(db_engine: AsyncEngine) -> None:
     """Otherwise the hourly pass resumes exactly the loop this replaced."""
     processing_service = _TriggerRecordingSourceService(FakeDelegatableService())
-    chat_interface = AsyncMock(spec=ChatInterface)
-    chat_interface.send_message.side_effect = ChatDeliveryError(
-        "chat not found", transient=False
+    chat_interface = ScriptedChatInterface.failing_with(
+        ChatDeliveryError("chat not found", transient=False)
     )
     await _terminal_run(db_engine, "delegation_given_up")
     await _run_cleanup(
         db_engine, cast("ProcessingService", processing_service), chat_interface
     )
-    sends_after_giving_up = chat_interface.send_message.await_count
+    sends_after_giving_up = len(chat_interface.sent)
     wakes_after_giving_up = processing_service.wake_call_count
     # Past the longest backoff, so only the gave_up stage keeps it out of the pass.
     long_ago = datetime.now(UTC) - timedelta(hours=9)
@@ -580,7 +569,7 @@ async def test_a_gave_up_run_is_not_picked_up_again(db_engine: AsyncEngine) -> N
         db_engine, cast("ProcessingService", processing_service), chat_interface
     )
 
-    assert chat_interface.send_message.await_count == sends_after_giving_up
+    assert len(chat_interface.sent) == sends_after_giving_up
     assert processing_service.wake_call_count == wakes_after_giving_up
 
 
@@ -595,12 +584,11 @@ async def test_a_transient_failure_delivering_the_fail_forward_reply_does_not_re
     model a second time and repeating everything it did.
     """
     processing_service = _TriggerRecordingSourceService(FakeDelegatableService())
-    chat_interface = AsyncMock(spec=ChatInterface)
-    chat_interface.send_message.side_effect = [
+    chat_interface = ScriptedChatInterface.exactly(
         ChatDeliveryError("Message is too long", transient=False),
         ChatDeliveryError("connection reset", transient=True),
         "delivered_on_the_next_pass",
-    ]
+    )
     await _terminal_run(db_engine, "delegation_resumes_at_delivery")
 
     await _run_cleanup(

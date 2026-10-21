@@ -10,7 +10,6 @@ import logging
 import uuid
 from collections.abc import Callable
 from typing import cast
-from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -19,7 +18,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
-from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.database import Database
 from family_assistant.storage.tasks import TaskPriority, tasks_table
@@ -39,6 +37,7 @@ from family_assistant.tools.infrastructure import (
 from family_assistant.tools.notes import NOTE_TOOLS_DEFINITION
 from tests.helpers import wait_for_condition, wait_for_tasks_to_complete
 from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 logger = logging.getLogger(__name__)
 
@@ -144,11 +143,11 @@ async def test_script_failure_notification_is_processable(
     that can be successfully processed by handle_llm_callback end-to-end."""
     tools_provider = await _make_tools_provider()
     processing_service = _make_processing_service(tools_provider)
-    mock_chat = AsyncMock(spec=ChatInterface)
+    chat_interface = RecordingChatInterface()
 
     worker, new_task_event, shutdown_event = task_worker_manager(
         processing_service,
-        mock_chat,
+        chat_interface,
     )
     worker.register_task_handler("script_execution", handle_script_execution)
     worker.register_task_handler("llm_callback", handle_llm_callback)
@@ -224,7 +223,7 @@ async def test_notify_on_failure_false_suppresses_notification(
 
     worker, new_task_event, shutdown_event = task_worker_manager(
         processing_service,
-        AsyncMock(spec=ChatInterface),
+        RecordingChatInterface(),
     )
     worker.register_task_handler("script_execution", handle_script_execution)
     worker.register_task_handler(SENTINEL_TASK_TYPE, _noop_handler)
@@ -270,7 +269,7 @@ async def test_llm_callback_failure_does_not_trigger_notification(
 
     worker, new_task_event, shutdown_event = task_worker_manager(
         processing_service,
-        AsyncMock(spec=ChatInterface),
+        RecordingChatInterface(),
     )
 
     # Register a handler that always raises for llm_callback
@@ -322,7 +321,7 @@ async def test_notification_contains_event_data(
 
     worker, new_task_event, shutdown_event = task_worker_manager(
         processing_service,
-        AsyncMock(spec=ChatInterface),
+        RecordingChatInterface(),
     )
     worker.register_task_handler("script_execution", handle_script_execution)
 
@@ -387,7 +386,7 @@ async def test_confined_profile_failure_skips_llm_notification(
 
     worker, new_task_event, shutdown_event = task_worker_manager(
         default_service,
-        AsyncMock(spec=ChatInterface),
+        RecordingChatInterface(),
     )
     worker.register_task_handler("script_execution", handle_script_execution)
     worker.register_task_handler(SENTINEL_TASK_TYPE, _noop_handler)
@@ -444,7 +443,7 @@ async def test_stamped_profile_carried_into_notification(
 
     worker, new_task_event, shutdown_event = task_worker_manager(
         default_service,
-        AsyncMock(spec=ChatInterface),
+        RecordingChatInterface(),
     )
     worker.register_task_handler("script_execution", handle_script_execution)
 

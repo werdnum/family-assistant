@@ -16,7 +16,6 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, cast
-from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import select
@@ -62,6 +61,7 @@ from tests.functional.automations.test_async_delegation import (
     _source_processing_service,
     _tool_context,
 )
+from tests.mocks.recording_chat_interface import ScriptedChatInterface
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -197,12 +197,11 @@ async def _failed_run(
 
 def _worker_for(
     db_engine: AsyncEngine, target: FakePollableService
-) -> tuple[TaskWorker, ProcessingService, AsyncMock]:
+) -> tuple[TaskWorker, ProcessingService, ScriptedChatInterface]:
     processing_service = _source_processing_service(
         cast("FakeDelegatableService", target)
     )
-    chat_interface = AsyncMock()
-    chat_interface.send_message.return_value = "external_message_id"
+    chat_interface = ScriptedChatInterface(otherwise="external_message_id")
     worker = _build_worker(db_engine, processing_service, chat_interface)
     return worker, processing_service, chat_interface
 
@@ -251,11 +250,8 @@ async def test_a_cancelled_run_that_later_completes_is_recovered(
     assert observation["output_chars"] == len("Here is the work you asked for.")
     assert observation["step_count"] == 342
     assert "Here is the work" not in str(observation)
-    chat_interface.send_message.assert_awaited_once()
-    assert (
-        "Here is the work you asked for."
-        in chat_interface.send_message.await_args.kwargs["text"]
-    )
+    assert len(chat_interface.sent) == 1
+    assert "Here is the work you asked for." in chat_interface.last_sent.text
 
 
 @pytest.mark.asyncio
@@ -283,7 +279,7 @@ async def test_a_late_result_says_that_it_is_late(
         _reconcile_payload("delegation_marked_late"),
     )
 
-    text = chat_interface.send_message.await_args.kwargs["text"]
+    text = chat_interface.last_sent.text
     assert "failed earlier" in text
     assert "the finished work" in text
 
@@ -331,7 +327,7 @@ async def test_racing_reconcilers_recover_a_late_result_once(
         await asyncio.gather(reconcile(), reconcile())
 
     assert len(target.observe_calls) == 2
-    chat_interface.send_message.assert_awaited_once()
+    assert len(chat_interface.sent) == 1
     db_context = Database(engine=db_engine)
     rows = await db_context.fetch_all(
         select(message_history_table)
@@ -367,7 +363,7 @@ async def test_a_recovered_run_is_not_read_again(
     )
 
     assert len(target.observe_calls) == reads_before
-    chat_interface.send_message.assert_awaited_once()
+    assert len(chat_interface.sent) == 1
 
 
 @pytest.mark.asyncio
@@ -403,9 +399,10 @@ async def test_a_recovered_result_carries_the_runs_own_taint(
         _reconcile_payload("delegation_tainted"),
     )
 
-    chat_interface.send_message.assert_awaited_once()
-    _, send_kwargs = chat_interface.send_message.await_args
-    assert send_kwargs["taint_metadata"]["max_tier"] == "unknown_external"
+    assert len(chat_interface.sent) == 1
+    sent_taint = chat_interface.last_sent.taint_metadata
+    assert sent_taint is not None
+    assert sent_taint.get("max_tier") == "unknown_external"
     rows = await db_context.fetch_all(
         select(message_history_table)
         .where(message_history_table.c.conversation_id == TEST_CONVERSATION_ID)
@@ -464,7 +461,7 @@ async def test_a_stale_completion_does_not_recover_a_late_result(
     assert run["status"] == "failed"
     assert run["late_recovered_at"] is None
     assert run["remote_status"] == "in_progress"
-    chat_interface.send_message.assert_not_awaited()
+    assert chat_interface.sent == []
     # Declining is not settling: the run is read again.
     assert run["reconciled_at"] is None
 
@@ -498,7 +495,7 @@ async def test_a_run_still_in_progress_is_read_again_and_not_resurrected(
     assert run["reconciled_at"] is None
     assert run["reconcile_attempts"] == 1
     assert run["remote_status"] == "pending"
-    chat_interface.send_message.assert_not_awaited()
+    assert chat_interface.sent == []
     # Reconciliation is a re-read, never a mutation.
     assert target.cancelled == []
     pending = await db_context.tasks.get_all(
@@ -826,8 +823,7 @@ async def test_a_recovered_run_wakes_the_source_again_instead_of_replaying_the_f
     ])
     source = FakeWakeCapableSourceService(cast("FakeDelegatableService", target))
     processing_service = cast("ProcessingService", source)
-    chat_interface = AsyncMock()
-    chat_interface.send_message.return_value = "external_message_id"
+    chat_interface = ScriptedChatInterface(otherwise="external_message_id")
     worker = _build_worker(db_engine, processing_service, chat_interface)
 
     db_context = Database(engine=db_engine)
@@ -966,7 +962,7 @@ async def test_a_stale_poll_reading_does_not_finalize_the_run(
     assert run is not None
     assert run["status"] == "awaiting_remote"
     assert run["remote_status"] == "in_progress"
-    chat_interface.send_message.assert_not_awaited()
+    assert chat_interface.sent == []
 
 
 @pytest.mark.asyncio
@@ -1028,4 +1024,4 @@ async def test_a_superseded_reading_past_the_cap_does_not_time_the_run_out(
     assert run["status"] == "awaiting_remote"
     assert run["cancel_requested_at"] is None
     assert target.cancelled == []
-    chat_interface.send_message.assert_not_awaited()
+    assert chat_interface.sent == []

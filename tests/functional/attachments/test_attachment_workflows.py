@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import uuid
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -13,7 +12,6 @@ import pytest
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.events.processor import EventProcessor
-from family_assistant.interfaces import ChatInterface
 from family_assistant.plugins.home_assistant.tools import (
     HOME_ASSISTANT_TOOLS_DEFINITION,
 )
@@ -43,6 +41,10 @@ from tests.mocks.mock_llm import (
     RuleBasedMockLLMClient,
     get_last_message_text,
 )
+from tests.mocks.recording_chat_interface import (
+    RecordingChatInterface,
+    SentChatMessage,
+)
 
 if TYPE_CHECKING:
     import asyncio
@@ -51,6 +53,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncEngine
 
+    from family_assistant.interfaces import ChatInterface
     from family_assistant.services.attachment_registry import AttachmentMetadata
     from family_assistant.task_worker import TaskWorker
 
@@ -206,10 +209,9 @@ class TestAttachmentWorkflows:
         db_context = Database(engine=db_engine)
         target_chat_id = 987654321
         await seed_known_conversation(db_engine, str(target_chat_id))
-        mock_chat_interface = AsyncMock(spec=ChatInterface)
-        mock_chat_interface.send_message.return_value = "mock_message_id_123"
+        chat_interface = RecordingChatInterface()
         exec_context = _exec_context(
-            db_context, attachment_registry, chat_interface=mock_chat_interface
+            db_context, attachment_registry, chat_interface=chat_interface
         )
 
         user_image_content = b"fake_user_uploaded_image_data" + b"\x00" * 200
@@ -253,13 +255,15 @@ class TestAttachmentWorkflows:
         assert "sent successfully" in result_text.lower()
         assert str(target_chat_id) in result_text
 
-        mock_chat_interface.send_message.assert_called_once_with(
-            conversation_id=str(target_chat_id),
-            text="Here's your enhanced photo!",
-            attachment_ids=[processed_attachment.attachment_id],
-            on_behalf_of_user_id=None,
-            taint_metadata=TurnTaintState.empty().to_metadata(),
-        )
+        assert chat_interface.sent == [
+            SentChatMessage(
+                conversation_id=str(target_chat_id),
+                text="Here's your enhanced photo!",
+                attachment_ids=[processed_attachment.attachment_id],
+                on_behalf_of_user_id=None,
+                taint_metadata=TurnTaintState.empty().to_metadata(),
+            )
+        ]
 
         sent_content = await attachment_registry.get_attachment_content(
             db_context, processed_attachment.attachment_id, acting_user_id=None
@@ -329,8 +333,7 @@ wake_llm({
         tools_provider = CompositeToolsProvider(providers=[local_provider])
         await tools_provider.get_tool_definitions()
 
-        mock_chat_interface = AsyncMock(spec=ChatInterface)
-        mock_chat_interface.send_message.return_value = "mock_security_message_id"
+        chat_interface = RecordingChatInterface()
 
         wake_messages: list[str] = []
 
@@ -376,7 +379,7 @@ wake_llm({
             attachment_registry=attachment_registry,
         )
 
-        worker, _, _ = task_worker_manager(processing_service, mock_chat_interface)
+        worker, _, _ = task_worker_manager(processing_service, chat_interface)
         worker.register_task_handler("script_execution", handle_script_execution)
         worker.register_task_handler("llm_callback", handle_llm_callback)
 
@@ -410,7 +413,7 @@ wake_llm({
             handed_over = text.split("<attachment_metadata>", 1)[1]
             assert snapshots[0].attachment_id in handed_over
 
-        mock_chat_interface.send_message.assert_called_once()
-        sent_text = mock_chat_interface.send_message.call_args.kwargs["text"]
+        assert len(chat_interface.sent) == 1
+        sent_text = chat_interface.sent[0].text
         assert "Security Alert" in sent_text
         assert "snapshot captured" in sent_text

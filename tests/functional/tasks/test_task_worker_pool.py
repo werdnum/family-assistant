@@ -23,7 +23,6 @@ import contextlib
 import logging
 from collections.abc import AsyncGenerator
 from typing import Any, cast
-from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -33,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.assistant import Assistant
 from family_assistant.config_models import AppConfig
+from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.storage.database import Database
 from family_assistant.storage.tasks import (
     TaskPriority,
@@ -44,6 +44,8 @@ from family_assistant.task_worker import PARKING_TASK_TYPES, TaskWorker
 from family_assistant.tools.types import ToolExecutionContext
 from tests.conftest import cleanup_task_worker
 from tests.helpers import wait_for_condition, wait_for_tasks_to_complete
+from tests.mocks.idle_processing_service import make_idle_processing_service
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 logger = logging.getLogger(__name__)
 
@@ -72,11 +74,11 @@ def _make_worker(
     """
     engine = db_engine
     return worker_cls(
-        processing_service=MagicMock(),
-        chat_interface=MagicMock(),
+        processing_service=make_idle_processing_service(),
+        chat_interface=RecordingChatInterface(),
         calendar_config={},
         timezone=ZoneInfo("UTC"),
-        embedding_generator=MagicMock(),
+        embedding_generator=MockEmbeddingGenerator(),
         shutdown_event_instance=shutdown_event,
         engine=engine,
         **kwargs,

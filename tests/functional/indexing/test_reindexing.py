@@ -7,7 +7,6 @@ import contextlib
 import logging
 import uuid
 from collections.abc import AsyncGenerator
-from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -25,14 +24,9 @@ from family_assistant.task_worker import TaskWorker, handle_reindex_document
 from family_assistant.utils.scraping import MockScraper, ScrapeResult
 from family_assistant.web.app_creator import app as fastapi_app
 from tests.helpers import wait_for_tasks_to_complete
+from tests.mocks.idle_processing_service import make_idle_processing_service
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
-
-
-def _create_mock_processing_service() -> MagicMock:
-    """Create a mock ProcessingService with required attributes."""
-    mock = MagicMock()
-    return mock
-
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 logger = logging.getLogger(__name__)
 
@@ -184,8 +178,8 @@ async def test_reindex_document_e2e(
     )
 
     worker = TaskWorker(
-        processing_service=_create_mock_processing_service(),
-        chat_interface=MagicMock(),
+        processing_service=make_idle_processing_service(),
+        chat_interface=RecordingChatInterface(),
         calendar_config={},
         timezone=ZoneInfo("UTC"),
         embedding_generator=mock_embedding_generator,

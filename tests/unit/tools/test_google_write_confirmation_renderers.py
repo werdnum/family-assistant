@@ -57,12 +57,18 @@ async def test_gmail_draft_confirmation_shows_recipients_content_and_attachments
                 "content": "Family plan",
                 "file_type": "google_doc",
                 "overwrite": True,
+                "folder": "Trips/2026",
             },
-            ("Plan", "Family plan", "google_doc", "True"),
+            ("Plan", "Family plan", "google_doc", "True", "Trips/2026"),
         ),
         (
             {"attachment_id": "attachment-2"},
-            ("Use the attachment filename", "attachment-2", "False"),
+            (
+                "Use the attachment filename",
+                "attachment-2",
+                "False",
+                "Top of the Family Assistant folder",
+            ),
         ),
     ],
 )

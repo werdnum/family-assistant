@@ -2,13 +2,12 @@
 
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock
 from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.config_models import ToolsConfig
+from family_assistant.config_models import AppConfig, AttachmentConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import LLMOutput
 from family_assistant.llm.messages import SystemMessage, UserMessage
@@ -29,6 +28,25 @@ from family_assistant.utils.clock import SystemClock
 from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module
     RuleBasedMockLLMClient,
 )
+from tests.mocks.mock_tools_provider import MockToolsProvider
+
+
+def _app_config() -> AppConfig:
+    return AppConfig(
+        attachment_selection_threshold=5,
+        max_response_attachments=3,
+        attachment_config=AttachmentConfig(large_tool_result_threshold_kb=20),
+    )
+
+
+_READ_ERROR_LOGS_DEFINITION = {
+    "type": "function",
+    "function": {
+        "name": "read_error_logs",
+        "description": "Read error logs.",
+        "parameters": {"type": "object", "properties": {}},
+    },
+}
 
 
 @pytest.mark.asyncio
@@ -59,30 +77,31 @@ async def test_large_tool_result_auto_attachment(
         id="test-profile",
     )
 
-    mock_llm = Mock()
-    mock_tools_provider = AsyncMock()
+    large_content = "A" * (20 * 1024 + 100)
+    large_json_obj = {"data": "B" * (20 * 1024)}
+    large_json_str = json.dumps(large_json_obj)
+    large_read_result = "C" * (20 * 1024 + 100)
 
-    # Mock AppConfig for attachment threshold
-    mock_app_config = Mock()
-    mock_app_config.attachment_selection_threshold = 5
-    mock_app_config.attachment_config = Mock()
-    mock_app_config.attachment_config.large_tool_result_threshold_kb = 20
+    tools_provider = MockToolsProvider()
+    tools_provider.add_tool("large_tool", lambda: large_content)
+    tools_provider.add_tool("json_tool", lambda: large_json_str)
+    tools_provider.add_tool(
+        "read_text_attachment", lambda attachment_id: large_read_result
+    )
 
     service = ProcessingService(
-        llm_client=mock_llm,
-        tools_provider=mock_tools_provider,
+        llm_client=RuleBasedMockLLMClient(rules=[]),
+        tools_provider=tools_provider,
         service_config=config,
         context_providers=[],
         server_url="http://localhost:8000",
-        app_config=mock_app_config,
+        app_config=_app_config(),
         attachment_registry=attachment_registry,
         clock=SystemClock(),
     )
 
     db = Database(engine=db_engine)
     # 1. Test large string result
-    large_content = "A" * (20 * 1024 + 100)
-    mock_tools_provider.execute_tool.return_value = large_content
 
     tool_call = ToolCallItem(
         id="call_1",
@@ -116,9 +135,6 @@ async def test_large_tool_result_auto_attachment(
     assert saved_content.decode("utf-8") == large_content
 
     # 2. Test large JSON result
-    large_json_obj = {"data": "B" * (20 * 1024)}
-    large_json_str = json.dumps(large_json_obj)
-    mock_tools_provider.execute_tool.return_value = large_json_str
 
     tool_call = ToolCallItem(
         id="call_2",
@@ -148,8 +164,6 @@ async def test_large_tool_result_auto_attachment(
     # 3. Test read_text_attachment is EXEMPT from auto-conversion
     # Even if it returns large content, it should NOT be converted to an attachment
     # because the user explicitly requested to read that content
-    large_read_result = "C" * (20 * 1024 + 100)
-    mock_tools_provider.execute_tool.return_value = large_read_result
 
     tool_call = ToolCallItem(
         id="call_3",
@@ -313,11 +327,7 @@ async def test_stream_done_event_attachment_metadata_visible_same_transaction(
         id="test-profile",
     )
 
-    app_config = Mock()
-    app_config.attachment_selection_threshold = 5
-    app_config.max_response_attachments = 3
-    app_config.attachment_config = Mock()
-    app_config.attachment_config.large_tool_result_threshold_kb = 20
+    app_config = _app_config()
 
     llm_client = RuleBasedMockLLMClient(
         rules=[
@@ -351,31 +361,25 @@ async def test_stream_done_event_attachment_metadata_visible_same_transaction(
         ]
     )
 
-    mock_tools_provider = AsyncMock()
-    mock_tools_provider.get_tool_definitions.return_value = [
-        {
-            "type": "function",
-            "function": {
-                "name": "read_error_logs",
-                "description": "Read error logs.",
-                "parameters": {"type": "object", "properties": {}},
-            },
-        }
-    ]
-    mock_tools_provider.execute_tool.return_value = ToolResult(
-        text="log excerpt",
-        attachments=[
-            ToolAttachment(
-                content=b"E" * 1024,
-                mime_type="text/plain",
-                description="Error log excerpt",
-            )
-        ],
+    tools_provider = MockToolsProvider()
+    tools_provider.add_tool(
+        "read_error_logs",
+        lambda: ToolResult(
+            text="log excerpt",
+            attachments=[
+                ToolAttachment(
+                    content=b"E" * 1024,
+                    mime_type="text/plain",
+                    description="Error log excerpt",
+                )
+            ],
+        ),
+        _READ_ERROR_LOGS_DEFINITION,
     )
 
     service = ProcessingService(
         llm_client=llm_client,
-        tools_provider=mock_tools_provider,
+        tools_provider=tools_provider,
         service_config=service_config,
         context_providers=[],
         server_url="http://localhost:8000",
@@ -444,11 +448,7 @@ async def test_large_result_attachment_not_sent_with_response(
         id="test-profile",
     )
 
-    app_config = Mock()
-    app_config.attachment_selection_threshold = 5
-    app_config.max_response_attachments = 3
-    app_config.attachment_config = Mock()
-    app_config.attachment_config.large_tool_result_threshold_kb = 20
+    app_config = _app_config()
 
     llm_client = RuleBasedMockLLMClient(
         rules=[
@@ -482,22 +482,14 @@ async def test_large_result_attachment_not_sent_with_response(
         ]
     )
 
-    mock_tools_provider = AsyncMock()
-    mock_tools_provider.get_tool_definitions.return_value = [
-        {
-            "type": "function",
-            "function": {
-                "name": "read_error_logs",
-                "description": "Read error logs.",
-                "parameters": {"type": "object", "properties": {}},
-            },
-        }
-    ]
-    mock_tools_provider.execute_tool.return_value = "E" * (20 * 1024 + 100)
+    tools_provider = MockToolsProvider()
+    tools_provider.add_tool(
+        "read_error_logs", lambda: "E" * (20 * 1024 + 100), _READ_ERROR_LOGS_DEFINITION
+    )
 
     service = ProcessingService(
         llm_client=llm_client,
-        tools_provider=mock_tools_provider,
+        tools_provider=tools_provider,
         service_config=service_config,
         context_providers=[],
         server_url="http://localhost:8000",
@@ -569,30 +561,24 @@ async def test_large_tool_result_data_field_triggers_auto_attachment(
         id="test-profile",
     )
 
-    mock_llm = Mock()
-    mock_tools_provider = AsyncMock()
-
-    mock_app_config = Mock()
-    mock_app_config.attachment_selection_threshold = 5
-    mock_app_config.attachment_config = Mock()
-    mock_app_config.attachment_config.large_tool_result_threshold_kb = 20
+    large_data = {
+        "entries": [{"key": f"item_{i}", "value": "x" * 100} for i in range(200)]
+    }
+    tools_provider = MockToolsProvider()
+    tools_provider.add_tool("data_tool", lambda: ToolResult(data=large_data))
 
     service = ProcessingService(
-        llm_client=mock_llm,
-        tools_provider=mock_tools_provider,
+        llm_client=RuleBasedMockLLMClient(rules=[]),
+        tools_provider=tools_provider,
         service_config=config,
         context_providers=[],
         server_url="http://localhost:8000",
-        app_config=mock_app_config,
+        app_config=_app_config(),
         attachment_registry=attachment_registry,
         clock=SystemClock(),
     )
 
     db = Database(engine=db_engine)
-    large_data = {
-        "entries": [{"key": f"item_{i}", "value": "x" * 100} for i in range(200)]
-    }
-    mock_tools_provider.execute_tool.return_value = ToolResult(data=large_data)
 
     tool_call = ToolCallItem(
         id="call_data_1",

@@ -5,12 +5,13 @@ import os
 import signal
 from datetime import datetime, time, timedelta
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
 import pytest_asyncio
+from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.storage.database import Database
 from family_assistant.tools.mcp import MCPToolsProvider
 from family_assistant.tools.types import MCPServerConfig, ToolExecutionContext
 from tests.helpers import find_free_port, require_executable, wait_for_server
@@ -103,7 +104,9 @@ async def mcp_proxy_controller() -> "AsyncGenerator[MCPProxyController]":
 
 
 @pytest.mark.asyncio
-async def test_mcp_sse_restart(mcp_proxy_controller: MCPProxyController) -> None:
+async def test_mcp_sse_restart(
+    db_engine: AsyncEngine, mcp_proxy_controller: MCPProxyController
+) -> None:
     """
     Test that MCP client can handle server restart (SSE disconnect).
     """
@@ -123,7 +126,7 @@ async def test_mcp_sse_restart(mcp_proxy_controller: MCPProxyController) -> None
         conversation_id="456",
         user_name="tester",
         turn_id="turn1",
-        db_context=MagicMock(),
+        db_context=Database(engine=db_engine),
         processing_service=None,
         clock=None,
         plugins=None,

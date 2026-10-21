@@ -10,12 +10,12 @@ import typing
 import uuid
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 import telegramify_markdown  # type: ignore[import-untyped]  # Third-party library has no type stubs
 from assertpy import assert_that, soft_assertions
-from telegram import Chat, Message, PhotoSize, Update, User
+from telegram import Bot, Chat, Message, PhotoSize, Update, User
 from telegram.error import BadRequest
 from telegram.ext import Application, ContextTypes
 
@@ -57,24 +57,36 @@ def create_context(
 create_mock_context = create_context
 
 
-def _make_parse_error_side_effect(
+def _make_parse_error_send_message(
     original_send_message: typing.Callable[
         ..., typing.Coroutine[typing.Any, typing.Any, Message]
     ],
 ) -> typing.Callable[..., typing.Coroutine[typing.Any, typing.Any, Message]]:
-    """Create a side_effect function that rejects messages with parse_mode set.
+    """Create a ``Bot.send_message`` replacement that rejects messages with parse_mode set.
 
-    Returns an async function suitable for use as AsyncMock(side_effect=...).
+    The returned function is installed on the ``Bot`` class, so it receives the
+    bot instance first; every other send goes through ``original_send_message``.
     """
 
-    async def side_effect(**kwargs: object) -> Message:
+    async def send_message(_bot: Bot, **kwargs: object) -> Message:
         if kwargs.get("parse_mode") is not None:
             raise BadRequest(
                 "Can't parse entities: can't find end of spoiler entity at byte offset 42"
             )
         return await original_send_message(**kwargs)
 
-    return side_effect
+    return send_message
+
+
+class InMemoryTelegramFile:
+    """Stands in for the ``telegram.File`` that ``get_file`` returns, serving fixed bytes."""
+
+    def __init__(self, content: bytes) -> None:
+        self._content = content
+        self.file_size = len(content)
+
+    async def download_to_memory(self, out: io.BytesIO) -> None:
+        out.write(self._content)
 
 
 def create_mock_update(
@@ -547,16 +559,13 @@ async def test_telegram_photo_persistence_and_llm_context(
     # Mock Telegram bot file download to write test photo bytes to buffer
     test_photo_bytes = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xdd\x8d\xb4\x1c\x00\x00\x00\x00IEND\xaeB`\x82"
 
-    # Mock the file object and its download method
-    async def mock_download_to_memory(out: io.BytesIO) -> None:
-        out.write(test_photo_bytes)
+    photo_file = InMemoryTelegramFile(test_photo_bytes)
 
-    mock_file = AsyncMock()
-    mock_file.download_to_memory = mock_download_to_memory
-    mock_file.file_size = len(test_photo_bytes)
+    async def get_file(_bot: Bot, *_args: object, **_kwargs: object) -> object:
+        return photo_file
 
     # Use patch on the class method since the Bot instance is frozen/immutable
-    with patch("telegram.Bot.get_file", AsyncMock(return_value=mock_file)):
+    with patch("telegram.Bot.get_file", new=get_file):
         # === TURN 1: Send photo with text ===
         photo_update = create_mock_update_with_photo(
             message_text="What do you see in this image?",
@@ -656,11 +665,11 @@ async def test_bad_request_parse_error_falls_back_to_plain_text(
     # simulating Telegram rejecting malformed entities.
     original_send_message = fix.bot.send_message
 
-    mock_send = AsyncMock(
-        side_effect=_make_parse_error_side_effect(original_send_message)
-    )
-
-    with patch.object(type(fix.bot), "send_message", mock_send):
+    with patch.object(
+        type(fix.bot),
+        "send_message",
+        new=_make_parse_error_send_message(original_send_message),
+    ):
         await fix.handler.message_handler(update, context)
 
     # The user should still receive a response (the plain text fallback)

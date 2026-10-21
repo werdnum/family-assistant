@@ -20,7 +20,6 @@ from collections.abc import (
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock  # unittest.mock.AsyncMock removed
 from zoneinfo import ZoneInfo
 
 import httpx  # Added for http_client
@@ -72,11 +71,13 @@ from family_assistant.utils.scraping import MockScraper, ScrapeResult
 # Import the FastAPI app directly for the test client
 from family_assistant.web.app_creator import app as fastapi_app
 from tests.helpers import wait_for_tasks_to_complete
-from tests.mocks.mock_llm import (  # Added
+from tests.mocks.idle_processing_service import make_idle_processing_service
+from tests.mocks.mock_llm import (
     LLMOutput,
     RuleBasedMockLLMClient,
     get_last_message_text,
 )
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 logger = logging.getLogger(__name__)
 
@@ -94,21 +95,6 @@ async def _cleanup_after_test(
         raise
     finally:
         await cleanup(test_failed)
-
-
-def _create_mock_processing_service() -> MagicMock:
-    """Create a mock ProcessingService with required attributes.
-
-    ``attachment_registry`` is pinned to ``None`` rather than left as an
-    auto-generated ``MagicMock``: any tool that happened to ``await`` a
-    ``MagicMock`` method would otherwise raise ``TypeError``. The
-    ``EmailIndexer`` uses its own ``attachment_registry`` constructor
-    argument, so the ``exec_context`` value here is unused by the code
-    under test.
-    """
-    mock = MagicMock()
-    mock.attachment_registry = None
-    return mock
 
 
 # --- Test Configuration ---
@@ -506,15 +492,12 @@ async def test_email_with_pdf_attachment_indexing_e2e(
     )
 
     # --- Arrange: Task Worker Setup ---
-    mock_application_pdf = MagicMock()
-    mock_application_pdf.state.embedding_generator = mock_embedder
-    mock_application_pdf.state.llm_client = None  # Or a mock LLM if needed
 
     dummy_timezone_str_pdf = "UTC"
-    mock_chat_interface_pdf = MagicMock()
+    mock_chat_interface_pdf = RecordingChatInterface()
     test_shutdown_event = asyncio.Event()  # Create shutdown event early
     worker = TaskWorker(
-        processing_service=_create_mock_processing_service(),
+        processing_service=make_idle_processing_service(),
         chat_interface=mock_chat_interface_pdf,
         embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=None,
@@ -789,18 +772,10 @@ async def test_email_indexing_with_llm_summary_e2e(
     original_llm_client = getattr(fastapi_app.state, "llm_client", None)
     fastapi_app.state.llm_client = mock_llm_client_email  # type: ignore[assignment]
 
-    # Create a mock application object for TaskWorker
-    mock_app_state_summary = MagicMock()
-    mock_app_state_summary.embedding_generator = current_embedder
-    mock_app_state_summary.llm_client = mock_llm_client_email
-
-    mock_application_summary = MagicMock()
-    mock_application_summary.state = mock_app_state_summary
-
-    mock_chat_interface_summary = MagicMock()
+    mock_chat_interface_summary = RecordingChatInterface()
     test_shutdown_event = asyncio.Event()  # Create shutdown event before TaskWorker
     worker_email_summary = TaskWorker(
-        processing_service=_create_mock_processing_service(),
+        processing_service=make_idle_processing_service(),
         chat_interface=mock_chat_interface_summary,
         embedding_generator=current_embedder,  # Use the updated embedder
         calendar_config={},
@@ -1071,10 +1046,10 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
     )  # Instantiate EmailIndexer
 
     # --- Arrange: Task Worker Setup ---
-    mock_chat_interface_link_ext = MagicMock()
+    mock_chat_interface_link_ext = RecordingChatInterface()
     test_shutdown_event = asyncio.Event()  # Create shutdown event before TaskWorker
     worker_link_ext = TaskWorker(
-        processing_service=_create_mock_processing_service(),
+        processing_service=make_idle_processing_service(),
         chat_interface=mock_chat_interface_link_ext,
         embedding_generator=current_embedder,
         calendar_config={},

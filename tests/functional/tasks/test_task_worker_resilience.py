@@ -4,18 +4,22 @@ Tests for TaskWorker resilience features including timeout and health monitoring
 
 import asyncio
 import contextlib
+import inspect
 import logging
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.config_models import AppConfig, ToolsConfig
+from family_assistant.delegation_security import DelegationSecurityLevel
+from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.llm.messages import UserMessage
+from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.processing.types import ChatInteractionResult
 from family_assistant.storage.database import Database
 from family_assistant.storage.message_history import message_history_table
@@ -27,9 +31,13 @@ from family_assistant.task_worker import (
     TaskWorker,
     handle_llm_callback,
 )
+from family_assistant.tools.infrastructure import LocalToolsProvider
 from family_assistant.tools.types import ToolExecutionContext
 from family_assistant.utils.clock import MockClock
 from tests.helpers import wait_for_condition, wait_for_tasks_to_complete
+from tests.mocks.idle_processing_service import make_idle_processing_service
+from tests.mocks.mock_llm import RuleBasedMockLLMClient
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 logger = logging.getLogger(__name__)
 
@@ -86,18 +94,50 @@ async def _make_schedule_task_due_now(
     return updated_task
 
 
-def _processing_service_with_callback_result(
-    result: ChatInteractionResult,
-) -> MagicMock:
-    processing_service = MagicMock()
-    processing_service.handle_chat_interaction = AsyncMock(return_value=result)
-    processing_service.plugins = None
-    processing_service.attachment_registry = None
-    processing_service.processing_services_registry = {}
-    processing_service.service_config.id = "test_profile"
-    processing_service.service_config.visibility_grants = None
-    processing_service.service_config.default_note_visibility_labels = None
-    return processing_service
+class ScriptedTurnProcessingService(ProcessingService):
+    """A real ``ProcessingService`` whose turns return scripted outcomes.
+
+    Each ``handle_chat_interaction`` call consumes the next outcome: a result is
+    returned, an exception is raised. Calls are counted so a test can tell
+    whether a retry re-ran the turn.
+    """
+
+    def __init__(self, *outcomes: ChatInteractionResult | Exception) -> None:
+        super().__init__(
+            llm_client=RuleBasedMockLLMClient(rules=[]),
+            tools_provider=LocalToolsProvider(definitions=[], implementations={}),
+            service_config=ProcessingServiceConfig(
+                id="test_profile",
+                prompts={"system_prompt": "You are a helpful assistant."},
+                timezone=ZoneInfo("UTC"),
+                history_budget_chars=100_000,
+                history_max_age_hours=24,
+                tools_config=ToolsConfig(),
+                delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
+            ),
+            context_providers=[],
+            server_url=None,
+            app_config=AppConfig(),
+        )
+        self._outcomes = list(outcomes)
+        self.turn_count = 0
+
+    async def handle_chat_interaction(
+        self,
+        *args: object,
+        **kwargs: object,
+    ) -> ChatInteractionResult:
+        # Checked against the real signature, so a call the real service would
+        # reject fails here too.
+        inspect.signature(ProcessingService.handle_chat_interaction).bind(
+            self, *args, **kwargs
+        )
+        self.turn_count += 1
+        assert self._outcomes, f"unexpected turn #{self.turn_count}"
+        outcome = self._outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
 
 
 async def _create_schedule_automation(
@@ -160,11 +200,11 @@ async def test_task_handler_timeout(
 
     # Create worker with custom timeout - no global patching needed
     worker = TaskWorker(
-        processing_service=MagicMock(),
-        chat_interface=MagicMock(),
+        processing_service=make_idle_processing_service(),
+        chat_interface=RecordingChatInterface(),
         calendar_config={},
         timezone=ZoneInfo("UTC"),
-        embedding_generator=MagicMock(),
+        embedding_generator=MockEmbeddingGenerator(),
         shutdown_event_instance=shutdown_event,
         engine=db_engine,
         handler_timeout=test_timeout,  # Set timeout per instance
@@ -251,8 +291,8 @@ async def test_successful_handler_completes(
     """Test that successful handlers mark tasks as completed."""
     # Create worker using the fixture factory
     worker, new_task_event, shutdown_event = task_worker_manager(
-        processing_service=MagicMock(),
-        chat_interface=MagicMock(),
+        processing_service=make_idle_processing_service(),
+        chat_interface=RecordingChatInterface(),
     )
     engine = worker.engine
     assert engine is not None
@@ -307,8 +347,8 @@ async def test_task_worker_context_includes_taint_tracker(
 ) -> None:
     """Task, automation, and script handlers must not run taint-blind."""
     worker, new_task_event, _shutdown_event = task_worker_manager(
-        processing_service=MagicMock(),
-        chat_interface=MagicMock(),
+        processing_service=make_idle_processing_service(),
+        chat_interface=RecordingChatInterface(),
     )
     engine = worker.engine
     assert engine is not None
@@ -354,8 +394,8 @@ async def test_retry_exhaustion_leads_to_failure(
     """Test that a task retries once on failure, then fails permanently once retries are exhausted."""
     # Create worker using the fixture factory with short timeout
     worker, new_task_event, shutdown_event = task_worker_manager(
-        processing_service=MagicMock(),
-        chat_interface=MagicMock(),
+        processing_service=make_idle_processing_service(),
+        chat_interface=RecordingChatInterface(),
         handler_timeout=0.1,  # Very short timeout to make test fast
     )
     engine = worker.engine
@@ -430,8 +470,8 @@ async def test_failed_schedule_script_reschedules_after_retry_exhaustion(
 ) -> None:
     """A schedule automation script keeps recurring after an exhausted failure."""
     worker, new_task_event, shutdown_event = task_worker_manager(
-        processing_service=MagicMock(),
-        chat_interface=MagicMock(),
+        processing_service=make_idle_processing_service(),
+        chat_interface=RecordingChatInterface(),
     )
     engine = worker.engine
     assert engine is not None
@@ -487,14 +527,13 @@ async def test_failed_schedule_llm_callback_delivers_error_once_and_reschedules(
     task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
 ) -> None:
     """A delivered callback error fails once and still advances the schedule."""
-    processing_service = _processing_service_with_callback_result(
+    processing_service = ScriptedTurnProcessingService(
         ChatInteractionResult.error(
             text_reply="User-visible callback error.",
             error_traceback="callback exploded",
         )
     )
-    chat_interface = AsyncMock()
-    chat_interface.send_message.return_value = "mock-error-message-id"
+    chat_interface = RecordingChatInterface()
     worker, new_task_event, shutdown_event = task_worker_manager(
         processing_service=processing_service,
         chat_interface=chat_interface,
@@ -534,10 +573,9 @@ async def test_failed_schedule_llm_callback_delivers_error_once_and_reschedules(
         engine, automation_id, original_task["task_id"]
     )
     assert next_task["task_type"] == "llm_callback"
-    chat_interface.send_message.assert_awaited_once()
-    assert chat_interface.send_message.await_args.kwargs["text"] == (
+    assert [message.text for message in chat_interface.sent] == [
         "User-visible callback error."
-    )
+    ]
 
 
 @pytest.mark.asyncio
@@ -546,8 +584,8 @@ async def test_retryable_schedule_failure_does_not_reschedule_next_run(
 ) -> None:
     """Schedule automations wait for retries before advancing the recurrence."""
     worker, new_task_event, shutdown_event = task_worker_manager(
-        processing_service=MagicMock(),
-        chat_interface=MagicMock(),
+        processing_service=make_idle_processing_service(),
+        chat_interface=RecordingChatInterface(),
     )
     engine = worker.engine
     assert engine is not None
@@ -613,8 +651,8 @@ async def test_schedule_advance_enqueued_when_retry_reschedule_fails(
 ) -> None:
     """If retry rescheduling fails into terminal failure, schedule advancement remains retryable."""
     worker, new_task_event, shutdown_event = task_worker_manager(
-        processing_service=MagicMock(),
-        chat_interface=MagicMock(),
+        processing_service=make_idle_processing_service(),
+        chat_interface=RecordingChatInterface(),
     )
     engine = worker.engine
     assert engine is not None
@@ -698,8 +736,8 @@ async def test_schedule_advance_enqueue_failure_does_not_retry_completed_action(
 ) -> None:
     """A completed schedule action stays done if advancing its schedule cannot enqueue."""
     worker, new_task_event, shutdown_event = task_worker_manager(
-        processing_service=MagicMock(),
-        chat_interface=MagicMock(),
+        processing_service=make_idle_processing_service(),
+        chat_interface=RecordingChatInterface(),
     )
     engine = worker.engine
     assert engine is not None
@@ -791,8 +829,8 @@ async def test_schedule_advance_enqueue_failure_preserves_failed_source_status(
 ) -> None:
     """An exhausted schedule failure stays failed if advance enqueue fails."""
     worker, new_task_event, shutdown_event = task_worker_manager(
-        processing_service=MagicMock(),
-        chat_interface=MagicMock(),
+        processing_service=make_idle_processing_service(),
+        chat_interface=RecordingChatInterface(),
     )
     engine = worker.engine
     assert engine is not None
@@ -964,8 +1002,8 @@ async def test_schedule_advance_outbox_drains_after_source_commit(
 ) -> None:
     """A schedule advancement outbox stuck by a failed enqueue drains once enqueue recovers."""
     worker, new_task_event, shutdown_event = task_worker_manager(
-        processing_service=MagicMock(),
-        chat_interface=MagicMock(),
+        processing_service=make_idle_processing_service(),
+        chat_interface=RecordingChatInterface(),
     )
     engine = worker.engine
     assert engine is not None
@@ -1048,8 +1086,8 @@ async def test_schedule_advance_outbox_drain_finds_buried_entries(
 ) -> None:
     """Outbox recovery finds a stuck entry even behind many unrelated terminal tasks."""
     worker, new_task_event, shutdown_event = task_worker_manager(
-        processing_service=MagicMock(),
-        chat_interface=MagicMock(),
+        processing_service=make_idle_processing_service(),
+        chat_interface=RecordingChatInterface(),
     )
     engine = worker.engine
     assert engine is not None
@@ -1126,8 +1164,8 @@ async def test_schedule_advance_uses_source_execution_time(
     source_execution_time = datetime(2026, 6, 22, 4, 28, tzinfo=UTC)
     mock_clock.set_time(source_execution_time + timedelta(hours=6))
     worker, new_task_event, shutdown_event = task_worker_manager(
-        processing_service=MagicMock(),
-        chat_interface=MagicMock(),
+        processing_service=make_idle_processing_service(),
+        chat_interface=RecordingChatInterface(),
     )
     engine = worker.engine
     assert engine is not None
@@ -1176,11 +1214,10 @@ async def test_successful_schedule_llm_callback_reschedules_once(
     task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
 ) -> None:
     """A successful schedule callback should enqueue exactly one next run."""
-    processing_service = _processing_service_with_callback_result(
+    processing_service = ScriptedTurnProcessingService(
         ChatInteractionResult.success(text_reply="Callback completed.")
     )
-    chat_interface = AsyncMock()
-    chat_interface.send_message.return_value = "mock-message-id"
+    chat_interface = RecordingChatInterface()
     worker, new_task_event, shutdown_event = task_worker_manager(
         processing_service=processing_service,
         chat_interface=chat_interface,
@@ -1213,7 +1250,7 @@ async def test_successful_schedule_llm_callback_reschedules_once(
         engine, automation_id, original_task["task_id"]
     )
     assert next_task["task_type"] == "llm_callback"
-    chat_interface.send_message.assert_awaited_once()
+    assert [message.text for message in chat_interface.sent] == ["Callback completed."]
 
     db_context = Database(engine=engine)
     automation = await db_context.schedule_automations.get_by_id(automation_id)
@@ -1231,17 +1268,11 @@ async def test_follow_up_reminder_retry_distinguishes_trigger_from_user_response
     """A retry ignores only its trigger, while a real response still cancels."""
     callback_turn_id = "retrying-follow-up-reminder-turn"
     conversation_id = "retrying-follow-up-reminder-conversation"
-    processing_service = _processing_service_with_callback_result(
-        ChatInteractionResult.success(text_reply="Reminder delivered after retry.")
-    )
-    processing_service.service_config.allow_wake_llm = True
-    successful_result = processing_service.handle_chat_interaction.return_value
-    processing_service.handle_chat_interaction.side_effect = [
+    processing_service = ScriptedTurnProcessingService(
         RuntimeError("fail after persisting trigger"),
-        successful_result,
-    ]
-    chat_interface = AsyncMock()
-    chat_interface.send_message.return_value = "delivered-reminder-id"
+        ChatInteractionResult.success(text_reply="Reminder delivered after retry."),
+    )
+    chat_interface = RecordingChatInterface()
     db_context = Database(engine=db_engine)
     exec_context = ToolExecutionContext(
         interface_type="telegram",
@@ -1315,15 +1346,14 @@ async def test_follow_up_reminder_retry_distinguishes_trigger_from_user_response
         )
     )
     if genuine_response:
-        assert processing_service.handle_chat_interaction.await_count == 1
-        chat_interface.send_message.assert_not_awaited()
+        assert processing_service.turn_count == 1
+        assert chat_interface.sent == []
         assert follow_ups == []
     else:
-        assert processing_service.handle_chat_interaction.await_count == 2
-        chat_interface.send_message.assert_awaited_once()
-        assert chat_interface.send_message.await_args.kwargs["text"] == (
+        assert processing_service.turn_count == 2
+        assert [message.text for message in chat_interface.sent] == [
             "Reminder delivered after retry."
-        )
+        ]
         assert len(follow_ups) == 1
         assert follow_ups[0]["payload"]["reminder_config"]["current_attempt"] == 2
 
@@ -1336,11 +1366,11 @@ async def test_worker_activity_tracking(
     t0 = datetime(2026, 6, 1, tzinfo=UTC)
     mock_clock.set_time(t0)
     worker = TaskWorker(
-        processing_service=MagicMock(),
-        chat_interface=MagicMock(),
+        processing_service=make_idle_processing_service(),
+        chat_interface=RecordingChatInterface(),
         calendar_config={},
         timezone=ZoneInfo("UTC"),
-        embedding_generator=MagicMock(),
+        embedding_generator=MockEmbeddingGenerator(),
         engine=db_engine,
         clock=mock_clock,
         shutdown_event_instance=asyncio.Event(),  # Create fresh shutdown event for test
@@ -1410,11 +1440,11 @@ async def test_shutdown_stops_worker(db_engine: AsyncEngine) -> None:
             return await super().wait()
 
     worker = TaskWorker(
-        processing_service=MagicMock(),
-        chat_interface=MagicMock(),
+        processing_service=make_idle_processing_service(),
+        chat_interface=RecordingChatInterface(),
         calendar_config={},
         timezone=ZoneInfo("UTC"),
-        embedding_generator=MagicMock(),
+        embedding_generator=MockEmbeddingGenerator(),
         engine=db_engine,
         shutdown_event_instance=asyncio.Event(),  # Create fresh shutdown event for test
     )
@@ -1457,8 +1487,8 @@ async def test_success_after_retry_clears_the_earlier_error(
 ) -> None:
     """A task that succeeds on retry does not keep the failed attempt's error."""
     worker, new_task_event, _ = task_worker_manager(
-        processing_service=MagicMock(),
-        chat_interface=MagicMock(),
+        processing_service=make_idle_processing_service(),
+        chat_interface=RecordingChatInterface(),
     )
     engine = worker.engine
     assert engine is not None

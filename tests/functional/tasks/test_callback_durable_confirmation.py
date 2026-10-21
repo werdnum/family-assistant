@@ -12,13 +12,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
-from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import select
 
-from family_assistant.interfaces import ChatInterface
 from family_assistant.processing.types import ChatInteractionResult
 from family_assistant.storage.confirmation_requests import confirmation_requests_table
 from family_assistant.storage.database import Database
@@ -28,9 +26,12 @@ from family_assistant.tools.types import (
     ToolExecutionContext,
 )
 from family_assistant.utils.clock import SystemClock
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
+
+    from family_assistant.interfaces import ChatInterface
 
 TEST_INTERFACE_TYPE = "test"
 TEST_CONVERSATION_ID = "callback_confirm_chat"
@@ -134,8 +135,7 @@ async def test_callback_with_owner_can_request_durable_confirmation(
     """A scheduled callback owned by a user defers a confirm-gated tool call to a
     durable confirmation addressed to that owner."""
     processing_service = CallbackCapturingService()
-    chat_interface = AsyncMock(spec=ChatInterface)
-    chat_interface.send_message.return_value = "sent_message_id"
+    chat_interface = RecordingChatInterface()
 
     db_context = Database(engine=db_engine)
     await handle_llm_callback(
@@ -174,8 +174,7 @@ async def test_a_worker_completed_continuation_declares_its_trigger_internal(
     that another worker entry point would then have to remember too.
     """
     processing_service = CallbackCapturingService()
-    chat_interface = AsyncMock(spec=ChatInterface)
-    chat_interface.send_message.return_value = "sent_message_id"
+    chat_interface = RecordingChatInterface()
 
     await handle_llm_callback(
         _exec_context(Database(engine=db_engine), processing_service, chat_interface),
@@ -193,8 +192,7 @@ async def test_callback_without_owner_reports_tool_not_run(
     """A legacy callback with no recorded owner still advertises confirm-gated
     tools, but calling one reports it cannot be approved and creates no request."""
     processing_service = CallbackCapturingService()
-    chat_interface = AsyncMock(spec=ChatInterface)
-    chat_interface.send_message.return_value = "sent_message_id"
+    chat_interface = RecordingChatInterface()
 
     db_context = Database(engine=db_engine)
     await handle_llm_callback(

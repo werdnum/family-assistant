@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -17,7 +16,6 @@ from family_assistant.actions import (
 )
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
-from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.database import Database
 from family_assistant.storage.message_history import message_history_table
@@ -33,6 +31,7 @@ from family_assistant.tools.infrastructure import (
 )
 from tests.helpers import wait_for_tasks_to_complete
 from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
+from tests.mocks.recording_chat_interface import ScriptedChatInterface
 
 if TYPE_CHECKING:
     import asyncio
@@ -46,7 +45,7 @@ OWNER = "alice@example.com"
 
 async def _start_worker(
     task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
-) -> tuple[AsyncMock, asyncio.Event]:
+) -> tuple[ScriptedChatInterface, asyncio.Event]:
     tools_provider = CompositeToolsProvider(
         providers=[LocalToolsProvider(definitions=[], implementations={})]
     )
@@ -70,8 +69,7 @@ async def _start_worker(
         context_providers=[],
         server_url=None,
     )
-    chat_interface = AsyncMock(spec=ChatInterface)
-    chat_interface.send_message.return_value = "sent_message_id"
+    chat_interface = ScriptedChatInterface(otherwise="sent_message_id")
     task_worker, new_task_event, _ = task_worker_manager(
         processing_service=processing_service,
         chat_interface=chat_interface,
@@ -102,11 +100,8 @@ async def _wake(
     )
 
 
-def _sent_conversation_ids(chat_interface: AsyncMock) -> list[str]:
-    return [
-        call.kwargs["conversation_id"]
-        for call in chat_interface.send_message.call_args_list
-    ]
+def _sent_conversation_ids(chat_interface: ScriptedChatInterface) -> list[str]:
+    return [sent.conversation_id for sent in chat_interface.sent]
 
 
 @pytest.mark.asyncio
@@ -204,7 +199,7 @@ async def test_new_conversation_wake_from_telegram_fails_without_sending(
         select(tasks_table.c.status).where(tasks_table.c.task_type == "llm_callback")
     )
     assert [row["status"] for row in rows] == ["failed"]
-    chat_interface.send_message.assert_not_called()
+    assert chat_interface.sent == []
 
 
 @pytest.mark.asyncio

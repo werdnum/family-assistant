@@ -12,7 +12,6 @@ from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -45,6 +44,8 @@ from family_assistant.storage.vector import (
 from family_assistant.task_worker import TaskWorker
 from family_assistant.web.app_creator import app as fastapi_app
 from tests.helpers import wait_for_tasks_to_complete
+from tests.mocks.idle_processing_service import make_idle_processing_service
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 logger = logging.getLogger(__name__)
 
@@ -62,12 +63,6 @@ async def _cleanup_after_test(
         raise
     finally:
         await cleanup(test_failed)
-
-
-def _create_mock_processing_service() -> MagicMock:
-    """Create a mock ProcessingService with required attributes."""
-    mock = MagicMock()
-    return mock
 
 
 # --- Test Configuration ---
@@ -403,11 +398,6 @@ async def test_vector_ranking(
         ),
     )  # Instantiate EmailIndexer
 
-    # Mock application for TaskWorker
-    mock_application_kw = MagicMock()  # Define mock_application_kw
-    mock_application_kw.state.embedding_generator = mock_embedder
-    mock_application_kw.state.llm_client = None
-
     dummy_timezone_str_kw = "UTC"  # Define dummy_timezone_str_kw
 
     # --- Arrange: Ingest Emails ---
@@ -428,10 +418,10 @@ async def test_vector_ranking(
 
     # Create TaskWorker instance and start it
     # Provide dummy/mock values for the required arguments
-    mock_chat_interface_kw = MagicMock()
+    mock_chat_interface_kw = RecordingChatInterface()
     test_shutdown_event = asyncio.Event()  # Create shutdown event before TaskWorker
     worker = TaskWorker(
-        processing_service=_create_mock_processing_service(),  # No processing service needed for this handler
+        processing_service=make_idle_processing_service(),
         chat_interface=mock_chat_interface_kw,
         embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=None,
@@ -594,11 +584,6 @@ async def test_metadata_filtering(
         ),
     )  # Instantiate EmailIndexer
 
-    # Mock application for TaskWorker
-    mock_application_meta = MagicMock()
-    mock_application_meta.state.embedding_generator = mock_embedder
-    mock_application_meta.state.llm_client = None
-
     # --- Arrange: Ingest Emails with different source_type ---
     form_data1 = TEST_EMAIL_FORM_DATA.copy()
     form_data1["stripped-text"] = email1_body
@@ -617,10 +602,10 @@ async def test_metadata_filtering(
     # Create TaskWorker instance and start it
     # Provide dummy/mock values for the required arguments
     dummy_timezone_str_meta = "UTC"
-    mock_chat_interface_meta = MagicMock()
+    mock_chat_interface_meta = RecordingChatInterface()
     test_shutdown_event = asyncio.Event()  # Create shutdown event before TaskWorker
     worker = TaskWorker(
-        processing_service=_create_mock_processing_service(),  # No processing service needed for this handler
+        processing_service=make_idle_processing_service(),
         chat_interface=mock_chat_interface_meta,
         embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=None,
@@ -775,11 +760,6 @@ async def test_keyword_filtering(
         ),
     )  # Instantiate EmailIndexer
 
-    # Mock application for TaskWorker
-    mock_application_kw = MagicMock()  # Define mock_application_kw
-    mock_application_kw.state.embedding_generator = mock_embedder
-    mock_application_kw.state.llm_client = None
-
     dummy_timezone_str_kw = "UTC"  # Define dummy_timezone_str_kw
 
     # --- Arrange: Ingest Emails ---
@@ -796,11 +776,11 @@ async def test_keyword_filtering(
     # Create TaskWorker instance and start it
     # Provide dummy/mock values for the required arguments
     # Define new mocks for this test scope
-    mock_chat_interface_keyword_test = MagicMock()
+    mock_chat_interface_keyword_test = RecordingChatInterface()
     test_shutdown_event = asyncio.Event()  # Create shutdown event before TaskWorker
 
     worker = TaskWorker(
-        processing_service=_create_mock_processing_service(),  # No processing service needed for this handler
+        processing_service=make_idle_processing_service(),
         chat_interface=mock_chat_interface_keyword_test,
         embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=None,

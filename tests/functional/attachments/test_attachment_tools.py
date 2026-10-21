@@ -7,7 +7,6 @@ import json
 import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
-from unittest.mock import AsyncMock, Mock
 from zoneinfo import ZoneInfo
 
 import aiofiles
@@ -16,7 +15,10 @@ from PIL import Image
 
 from family_assistant.scripting.apis.attachments import ScriptAttachment
 from family_assistant.security.taint import TurnTaintState
-from family_assistant.services.attachment_registry import AttachmentRegistry
+from family_assistant.services.attachment_registry import (
+    AttachmentMetadata,
+    AttachmentRegistry,
+)
 from family_assistant.storage.database import Database
 from family_assistant.tools.attachments import attach_to_response_tool
 from family_assistant.tools.catalog import LOCAL_TOOL_REGISTRATIONS
@@ -25,6 +27,10 @@ from family_assistant.tools.image_tools import highlight_image_tool
 from family_assistant.tools.infrastructure import LocalToolsProvider
 from family_assistant.tools.types import ToolExecutionContext
 from tests.helpers import seed_known_conversation
+from tests.mocks.recording_chat_interface import (
+    RecordingChatInterface,
+    SentChatMessage,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -201,9 +207,7 @@ class TestSendMessageToUserWithAttachments:
         mock_attachment_metadata: MockAttachmentMetadata,
     ) -> None:
         """Test send_message_to_user with valid attachments."""
-        # Create mock chat interface
-        mock_chat_interface = Mock()
-        mock_chat_interface.send_message = AsyncMock(return_value="message_123")
+        chat_interface = RecordingChatInterface()
 
         db_context = Database(db_engine)
         # Create attachment registry and register the attachment in the database
@@ -234,7 +238,7 @@ class TestSendMessageToUserWithAttachments:
             clock=None,
             plugins=None,
             event_sources=None,
-            chat_interface=mock_chat_interface,
+            chat_interface=chat_interface,
             attachment_registry=attachment_registry,
             timezone=ZoneInfo("UTC"),
             credential_resolvers=None,
@@ -250,13 +254,15 @@ class TestSendMessageToUserWithAttachments:
 
         # Verify message was sent with attachments, delivered on behalf of
         # the acting user so owner-scoped attachments survive delivery.
-        mock_chat_interface.send_message.assert_called_once_with(
-            conversation_id="456789",
-            text="Here's your document",
-            attachment_ids=[mock_attachment_metadata.id],
-            on_behalf_of_user_id="test_user",
-            taint_metadata=TurnTaintState.empty().to_metadata(),
-        )
+        assert chat_interface.sent == [
+            SentChatMessage(
+                conversation_id="456789",
+                text="Here's your document",
+                attachment_ids=[mock_attachment_metadata.id],
+                on_behalf_of_user_id="test_user",
+                taint_metadata=TurnTaintState.empty().to_metadata(),
+            )
+        ]
 
         assert "Message sent successfully" in result
         assert "with 1 attachment(s)" in result
@@ -267,9 +273,7 @@ class TestSendMessageToUserWithAttachments:
     ) -> None:
         """Test send_message_to_user without attachments."""
 
-        # Create mock chat interface
-        mock_chat_interface = Mock()
-        mock_chat_interface.send_message = AsyncMock(return_value="message_123")
+        chat_interface = RecordingChatInterface()
 
         db_context = Database(db_engine)
         await seed_known_conversation(db_engine, "456789")
@@ -283,7 +287,7 @@ class TestSendMessageToUserWithAttachments:
             clock=None,
             plugins=None,
             event_sources=None,
-            chat_interface=mock_chat_interface,
+            chat_interface=chat_interface,
             attachment_registry=None,
             timezone=ZoneInfo("UTC"),
             credential_resolvers=None,
@@ -297,13 +301,15 @@ class TestSendMessageToUserWithAttachments:
         )
 
         # Verify message was sent without attachments
-        mock_chat_interface.send_message.assert_called_once_with(
-            conversation_id="456789",
-            text="Just a message",
-            attachment_ids=None,
-            on_behalf_of_user_id=None,
-            taint_metadata=TurnTaintState.empty().to_metadata(),
-        )
+        assert chat_interface.sent == [
+            SentChatMessage(
+                conversation_id="456789",
+                text="Just a message",
+                attachment_ids=None,
+                on_behalf_of_user_id=None,
+                taint_metadata=TurnTaintState.empty().to_metadata(),
+            )
+        ]
 
         assert "Message sent successfully" in result
         assert "attachment" not in result
@@ -732,8 +738,14 @@ class TestScriptAttachmentSyncContent:
                 seen.append(db_context)
                 return b"attachment bytes"
 
-        metadata = Mock()
-        metadata.attachment_id = str(uuid.uuid4())
+        metadata = AttachmentMetadata(
+            attachment_id=str(uuid.uuid4()),
+            source_type="user",
+            source_id="test_user",
+            mime_type="application/octet-stream",
+            description="Script attachment",
+            size=len(b"attachment bytes"),
+        )
 
         script_attachment = ScriptAttachment(
             metadata=metadata,

@@ -8,12 +8,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import update
 
+from family_assistant.config_models import AppConfig
 from family_assistant.plugins.ai_workers.backend import WorkerStatus
 from family_assistant.plugins.ai_workers.backends.mock import MockBackend
 from family_assistant.plugins.ai_workers.config import AIWorkersConfig
@@ -24,6 +24,7 @@ from family_assistant.plugins.runtime import ProfilePlugins
 from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.worker_tasks import worker_tasks_table
 from family_assistant.tools.types import ToolExecutionContext
+from tests.mocks.idle_processing_service import make_idle_processing_service
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -47,12 +48,11 @@ def mock_backend() -> MockBackend:
 def _make_exec_context(
     db_context: Database,
     conversation_id: str = "conv-test",
-    processing_service: MagicMock | None = None,
 ) -> ToolExecutionContext:
     """Create a minimal ToolExecutionContext for testing."""
-    if processing_service is None:
-        processing_service = MagicMock()
-        processing_service.app_config.shared_workspace_path = "/tmp/test"
+    processing_service = make_idle_processing_service(
+        app_config=AppConfig(shared_workspace_path="/tmp/test")
+    )
     sandbox = AIWorkersInstance(
         AIWorkersConfig(backend_type="mock", docker=None, kubernetes=None)
     )
@@ -239,7 +239,7 @@ class TestCancelWorkerTask:
         exec_context = _make_exec_context(db_context, conversation_id="conv-cancel")
         monkeypatch.setattr(
             "family_assistant.plugins.ai_workers.instance.get_worker_backend",
-            MagicMock(return_value=mock_backend),
+            lambda *_args, **_kwargs: mock_backend,
         )
 
         result = await cancel_worker_task_tool(exec_context, task_id="cancel-me")

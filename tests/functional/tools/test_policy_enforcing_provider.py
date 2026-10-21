@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
-from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -28,9 +27,12 @@ from family_assistant.tools.types import (
 )
 
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncEngine
+
     from family_assistant.processing import ProcessingService
     from family_assistant.tools.types import (
         RequestConfirmationCallback,
+        ToolArguments,
         ToolDefinition,
     )
 
@@ -54,8 +56,30 @@ def _delegate_policy(decision: ToolPolicyDecision) -> PolicyEngine:
     )
 
 
+class _RejectingConfirmationCallback:
+    """Records each confirmation request and rejects it."""
+
+    def __init__(self) -> None:
+        self.requested_tools: list[str] = []
+
+    async def __call__(
+        self,
+        interface_type: str,
+        conversation_id: str,
+        turn_id: str | None,
+        tool_name: str,
+        call_id: str,
+        tool_args: ToolArguments,
+        timeout_seconds: float,
+        context: ToolExecutionContext,
+    ) -> ConfirmationOutcome:
+        self.requested_tools.append(tool_name)
+        return ConfirmationOutcome(kind="rejected", result="no")
+
+
 def _exec_context(
     *,
+    db_engine: AsyncEngine,
     confirmation_callback: object | None,
     processing_service: object | None,
 ) -> ToolExecutionContext:
@@ -64,7 +88,7 @@ def _exec_context(
         conversation_id="conversation",
         user_name="User",
         turn_id=None,
-        db_context=MagicMock(spec=Database),
+        db_context=Database(engine=db_engine),
         processing_service=cast("ProcessingService", processing_service),
         request_confirmation_callback=cast(
             "RequestConfirmationCallback | None", confirmation_callback
@@ -80,18 +104,20 @@ def _exec_context(
 
 
 @pytest.mark.asyncio
-async def test_confirm_gated_delegation_prompts_for_a_long_request() -> None:
+async def test_confirm_gated_delegation_prompts_for_a_long_request(
+    db_engine: AsyncEngine,
+) -> None:
     # A large payload is put to the approver rather than refused before anyone
     # is asked (docs/design/confirmation-prompt-capacity.md).
     policy_provider = PolicyEnforcingToolsProvider(
         wrapped_provider=LocalToolsProvider(registrations=LOCAL_TOOL_REGISTRATIONS),
         policy_engine=_delegate_policy(ToolPolicyDecision.CONFIRM),
     )
-    confirmation_callback = AsyncMock(
-        return_value=ConfirmationOutcome(kind="rejected", result="no")
-    )
+    confirmation_callback = _RejectingConfirmationCallback()
     context = _exec_context(
-        confirmation_callback=confirmation_callback, processing_service=None
+        db_engine=db_engine,
+        confirmation_callback=confirmation_callback,
+        processing_service=None,
     )
 
     await policy_provider.execute_tool(
@@ -103,11 +129,13 @@ async def test_confirm_gated_delegation_prompts_for_a_long_request() -> None:
         context,
     )
 
-    confirmation_callback.assert_awaited()
+    assert confirmation_callback.requested_tools == ["delegate_to_service"]
 
 
 @pytest.mark.asyncio
-async def test_unconfirmed_delegation_is_not_size_capped() -> None:
+async def test_unconfirmed_delegation_is_not_size_capped(
+    db_engine: AsyncEngine,
+) -> None:
     policy_provider = PolicyEnforcingToolsProvider(
         wrapped_provider=LocalToolsProvider(registrations=LOCAL_TOOL_REGISTRATIONS),
         policy_engine=_delegate_policy(ToolPolicyDecision.ALLOW),
@@ -116,7 +144,9 @@ async def test_unconfirmed_delegation_is_not_size_capped() -> None:
     # short-circuited an ordinary (unconfirmed) hand-off.
     source_service = SimpleNamespace(processing_services_registry=None)
     context = _exec_context(
-        confirmation_callback=None, processing_service=source_service
+        db_engine=db_engine,
+        confirmation_callback=None,
+        processing_service=source_service,
     )
 
     result = await policy_provider.execute_tool(

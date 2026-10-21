@@ -92,6 +92,8 @@ _GOOGLE_DOC_MIME = "application/vnd.google-apps.document"
 _APP_PROPERTY_KEY = "family_assistant"
 _APP_FOLDER_PROPERTY_VALUE = "app_folder_v1"
 _APP_FILE_PROPERTY_VALUE = "app_file_v1"
+_APP_SUBFOLDER_PROPERTY_VALUE = "app_subfolder_v1"
+_APP_SUBFOLDER_MAX_DEPTH = 5
 _APP_FOLDER_DEFAULT_NAME = "Family Assistant"
 
 # Google-native mime types and the export format we fetch them as.
@@ -339,11 +341,13 @@ GOOGLE_DATA_TOOLS_DEFINITION: list[ToolDefinition] = [
             "name": "drive_write_file",
             "description": (
                 "Create or replace a file only inside the requesting user's "
-                "Family Assistant Drive folder. For authored content, provide "
-                "name and content; native Google Docs are the default, with plain "
-                "text and Markdown also available. To upload an existing owned "
-                "attachment instead, provide attachment_id and optionally name. "
-                "The tool cannot choose another folder or arbitrary Drive file ID."
+                "Family Assistant Drive folder, optionally in a subfolder of it "
+                "(created on demand). For authored content, provide name and "
+                "content; native Google Docs are the default, with plain text and "
+                "Markdown also available. To upload an existing owned attachment "
+                "instead, provide attachment_id and optionally name. The tool "
+                "cannot write outside the Family Assistant folder or to an "
+                "arbitrary Drive file ID."
             ),
             "parameters": {
                 "type": "object",
@@ -375,11 +379,21 @@ GOOGLE_DATA_TOOLS_DEFINITION: list[ToolDefinition] = [
                             "splitting them. Do not provide content at the same time."
                         ),
                     },
+                    "folder": {
+                        "type": "string",
+                        "description": (
+                            "Optional subfolder path inside the Family Assistant "
+                            "folder, with '/' between levels, e.g. 'Receipts/2026'. "
+                            f"At most {_APP_SUBFOLDER_MAX_DEPTH} levels. Missing "
+                            "subfolders are created. Omit to write at the top "
+                            "of the Family Assistant folder."
+                        ),
+                    },
                     "overwrite": {
                         "type": "boolean",
                         "description": (
                             "Replace an existing app-created file of the same name "
-                            "inside the app folder. Defaults to false."
+                            "in the target folder. Defaults to false."
                         ),
                         "default": False,
                     },
@@ -1420,10 +1434,81 @@ async def _ensure_app_folder(exec_context: ToolExecutionContext) -> GoogleJson:
     ).json()
 
 
+def _validated_folder_path(folder: str | None) -> list[str]:
+    """Split a subfolder path into validated segments; empty means the app folder."""
+    if folder is None:
+        return []
+    segments = [segment for segment in folder.strip().strip("/").split("/") if segment]
+    if len(segments) > _APP_SUBFOLDER_MAX_DEPTH:
+        raise GoogleApiError(
+            f"Drive folder paths are limited to {_APP_SUBFOLDER_MAX_DEPTH} levels."
+        )
+    return [_validated_drive_name(segment) for segment in segments]
+
+
+async def _ensure_app_subfolder(
+    exec_context: ToolExecutionContext, parent_id: str, name: str
+) -> GoogleJson:
+    """Return the app-marked subfolder ``name`` under ``parent_id``, creating it."""
+    escaped_name = _drive_query_literal(name)
+    escaped_parent = _drive_query_literal(parent_id)
+    key = _drive_query_literal(_APP_PROPERTY_KEY)
+    marker = _drive_query_literal(_APP_SUBFOLDER_PROPERTY_VALUE)
+    listing = (
+        await _google_request(
+            exec_context,
+            GoogleScope.DRIVE_FILE,
+            url=f"{_DRIVE_API_BASE}/files",
+            params={
+                "q": (
+                    f"'{escaped_parent}' in parents and name = '{escaped_name}' "
+                    f"and mimeType = '{_DRIVE_FOLDER_MIME}' "
+                    f"and appProperties has {{ key='{key}' and value='{marker}' }} "
+                    "and trashed = false"
+                ),
+                "pageSize": "2",
+                "fields": "files(id,name,mimeType,webViewLink)",
+            },
+        )
+    ).json()
+    folders = listing.get("files") or []
+    if len(folders) > 1:
+        raise GoogleApiError(
+            f"Multiple app-created Drive folders are named {name!r}; resolve the "
+            "duplicates before writing."
+        )
+    if folders:
+        return folders[0]
+    metadata = {
+        "name": name,
+        "mimeType": _DRIVE_FOLDER_MIME,
+        "parents": [parent_id],
+        "appProperties": {_APP_PROPERTY_KEY: _APP_SUBFOLDER_PROPERTY_VALUE},
+    }
+    return (
+        await _google_request(
+            exec_context,
+            GoogleScope.DRIVE_FILE,
+            method="POST",
+            url=f"{_DRIVE_API_BASE}/files",
+            params={"fields": "id,name,mimeType,webViewLink"},
+            content=json.dumps(metadata).encode("utf-8"),
+            content_type="application/json; charset=UTF-8",
+        )
+    ).json()
+
+
+def _folder_id(folder: GoogleJson) -> str:
+    folder_id = folder.get("id")
+    if not isinstance(folder_id, str) or not folder_id:
+        raise GoogleApiError("Google Drive did not return a folder ID.")
+    return folder_id
+
+
 async def _find_app_file(
     exec_context: ToolExecutionContext, folder_id: str, name: str
 ) -> GoogleJson | None:
-    """Find one app-marked file with ``name`` beneath the app folder."""
+    """Find one app-marked file with ``name`` directly beneath ``folder_id``."""
     escaped_name = _drive_query_literal(name)
     escaped_parent = _drive_query_literal(folder_id)
     key = _drive_query_literal(_APP_PROPERTY_KEY)
@@ -1462,12 +1547,12 @@ async def _drive_write_payload(
     mime_type: str,
     overwrite: bool,
 ) -> tuple[GoogleJson, str]:
-    """Create or replace one app-marked file beneath the dedicated folder."""
+    """Create or replace one app-marked file directly beneath ``folder_id``."""
     existing = await _find_app_file(exec_context, folder_id, name)
     if existing is not None and not overwrite:
         raise GoogleApiError(
-            f"A file named {name!r} already exists in the Family Assistant "
-            "folder; set overwrite=true to replace it."
+            f"A file named {name!r} already exists in the target Drive folder; "
+            "set overwrite=true to replace it."
         )
     if existing is not None and existing.get("mimeType") != mime_type:
         raise GoogleApiError(
@@ -1574,10 +1659,12 @@ async def drive_write_file_tool(
     file_type: str = "google_doc",
     attachment_id: ScriptAttachment | str | None = None,
     overwrite: bool = False,
+    folder: str | None = None,
 ) -> ToolResult:
     """Write authored content or an owned attachment inside the app Drive folder."""
 
     async def _impl() -> ToolResult:
+        folder_path = _validated_folder_path(folder)
         if (content is None) == (attachment_id is None):
             raise GoogleApiError(
                 "Provide exactly one of content or attachment_id when writing to Drive."
@@ -1612,10 +1699,13 @@ async def drive_write_file_tool(
             )
 
         async with _google_user_operation_lock(exec_context, "drive_write"):
-            folder = await _ensure_app_folder(exec_context)
-            folder_id = folder.get("id")
-            if not isinstance(folder_id, str) or not folder_id:
-                raise GoogleApiError("Google Drive did not return an app folder ID.")
+            target = await _ensure_app_folder(exec_context)
+            folder_id = _folder_id(target)
+            path_names = [str(target.get("name") or _APP_FOLDER_DEFAULT_NAME)]
+            for segment in folder_path:
+                target = await _ensure_app_subfolder(exec_context, folder_id, segment)
+                folder_id = _folder_id(target)
+                path_names.append(str(target.get("name") or segment))
             written, status = await _drive_write_payload(
                 exec_context,
                 folder_id=folder_id,
@@ -1632,7 +1722,7 @@ async def drive_write_file_tool(
                 "mime_type": written.get("mimeType", mime_type),
                 "web_view_link": written.get("webViewLink"),
                 "folder_id": folder_id,
-                "folder_name": folder.get("name", _APP_FOLDER_DEFAULT_NAME),
+                "folder_path": "/".join(path_names),
             }
         )
 

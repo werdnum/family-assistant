@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import json
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -54,7 +53,6 @@ from family_assistant.tools.infrastructure import (
     TaintTrackingToolsProvider,
     ToolsProvider,
 )
-from family_assistant.tools.mcp import MCPToolsProvider
 from family_assistant.tools.policy import (
     PolicyEngine,
     PolicyRule,
@@ -110,9 +108,7 @@ async def confirm_policy_tools_provider(
         registrations=local_tool_registrations,
         embedding_generator=None,
     )
-    mock_mcp_provider = AsyncMock(spec=MCPToolsProvider)
-    mock_mcp_provider.get_tool_definitions.return_value = []
-    composite = CompositeToolsProvider(providers=[local_provider, mock_mcp_provider])
+    composite = CompositeToolsProvider(providers=[local_provider])
     await composite.get_tool_definitions()
 
     policy_provider = PolicyEnforcingToolsProvider(

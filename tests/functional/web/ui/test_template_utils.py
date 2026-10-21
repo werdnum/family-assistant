@@ -142,18 +142,19 @@ class TestTemplateUtils:
         assert get_static_asset("main.js") == "/static/dist/assets/main-second.js"
 
     @patch.dict(os.environ, {"DEV_MODE": "false"})
-    def test_manifest_error_handling(self) -> None:
+    def test_manifest_error_handling(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Test behavior when manifest.json cannot be read."""
+        # A directory where the manifest file should be exists but cannot be opened.
+        (tmp_path / ".vite" / "manifest.json").mkdir(parents=True)
+        monkeypatch.setattr(template_utils, "STATIC_DIST_DIR", tmp_path)
+        monkeypatch.setattr(template_utils, "_manifest_cache", None)
+        monkeypatch.setattr(template_utils, "_manifest_last_read", 0)
 
-        # Clear cache
-        template_utils._manifest_cache = None
+        result = get_static_asset("main.js")
 
-        # Mock open to raise an exception
-        with patch("builtins.open", side_effect=Exception("Read error")):
-            result = get_static_asset("main.js")
-
-            # Should fall back to direct path
-            assert result == "/static/dist/main.js"
+        assert result == "/static/dist/main.js"
 
     def test_real_manifest_content_matches_build(self) -> None:
         """Test that the actual manifest content matches what's in the build directory."""

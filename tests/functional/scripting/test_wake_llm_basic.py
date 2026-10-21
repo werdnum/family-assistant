@@ -6,7 +6,6 @@ import asyncio
 import logging
 import uuid
 from collections.abc import Callable
-from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -15,7 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.events.processor import EventProcessor
-from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.database import Database
 from family_assistant.storage.events import EventActionType, EventSourceType
@@ -41,6 +39,7 @@ from tests.mocks.mock_llm import (
     get_message_content,
     last_real_message,
 )
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 logger = logging.getLogger(__name__)
 
@@ -97,9 +96,7 @@ if temp > 25.0:
     tools_provider = CompositeToolsProvider(providers=[local_provider])
     await tools_provider.get_tool_definitions()
 
-    # Mock chat interface
-    mock_chat_interface = AsyncMock(spec=ChatInterface)
-    mock_chat_interface.send_message.return_value = "mock_wake_message_id"
+    chat_interface = RecordingChatInterface()
 
     # LLM client with rule to match wake_llm context
     def wake_llm_matcher(args: dict) -> bool:
@@ -147,7 +144,7 @@ if temp > 25.0:
 
     task_worker, new_task_event, _ = task_worker_manager(
         processing_service=processing_service,
-        chat_interface=mock_chat_interface,
+        chat_interface=chat_interface,
         register_delegation_handler=False,
     )
     task_worker.register_task_handler("script_execution", handle_script_execution)
@@ -173,9 +170,8 @@ if temp > 25.0:
     )
 
     # Step 4: Verify LLM was woken with correct context
-    mock_chat_interface.send_message.assert_called_once()
-    call_args = mock_chat_interface.send_message.call_args
-    sent_text = call_args[1]["text"]
+    assert len(chat_interface.sent) == 1
+    sent_text = chat_interface.sent[0].text
     assert "Temperature Alert" in sent_text
     assert "27.5°C" in sent_text
     assert "cooling system" in sent_text
@@ -258,8 +254,7 @@ if air_quality < 50:
     tools_provider = CompositeToolsProvider(providers=[local_provider])
     await tools_provider.get_tool_definitions()
 
-    mock_chat_interface = AsyncMock(spec=ChatInterface)
-    mock_chat_interface.send_message.return_value = "mock_multi_wake_message_id"
+    chat_interface = RecordingChatInterface()
 
     llm_client = RuleBasedMockLLMClient(
         rules=[],
@@ -286,7 +281,7 @@ if air_quality < 50:
 
     task_worker, new_task_event, _ = task_worker_manager(
         processing_service=processing_service,
-        chat_interface=mock_chat_interface,
+        chat_interface=chat_interface,
         register_delegation_handler=False,
     )
     task_worker.register_task_handler("script_execution", handle_script_execution)
@@ -317,7 +312,7 @@ if air_quality < 50:
 
     # Step 4: Verify the LLM was woken exactly once, with every context
     assert len(await db_ctx.tasks.get_all(task_type="llm_callback")) == 1
-    mock_chat_interface.send_message.assert_called_once()
+    assert len(chat_interface.sent) == 1
 
     wake_prompts = {
         text
@@ -406,8 +401,7 @@ if temp > 30 or temp < 10:
     tools_provider = CompositeToolsProvider(providers=[local_provider])
     await tools_provider.get_tool_definitions()
 
-    mock_chat_interface = AsyncMock(spec=ChatInterface)
-    mock_chat_interface.send_message.return_value = "mock_conditional_message_id"
+    chat_interface = RecordingChatInterface()
 
     llm_client = RuleBasedMockLLMClient(
         rules=[],  # No rules needed - LLM shouldn't be called
@@ -434,7 +428,7 @@ if temp > 30 or temp < 10:
 
     task_worker, new_task_event, _ = task_worker_manager(
         processing_service=processing_service,
-        chat_interface=mock_chat_interface,
+        chat_interface=chat_interface,
         register_delegation_handler=False,
     )
     task_worker.register_task_handler("script_execution", handle_script_execution)
@@ -465,6 +459,6 @@ if temp > 30 or temp < 10:
 
     assert await db_ctx.tasks.get_all(task_type="llm_callback") == []
     assert llm_client.get_calls() == []
-    mock_chat_interface.send_message.assert_not_called()
+    assert chat_interface.sent == []
 
     logger.info(f"--- Script Conditional Wake LLM Test ({test_run_id}) Passed ---")

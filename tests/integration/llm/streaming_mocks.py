@@ -11,7 +11,6 @@ import json
 import logging
 from collections.abc import AsyncIterator
 from types import TracebackType
-from unittest.mock import AsyncMock
 
 from pytest_mock import MockerFixture
 
@@ -98,6 +97,29 @@ class MockClientResponse:
         """Raise if status indicates an error."""
         if self.status >= 400:
             raise RuntimeError(f"HTTP {self.status}")
+
+
+class FakeClientSession:
+    """Stands in for aiohttp.ClientSession, answering every POST with one response."""
+
+    def __init__(self, response: MockClientResponse) -> None:
+        self.response = response
+        self.post_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    async def post(self, *args: object, **kwargs: object) -> MockClientResponse:
+        self.post_calls.append((args, kwargs))
+        return self.response
+
+    async def __aenter__(self) -> "FakeClientSession":
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        return None
 
 
 def create_gemini_streaming_chunks(
@@ -267,14 +289,12 @@ class GeminiStreamingMocker:
         # Create mock response
         mock_response = MockClientResponse(chunks, status)
 
-        # Create mock session
-        mock_session = AsyncMock()
-        mock_session.post = AsyncMock(return_value=mock_response)
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=None)
+        session = FakeClientSession(mock_response)
 
-        # Patch aiohttp.ClientSession
-        self.mocker.patch("aiohttp.ClientSession", return_value=mock_session)
+        def session_factory(*_args: object, **_kwargs: object) -> FakeClientSession:
+            return session
+
+        self.mocker.patch("aiohttp.ClientSession", new=session_factory)
 
         logger.debug(
             f"Set up mock aiohttp session with {len(chunks)} chunks, status {status}"

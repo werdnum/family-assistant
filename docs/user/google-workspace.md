@@ -20,6 +20,7 @@ Once connected, you can ask things like:
 - "Draft an email to the school about tomorrow's absence and attach the doctor's note."
 - "Save this trip plan as a Google Doc."
 - "Upload this PDF to my Family Assistant Drive folder."
+- "Save this receipt to Drive under Receipts/2026."
 
 The assistant can search your inbox, read full messages (HTML is converted to readable text), fetch
 email attachments and return them to you inline, search your Drive, and fetch or export files —
@@ -27,10 +28,11 @@ Google Docs, Sheets, and Slides come back as text, other small text files inline
 binary files as downloadable attachments.
 
 It can also create **unsent** Gmail drafts, optionally attaching existing Family Assistant
-attachments, and create or replace files inside its dedicated **Family Assistant** Drive folder.
-Authored content becomes a native Google Doc by default; plain text and Markdown are also supported,
-and existing attachments up to 100 MB (3D-print models, large PDFs, archives) can be uploaded as
-ordinary files.
+attachments, and create or replace files inside its dedicated **Family Assistant** Drive folder. It
+can organise that folder into subfolders, up to five levels deep: ask it to save something "in
+Receipts/2026" and it creates any subfolders that don't exist yet. Authored content becomes a native
+Google Doc by default; plain text and Markdown are also supported, and existing attachments up to
+100 MB (3D-print models, large PDFs, archives) can be uploaded as ordinary files.
 
 Gmail searches use standard Gmail syntax (`from:school has:attachment`) and Drive searches use Drive
 query syntax (`name contains 'budget'`), so you can be as precise as you like.
@@ -41,8 +43,9 @@ query syntax (`name contains 'budget'`), so you can be as precise as you like.
   operation at all.
 - **Delete your Google data.**
 - **Write outside its own folder.** Drive writes are confined to the app-created **Family
-  Assistant** folder and app-created files within it. Creating a file with an existing name is
-  refused unless the assistant explicitly asks to overwrite, and even then it can only replace an
+  Assistant** folder and the subfolders and files it created within it, so it cannot save into a
+  folder you made yourself elsewhere in your Drive. Creating a file with an existing name is refused
+  unless the assistant explicitly asks to overwrite, and even then it can only replace an
   app-created file of the same type in that folder.
 - **See anyone else's account.** Each connection is strictly the connecting user's own mailbox and
   Drive.

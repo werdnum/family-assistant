@@ -4,8 +4,9 @@ import json
 import logging
 import pathlib
 import tempfile
-from typing import TYPE_CHECKING, cast
-from unittest.mock import MagicMock
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, cast
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -14,6 +15,8 @@ from family_assistant.indexing.processors.llm_processors import (
     LLMIntelligenceProcessor,
 )
 from family_assistant.llm import ToolCallFunction, ToolCallItem
+from family_assistant.storage.database import Database
+from family_assistant.tools.types import ToolExecutionContext
 from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module
     LLMOutput,
     MatcherArgs,
@@ -22,10 +25,29 @@ from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module
 
 if TYPE_CHECKING:
     from collections.abc import Generator
+    from datetime import datetime
+
+    from sqlalchemy.ext.asyncio import AsyncEngine
 
     from family_assistant.llm import LLMInterface as RealLLMInterface
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class SourceDocument:
+    """The document being indexed, as the ``Document`` protocol describes it."""
+
+    source_type: str
+    source_id: str
+    title: str | None
+    id: int | None = None
+    source_uri: str | None = None
+    created_at: datetime | None = None
+    # ast-grep-ignore: no-dict-any - Document protocol metadata is free-form
+    metadata: dict[str, Any] | None = field(default_factory=dict)
+    file_path: str | None = None
+    visibility_labels: list[str] | None = None
 
 
 @pytest.fixture
@@ -44,6 +66,7 @@ def temp_text_file() -> Generator[pathlib.Path]:
 @pytest.mark.asyncio
 async def test_llm_processor_with_file_input_summarization(
     temp_text_file: pathlib.Path,
+    db_engine: AsyncEngine,
 ) -> None:
     """
     Tests LLMIntelligenceProcessor with a file input, expecting it to call the LLM
@@ -233,17 +256,34 @@ async def test_llm_processor_with_file_input_summarization(
         content="Please summarize the attached file.",  # This is the prompt_text for the LLM
     )
 
-    # 6. Mock ToolExecutionContext and other arguments for processor.process
-    mock_exec_context = MagicMock()
-    mock_original_doc = MagicMock()
-    mock_original_doc.title = "Test Document Title"  # For logging in pipeline
+    # 6. Build the ToolExecutionContext and source document for processor.process
+    exec_context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="llm-intelligence-processor-test",
+        user_name="IndexingTestUser",
+        turn_id=None,
+        db_context=Database(engine=db_engine),
+        processing_service=None,
+        clock=None,
+        plugins=None,
+        event_sources=None,
+        attachment_registry=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
+    original_doc = SourceDocument(
+        source_type="file",
+        source_id="test-document",
+        title="Test Document Title",
+    )
 
     # 7. Call processor.process
     processed_items = await llm_processor.process(
         current_items=[input_item],
-        original_document=mock_original_doc,
+        original_document=original_doc,
         initial_content_ref=input_item,  # For this test, it's the same
-        context=mock_exec_context,
+        context=exec_context,
     )
 
     # 8. Assertions

@@ -1,7 +1,6 @@
 """CRUD operations for automations (create, list, get, update, delete)."""
 
 from typing import TYPE_CHECKING, cast
-from unittest.mock import Mock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -9,7 +8,9 @@ from pydantic import SecretStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.config_models import AppConfig, KeychuteConfig
+from family_assistant.config_models import AppConfig, KeychuteConfig, ToolsConfig
+from family_assistant.delegation_security import DelegationSecurityLevel
+from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.database import Database
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.tools.automations import (
@@ -21,7 +22,9 @@ from family_assistant.tools.automations import (
     list_automations_tool,
     update_automation_tool,
 )
+from family_assistant.tools.infrastructure import CompositeToolsProvider
 from family_assistant.tools.types import ToolExecutionContext
+from tests.mocks.idle_processing_service import IdleLLMClient
 
 if TYPE_CHECKING:
     from family_assistant.storage.types import ActionConfig
@@ -427,14 +430,28 @@ async def test_create_automation_accepts_configured_keychute_api(
 ) -> None:
     """Scheduled-script validation uses the configured runtime API namespace."""
     db_ctx = Database(engine=db_engine)
-    processing_service = Mock()
-    processing_service.tools_provider = None
-    processing_service.app_config = AppConfig(
-        keychute_config=KeychuteConfig(
-            enabled=True,
-            url="https://keychute.test",
-            token=SecretStr("client-token"),
-        )
+    processing_service = ProcessingService(
+        llm_client=IdleLLMClient(),
+        tools_provider=CompositeToolsProvider(providers=[]),
+        service_config=ProcessingServiceConfig(
+            id="default_assistant",
+            prompts={"system_prompt": "Test profile"},
+            timezone=ZoneInfo("UTC"),
+            history_budget_chars=0,
+            history_min_turns=0,
+            history_max_age_hours=1,
+            tools_config=ToolsConfig(),
+            delegation_security_level=DelegationSecurityLevel.BLOCKED,
+        ),
+        app_config=AppConfig(
+            keychute_config=KeychuteConfig(
+                enabled=True,
+                url="https://keychute.test",
+                token=SecretStr("client-token"),
+            )
+        ),
+        context_providers=[],
+        server_url=None,
     )
     exec_context = ToolExecutionContext(
         interface_type="web",

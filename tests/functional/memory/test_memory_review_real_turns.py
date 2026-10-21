@@ -21,8 +21,8 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import timedelta
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
-from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -70,6 +70,7 @@ from tests.functional.memory.curator_harness import (
     review_limits,
 )
 from tests.mocks.mock_llm import LLMOutput, MatcherArgs, RuleBasedMockLLMClient
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -191,7 +192,7 @@ async def _say(
     """One real turn, start to finish, the way an interface drives one."""
     result = await service.handle_chat_interaction(
         db_context=Database(engine=engine),
-        chat_interface=MagicMock(),
+        chat_interface=RecordingChatInterface(),
         interface_type=interface_type,
         conversation_id=CONVERSATION,
         trigger_content_parts=[text_content(said)],
@@ -451,7 +452,7 @@ async def test_every_row_a_real_turn_writes_carries_its_own_stamp(
             f"{row['role']} row fell back to the legacy unknown-external default"
         )
     merged = merge_history_taint([
-        MagicMock(taint_metadata=row["taint_metadata"]) for row in rows
+        SimpleNamespace(taint_metadata=row["taint_metadata"]) for row in rows
     ])
     assert not is_externally_authored(merged.max_tier)
 

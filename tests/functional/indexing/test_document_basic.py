@@ -10,7 +10,6 @@ import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -33,14 +32,9 @@ from family_assistant.web.app_creator import app as fastapi_app
 from family_assistant.web.dependencies import get_embedding_generator_dependency
 from tests.conftest import cleanup_task_worker
 from tests.helpers import wait_for_tasks_to_complete
+from tests.mocks.idle_processing_service import make_idle_processing_service
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
-
-
-def _create_mock_processing_service() -> MagicMock:
-    """Create a mock ProcessingService with required attributes."""
-    mock = MagicMock()
-    return mock
-
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 logger = logging.getLogger(__name__)
 
@@ -281,13 +275,13 @@ async def test_document_indexing_and_query_e2e(
     # Create a TaskWorker instance for this test and register the handler
     # Use fastapi_app as the application so the test handler can access app.state
     dummy_timezone_str = "UTC"
-    mock_chat_interface = MagicMock()  # Create a mock ChatInterface
+    mock_chat_interface = RecordingChatInterface()
 
     test_shutdown_event = asyncio.Event()
     test_new_task_event = asyncio.Event()
 
     worker = TaskWorker(
-        processing_service=_create_mock_processing_service(),  # No processing service needed for this handler
+        processing_service=make_idle_processing_service(),
         chat_interface=mock_chat_interface,  # Pass mock ChatInterface
         calendar_config=None,
         timezone=ZoneInfo(dummy_timezone_str),

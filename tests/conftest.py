@@ -20,8 +20,6 @@ from zoneinfo import ZoneInfo
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
-from unittest.mock import MagicMock
-
 import caldav
 import pytest
 import pytest_asyncio  # Import the correct decorator
@@ -46,6 +44,8 @@ import family_assistant.storage.tasks as tasks_module
 
 # Import for task_worker_manager fixture
 from family_assistant.config_models import AppConfig
+from family_assistant.embeddings import MockEmbeddingGenerator
+from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService  # Import ProcessingService
 from family_assistant.processing.message_time import strip_sent_at_label
 from family_assistant.services.attachment_registry import AttachmentRegistry
@@ -817,7 +817,7 @@ async def task_worker_manager(
 
     def worker_factory(
         processing_service: ProcessingService,
-        chat_interface: MagicMock,
+        chat_interface: ChatInterface,
         **kwargs: Any,  # noqa: ANN401
     ) -> tuple[TaskWorker, asyncio.Event, asyncio.Event]:
         nonlocal worker_task_handle
@@ -832,7 +832,7 @@ async def task_worker_manager(
             chat_interface=chat_interface,
             calendar_config={},
             timezone=timezone,
-            embedding_generator=MagicMock(),
+            embedding_generator=MockEmbeddingGenerator(),
             shutdown_event_instance=shutdown_event,
             engine=db_engine,
             clock=mock_clock,  # Use the mock_clock fixture

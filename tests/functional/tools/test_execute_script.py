@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -29,6 +29,7 @@ from family_assistant.tools.types import (
     ToolExecutionContext,
     ToolResult,
 )
+from tests.mocks.idle_processing_service import make_idle_processing_service
 
 
 def test_execute_script_tool_description_points_to_scripting_guide() -> None:
@@ -86,9 +87,7 @@ async def test_execute_script_with_empty_tools_provider(db_engine: AsyncEngine) 
     # Create empty tools provider
     tools_provider = CompositeToolsProvider([])
 
-    # Create mock processing service
-    mock_service = Mock()
-    mock_service.tools_provider = tools_provider
+    processing_service = make_idle_processing_service(tools_provider=tools_provider)
 
     ctx = ToolExecutionContext(
         interface_type="test",
@@ -100,7 +99,7 @@ async def test_execute_script_with_empty_tools_provider(db_engine: AsyncEngine) 
         plugins=None,
         event_sources=None,
         attachment_registry=None,
-        processing_service=mock_service,
+        processing_service=processing_service,
         timezone=ZoneInfo("UTC"),
         credential_resolvers=None,
         api_backend=None,
@@ -133,14 +132,15 @@ async def test_execute_script_exposes_configured_keychute(
         fake_request,
     )
     db = Database(engine=db_engine)
-    mock_service = Mock()
-    mock_service.tools_provider = CompositeToolsProvider([])
-    mock_service.app_config = AppConfig(
-        keychute_config=KeychuteConfig(
-            enabled=True,
-            url="https://keychute.test",
-            token=SecretStr("client-token"),
-        )
+    processing_service = make_idle_processing_service(
+        tools_provider=CompositeToolsProvider([]),
+        app_config=AppConfig(
+            keychute_config=KeychuteConfig(
+                enabled=True,
+                url="https://keychute.test",
+                token=SecretStr("client-token"),
+            )
+        ),
     )
     ctx = ToolExecutionContext(
         interface_type="test",
@@ -152,7 +152,7 @@ async def test_execute_script_exposes_configured_keychute(
         plugins=None,
         event_sources=None,
         attachment_registry=None,
-        processing_service=mock_service,
+        processing_service=processing_service,
         timezone=ZoneInfo("UTC"),
         credential_resolvers=None,
         api_backend=None,
@@ -197,9 +197,7 @@ async def test_execute_script_with_tools(db_engine: AsyncEngine) -> None:
 
     tools_provider = CompositeToolsProvider([local_provider])
 
-    # Create mock processing service
-    mock_service = Mock()
-    mock_service.tools_provider = tools_provider
+    processing_service = make_idle_processing_service(tools_provider=tools_provider)
 
     ctx = ToolExecutionContext(
         interface_type="test",
@@ -211,7 +209,7 @@ async def test_execute_script_with_tools(db_engine: AsyncEngine) -> None:
         plugins=None,
         event_sources=None,
         attachment_registry=None,
-        processing_service=mock_service,
+        processing_service=processing_service,
         timezone=ZoneInfo("UTC"),
         credential_resolvers=None,
         api_backend=None,
@@ -511,9 +509,7 @@ async def test_script_attachment_composition_dict_format(
 
     tools_provider = CompositeToolsProvider([local_provider])
 
-    # Create mock processing service
-    mock_service = Mock()
-    mock_service.tools_provider = tools_provider
+    processing_service = make_idle_processing_service(tools_provider=tools_provider)
 
     ctx = ToolExecutionContext(
         interface_type="test",
@@ -525,7 +521,7 @@ async def test_script_attachment_composition_dict_format(
         plugins=None,
         event_sources=None,
         attachment_registry=attachment_registry,
-        processing_service=mock_service,
+        processing_service=processing_service,
         timezone=ZoneInfo("UTC"),
         credential_resolvers=None,
         api_backend=None,
@@ -795,6 +791,7 @@ async def test_execute_script_unexpected_engine_exception_logs_at_error(
     with (
         patch(
             "family_assistant.tools.execute_script.MontyEngine.evaluate_async",
+            autospec=True,
             side_effect=RuntimeError("Unexpected host failure"),
         ),
         caplog.at_level(logging.INFO),
@@ -822,6 +819,7 @@ async def test_execute_script_timeout_downgraded_to_warning(
     with (
         patch(
             "family_assistant.tools.execute_script.MontyEngine.evaluate_async",
+            autospec=True,
             side_effect=ScriptTimeoutError(
                 "Script execution timed out after 5.0 seconds", 5.0
             ),

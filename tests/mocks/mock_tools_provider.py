@@ -68,6 +68,7 @@ class MockToolsProvider(ToolsProvider):
         # ast-grep-ignore: no-dict-any - tool arguments from external LLM tool call
         arguments: dict[str, Any],
         context: ToolExecutionContext | None = None,  # Mock needs to be flexible
+        call_id: str | None = None,
     ) -> Any:  # noqa: ANN401 # Mock tool can return anything
         """Execute a tool by name."""
         if name not in self.tools:

@@ -4,7 +4,6 @@ import asyncio
 import json
 from collections.abc import Callable
 from datetime import UTC, timedelta
-from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -13,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
-from family_assistant.interfaces import ChatInterface
 from family_assistant.llm import LLMInterface, ToolCallFunction, ToolCallItem
 from family_assistant.llm.messages import ToolMessage
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
@@ -40,6 +38,7 @@ from tests.mocks.mock_llm import (
     RuleBasedMockLLMClient,
     get_last_message_text,
 )
+from tests.mocks.recording_chat_interface import ScriptedChatInterface
 
 # Test configuration
 TEST_CHAT_ID = 12345
@@ -147,13 +146,12 @@ print("Script executed - note created: " + str(result))
         api_backend=None,
     )
 
-    mock_chat_interface = AsyncMock(spec=ChatInterface)
-    mock_chat_interface.send_message.return_value = "mock_message_id"
+    chat_interface = ScriptedChatInterface(otherwise="mock_message_id")
 
     # Create task worker using the fixture
     task_worker, test_new_task_event, test_shutdown_event = task_worker_manager(
         processing_service=processing_service,
-        chat_interface=mock_chat_interface,
+        chat_interface=chat_interface,
     )
 
     # Register the script execution handler
@@ -162,7 +160,7 @@ print("Script executed - note created: " + str(result))
     db_context = Database(engine=db_engine)
     result = await processing_service.handle_chat_interaction(
         db_context=db_context,
-        chat_interface=mock_chat_interface,
+        chat_interface=chat_interface,
         interface_type="test",
         conversation_id=str(TEST_CHAT_ID),
         trigger_content_parts=[
@@ -289,13 +287,12 @@ if True  # Missing colon
         api_backend=None,
     )
 
-    mock_chat_interface = AsyncMock(spec=ChatInterface)
-    mock_chat_interface.send_message.return_value = "mock_message_id"
+    chat_interface = ScriptedChatInterface(otherwise="mock_message_id")
 
     db_context = Database(engine=db_engine)
     result = await processing_service.handle_chat_interaction(
         db_context=db_context,
-        chat_interface=mock_chat_interface,
+        chat_interface=chat_interface,
         interface_type="test",
         conversation_id=str(TEST_CHAT_ID),
         trigger_content_parts=[{"type": "text", "text": "Schedule an invalid script"}],

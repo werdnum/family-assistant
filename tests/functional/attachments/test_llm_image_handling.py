@@ -10,7 +10,6 @@ import tempfile
 import uuid
 from collections.abc import AsyncIterator
 from typing import Any
-from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -28,6 +27,7 @@ from family_assistant.llm.messages import (
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
+from family_assistant.tools.infrastructure import LocalToolsProvider
 from family_assistant.tools.types import ToolAttachment
 from tests.mocks.mock_llm import last_real_message
 
@@ -108,8 +108,7 @@ async def test_image_handling_with_real_db(
         assert metadata.attachment_id is not None
 
         # 3. Setup ProcessingService
-        tools_provider = AsyncMock()
-        tools_provider.get_tool_definitions.return_value = []  # No tools needed
+        tools_provider = LocalToolsProvider(definitions=[], implementations={})
 
         config = ProcessingServiceConfig(
             id="test_profile",

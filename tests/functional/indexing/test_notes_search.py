@@ -7,7 +7,6 @@ import asyncio
 import logging
 import uuid
 from typing import Any
-from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -31,13 +30,8 @@ from family_assistant.task_worker import TaskWorker
 from family_assistant.tools.types import ToolExecutionContext
 from tests.conftest import cleanup_task_worker
 from tests.helpers import wait_for_tasks_to_complete
-
-
-def _create_mock_processing_service() -> MagicMock:
-    """Create a mock ProcessingService with required attributes."""
-    mock = MagicMock()
-    return mock
-
+from tests.mocks.idle_processing_service import make_idle_processing_service
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 logger = logging.getLogger(__name__)
 
@@ -216,10 +210,10 @@ async def test_note_update_reindexing_e2e(
     )
     notes_indexer = NotesIndexer(pipeline=pipeline)
 
-    mock_chat_interface = MagicMock()
+    mock_chat_interface = RecordingChatInterface()
 
     worker = TaskWorker(
-        processing_service=_create_mock_processing_service(),
+        processing_service=make_idle_processing_service(),
         chat_interface=mock_chat_interface,
         calendar_config={},
         timezone=ZoneInfo("UTC"),
@@ -464,10 +458,10 @@ async def test_notes_indexing_graceful_degradation(
     notes_indexer = NotesIndexer(pipeline=pipeline)
 
     # Setup TaskWorker
-    mock_chat_interface = MagicMock()
+    mock_chat_interface = RecordingChatInterface()
 
     worker = TaskWorker(
-        processing_service=_create_mock_processing_service(),
+        processing_service=make_idle_processing_service(),
         chat_interface=mock_chat_interface,
         calendar_config={},
         timezone=ZoneInfo("UTC"),

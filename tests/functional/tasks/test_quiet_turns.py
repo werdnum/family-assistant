@@ -11,14 +11,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
-from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 import pytest
 
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
-from family_assistant.interfaces import ChatInterface
 from family_assistant.llm import LLMOutput, ToolCallFunction, ToolCallItem
 from family_assistant.llm.content_parts import text_content
 from family_assistant.llm.messages import AssistantMessage
@@ -42,12 +40,14 @@ from family_assistant.utils.clock import SystemClock
 from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module
     RuleBasedMockLLMClient,
 )
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from sqlalchemy.ext.asyncio import AsyncEngine
 
+    from family_assistant.interfaces import ChatInterface
     from family_assistant.llm.messages import LLMMessage
 
 TEST_INTERFACE_TYPE = "test"
@@ -182,10 +182,8 @@ def _payload(
     return payload
 
 
-def _chat_interface() -> AsyncMock:
-    chat_interface = AsyncMock(spec=ChatInterface)
-    chat_interface.send_message.return_value = "sent_message_id"
-    return chat_interface
+def _chat_interface() -> RecordingChatInterface:
+    return RecordingChatInterface()
 
 
 @pytest.mark.asyncio
@@ -206,7 +204,7 @@ async def test_a_woken_turn_can_end_without_messaging_the_user(
     )
 
     assert END_TURN_QUIETLY_TOOL_NAME in client.offered_tool_names[0]
-    chat_interface.send_message.assert_not_called()
+    assert chat_interface.sent == []
 
     rows = await db_context.message_history.get_recent_with_metadata(
         interface_type=TEST_INTERFACE_TYPE, conversation_id=TEST_CONVERSATION_ID
@@ -260,7 +258,7 @@ async def test_a_retry_after_a_quiet_end_does_not_rerun_the_turn(
         )
 
     assert len(client.offered_tool_names) == 1
-    chat_interface.send_message.assert_not_called()
+    assert chat_interface.sent == []
 
 
 @pytest.mark.asyncio
@@ -311,7 +309,7 @@ async def test_an_empty_callback_reply_fails_without_a_retry(
             ),
             _payload(),
         )
-    chat_interface.send_message.assert_not_called()
+    assert chat_interface.sent == []
 
 
 @pytest.mark.asyncio
@@ -334,7 +332,7 @@ async def test_a_quiet_end_stays_available_when_the_tool_budget_runs_out(
     )
 
     assert client.offered_tool_names[-1] == {END_TURN_QUIETLY_TOOL_NAME}
-    chat_interface.send_message.assert_not_called()
+    assert chat_interface.sent == []
     rows = await db_context.message_history.get_recent_with_metadata(
         interface_type=TEST_INTERFACE_TYPE, conversation_id=TEST_CONVERSATION_ID
     )

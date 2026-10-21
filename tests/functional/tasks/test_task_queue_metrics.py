@@ -4,7 +4,6 @@ import asyncio
 import uuid
 from collections.abc import Callable, Mapping
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 from prometheus_client import REGISTRY
@@ -15,6 +14,8 @@ from family_assistant.storage.tasks import TaskPriority
 from family_assistant.task_worker import TaskWorker
 from family_assistant.tools.types import ToolExecutionContext
 from tests.helpers import wait_for_condition, wait_for_tasks_to_complete
+from tests.mocks.idle_processing_service import make_idle_processing_service
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 
 def _sample(name: str, labels: Mapping[str, str]) -> float:
@@ -65,8 +66,8 @@ async def test_a_task_that_ran_is_counted_as_completed(
     """The success path counts the execution and times the handler."""
     db = Database(db_engine)
     worker, _new_task_event, _shutdown_event = task_worker_manager(
-        processing_service=MagicMock(),
-        chat_interface=MagicMock(),
+        processing_service=make_idle_processing_service(),
+        chat_interface=RecordingChatInterface(),
     )
 
     async def handler(
@@ -129,8 +130,8 @@ async def test_a_failing_task_with_retries_left_is_counted_as_retried(
     """A failure the queue will try again is its own outcome, not a failure."""
     db = Database(db_engine)
     worker, _new_task_event, _shutdown_event = task_worker_manager(
-        processing_service=MagicMock(),
-        chat_interface=MagicMock(),
+        processing_service=make_idle_processing_service(),
+        chat_interface=RecordingChatInterface(),
     )
 
     async def handler(
@@ -175,8 +176,8 @@ async def test_a_failing_task_out_of_retries_is_counted_as_failed(
     """An execution the queue gives up on is counted once, as failed."""
     db = Database(db_engine)
     worker, _new_task_event, _shutdown_event = task_worker_manager(
-        processing_service=MagicMock(),
-        chat_interface=MagicMock(),
+        processing_service=make_idle_processing_service(),
+        chat_interface=RecordingChatInterface(),
     )
 
     async def handler(
@@ -237,8 +238,8 @@ async def test_a_task_rejected_before_its_handler_runs_is_counted_as_failed(
     """
     db = Database(db_engine)
     worker, _new_task_event, _shutdown_event = task_worker_manager(
-        processing_service=MagicMock(),
-        chat_interface=MagicMock(),
+        processing_service=make_idle_processing_service(),
+        chat_interface=RecordingChatInterface(),
     )
     task_id = f"metrics_probe_{uuid.uuid4().hex[:8]}"
     failed_before = _sample(

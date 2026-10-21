@@ -14,7 +14,6 @@ missing attachment.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -22,6 +21,7 @@ from family_assistant.security.taint import TurnTaintState
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
 from family_assistant.telegram.interface import TelegramChatInterface
+from tests.mocks.telegram_bot_autospec import make_autospecced_telegram, sent_message
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -48,10 +48,8 @@ async def _register_owned(registry: AttachmentRegistry, db_engine: AsyncEngine) 
 async def test_owned_attachment_delivered_with_matching_actor(
     db_engine: AsyncEngine, tmp_path: object
 ) -> None:
-    mock_app = MagicMock()
-    mock_bot = AsyncMock()
-    mock_app.bot = mock_bot
-    mock_bot.send_document = AsyncMock(return_value=MagicMock(message_id=301))
+    mock_app, mock_bot = make_autospecced_telegram()
+    mock_bot.send_document.return_value = sent_message(301)
 
     registry = AttachmentRegistry(storage_path=str(tmp_path), db_engine=db_engine)
     attachment_id = await _register_owned(registry, db_engine)
@@ -76,10 +74,8 @@ async def test_owned_attachment_delivered_with_matching_actor(
 async def test_owned_attachment_skipped_without_actor(
     db_engine: AsyncEngine, tmp_path: object
 ) -> None:
-    mock_app = MagicMock()
-    mock_bot = AsyncMock()
-    mock_app.bot = mock_bot
-    mock_bot.send_document = AsyncMock(return_value=MagicMock(message_id=302))
+    mock_app, mock_bot = make_autospecced_telegram()
+    mock_bot.send_document.return_value = sent_message(302)
 
     registry = AttachmentRegistry(storage_path=str(tmp_path), db_engine=db_engine)
     attachment_id = await _register_owned(registry, db_engine)

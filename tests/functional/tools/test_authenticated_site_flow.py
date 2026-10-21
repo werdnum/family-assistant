@@ -19,7 +19,6 @@ import uuid
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
-from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -27,7 +26,6 @@ import pytest
 
 from family_assistant.config_loader import load_config
 from family_assistant.config_models import AppConfig, BrowserHandoffConfig, ToolsConfig
-from family_assistant.interfaces import ChatInterface
 from family_assistant.llm import LLMOutput, ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.processing.types import DelegationSecurityLevel
@@ -59,6 +57,7 @@ from tests.mocks.mock_llm import (
     extract_text_from_content,
     last_real_message,
 )
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -68,7 +67,11 @@ if TYPE_CHECKING:
     from family_assistant.storage.delegation_runs import AuthenticatedSiteEnvelope
     from family_assistant.task_worker import DelegatedProfileRunPayload, TaskWorker
     from family_assistant.tools.browser_backend import JsonDict
-    from family_assistant.tools.types import ToolExecutionContext
+    from family_assistant.tools.types import (
+        ConfirmationOutcome,
+        ToolArguments,
+        ToolExecutionContext,
+    )
 
 pytestmark = pytest.mark.asyncio
 
@@ -412,6 +415,19 @@ async def _service(
     )
 
 
+async def _no_confirmation_expected(
+    interface_type: str,
+    conversation_id: str,
+    turn_id: str | None,
+    tool_name: str,
+    call_id: str,
+    tool_args: ToolArguments,
+    timeout_seconds: float,
+    context: ToolExecutionContext,
+) -> ConfirmationOutcome:
+    raise AssertionError(f"unexpected confirmation request for {tool_name}")
+
+
 @dataclass
 class Harness:
     """A caller profile wired to a worker profile and a running task worker."""
@@ -428,8 +444,8 @@ class Harness:
             trigger_content_parts=[{"type": "text", "text": text}],
             trigger_interface_message_id=None,
             user_name=TEST_USER,
-            chat_interface=MagicMock(spec=ChatInterface),
-            request_confirmation_callback=AsyncMock(),
+            chat_interface=RecordingChatInterface(),
+            request_confirmation_callback=_no_confirmation_expected,
         )
         assert result.error_traceback is None, result.error_traceback
         assert result.text_reply is not None
@@ -456,7 +472,7 @@ async def _harness(
     registry = {CALLER_PROFILE_ID: caller, WORKER_PROFILE_ID: worker}
     caller.processing_services_registry = registry
     worker.processing_services_registry = registry
-    task_worker, _, _ = task_worker_manager(caller, MagicMock(spec=ChatInterface))
+    task_worker, _, _ = task_worker_manager(caller, RecordingChatInterface())
     _require_binding_before_delegating(cast("TaskWorker", task_worker))
     return Harness(caller=caller, engine=db_engine, conversation_id=conversation_id)
 

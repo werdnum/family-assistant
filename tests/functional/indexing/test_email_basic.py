@@ -14,7 +14,6 @@ import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -47,6 +46,8 @@ from family_assistant.storage.vector import (
 from family_assistant.task_worker import TaskWorker
 from family_assistant.web.app_creator import app as fastapi_app
 from tests.helpers import wait_for_tasks_to_complete
+from tests.mocks.idle_processing_service import make_idle_processing_service
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 logger = logging.getLogger(__name__)
 
@@ -64,12 +65,6 @@ async def _cleanup_after_test(
         raise
     finally:
         await cleanup(test_failed)
-
-
-def _create_mock_processing_service() -> MagicMock:
-    """Create a mock ProcessingService with required attributes."""
-    mock = MagicMock()
-    return mock
 
 
 # --- Test Configuration ---
@@ -389,28 +384,13 @@ async def test_email_indexing_and_query_e2e(
     logger.info("Instantiated EmailIndexer for email indexing.")
 
     # --- Arrange: Register Task Handler ---
-    # Create a TaskWorker instance for this test and register the handler
-    # Provide dummy/mock values for the required arguments
-    # The TaskWorker needs access to the embedding_generator for handle_embed_and_store_batch.
-    # This is typically provided via application.state.embedding_generator.
-    # The http_client fixture doesn't set this, so we ensure it's set on the global app
-    # or pass a mock application to the TaskWorker.
-    # For consistency with document_indexer test, let's assume fastapi_app.state can be used
-    # if the TaskWorker is instantiated with `application=fastapi_app`.
-    # However, to keep test dependencies clear, we'll use a MagicMock for application
-    # and set its state, similar to before.
-    mock_application_e2e = MagicMock()
-    mock_application_e2e.state.embedding_generator = mock_embedder
-    mock_application_e2e.state.llm_client = (
-        None  # Or a mock LLM if any processor uses it
-    )
-    # If ATTACHMENT_STORAGE_DIR is needed by any task run by worker via app.state.config:
+    # The worker gets the embedder directly; it runs no LLM turns.
 
     dummy_timezone_str = "UTC"  # Not used by email/embedding tasks
-    mock_chat_interface_e2e = MagicMock()
+    mock_chat_interface_e2e = RecordingChatInterface()
     test_shutdown_event = asyncio.Event()  # Create shutdown event early
     worker = TaskWorker(
-        processing_service=_create_mock_processing_service(),  # No processing service needed for this handler
+        processing_service=make_idle_processing_service(),
         chat_interface=mock_chat_interface_e2e,
         embedding_generator=mock_embedder,  # Pass the embedder directly
         calendar_config=None,

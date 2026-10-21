@@ -11,7 +11,6 @@ import uuid
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -25,7 +24,6 @@ from family_assistant.actions import (
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.events.processor import EventProcessor
-from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.scripting.errors import ScriptError
 from family_assistant.storage.database import Database
@@ -46,6 +44,7 @@ from family_assistant.tools.tasks import schedule_future_callback_tool
 from family_assistant.tools.types import ToolExecutionContext
 from tests.helpers import wait_for_tasks_to_complete
 from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 if TYPE_CHECKING:
     import asyncio
@@ -525,9 +524,10 @@ async def test_queued_wake_refused_for_confined_profile(
         registry={"ops_automation": ops_service},
     )
 
+    chat_interface = RecordingChatInterface()
     worker, new_task_event, _shutdown_event = task_worker_manager(
         default_service,
-        AsyncMock(spec=ChatInterface),
+        chat_interface,
     )
     worker.register_task_handler("llm_callback", handle_llm_callback)
 
@@ -565,6 +565,7 @@ async def test_queued_wake_refused_for_confined_profile(
         )
     )
     assert history_rows == []
+    assert chat_interface.sent == []
 
 
 @pytest.mark.asyncio
@@ -584,7 +585,7 @@ async def test_routed_wake_renders_trigger_in_routed_profile_timezone(
 
     worker, new_task_event, _shutdown_event = task_worker_manager(
         default_service,
-        AsyncMock(spec=ChatInterface),
+        RecordingChatInterface(),
     )
     worker.register_task_handler("llm_callback", handle_llm_callback)
 

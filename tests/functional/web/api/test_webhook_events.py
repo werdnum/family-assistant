@@ -3,16 +3,54 @@
 import hashlib
 import hmac
 import uuid
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import Any
+from unittest.mock import patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.config_models import (
+    AppConfig,
+    EventSourcesConfig,
+    EventSystemConfig,
+    WebhookSourceConfig,
+)
+from family_assistant.events.processor import EventProcessor
 from family_assistant.events.webhook_source import WebhookEventSource
 from family_assistant.storage.database import Database
 from family_assistant.web.app_creator import app as fastapi_app
+
+
+class _RecordingEventProcessor(EventProcessor):
+    """An event processor that records what its sources emit and routes nothing."""
+
+    def __init__(self) -> None:
+        super().__init__(sources={})
+        # ast-grep-ignore: no-dict-any - webhook payloads have arbitrary structure
+        self.events: list[tuple[str, dict[str, Any]]] = []
+
+    # ast-grep-ignore: no-dict-any - webhook payloads have arbitrary structure
+    async def process_event(self, source_id: str, event_data: dict[str, Any]) -> None:
+        self.events.append((source_id, event_data))
+
+
+async def _started_webhook_source() -> tuple[
+    WebhookEventSource, _RecordingEventProcessor
+]:
+    source = WebhookEventSource()
+    processor = _RecordingEventProcessor()
+    await source.start(processor)
+    return source, processor
+
+
+def _config_with_webhook_secrets(secrets: dict[str, SecretStr]) -> AppConfig:
+    return AppConfig(
+        event_system=EventSystemConfig(
+            sources=EventSourcesConfig(webhook=WebhookSourceConfig(secrets=secrets))
+        )
+    )
 
 
 @pytest.fixture
@@ -119,14 +157,10 @@ async def test_webhook_event_signature_required_when_secret_configured(
     """Test that signature is required when source has a configured secret."""
     transport = ASGITransport(app=fastapi_app)
 
-    # Create a mock config with a secret for 'grafana' source
-    mock_config = MagicMock()
-    mock_config.event_system.sources.webhook.secrets = {
-        "grafana": SecretStr("test-secret")
-    }
+    config = _config_with_webhook_secrets({"grafana": SecretStr("test-secret")})
 
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
-        with patch.object(fastapi_app.state, "config", mock_config, create=True):
+        with patch.object(fastapi_app.state, "config", config, create=True):
             # Request without signature should be rejected
             response = await client.post(
                 "/webhook/event",
@@ -148,14 +182,10 @@ async def test_webhook_event_invalid_signature_rejected(
     """Test that invalid signature is rejected."""
     transport = ASGITransport(app=fastapi_app)
 
-    # Create a mock config with a secret for 'grafana' source
-    mock_config = MagicMock()
-    mock_config.event_system.sources.webhook.secrets = {
-        "grafana": SecretStr("test-secret")
-    }
+    config = _config_with_webhook_secrets({"grafana": SecretStr("test-secret")})
 
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
-        with patch.object(fastapi_app.state, "config", mock_config, create=True):
+        with patch.object(fastapi_app.state, "config", config, create=True):
             response = await client.post(
                 "/webhook/event",
                 headers={"X-Webhook-Signature": "sha256=invalid"},
@@ -187,12 +217,10 @@ async def test_webhook_event_valid_signature_accepted(
         hashlib.sha256,
     ).hexdigest()
 
-    # Create a mock config with a secret for 'grafana' source
-    mock_config = MagicMock()
-    mock_config.event_system.sources.webhook.secrets = {"grafana": SecretStr(secret)}
+    config = _config_with_webhook_secrets({"grafana": SecretStr(secret)})
 
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
-        with patch.object(fastapi_app.state, "config", mock_config, create=True):
+        with patch.object(fastapi_app.state, "config", config, create=True):
             response = await client.post(
                 "/webhook/event",
                 headers={
@@ -214,14 +242,10 @@ async def test_webhook_event_no_signature_needed_for_unconfigured_source(
     """Test that no signature is needed for sources without configured secrets."""
     transport = ASGITransport(app=fastapi_app)
 
-    # Create a mock config with a secret only for 'grafana', not for 'github'
-    mock_config = MagicMock()
-    mock_config.event_system.sources.webhook.secrets = {
-        "grafana": SecretStr("test-secret")
-    }
+    config = _config_with_webhook_secrets({"grafana": SecretStr("test-secret")})
 
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
-        with patch.object(fastapi_app.state, "config", mock_config, create=True):
+        with patch.object(fastapi_app.state, "config", config, create=True):
             # Request from 'github' (no secret configured) should succeed without signature
             response = await client.post(
                 "/webhook/event",
@@ -252,20 +276,17 @@ async def test_worker_started_uses_nonpersisted_callback_token_header(
         callback_token=callback_token,
     )
 
-    mock_config = MagicMock()
-    mock_config.event_system.sources.webhook.secrets = {
-        "worker": SecretStr("source-secret")
-    }
-    mock_webhook_source = AsyncMock(spec=WebhookEventSource)
+    config = _config_with_webhook_secrets({"worker": SecretStr("source-secret")})
+    event_source, processor = await _started_webhook_source()
     transport = ASGITransport(app=fastapi_app)
 
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
         with (
-            patch.object(fastapi_app.state, "config", mock_config, create=True),
+            patch.object(fastapi_app.state, "config", config, create=True),
             patch.object(
                 fastapi_app.state,
                 "webhook_source",
-                mock_webhook_source,
+                event_source,
                 create=True,
             ),
         ):
@@ -282,7 +303,8 @@ async def test_worker_started_uses_nonpersisted_callback_token_header(
             )
 
     assert response.status_code == 200
-    emitted_event = mock_webhook_source.emit_event.await_args.args[0]
+    assert len(processor.events) == 1
+    emitted_event = processor.events[0][1]
     assert emitted_event["source"] is None
     assert emitted_event["data"] == {"task_id": "worker-start-task"}
     db_context = Database(engine=db_engine)
@@ -296,9 +318,8 @@ async def test_webhook_source_emit_event() -> None:
     """Test WebhookEventSource emit_event method."""
     source = WebhookEventSource()
 
-    # Mock the processor
-    mock_processor = AsyncMock()
-    await source.start(mock_processor)
+    processor = _RecordingEventProcessor()
+    await source.start(processor)
 
     event_data = {
         "event_type": "test",
@@ -308,8 +329,7 @@ async def test_webhook_source_emit_event() -> None:
 
     await source.emit_event(event_data)
 
-    # Verify process_event was called
-    mock_processor.process_event.assert_called_once_with("webhook", event_data)
+    assert processor.events == [("webhook", event_data)]
 
 
 @pytest.mark.asyncio
@@ -327,16 +347,16 @@ async def test_webhook_source_emit_event_not_running() -> None:
 async def test_webhook_source_lifecycle() -> None:
     """Test WebhookEventSource start/stop lifecycle."""
     source = WebhookEventSource()
-    mock_processor = AsyncMock()
-    await source.start(mock_processor)
+    processor = _RecordingEventProcessor()
+    await source.start(processor)
     event_data = {"event_type": "test", "event_id": "event-1"}
 
     assert await source.emit_event(event_data) == "event-1"
-    mock_processor.process_event.assert_awaited_once_with("webhook", event_data)
+    assert processor.events == [("webhook", event_data)]
 
     await source.stop()
     assert await source.emit_event(event_data) is None
-    mock_processor.process_event.assert_awaited_once_with("webhook", event_data)
+    assert processor.events == [("webhook", event_data)]
 
 
 @pytest.mark.asyncio
@@ -367,12 +387,11 @@ async def test_webhook_event_type_query_param_overrides_body(
     """Test that query param event_type overrides body event_type."""
     transport = ASGITransport(app=fastapi_app)
 
-    mock_webhook_source = AsyncMock(spec=WebhookEventSource)
-    mock_webhook_source.emit_event = AsyncMock(return_value="test-event-id")
+    event_source, processor = await _started_webhook_source()
 
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
         with patch.object(
-            fastapi_app.state, "webhook_source", mock_webhook_source, create=True
+            fastapi_app.state, "webhook_source", event_source, create=True
         ):
             response = await client.post(
                 "/webhook/event?event_type=query_type",
@@ -384,8 +403,8 @@ async def test_webhook_event_type_query_param_overrides_body(
 
             assert response.status_code == 200
 
-            mock_webhook_source.emit_event.assert_awaited_once()
-            event_data = mock_webhook_source.emit_event.await_args.args[0]
+            assert len(processor.events) == 1
+            event_data = processor.events[0][1]
             assert event_data["event_type"] == "query_type"
 
 
@@ -396,12 +415,11 @@ async def test_webhook_source_via_query_param(
     """Test that source can be provided via query parameter."""
     transport = ASGITransport(app=fastapi_app)
 
-    mock_webhook_source = AsyncMock(spec=WebhookEventSource)
-    mock_webhook_source.emit_event = AsyncMock(return_value="test-event-id")
+    event_source, processor = await _started_webhook_source()
 
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
         with patch.object(
-            fastapi_app.state, "webhook_source", mock_webhook_source, create=True
+            fastapi_app.state, "webhook_source", event_source, create=True
         ):
             response = await client.post(
                 "/webhook/event?source=query_source",
@@ -412,8 +430,8 @@ async def test_webhook_source_via_query_param(
 
             assert response.status_code == 200
 
-            mock_webhook_source.emit_event.assert_awaited_once()
-            event_data = mock_webhook_source.emit_event.await_args.args[0]
+            assert len(processor.events) == 1
+            event_data = processor.events[0][1]
             assert event_data["source"] == "query_source"
 
 
@@ -424,12 +442,11 @@ async def test_webhook_source_priority_header_over_query(
     """Test that header source takes priority over query param source."""
     transport = ASGITransport(app=fastapi_app)
 
-    mock_webhook_source = AsyncMock(spec=WebhookEventSource)
-    mock_webhook_source.emit_event = AsyncMock(return_value="test-event-id")
+    event_source, processor = await _started_webhook_source()
 
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
         with patch.object(
-            fastapi_app.state, "webhook_source", mock_webhook_source, create=True
+            fastapi_app.state, "webhook_source", event_source, create=True
         ):
             response = await client.post(
                 "/webhook/event?source=query_source",
@@ -442,8 +459,8 @@ async def test_webhook_source_priority_header_over_query(
 
             assert response.status_code == 200
 
-            mock_webhook_source.emit_event.assert_awaited_once()
-            event_data = mock_webhook_source.emit_event.await_args.args[0]
+            assert len(processor.events) == 1
+            event_data = processor.events[0][1]
             assert event_data["source"] == "header_source"
 
 
@@ -480,12 +497,11 @@ async def test_webhook_system_fields_cannot_be_overwritten(
     """Test that system-generated fields cannot be overwritten by payload extra fields."""
     transport = ASGITransport(app=fastapi_app)
 
-    mock_webhook_source = AsyncMock(spec=WebhookEventSource)
-    mock_webhook_source.emit_event = AsyncMock(return_value="test-event-id")
+    event_source, processor = await _started_webhook_source()
 
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
         with patch.object(
-            fastapi_app.state, "webhook_source", mock_webhook_source, create=True
+            fastapi_app.state, "webhook_source", event_source, create=True
         ):
             response = await client.post(
                 "/webhook/event",
@@ -499,8 +515,8 @@ async def test_webhook_system_fields_cannot_be_overwritten(
 
             assert response.status_code == 200
 
-            mock_webhook_source.emit_event.assert_awaited_once()
-            event_data = mock_webhook_source.emit_event.await_args.args[0]
+            assert len(processor.events) == 1
+            event_data = processor.events[0][1]
             assert event_data["event_id"] == response.json()["event_id"]
             assert event_data["event_id"] != "malicious-id"
             uuid.UUID(event_data["event_id"])

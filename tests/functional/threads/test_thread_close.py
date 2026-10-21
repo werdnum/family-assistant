@@ -11,7 +11,6 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
-from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -23,7 +22,6 @@ from family_assistant.config_models import (
     ToolsConfig,
 )
 from family_assistant.delegation_security import DelegationSecurityLevel
-from family_assistant.interfaces import ChatInterface
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.llm.messages import UserMessage
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
@@ -51,6 +49,7 @@ from family_assistant.tools.policy import (
     ToolPolicyDecision,
 )
 from tests.mocks.mock_llm import LLMOutput, MatcherArgs, RuleBasedMockLLMClient
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping
@@ -201,7 +200,7 @@ class World:
             trigger_interface_message_id=None,
             user_name="Alice",
             user_id=USER,
-            chat_interface=MagicMock(spec=ChatInterface),
+            chat_interface=RecordingChatInterface(),
             initial_taint_sources=[UNTRUSTED] if tainted else None,
         )
         assert result.error_traceback is None
@@ -381,7 +380,7 @@ async def test_an_echo_pings_the_login_the_turn_ran_as(world: World) -> None:
         trigger_interface_message_id=None,
         user_name="Alice",
         user_id="alice-phone",
-        chat_interface=MagicMock(spec=ChatInterface),
+        chat_interface=RecordingChatInterface(),
     )
 
     assert result.error_traceback is None
@@ -460,7 +459,7 @@ async def test_a_follow_up_turn_that_errors_fails_the_thread(
         trigger_interface_message_id=None,
         user_name="Alice",
         user_id=USER,
-        chat_interface=MagicMock(spec=ChatInterface),
+        chat_interface=RecordingChatInterface(),
     )
     latest = (await world.db.message_history.latest_visible_messages([THREAD]))[THREAD]
     await world.db.conversation_threads.mark_read(

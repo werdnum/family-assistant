@@ -12,7 +12,6 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
-from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -27,6 +26,7 @@ from family_assistant.config_loader import (
     resolve_all_service_profiles,
 )
 from family_assistant.config_models import (
+    AppConfig,
     DefaultProfileSettings,
     ServiceProfile,
     ToolCallReviewConfig,
@@ -58,6 +58,7 @@ from family_assistant.tools.types import (
     ToolExecutionContext,
     ToolResult,
 )
+from tests.mocks.idle_processing_service import make_idle_processing_service
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -199,8 +200,10 @@ def _make_exec_context(
     workspace_path: Path,
     profile_id: str = "engineer",
 ) -> ToolExecutionContext:
-    mock_service = MagicMock()
-    mock_service.app_config.shared_workspace_path = str(workspace_path)
+    processing_service = make_idle_processing_service(
+        profile_id=profile_id,
+        app_config=AppConfig(shared_workspace_path=str(workspace_path)),
+    )
     sandbox = AIWorkersInstance(AIWorkersConfig(backend_type="mock"))
 
     db = Database(engine=db_engine)
@@ -213,7 +216,7 @@ def _make_exec_context(
         user_name="Alice",
         turn_id="turn-1",
         db_context=db,
-        processing_service=cast("ProcessingService", mock_service),
+        processing_service=processing_service,
         clock=None,
         plugins=ProfilePlugins((sandbox,)),
         event_sources=None,
@@ -379,7 +382,7 @@ async def test_resolve_tool_policy_reports_review_for_flipped_rules(
     """resolve_tool_policy reports 'review' for spawn_worker and delegate_to_service on engineer and into-engineer."""
     _, profiles = _load_resolved_profiles()
 
-    services_registry: dict[str, MagicMock] = {}
+    services_registry: dict[str, ProcessingService] = {}
     for pid, profile in profiles.items():
         engine = _build_profile_policy_engine(
             profile.id,
@@ -392,13 +395,12 @@ async def test_resolve_tool_policy_reports_review_for_flipped_rules(
             wrapped_provider=LocalToolsProvider(registrations=LOCAL_TOOL_REGISTRATIONS),
             policy_engine=engine,
         )
-        mock_svc = MagicMock()
-        mock_svc.tools_provider = policy_provider
-        mock_svc.on_demand_view = None
-        services_registry[pid] = mock_svc
+        services_registry[pid] = make_idle_processing_service(
+            profile_id=pid, tools_provider=policy_provider
+        )
 
-    mock_service = MagicMock()
-    mock_service.processing_services_registry = services_registry
+    processing_service = make_idle_processing_service(profile_id="engineer")
+    processing_service.processing_services_registry = services_registry
     db = Database(engine=db_engine)
     context = ToolExecutionContext(
         interface_type="web",
@@ -406,7 +408,7 @@ async def test_resolve_tool_policy_reports_review_for_flipped_rules(
         user_name="Alice",
         turn_id="turn-1",
         db_context=db,
-        processing_service=cast("ProcessingService", mock_service),
+        processing_service=processing_service,
         clock=None,
         plugins=None,
         event_sources=None,

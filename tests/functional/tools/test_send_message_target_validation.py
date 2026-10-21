@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, Mock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -19,6 +18,7 @@ from family_assistant.storage.database import Database
 from family_assistant.tools.communication import send_message_to_user_tool
 from family_assistant.tools.types import ToolExecutionContext
 from tests.helpers import seed_known_conversation
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -29,7 +29,7 @@ UNKNOWN_CHAT_ID = "999111"
 
 def _build_exec_context(
     db_context: Database,
-    chat_interface: Mock,
+    chat_interface: RecordingChatInterface,
 ) -> ToolExecutionContext:
     return ToolExecutionContext(
         interface_type="web",
@@ -51,15 +51,13 @@ def _build_exec_context(
 
 
 @pytest.fixture
-def chat_interface() -> Mock:
-    interface = Mock()
-    interface.send_message = AsyncMock(return_value="sent_message_1")
-    return interface
+def chat_interface() -> RecordingChatInterface:
+    return RecordingChatInterface()
 
 
 async def test_sends_to_conversation_of_known_user(
     db_engine: AsyncEngine,
-    chat_interface: Mock,
+    chat_interface: RecordingChatInterface,
 ) -> None:
     """A conversation an authorized user has messaged in is a valid target."""
     await seed_known_conversation(db_engine, KNOWN_CHAT_ID, user_id="bob")
@@ -72,14 +70,12 @@ async def test_sends_to_conversation_of_known_user(
     )
 
     assert "Message sent successfully" in result
-    assert chat_interface.send_message.await_args.kwargs["conversation_id"] == (
-        KNOWN_CHAT_ID
-    )
+    assert [sent.conversation_id for sent in chat_interface.sent] == [KNOWN_CHAT_ID]
 
 
 async def test_rejects_conversation_with_no_history(
     db_engine: AsyncEngine,
-    chat_interface: Mock,
+    chat_interface: RecordingChatInterface,
 ) -> None:
     """An identifier the assistant has never seen is not a deliverable target."""
     exec_context = _build_exec_context(Database(db_engine), chat_interface)
@@ -91,12 +87,12 @@ async def test_rejects_conversation_with_no_history(
     )
 
     assert f"Chat ID {UNKNOWN_CHAT_ID} is not a known conversation" in result
-    chat_interface.send_message.assert_not_awaited()
+    assert chat_interface.sent == []
 
 
 async def test_rejects_conversation_without_authorized_sender(
     db_engine: AsyncEngine,
-    chat_interface: Mock,
+    chat_interface: RecordingChatInterface,
 ) -> None:
     """A conversation the assistant wrote into but nobody talked in is refused.
 
@@ -119,12 +115,12 @@ async def test_rejects_conversation_without_authorized_sender(
     )
 
     assert f"Chat ID {UNKNOWN_CHAT_ID} is not a known conversation" in result
-    chat_interface.send_message.assert_not_awaited()
+    assert chat_interface.sent == []
 
 
 async def test_rejects_numeric_target_supplied_as_integer(
     db_engine: AsyncEngine,
-    chat_interface: Mock,
+    chat_interface: RecordingChatInterface,
 ) -> None:
     """Integer chat IDs from JSON deserialization are validated the same way."""
     exec_context = _build_exec_context(Database(db_engine), chat_interface)
@@ -136,17 +132,15 @@ async def test_rejects_numeric_target_supplied_as_integer(
     )
 
     assert f"Chat ID {UNKNOWN_CHAT_ID} is not a known conversation" in result
-    chat_interface.send_message.assert_not_awaited()
+    assert chat_interface.sent == []
 
 
 async def test_routes_to_the_targets_own_interface(
     db_engine: AsyncEngine,
 ) -> None:
     """Delivery uses the interface the target conversation belongs to."""
-    telegram_interface = Mock()
-    telegram_interface.send_message = AsyncMock(return_value="sent_message_1")
-    web_interface = Mock()
-    web_interface.send_message = AsyncMock(return_value="sent_message_2")
+    telegram_interface = RecordingChatInterface()
+    web_interface = RecordingChatInterface()
 
     await seed_known_conversation(
         db_engine, KNOWN_CHAT_ID, interface_type="telegram", user_id="bob"
@@ -177,5 +171,5 @@ async def test_routes_to_the_targets_own_interface(
     )
 
     assert "Message sent successfully" in result
-    telegram_interface.send_message.assert_awaited_once()
-    web_interface.send_message.assert_not_awaited()
+    assert [sent.conversation_id for sent in telegram_interface.sent] == [KNOWN_CHAT_ID]
+    assert web_interface.sent == []

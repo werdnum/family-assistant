@@ -22,7 +22,6 @@ import uuid
 from datetime import timedelta
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Literal, Protocol, cast
-from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -34,7 +33,7 @@ from family_assistant.config_models import (
     RetryModelConfig,
     ToolsConfig,
 )
-from family_assistant.interfaces import ChatInterface
+from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.llm import LLMOutput, ToolCallFunction, ToolCallItem
 from family_assistant.llm.call_context import CallAttribution, attributed_call
 from family_assistant.llm.messages import UserMessage
@@ -65,6 +64,7 @@ from family_assistant.utils.clock import SystemClock
 from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module
     RuleBasedMockLLMClient,
 )
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -73,6 +73,7 @@ if TYPE_CHECKING:
     from httpx import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncEngine
 
+    from family_assistant.interfaces import ChatInterface
     from family_assistant.llm import LLMInterface
     from family_assistant.llm.messages import LLMMessage, MessageReasoningInfo
     from family_assistant.services.attachment_registry import AttachmentRegistry
@@ -457,10 +458,8 @@ def _worker_context(
     )
 
 
-def _delivering_chat_interface() -> AsyncMock:
-    chat_interface = AsyncMock(spec=ChatInterface)
-    chat_interface.send_message.return_value = "sent_message_id"
-    return chat_interface
+def _delivering_chat_interface() -> RecordingChatInterface:
+    return RecordingChatInterface()
 
 
 async def _send(client: AsyncClient, conversation_id: str, **body: object) -> str:
@@ -651,7 +650,7 @@ async def test_a_delegation_completion_wake_is_not_routed(
         chat_interface=chat_interface,
         calendar_config={},
         timezone=ZoneInfo("UTC"),
-        embedding_generator=MagicMock(),
+        embedding_generator=MockEmbeddingGenerator(),
         engine=db_engine,
     )
 

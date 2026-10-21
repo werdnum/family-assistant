@@ -1345,6 +1345,81 @@ async def test_drive_write_creates_app_folder_and_native_google_doc(
 
 
 @pytest.mark.asyncio
+async def test_drive_write_creates_missing_subfolders_inside_app_folder(
+    db_engine: AsyncEngine,
+) -> None:
+    backend = FakeApiBackend(
+        scripted=[
+            (200, b'{"files":[{"id":"folder-1","name":"Family Assistant"}]}'),
+            (200, b'{"files":[{"id":"sub-1","name":"Receipts"}]}'),
+            (200, b'{"files":[]}'),
+            (200, b'{"id":"sub-2","name":"2026"}'),
+            (200, b'{"files":[]}'),
+            (200, b'{"id":"doc-1","name":"Hardware","mimeType":"text/plain"}'),
+        ]
+    )
+    resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
+    db = Database(engine=db_engine)
+    context = _make_context(db, user_id="user-a", resolver=resolver, backend=backend)
+    result = await drive_write_file_tool(
+        context,
+        name="Hardware",
+        content="Receipt",
+        file_type="text",
+        folder="/Receipts/2026/",
+    )
+
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert data["folder_id"] == "sub-2"
+    assert data["folder_path"] == "Family Assistant/Receipts/2026"
+    assert [request[0] for request in backend.requests] == [
+        "GET",
+        "GET",
+        "GET",
+        "POST",
+        "GET",
+        "POST",
+    ]
+    receipts_query = (backend.request_params[1] or {})["q"]
+    assert "'folder-1' in parents" in receipts_query
+    assert "name = 'Receipts'" in receipts_query
+    assert "app_subfolder_v1" in receipts_query
+    assert "'sub-1' in parents" in (backend.request_params[2] or {})["q"]
+    subfolder_body, _ = backend.request_bodies[3]
+    assert subfolder_body is not None
+    created = json.loads(subfolder_body)
+    assert created["name"] == "2026"
+    assert created["parents"] == ["sub-1"]
+    assert created["mimeType"] == "application/vnd.google-apps.folder"
+    assert created["appProperties"] == {"family_assistant": "app_subfolder_v1"}
+    assert "'sub-2' in parents" in (backend.request_params[4] or {})["q"]
+    upload_body, _ = backend.request_bodies[-1]
+    assert upload_body is not None
+    assert b'"parents":["sub-2"]' in upload_body
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "folder",
+    ["Receipts/../Taxes", "a/b/c/d/e/f", "Receipts\\2026", "x" * 201],
+)
+async def test_drive_write_rejects_invalid_folder_paths_before_any_request(
+    db_engine: AsyncEngine, folder: str
+) -> None:
+    backend = FakeApiBackend()
+    resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
+    db = Database(engine=db_engine)
+    context = _make_context(db, user_id="user-a", resolver=resolver, backend=backend)
+    result = await drive_write_file_tool(
+        context, name="Plan", content="Family plan", folder=folder
+    )
+
+    assert "Drive" in result.get_text()
+    assert backend.requests == []
+
+
+@pytest.mark.asyncio
 async def test_parallel_drive_writes_create_only_one_app_folder(
     db_engine: AsyncEngine,
 ) -> None:

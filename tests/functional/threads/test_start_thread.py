@@ -10,7 +10,6 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
-from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -22,7 +21,6 @@ from family_assistant.config_models import (
     ToolsConfig,
 )
 from family_assistant.delegation_security import DelegationSecurityLevel
-from family_assistant.interfaces import ChatInterface
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.llm.messages import UserMessage
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
@@ -46,6 +44,7 @@ from family_assistant.tools.policy import (
 )
 from tests.helpers import wait_for_condition
 from tests.mocks.mock_llm import LLMOutput, MatcherArgs, RuleBasedMockLLMClient
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Mapping
@@ -164,7 +163,7 @@ class ThreadWorld:
             trigger_interface_message_id=None,
             user_name="Alice",
             user_id=USER,
-            chat_interface=MagicMock(spec=ChatInterface),
+            chat_interface=RecordingChatInterface(),
         )
         assert result.error_traceback is None
 
@@ -276,7 +275,7 @@ async def world(
     target_service.processing_services_registry = registry
     task_worker_manager(
         world.home_service,
-        MagicMock(spec=ChatInterface),
+        RecordingChatInterface(),
         register_delegation_handler=True,
     )
     await db.conversation_threads.designate_home(

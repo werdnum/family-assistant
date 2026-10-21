@@ -19,9 +19,9 @@ that both paths work when enforcement is switched on:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from typing import TYPE_CHECKING, TypeVar
-from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -203,6 +203,7 @@ def _turn_script(sink_attempts: int) -> list[Rule]:
     return rules
 
 
+@contextlib.asynccontextmanager
 async def _client(
     db_engine: AsyncEngine,
     *,
@@ -210,12 +211,11 @@ async def _client(
     reviewer_llm: RuleBasedMockLLMClient,
     review_config: ToolCallReviewConfig,
     sink: _SinkRecorder,
-) -> AsyncClient:
+) -> AsyncGenerator[AsyncClient]:
     local_provider = LocalToolsProvider(
         registrations=_registrations(sink), embedding_generator=None
     )
-    mcp_provider = AsyncMock(spec=MCPToolsProvider)
-    mcp_provider.get_tool_definitions.return_value = []
+    mcp_provider = MCPToolsProvider(mcp_server_configs={})
     policy_provider = PolicyEnforcingToolsProvider(
         wrapped_provider=CompositeToolsProvider(
             providers=[local_provider, mcp_provider]
@@ -258,7 +258,12 @@ async def _client(
     app.state.llm_client = main_llm
     app.state.debug_mode = False
     app.state.web_chat_interface = WebChatInterface(db_engine)
-    return AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver")
+    try:
+        yield AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://testserver"
+        )
+    finally:
+        await tools_provider.close()
 
 
 async def _send(client: AsyncClient) -> dict[str, str]:
@@ -314,7 +319,7 @@ async def denial_client(
             )
         ],
     )
-    yield await _client(
+    async with _client(
         db_engine,
         main_llm=RuleBasedMockLLMClient(rules=_turn_script(sink_attempts=3)),
         reviewer_llm=reviewer_llm,
@@ -323,7 +328,8 @@ async def denial_client(
             escalation=ToolCallReviewEscalationConfig(consecutive_denials=3),
         ),
         sink=sink,
-    )
+    ) as client:
+        yield client
 
 
 @pytest.mark.asyncio
@@ -363,13 +369,14 @@ async def timeout_client(
     db_engine: AsyncEngine,
     sink: _SinkRecorder,
 ) -> AsyncGenerator[AsyncClient]:
-    yield await _client(
+    async with _client(
         db_engine,
         main_llm=RuleBasedMockLLMClient(rules=_turn_script(sink_attempts=1)),
         reviewer_llm=_SilentReviewerLLM(rules=[]),
         review_config=ToolCallReviewConfig(timeout_seconds=0.05),
         sink=sink,
-    )
+    ) as client:
+        yield client
 
 
 @pytest.mark.asyncio

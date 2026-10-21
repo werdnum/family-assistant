@@ -4,7 +4,6 @@ import json
 import logging
 import uuid
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -44,6 +43,7 @@ from tests.mocks.mock_llm import (
     get_message_role,
     last_real_message,
 )
+from tests.mocks.recording_chat_interface import RecordingChatInterface
 
 if TYPE_CHECKING:
     from family_assistant.llm import LLMInterface
@@ -182,7 +182,7 @@ async def test_add_note_with_include_in_prompt(db_engine: AsyncEngine) -> None:
     db_context = Database(engine=db_engine)
     result = await processing_service.handle_chat_interaction(
         db_context=db_context,
-        chat_interface=MagicMock(),
+        chat_interface=RecordingChatInterface(),
         interface_type="test",
         conversation_id=str(TEST_CHAT_ID),
         trigger_content_parts=[
@@ -246,7 +246,7 @@ async def test_get_note_that_exists(db_engine: AsyncEngine) -> None:
     # Act
     result = await processing_service.handle_chat_interaction(
         db_context=db_context,
-        chat_interface=MagicMock(),
+        chat_interface=RecordingChatInterface(),
         interface_type="test",
         conversation_id=str(TEST_CHAT_ID),
         trigger_content_parts=[
@@ -306,7 +306,7 @@ async def test_get_note_that_does_not_exist(db_engine: AsyncEngine) -> None:
     db_context = Database(engine=db_engine)
     result = await processing_service.handle_chat_interaction(
         db_context=db_context,
-        chat_interface=MagicMock(),
+        chat_interface=RecordingChatInterface(),
         interface_type="test",
         conversation_id=str(TEST_CHAT_ID),
         trigger_content_parts=[
@@ -369,7 +369,7 @@ async def test_list_all_notes(db_engine: AsyncEngine) -> None:
     # Act
     result = await processing_service.handle_chat_interaction(
         db_context=db_context,
-        chat_interface=MagicMock(),
+        chat_interface=RecordingChatInterface(),
         interface_type="test",
         conversation_id=str(TEST_CHAT_ID),
         trigger_content_parts=[{"type": "text", "text": "List all notes"}],
@@ -433,7 +433,7 @@ async def test_list_notes_with_filter(db_engine: AsyncEngine) -> None:
     # Act
     result = await processing_service.handle_chat_interaction(
         db_context=db_context,
-        chat_interface=MagicMock(),
+        chat_interface=RecordingChatInterface(),
         interface_type="test",
         conversation_id=str(TEST_CHAT_ID),
         trigger_content_parts=[
@@ -495,7 +495,7 @@ async def test_delete_note(db_engine: AsyncEngine) -> None:
     # Act
     result = await processing_service.handle_chat_interaction(
         db_context=db_context,
-        chat_interface=MagicMock(),
+        chat_interface=RecordingChatInterface(),
         interface_type="test",
         conversation_id=str(TEST_CHAT_ID),
         trigger_content_parts=[
@@ -559,7 +559,7 @@ async def test_update_existing_note(db_engine: AsyncEngine) -> None:
     # Act
     result = await processing_service.handle_chat_interaction(
         db_context=db_context,
-        chat_interface=MagicMock(),
+        chat_interface=RecordingChatInterface(),
         interface_type="test",
         conversation_id=str(TEST_CHAT_ID),
         trigger_content_parts=[

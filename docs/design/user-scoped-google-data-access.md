@@ -548,8 +548,10 @@ folder and every file carry private Drive `appProperties` markers. Lookup uses t
 the expected parent, rather than trusting the user-editable folder name. The tool accepts either
 UTF-8 content (native Google Doc by default, plain text, or Markdown) or one existing attachment.
 Attachments are resolved through the owner-scoped registry and uploaded as ordinary Drive files. The
-model cannot supply a parent or file ID. Overwrite lookup is limited to app-marked files in the app
-folder; create-only mode fails on an existing name rather than silently replacing it.
+model may name a subfolder path beneath the app folder; each level is resolved (or lazily created)
+as an app-marked folder under the previous one, so the path only ever selects folders the app made.
+The model cannot supply a parent or file ID. Overwrite lookup is limited to app-marked files in the
+target folder; create-only mode fails on an existing name rather than silently replacing it.
 
 Both tools impose a small-upload limit before materializing a request body. Users who add either
 write scope must reconnect so Google can grant it. `drive.file` is sufficient because the app only

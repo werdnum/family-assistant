@@ -5,7 +5,6 @@ import json
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -17,7 +16,6 @@ from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.events.processor import EventProcessor
 from family_assistant.events.storage import EventStorage
-from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage import Database
 from family_assistant.storage.events import EventSourceType, recent_events_table
@@ -37,6 +35,7 @@ from family_assistant.tools.types import ToolExecutionContext
 from tests.helpers import wait_for_condition
 from tests.mocks.mock_llm import LLMOutput as MockLLMOutput
 from tests.mocks.mock_llm import RuleBasedMockLLMClient, last_real_message
+from tests.mocks.recording_chat_interface import ScriptedChatInterface
 
 
 def safe_json_loads(data: str | dict | list) -> Any:  # noqa: ANN401  # JSON can be any type
@@ -357,14 +356,12 @@ async def test_end_to_end_event_listener_wakes_llm(
     service_registry["default_assistant"] = processing_service
     service_registry["event_handler"] = event_handler_service
 
-    # Setup mock chat interface
-    mock_chat_interface = AsyncMock(spec=ChatInterface)
-    mock_chat_interface.send_message.return_value = "mock_message_id"
+    chat_interface = ScriptedChatInterface(otherwise="mock_message_id")
 
     # Use task_worker_manager fixture to create and start task worker
     task_worker, new_task_event, shutdown_event = task_worker_manager(
         processing_service,
-        mock_chat_interface,
+        chat_interface,
     )
     task_worker.register_task_handler("llm_callback", handle_llm_callback)
 
@@ -377,15 +374,15 @@ async def test_end_to_end_event_listener_wakes_llm(
     # message is sent, and a loaded CI runner takes longer over that than any
     # fixed sleep is worth betting on.
     await wait_for_condition(
-        lambda: mock_chat_interface.send_message.call_count > 0,
+        lambda: len(chat_interface.sent) > 0,
         description="the event callback to deliver its message",
     )
 
     # Verify the message was sent (proves the task was processed successfully)
-    mock_chat_interface.send_message.assert_called_once()
-    call_kwargs = mock_chat_interface.send_message.call_args[1]
-    assert call_kwargs["conversation_id"] == "test_chat_123"
-    assert "Motion detected" in call_kwargs["text"]
+    assert len(chat_interface.sent) == 1
+    sent = chat_interface.last_sent
+    assert sent.conversation_id == "test_chat_123"
+    assert "Motion detected" in sent.text
 
     assistant_rows = await Database(db_engine).fetch_all(
         select(message_history_table)

@@ -15,9 +15,9 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock
+from zoneinfo import ZoneInfo
 
 import pytest
 from aiohttp import web
@@ -44,6 +44,7 @@ from family_assistant.tools.types import (
     ToolExecutionContext,
     ToolResult,
 )
+from tests.mocks.unconnected_database import unconnected_database
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -185,35 +186,34 @@ async def fixture_server() -> AsyncGenerator[BoundFixtureServer]:
 
 @pytest.fixture
 def exec_context(request: pytest.FixtureRequest) -> ToolExecutionContext:
-    """A minimally-mocked ToolExecutionContext with a unique conversation id.
+    """A minimal top-level ToolExecutionContext with a unique conversation id.
 
     A top-level turn (no subconversation) keys its ``BrowserSession`` by
     ``conversation_id``. Using the test's nodeid keeps each test's session
-    isolated.
+    isolated. The browser tools never query the database on a top-level turn.
     """
-    return _context(f"browser-dom-test-{request.node.nodeid}")
+    return ToolExecutionContext(
+        interface_type="test",
+        conversation_id=f"browser-dom-test-{request.node.nodeid}",
+        user_name="test_user",
+        turn_id=None,
+        db_context=unconnected_database(),
+        processing_service=None,
+        clock=None,
+        plugins=None,
+        event_sources=None,
+        attachment_registry=None,
+        credential_resolvers=None,
+        api_backend=None,
+        timezone=ZoneInfo("UTC"),
+    )
 
 
 _CallFactory = Callable[[ToolExecutionContext], Awaitable[ToolResult]]
 
 
-def _context(
-    conversation_id: str,
-    batch: ToolCallBatch | None = None,
-    call_id: str | None = None,
-) -> ToolExecutionContext:
-    """A context for one tool call, optionally as part of a batch."""
-    return MagicMock(
-        spec=ToolExecutionContext,
-        conversation_id=conversation_id,
-        subconversation_id=None,
-        tool_call_batch=batch,
-        tool_call_id=call_id,
-    )
-
-
 async def _run_batch(
-    conversation_id: str, calls: list[tuple[str, str, _CallFactory]]
+    exec_context: ToolExecutionContext, calls: list[tuple[str, str, _CallFactory]]
 ) -> list[ToolResult]:
     """Run ``(call_id, tool_name, coroutine factory)`` calls as one model response.
 
@@ -224,7 +224,9 @@ async def _run_batch(
 
     async def _one(call_id: str, make: _CallFactory) -> ToolResult:
         try:
-            return await make(_context(conversation_id, batch, call_id))
+            return await make(
+                replace(exec_context, tool_call_batch=batch, tool_call_id=call_id)
+            )
         finally:
             batch.mark_done(call_id)
 
@@ -459,13 +461,12 @@ async def test_two_ref_actions_in_one_batch_each_land_on_their_own_node(
     fixture_server: BoundFixtureServer, exec_context: ToolExecutionContext
 ) -> None:
     """Concurrent siblings run in issue order, each against the live page."""
-    conversation_id = str(exec_context.conversation_id)
     snap = await browser_open_tool(exec_context, fixture_server.url + "/two-inputs")
     first_ref = _ref_for_name(snap, "First")
     second_ref = _ref_for_name(snap, "Second")
 
     results = await _run_batch(
-        conversation_id,
+        exec_context,
         [
             (
                 "call_1",
@@ -504,13 +505,12 @@ async def test_a_batched_action_after_a_navigating_sibling_fails_rather_than_act
     fixture_server: BoundFixtureServer, exec_context: ToolExecutionContext
 ) -> None:
     """Ordering alone is not enough; unique numbering is what makes it safe."""
-    conversation_id = str(exec_context.conversation_id)
     snap = await browser_open_tool(exec_context, fixture_server.url + "/")
     link_ref = _first_ref_for(snap, role="link")
     input_ref = _first_ref_for(snap, role="textbox")
 
     results = await _run_batch(
-        conversation_id,
+        exec_context,
         [
             (
                 "call_1",
@@ -535,9 +535,8 @@ async def test_a_batched_action_after_a_navigating_sibling_fails_rather_than_act
 async def test_a_batch_that_navigates_twice_hands_back_refs_only_at_the_end(
     fixture_server: BoundFixtureServer, exec_context: ToolExecutionContext
 ) -> None:
-    conversation_id = str(exec_context.conversation_id)
     results = await _run_batch(
-        conversation_id,
+        exec_context,
         [
             (
                 "call_1",
