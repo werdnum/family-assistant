@@ -349,10 +349,18 @@ another is exactly the non-uniform bias a comparison cannot carry. Four classes,
    Captured calls are part of the end state and are what "no message was sent" assertions check.
 
 Delegation is part of the ordinary workload, so a **delegated profile runs for real inside the
-sandbox** on its configured tier, under the same backing rules; the browser profile reads the live
-web as a live read-only service. Targets that reach outside the sandbox by design — the Kubernetes
-agent, the managed coder, remote agents — are capture-backed with the recorded result returned, and
-a case that depends on their output says so.
+sandbox** on its configured tier, under the same backing rules. The sandbox is **sealed**: profiles
+whose work happens outside it — remote agents, the managed coder, computer use, the browser
+profiles, deep research — are removed, and every remaining profile carries an operator-layer rule
+denying browser, worker, GitHub, authenticated-site and shopping-cart tools, which no profile grant
+outranks. A case that depends on one of them is scored as a harness gap.
+
+Services the household owns run **for real, locally**, from the deployment's own source and settings
+rather than as fakes: the task tracker (Tuit, seeded through its own API from recorded results, its
+clock set to the case's moment), the code-execution server (confined with a `sandbox-exec` profile
+in place of its container), and Home Assistant with `ha-mcp` in front of it, built from recorded
+entity states. The sandbox starts from the deployment's own `config.yaml` and keeps only the MCP
+servers it runs locally, pointed at them.
 
 This is the one place the sandbox needs new seams. Concretely: a generic fake MCP server process
 that serves a registry snapshot with seeded-fake, replay or capture semantics per tool covers every
@@ -400,9 +408,13 @@ to the real user, so running as anyone else would test a different assistant.
 
 Three layers, cheapest first:
 
-1. **Deterministic checks** from the case's expectations against the end state: required effects
-   happened, forbidden effects did not, the turn completed without error. These decide pass/fail for
-   the side-effect half of the task.
+1. **State checks** by a grading agent that holds the household's own read tools, called through the
+   sandbox's tool API as the household user after the turn, with the clock still at the case's
+   moment. It inspects the calendar, notes, mail, the house and the task list the way the household
+   would, rather than reading the action log, and records each check with its evidence, any unwanted
+   effects (the wrong item, duplicates, more than asked), and whether the reply was true. Write
+   tools are never offered to it. Where a case states expectations, they are given to it as checks
+   to make.
 2. **LLM judge** for the reply: a rubric score (did it do the thing, is the information correct
    against the fixture, is it concise) and a **pairwise preference** against the historical
    production reply, with position swapped. The judge runs on a strong model from a different

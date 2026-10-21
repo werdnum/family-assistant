@@ -11,7 +11,8 @@ from family_assistant.config_loader import load_config
 from family_assistant.config_models import RetryModelConfig
 from family_assistant.eval.workhorse.google_sandbox import eval_google_integration
 from family_assistant.eval.workhorse.sandbox import (
-    deployment_overlay,
+    SEAL_RULE,
+    LocalServices,
     eval_tier_name,
     frozen_clock,
     sandbox_config,
@@ -44,6 +45,15 @@ def _sandbox(tmp_path: Path) -> tuple[AppConfig, AppConfig]:
         user_id="andrew@example.com",
         google_integration=eval_google_integration(require_taint_enforcement=False),
         configurations={"flash_low": _FLASH_LOW},
+        services=LocalServices(
+            mcp_servers={
+                "tuit": {
+                    "url": "http://127.0.0.1:9001/mcp",
+                    "transport": "streamable_http",
+                }
+            },
+            home_assistant=("http://127.0.0.1:9002", "local-token"),
+        ),
     )
 
 
@@ -66,15 +76,16 @@ def test_other_profiles_keep_their_shipped_tiers(tmp_path: Path) -> None:
 
     before = {p.id: p.allowed_model_tiers for p in shipped.service_profiles}
     after = {p.id: p.allowed_model_tiers for p in config.service_profiles}
-    for profile_id in set(before) - {"default_assistant", "complex_tasks"}:
+    for profile_id in set(after) - {"default_assistant", "complex_tasks"}:
         assert after[profile_id] == before[profile_id]
 
 
 def test_background_work_and_external_services_are_off(tmp_path: Path) -> None:
     _, config = _sandbox(tmp_path)
 
-    assert config.mcp_config.mcpServers == {}
     assert not config.telegram_enabled
+    assert config.mqtt_config.broker_host is None
+    assert not config.ucp_config.enabled
     assert config.model_routing.mode == "off"
     assert not config.conversation_summaries.enabled
     # Memory is read as in production, but nothing contributes, so the
@@ -96,32 +107,32 @@ def test_the_clock_moves_to_the_moment_and_ticks() -> None:
     assert moment <= now < datetime(2026, 8, 6, 1, 1, tzinfo=UTC)
 
 
-def test_a_recorded_deployment_overlays_only_its_behaviour_settings(
+def test_profiles_that_act_outside_the_sandbox_are_removed(tmp_path: Path) -> None:
+    shipped, config = _sandbox(tmp_path)
+
+    kept = {p.id for p in config.service_profiles}
+    assert {"default_assistant", "complex_tasks"} <= kept
+    for profile in shipped.service_profiles:
+        if "browser" in profile.id or profile.processing_config.antigravity_config:
+            assert profile.id not in kept
+
+
+def test_every_remaining_profile_carries_the_seal_in_the_operator_layer(
     tmp_path: Path,
 ) -> None:
-    shipped = load_config(
-        config_file_path=str(tmp_path / "none.yaml"), load_dotenv_file=False
-    )
-    recorded = {
-        # Dumps write tiers as numbers; configuration takes names.
-        "taint_policy": {
-            "mode": "observe",
-            "history_taint_epoch": "2026-07-24T04:00:00Z",
-            "high_taint_tier": 5,
-            "matrix_overrides": {"5": {"sensitive_read_broadening": "audit"}},
-            "artifact_labels": {"3": ["source_known_contact"]},
-        },
-        "memory_config": {"enabled": True, "core_note_title": "Household Memory"},
-        # Never taken: these reach the real house and the real world.
-        "mqtt_config": {"broker_host": "mqtt.example.com"},
-        "plugins": {"home_assistant": {"default": {"url": "https://ha.example.com"}}},
-    }
+    _, config = _sandbox(tmp_path)
 
-    config = deployment_overlay(shipped, recorded)
+    for profile in config.service_profiles:
+        assert profile.operator_tools_policy is not None
+        assert SEAL_RULE in profile.operator_tools_policy.rules
 
-    assert config.taint_policy.history_taint_epoch == datetime(
-        2026, 7, 24, 4, 0, tzinfo=UTC
+
+def test_only_locally_run_services_are_wired_and_point_locally(tmp_path: Path) -> None:
+    _, config = _sandbox(tmp_path)
+
+    assert list(config.mcp_config.mcpServers) == ["tuit"]
+    assert config.mcp_config.mcpServers["tuit"].model_dump()["url"] == (
+        "http://127.0.0.1:9001/mcp"
     )
-    assert config.memory_config.core_note_title == "Household Memory"
-    assert config.mqtt_config == shipped.mqtt_config
-    assert config.plugins == shipped.plugins
+    (instance,) = config.plugins.home_assistant.values()
+    assert instance.api_url == "http://127.0.0.1:9002"
