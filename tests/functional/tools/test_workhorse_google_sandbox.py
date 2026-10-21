@@ -248,10 +248,11 @@ async def test_what_the_tools_render_rebuilds_the_same_world(
 
     original = _WORLD.messages[0]
     (message_back,) = rebuilt.messages
-    assert message_back.model_dump(exclude={"first_seen_at"}) == original.model_dump(
-        exclude={"first_seen_at"}
+    rebuilt_only = {"first_seen_at", "matched_queries"}
+    assert message_back.model_dump(exclude=rebuilt_only) == original.model_dump(
+        exclude=rebuilt_only
     )
     (file_back,) = rebuilt.files
-    assert file_back.model_dump(exclude={"first_seen_at"}) == _WORLD.files[
-        0
-    ].model_dump(exclude={"first_seen_at"})
+    assert file_back.model_dump(exclude=rebuilt_only) == _WORLD.files[0].model_dump(
+        exclude=rebuilt_only
+    )

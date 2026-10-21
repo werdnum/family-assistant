@@ -40,7 +40,8 @@ __all__ = [
 _HEADER_LINE = re.compile(r"^(From|To|Subject|Date): ?(.*)$")
 _ATTACHMENT_ENTRY = re.compile(
     r"(?P<filename>[^,(]+?) \(attachment_id: (?P<attachment_id>[^,]*), "
-    r"part_id: (?P<part_id>[^,]*), (?P<mime_type>[^,]*), (?P<size>\w+) bytes\)"
+    # Older renderings carried no part id.
+    r"(?:part_id: (?P<part_id>[^,]*), )?(?P<mime_type>[^,]*), (?P<size>\w+) bytes\)"
 )
 
 
@@ -68,6 +69,10 @@ class WorldMessage(_Model):
     # None when the message was only ever seen in a search listing.
     body: str | None = None
     attachments: list[WorldAttachment] = []
+    # Recorded searches whose real results included this message: Google's
+    # own verdict that it matches those terms, which the fake can use where
+    # it lacks the text Google matched on.
+    matched_queries: list[str] = []
     first_seen_at: datetime
 
 
@@ -81,6 +86,8 @@ class WorldFile(_Model):
     web_view_link: str | None
     # None when the file was only ever listed, or fetched into an attachment.
     content: str | None = None
+    # As for messages: recorded searches whose real results included it.
+    matched_queries: list[str] = []
     first_seen_at: datetime
 
 
@@ -168,7 +175,7 @@ def _parse_rendered_message(
             WorldAttachment(
                 filename=match["filename"].strip(),
                 attachment_id=match["attachment_id"],
-                part_id=match["part_id"],
+                part_id=match["part_id"] or "",
                 mime_type=match["mime_type"],
                 size=int(match["size"]) if match["size"].isdigit() else None,
             )
@@ -183,7 +190,9 @@ class _Builder:
         self.messages: dict[str, WorldMessage] = {}
         self.files: dict[str, WorldFile] = {}
 
-    def add_search_listing(self, data: Mapping[str, object], seen: datetime) -> None:
+    def add_search_listing(
+        self, data: Mapping[str, object], query: str, seen: datetime
+    ) -> None:
         entries = data.get("messages")
         if not isinstance(entries, list):
             return
@@ -201,6 +210,7 @@ class _Builder:
                 to=_str(entry.get("to")),
                 subject=_str(entry.get("subject")),
                 snippet=_str(entry.get("snippet")),
+                matched_queries=[query] if query else [],
                 first_seen_at=seen,
             )
             if existing is None:
@@ -214,6 +224,9 @@ class _Builder:
                         "snippet": summary.snippet or existing.snippet,
                         "body": existing.body,
                         "attachments": existing.attachments,
+                        "matched_queries": _union(
+                            existing.matched_queries, summary.matched_queries
+                        ),
                         "first_seen_at": min(existing.first_seen_at, seen),
                     }
                 )
@@ -244,7 +257,9 @@ class _Builder:
             }
         )
 
-    def add_drive_listing(self, data: Mapping[str, object], seen: datetime) -> None:
+    def add_drive_listing(
+        self, data: Mapping[str, object], query: str, seen: datetime
+    ) -> None:
         entries = data.get("files")
         if not isinstance(entries, list):
             return
@@ -263,6 +278,7 @@ class _Builder:
                 owner_email=_str(owner.get("email")),
                 modified_time=_parse_iso(entry.get("modified_time")),
                 web_view_link=_str(entry.get("web_view_link")),
+                matched_queries=[query] if query else [],
                 first_seen_at=seen,
             )
             if existing is None:
@@ -277,6 +293,9 @@ class _Builder:
                     update={
                         "content": existing.content,
                         "modified_time": min(times) if times else None,
+                        "matched_queries": _union(
+                            existing.matched_queries, listed.matched_queries
+                        ),
                         "first_seen_at": min(existing.first_seen_at, seen),
                     }
                 )
@@ -298,6 +317,10 @@ class _Builder:
             )
             return
         self.files[file_id] = existing.model_copy(update={"content": content})
+
+
+def _union(first: list[str], second: list[str]) -> list[str]:
+    return first + [item for item in second if item not in first]
 
 
 def _is_tool_failure(content: str) -> bool:
@@ -330,13 +353,13 @@ def build_google_world(
             if _is_tool_failure(content):
                 continue
             if name == "gmail_search" and (data := _json_object(content)) is not None:
-                builder.add_search_listing(data, seen)
+                builder.add_search_listing(data, str(arguments.get("query", "")), seen)
             elif name == "gmail_get_message" and isinstance(
                 arguments.get("message_id"), str
             ):
                 builder.add_full_message(str(arguments["message_id"]), content, seen)
             elif name == "drive_search" and (data := _json_object(content)) is not None:
-                builder.add_drive_listing(data, seen)
+                builder.add_drive_listing(data, str(arguments.get("query", "")), seen)
             elif (
                 name == "drive_get_file"
                 and isinstance(arguments.get("file_id"), str)

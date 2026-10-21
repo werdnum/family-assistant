@@ -8,8 +8,9 @@ from datetime import UTC, datetime
 
 import pytest
 
-from family_assistant.eval.workhorse.fake_google import (
-    FakeGoogleBackend,
+from family_assistant.eval.workhorse.fake_google import FakeGoogleBackend
+from family_assistant.eval.workhorse.google_search import (
+    drive_known_folders,
     drive_query_matches,
     gmail_query_matches,
 )
@@ -79,11 +80,59 @@ def _file(**overrides: object) -> WorldFile:
         ("has:attachment", False),
         ("in:inbox label:important dermatology", True),
         ("dermatology -label:spam", True),
+        # OR binds tighter than the implied AND: clinic (podiatry OR dermatology).
+        ("clinic podiatry OR dermatology", True),
+        ("school podiatry OR dermatology", False),
+        # Whole words, not prefixes.
+        ("derm", False),
+        ("from:me", False),
+        ("to:me", True),
+        ("in:sent", False),
+        ("is:draft", False),
+        ("after:1755648000", True),
         ("dermatology -in:trash -category:promotions", True),
     ],
 )
 def test_gmail_query_approximation(query: str, expected: bool) -> None:
-    assert gmail_query_matches(_message(), query, _NOW) is expected
+    assert (
+        gmail_query_matches(_message(), query, _NOW, me=("andrew@example.com",))
+        is expected
+    )
+
+
+def test_unmodelled_gmail_operators_are_reported_not_decided() -> None:
+    unmodelled: set[str] = set()
+
+    matched = gmail_query_matches(
+        _message(), "dermatology is:unread", _NOW, unmodelled=unmodelled
+    )
+
+    assert matched
+    assert unmodelled == {"is:unread"}
+
+
+def test_an_unlisted_drive_folder_is_empty_and_reported() -> None:
+    listed = _file(matched_queries=["'folder-1' in parents"])
+    other = _file(id="f2", name="Elsewhere")
+    known = drive_known_folders([listed, other])
+    unmodelled: set[str] = set()
+
+    in_listed = [
+        f.id
+        for f in (listed, other)
+        if drive_query_matches(f, "'folder-1' in parents", known_folders=known)
+    ]
+    in_unlisted = [
+        f.id
+        for f in (listed, other)
+        if drive_query_matches(
+            f, "'folder-9' in parents", known_folders=known, unmodelled=unmodelled
+        )
+    ]
+
+    assert in_listed == ["f1"]
+    assert in_unlisted == []
+    assert unmodelled == {"unlisted folder folder-9"}
 
 
 def test_attachment_operators_are_unknown_for_listing_only_messages() -> None:
@@ -373,7 +422,7 @@ async def test_a_listing_only_message_serves_its_snippet_as_partial() -> None:
 
     part = full.json()["payload"]["parts"][0]
     body = base64.urlsafe_b64decode(part["body"]["data"] + "==").decode()
-    assert body == "Your appointment at Paediatric Dermatology"
+    assert body == "Your appointment at Paediatric Dermatology …"
     assert backend.partial == ["gmail message m1: snippet only"]
 
 

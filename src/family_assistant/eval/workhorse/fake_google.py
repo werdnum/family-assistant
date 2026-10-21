@@ -13,39 +13,42 @@ distractor should not void the trial. Anything else the world cannot answer
 -- returns 404 and is recorded in :attr:`unbacked`, which the runner reads to
 mark the trial unscorable rather than charge the model.
 
-Search is deliberately lenient. Gmail and Drive query languages are only
-approximated: every free term must appear somewhere in the item, the common
-operators narrow the match, and operators the fake does not model are
-ignored. A model is never refused for writing a query the real service would
-accept; the cost is that some queries match more than they would at Google.
+Search semantics live in :mod:`family_assistant.eval.workhorse.google_search`,
+and are measured against the recorded traffic by replaying every recorded
+search with its own evidence withheld.
 """
 
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import re
-import shlex
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta, tzinfo
 from email.message import Message
 from email.parser import BytesParser
 from email.policy import default as default_policy
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
+from family_assistant.eval.workhorse.google_search import (
+    drive_known_folders,
+    drive_query_matches,
+    gmail_query_matches,
+)
 from family_assistant.eval.workhorse.google_world import WorldFile
 from family_assistant.services.api_backend import ApiResponse
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+    from datetime import datetime
 
     from family_assistant.eval.workhorse.google_world import (
         GoogleWorld,
         WorldMessage,
     )
 
-__all__ = ["FakeGoogleBackend", "drive_query_matches", "gmail_query_matches"]
+__all__ = ["FakeGoogleBackend"]
 
 _GMAIL_PREFIX = "/gmail/v1/users/me/"
 _DRIVE_PREFIX = "/drive/v3/files"
@@ -58,11 +61,6 @@ _GOOGLE_DOC_TYPES = frozenset({
 _DRIVE_FOLDER_MIME = "application/vnd.google-apps.folder"
 _APP_QUERY = "appProperties has"
 _APP_FILE_NAME = re.compile(r"\bname\s*=\s*'((?:[^'\\]|\\.)*)'")
-_RELATIVE_AGE = re.compile(r"^(\d+)([dmy])$")
-_DRIVE_CONTAINS = re.compile(
-    r"\b(name|fullText)\s+contains\s+'((?:[^'\\]|\\.)*)'", re.IGNORECASE
-)
-_DRIVE_MIME = re.compile(r"\bmimeType\s*(=|!=)\s*'((?:[^'\\]|\\.)*)'", re.IGNORECASE)
 
 
 def _b64url(text: str) -> str:
@@ -75,113 +73,6 @@ def _json(status: int, payload: object) -> ApiResponse:
 
 def _not_found(reason: str) -> ApiResponse:
     return _json(404, {"error": {"code": 404, "message": reason}})
-
-
-def _message_text(message: WorldMessage) -> str:
-    return " ".join(
-        part or ""
-        for part in (
-            message.subject,
-            message.from_,
-            message.to,
-            message.snippet,
-            message.body,
-        )
-    ).lower()
-
-
-def _gmail_date(value: str, tz: tzinfo | None) -> datetime | None:
-    """Parse Gmail's ``YYYY/MM/DD`` (or dashed) date as midnight in ``tz``."""
-    pieces = re.split(r"[/-]", value)
-    if len(pieces) != 3 or not all(piece.isdigit() for piece in pieces):
-        return None
-    year, month, day = (int(piece) for piece in pieces)
-    try:
-        return datetime(year, month, day, tzinfo=tz or UTC)
-    except ValueError:
-        return None
-
-
-def _term_matches(message: WorldMessage, term: str, now: datetime) -> bool | None:
-    """Whether one query term holds for ``message``; ``None`` when not modelled."""
-    if ":" in term:
-        operator, _, value = term.partition(":")
-        operator = operator.lower()
-        value = value.strip('"').lower()
-        sent = message.sent_at or message.first_seen_at
-        if operator == "from":
-            return value in (message.from_ or "").lower()
-        if operator in {"to", "cc", "deliveredto"}:
-            return value in (message.to or "").lower()
-        if operator == "subject":
-            return value in (message.subject or "").lower()
-        if operator in {"after", "before"}:
-            bound = _gmail_date(value, sent.tzinfo)
-            if bound is None:
-                return None
-            return sent >= bound if operator == "after" else sent < bound
-        if operator in {"newer_than", "older_than"}:
-            match = _RELATIVE_AGE.match(value)
-            if match is None:
-                return None
-            days = int(match[1]) * {"d": 1, "m": 30, "y": 365}[match[2]]
-            cutoff = now - timedelta(days=days)
-            return sent >= cutoff if operator == "newer_than" else sent < cutoff
-        if operator in {"has", "filename"} and message.body is None:
-            # Listings carry no attachment metadata, so for a message only ever
-            # listed whether it has one is unknown.
-            return None
-        if operator == "has" and value == "attachment":
-            return bool(message.attachments)
-        if operator == "filename":
-            return any(value in a.filename.lower() for a in message.attachments)
-        # in:, is:, label:, category: and the rest are not modelled, and are
-        # skipped whether or not they are negated.
-        return None
-    return term.strip('"').lower() in _message_text(message)
-
-
-def gmail_query_matches(message: WorldMessage, query: str, now: datetime) -> bool:
-    """Approximate Gmail search: OR-separated groups of ANDed terms."""
-    try:
-        tokens = shlex.split(query.replace("(", " ").replace(")", " "), posix=True)
-    except ValueError:
-        tokens = query.split()
-    groups: list[list[str]] = [[]]
-    for token in tokens:
-        if token == "OR":
-            groups.append([])
-        elif token and token not in {"AND", "{", "}"}:
-            groups[-1].append(token.strip("{}"))
-    for group in groups:
-        holds = True
-        for term in group:
-            negated = term.startswith("-") and len(term) > 1
-            result = _term_matches(message, term[1:] if negated else term, now)
-            if result is not None and result == negated:
-                holds = False
-                break
-        if holds:
-            return True
-    return False
-
-
-def drive_query_matches(file: WorldFile, query: str) -> bool:
-    """Approximate Drive search over ``name``/``fullText contains`` and ``mimeType``."""
-    name = file.name.lower()
-    full_text = f"{name} {(file.content or '').lower()}"
-    checks: list[bool] = []
-    for field_name, raw in _DRIVE_CONTAINS.findall(query):
-        value = raw.replace("\\'", "'").lower()
-        checks.append(value in (name if field_name.lower() == "name" else full_text))
-    for operator, raw in _DRIVE_MIME.findall(query):
-        same = file.mime_type == raw.replace("\\'", "'")
-        checks.append(same if operator == "=" else not same)
-    if not checks:
-        return True
-    if re.search(r"\bor\b", query, re.IGNORECASE):
-        return any(checks)
-    return all(checks)
 
 
 def _sent_sort_key(message: WorldMessage) -> datetime:
@@ -199,7 +90,16 @@ class _AppItem:
 
 
 def _app_link(item: _AppItem) -> str:
-    return f"https://drive.google.com/eval/{item.id}"
+    if item.mime_type == _DRIVE_FOLDER_MIME:
+        return f"https://drive.google.com/drive/folders/{item.id}"
+    return f"https://drive.google.com/file/d/{item.id}/view?usp=drivesdk"
+
+
+def _google_like_id(seed: str, length: int = 33) -> str:
+    """A stable id shaped like Google's, so nothing in a result says "eval"."""
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    digest = hashlib.sha256(seed.encode()).digest()
+    return "1" + "".join(alphabet[b % len(alphabet)] for b in digest)[: length - 1]
 
 
 def _multipart_parts(content: bytes, content_type: str | None) -> tuple[dict, str]:
@@ -227,6 +127,11 @@ class FakeGoogleBackend:
 
     world: GoogleWorld
     now: datetime
+    # Recorded queries whose own evidence must not answer them: a replay of
+    # a recorded search would otherwise be graded against itself.
+    withheld: frozenset[str] = frozenset()
+    # The user's own addresses, which Gmail's ``me`` stands for.
+    user_addresses: tuple[str, ...] = ()
     unbacked: list[str] = field(default_factory=list)
     partial: list[str] = field(default_factory=list)
     writes: list[dict[str, object]] = field(default_factory=list)
@@ -236,6 +141,7 @@ class FakeGoogleBackend:
         self._messages = {m.id: m for m in visible.messages}
         self._files = {f.id: f for f in visible.files}
         self._app_items: dict[str, _AppItem] = {}
+        self._known_folders = drive_known_folders(visible.files, self.withheld)
 
     async def request(
         self,
@@ -260,7 +166,12 @@ class FakeGoogleBackend:
             response = None
         if response is None:
             self.unbacked.append(f"{method} {path}")
-            return _not_found(f"{path} is not served by the eval's Google world.")
+            # Google's own wording, so the model cannot tell it is in a sandbox.
+            return _not_found(
+                f"File not found: {path.rsplit('/', 1)[-1]}."
+                if path.startswith(_DRIVE_PREFIX)
+                else "Requested entity was not found."
+            )
         return response
 
     def _gmail(
@@ -276,7 +187,17 @@ class FakeGoogleBackend:
         if method == "GET" and len(parts) == 2 and parts[0] == "messages":
             return self._gmail_get(parts[1], query.get("format", "full"))
         if method == "POST" and parts == ["drafts"]:
-            draft_id = f"eval-draft-{len(self.writes) + 1}"
+            draft_id = (
+                "r"
+                + str(
+                    int(
+                        hashlib.sha256(
+                            f"draft-{len(self.writes)}".encode()
+                        ).hexdigest(),
+                        16,
+                    )
+                )[:19]
+            )
             self.writes.append({
                 "kind": "gmail_draft",
                 "id": draft_id,
@@ -291,10 +212,25 @@ class FakeGoogleBackend:
     def _gmail_list(self, query: Mapping[str, str]) -> ApiResponse:
         limit = int(query.get("maxResults", "10"))
         q = query.get("q", "")
+        unmodelled: set[str] = set()
         matches = sorted(
-            (m for m in self._messages.values() if gmail_query_matches(m, q, self.now)),
+            (
+                m
+                for m in self._messages.values()
+                if gmail_query_matches(
+                    m,
+                    q,
+                    self.now,
+                    self.withheld,
+                    me=self.user_addresses,
+                    unmodelled=unmodelled,
+                )
+            ),
             key=_sent_sort_key,
             reverse=True,
+        )
+        self.partial.extend(
+            f"unmodelled search term {term!r}" for term in sorted(unmodelled)
         )
         payload: dict[str, object] = {
             "messages": [
@@ -325,7 +261,9 @@ class FakeGoogleBackend:
             body = message.body
             if body is None:
                 self.partial.append(f"gmail message {message.id}: snippet only")
-                body = message.snippet or ""
+                # Snippets end mid-sentence; the ellipsis says so, as a
+                # truncated preview would.
+                body = f"{message.snippet or ''} …"
             payload["parts"] = [
                 {
                     "partId": "0",
@@ -404,6 +342,7 @@ class FakeGoogleBackend:
     def _drive_list(self, query: Mapping[str, str]) -> ApiResponse:
         limit = int(query.get("pageSize", "10"))
         q = query.get("q", "")
+        unmodelled: set[str] = set()
         # Files the trial created are searchable like any other.
         created = [
             WorldFile(
@@ -421,9 +360,22 @@ class FakeGoogleBackend:
             if item.mime_type != _DRIVE_FOLDER_MIME
         ]
         matches = sorted(
-            (f for f in [*self._files.values(), *created] if drive_query_matches(f, q)),
+            (
+                f
+                for f in [*self._files.values(), *created]
+                if drive_query_matches(
+                    f,
+                    q,
+                    self.withheld,
+                    known_folders=self._known_folders,
+                    unmodelled=unmodelled,
+                )
+            ),
             key=lambda f: f.modified_time or f.first_seen_at,
             reverse=True,
+        )
+        self.partial.extend(
+            f"unmodelled search term {term!r}" for term in sorted(unmodelled)
         )
         payload: dict[str, object] = {
             "files": [
@@ -450,7 +402,7 @@ class FakeGoogleBackend:
         self, name: str, mime_type: str, content: str | None
     ) -> _AppItem:
         item = _AppItem(
-            id=f"eval-drive-{len(self._app_items) + 1}",
+            id=_google_like_id(f"{name}-{len(self._app_items)}"),
             name=name,
             mime_type=mime_type,
             content=content,

@@ -84,10 +84,10 @@ def _token_endpoint(request: httpx.Request) -> httpx.Response:
 
 
 def google_transport(
-    world: GoogleWorld, now: datetime
+    world: GoogleWorld, now: datetime, *, user_addresses: tuple[str, ...] = ()
 ) -> tuple[ConnectedAccountTransport, FakeGoogleBackend]:
     """The transport to hand the application, and the fake behind it."""
-    backend = FakeGoogleBackend(world=world, now=now)
+    backend = FakeGoogleBackend(world=world, now=now, user_addresses=user_addresses)
     transport = ConnectedAccountTransport(
         api_backend=backend,
         token_http_client=httpx.AsyncClient(
