@@ -10917,6 +10917,7 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(assistant.status, .failed, "the optimistic bubble takes the failed styling")
         XCTAssertNotNil(model.failedSend(for: assistant), "a retry affordance is recorded on the bubble")
         XCTAssertNil(model.errorMessage, "no modal is raised on the send path")
+        XCTAssertFalse(model.canRate(assistant), "the server holds no reply for this turn to rate")
 
         let inline = try await waitForSpooledReports(
             component: "Chat.inlineErrorPresented",

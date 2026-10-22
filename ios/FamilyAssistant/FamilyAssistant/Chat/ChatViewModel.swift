@@ -2100,9 +2100,10 @@ final class ChatViewModel {
     /// Whether `message` offers thumbs up and down: the last bubble of a
     /// finished turn, whether that is the reply's text or, for a turn that
     /// ended on a tool call, its tool group. An echoed thread outcome is rated
-    /// in its thread.
+    /// in its thread, and a bubble the server holds no row for (a send it
+    /// never accepted, a reply still being reconciled) has nothing to rate.
     func canRate(_ message: ChatMessage) -> Bool {
-        guard message.role == .assistant,
+        guard message.role == .assistant, ReadMarkerGate.persistedID(of: message.id) != nil,
               message.echoedFromThread == nil, message.movedToThread == nil,
               message.status != .running, !message.isLoading,
               let turnID = message.turnID, conversationID != nil,
