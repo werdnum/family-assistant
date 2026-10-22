@@ -94,6 +94,38 @@ final class FamilyAssistantUITests: XCTestCase {
         attachScreenshot(named: "native-chat-history")
     }
 
+    func testRateAReplyThumbsUpThenDownWithAComment() {
+        relaunch(initialPath: "/chat?conversation_id=web_conv_seed")
+
+        openSeededConversationIfNeeded()
+        XCTAssertTrue(app.staticTexts["Milk and apples."].waitForExistence(timeout: 20))
+
+        // The bubble's identifier covers its controls; they are told apart by label.
+        let reply = app.buttons.matching(identifier: "chat-message-msg_2")
+        let up = reply.matching(NSPredicate(format: "label == %@", "Good response")).firstMatch
+        let down = reply.matching(NSPredicate(format: "label == %@", "Bad response")).firstMatch
+        XCTAssertTrue(up.waitForExistence(timeout: Self.readyTimeout))
+        XCTAssertFalse(up.isSelected)
+        up.tap()
+        XCTAssertTrue(waitUntilSelected(up), "A thumbs up shows as chosen once the server takes it.")
+
+        down.tap()
+        let alert = app.alerts["What was wrong?"]
+        XCTAssertTrue(alert.waitForExistence(timeout: Self.readyTimeout), "A thumbs down asks what was wrong.")
+        attachScreenshot(named: "native-chat-feedback-comment")
+        alert.textFields.firstMatch.typeText("Forgot the bread")
+        alert.buttons["Send"].tap()
+
+        XCTAssertTrue(waitUntilSelected(down))
+        XCTAssertFalse(up.isSelected, "One rating per reply: the thumbs down replaced the thumbs up.")
+        attachScreenshot(named: "native-chat-feedback-rated")
+    }
+
+    private func waitUntilSelected(_ element: XCUIElement) -> Bool {
+        let selected = expectation(for: NSPredicate(format: "isSelected == true"), evaluatedWith: element)
+        return XCTWaiter().wait(for: [selected], timeout: Self.readyTimeout) == .completed
+    }
+
     func testReopenConversationAfterBackNavigation() {
         // Start a fresh chat so the seeded conversation is listed in the sidebar
         // but not auto-opened: the bug only manifests when a row is opened by a

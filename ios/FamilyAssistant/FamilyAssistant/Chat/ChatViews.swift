@@ -858,7 +858,6 @@ struct MessageBubble: View {
         .buttonStyle(.plain)
         .accessibilityLabel(label)
         .accessibilityAddTraits(isActive ? .isSelected : [])
-        .accessibilityIdentifier("feedback-\(rating.rawValue)-\(message.id)")
     }
 
     private func toggle(_ rating: ChatTurnRating) async {

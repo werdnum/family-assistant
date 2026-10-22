@@ -222,7 +222,8 @@ private final class UITestBackendURLProtocol: URLProtocol {
                         timestamp: "2026-06-08T12:00:00Z",
                         toolCalls: nil,
                         toolCallID: nil,
-                        attachments: nil
+                        attachments: nil,
+                        turnID: "turn_seed"
                     ),
                     UITestChatMessage(
                         internalID: 2,
@@ -231,7 +232,8 @@ private final class UITestBackendURLProtocol: URLProtocol {
                         timestamp: "2026-06-08T12:00:01Z",
                         toolCalls: nil,
                         toolCallID: nil,
-                        attachments: nil
+                        attachments: nil,
+                        turnID: "turn_seed"
                     ),
                 ],
                 // Repro/verify harness for the chat-thread layout watchdog crash:
@@ -314,6 +316,52 @@ private final class UITestBackendURLProtocol: URLProtocol {
             return encode(UITestMarkReadResponse(conversationID: conversationID, unreadCount: 0))
         }
         return nil
+    }
+
+    /// `PUT` and `DELETE /api/v1/chat/conversations/{id}/turns/{turn}/feedback`:
+    /// the rating is kept on every row of the turn, as the messages route
+    /// reports it.
+    private static func turnFeedback(for request: URLRequest) -> UITestResponse? {
+        guard let path = request.url?.path, path.hasPrefix("/api/v1/chat/conversations/") else {
+            return nil
+        }
+        let components = path.split(separator: "/").map(String.init)
+        guard components.count == 8, components[5] == "turns", components[7] == "feedback" else {
+            return nil
+        }
+        let conversationID = components[4]
+        let turnID = components[6]
+        let rating: String?
+        switch request.httpMethod {
+        case "PUT":
+            guard let body = try? JSONDecoder().decode(UITestTurnFeedbackRequest.self, from: request.bodyData) else {
+                return .json(#"{"detail":"Invalid feedback payload."}"#, statusCode: 422)
+            }
+            rating = body.rating
+        case "DELETE":
+            rating = nil
+        default:
+            return nil
+        }
+        let found = lock.withLock { () -> Bool in
+            guard var rows = chatMessages[conversationID],
+                  rows.contains(where: { $0.turnID == turnID && $0.role == "assistant" })
+            else {
+                return false
+            }
+            for index in rows.indices where rows[index].turnID == turnID {
+                rows[index].feedback = rating
+            }
+            chatMessages[conversationID] = rows
+            return true
+        }
+        guard found else {
+            return .json(#"{"detail":"Not Found"}"#, statusCode: 404)
+        }
+        guard let rating else {
+            return .json("", statusCode: 204)
+        }
+        return .json(#"{"turn_id":"\#(turnID)","rating":"\#(rating)","comment":null}"#)
     }
 
     /// The profiles Home's turns may enter, as the profile list reports them.
@@ -583,6 +631,9 @@ private final class UITestBackendURLProtocol: URLProtocol {
         case ("POST", "/api/notes"), ("POST", "/api/notes/"):
             return saveNote(from: request)
         default:
+            if let feedback = turnFeedback(for: request) {
+                return feedback
+            }
             if let action = threadAction(for: request) {
                 return action
             }
@@ -1462,6 +1513,7 @@ private struct UITestChatMessage: Codable {
     var echoedFromThread: String? = nil
     var turnID: String? = nil
     var movedToThread: String? = nil
+    var feedback: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case internalID = "internal_id"
@@ -1474,6 +1526,7 @@ private struct UITestChatMessage: Codable {
         case echoedFromThread = "echoed_from_thread"
         case turnID = "turn_id"
         case movedToThread = "moved_to_thread"
+        case feedback
     }
 
     /// This row as copied into another conversation.
@@ -1489,6 +1542,10 @@ private struct UITestChatMessage: Codable {
             turnID: turnID
         )
     }
+}
+
+private struct UITestTurnFeedbackRequest: Decodable {
+    let rating: String
 }
 
 private struct UITestToolCall: Codable {
