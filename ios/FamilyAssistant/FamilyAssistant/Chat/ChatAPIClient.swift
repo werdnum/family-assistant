@@ -86,6 +86,31 @@ struct ChatAPIClient {
         return try JSONDecoder.chatDecoder.decode(ChatMoveTurnResult.self, from: data)
     }
 
+    /// Record the caller's thumbs up or down on a turn of the conversation, or
+    /// withdraw it with a nil `rating`. A turn with no assistant reply in the
+    /// conversation is a 404. Both are idempotent, so a retry is harmless.
+    func setTurnFeedback(
+        conversationID: String,
+        turnID: String,
+        rating: ChatTurnRating?,
+        comment: String? = nil
+    ) async throws {
+        let encodedID = Self.encodedPathComponent(conversationID)
+        let encodedTurnID = Self.encodedPathComponent(turnID)
+        var request = try await authManager.authorizedRequest(
+            url: apiURL("/api/v1/chat/conversations/\(encodedID)/turns/\(encodedTurnID)/feedback"),
+            method: rating == nil ? "DELETE" : "PUT"
+        )
+        if let rating {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONEncoder.chatEncoder.encode(
+                ChatTurnFeedbackRequest(rating: rating, comment: comment)
+            )
+        }
+        let (data, response) = try await urlSession.dataExpectingJSON(for: request, authWallError: ChatAPIError.authWall)
+        try validate(response: response, data: data)
+    }
+
     /// Move the caller's read marker in Home or a thread forward to
     /// `throughMessageID`. The server never moves it back.
     func markConversationRead(conversationID: String, throughMessageID: Int) async throws -> ChatMarkReadResponse {

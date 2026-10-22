@@ -159,9 +159,6 @@ Both are follow-ups; neither is needed to start collecting.
 ## Deliberate simplifications
 
 - Delegated runs are not enrolled.
-- iOS restores a conversation's chosen tier into its picker from the latest reply's `user` source,
-  so reopening a conversation whose chosen tier an experiment covers shows the default in the
-  picker. The server still continues the choice; only the picker is behind.
 - Auto shadow is not collected on enrolled turns.
 - Blindness is presentation only, and stays on after an experiment ends; the record keeps the arm.
 - Assignment is not stored, so changing an experiment's arms or weights mid-run reshuffles future

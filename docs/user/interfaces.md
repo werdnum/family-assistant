@@ -86,7 +86,8 @@ the clipboard, an error appears below the reply; select the text and copy it man
 (thumbs down). Your rating is saved with that reply and shows again when you reopen the
 conversation; press the same thumb again to take it back. After a thumbs down, a box asks what was
 wrong. Filling it in is optional, but a few words make the rating far more useful when comparing how
-different models do. Ratings are private to you and are only used to judge reply quality.
+different models do. Ratings are private to you and are only used to judge reply quality. In the iOS
+app the two thumbs sit under each finished reply, and a thumbs down asks the same optional question.
 
 A long conversation opens at its most recent messages. Scroll to the top and select **Load earlier
 messages** to bring in older ones, as many times as you need to reach the start.

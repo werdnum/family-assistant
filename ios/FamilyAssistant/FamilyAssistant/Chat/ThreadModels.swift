@@ -204,6 +204,11 @@ struct ChatMarkReadResponse: Decodable, Equatable {
     }
 }
 
+struct ChatTurnFeedbackRequest: Encodable {
+    let rating: ChatTurnRating
+    let comment: String?
+}
+
 struct ChatMarkReadRequest: Encodable {
     let throughMessageID: Int
 

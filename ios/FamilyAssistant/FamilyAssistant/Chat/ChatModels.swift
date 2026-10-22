@@ -407,15 +407,27 @@ struct ChatMessage: Identifiable, Equatable {
     // single model, and on an optimistic bubble that its persisted row has not
     // replaced yet — the badge appears when the turn settles.
     var modelTier: String? = nil
-    // Who chose that tier: `user`, `model` (Auto routing), or `default` for the
+    // Who chose that tier: `user`, `model` (another profile), `auto` (the
+    // router), `experiment` (a live experiment's draw), or `default` for the
     // profile's own. What ran and who asked for it are separate questions.
     var modelTierSource: String? = nil
+    // The tier the person chose when an experiment served the turn on another:
+    // it is still the conversation's choice, and the server continues it.
+    var modelTierRequested: String? = nil
     /// On a Home message echoing a finished thread's outcome: the thread's
     /// conversation id, so the message is shown as coming from it.
     var echoedFromThread: String? = nil
     /// On a Home message marking a turn the user moved into a thread: that
     /// thread's conversation id. Shown as "Moved to …" in place of its text.
     var movedToThread: String? = nil
+    /// The user's thumbs up or down on the turn this message belongs to.
+    var feedback: ChatTurnRating? = nil
+}
+
+/// A thumbs up or down on an assistant turn.
+enum ChatTurnRating: String, Codable, Equatable {
+    case up
+    case down
 }
 
 /// The intelligence level a persisted reply ran at, as reported on the message's
@@ -424,10 +436,12 @@ struct ChatMessage: Identifiable, Equatable {
 struct ChatMessageReasoningInfo: Decodable, Equatable {
     let modelTier: String?
     let modelTierSource: String?
+    let modelTierRequested: String?
 
     enum CodingKeys: String, CodingKey {
         case modelTier = "model_tier"
         case modelTierSource = "model_tier_source"
+        case modelTierRequested = "model_tier_requested"
     }
 }
 
@@ -1004,6 +1018,8 @@ struct ChatBackendMessage: Decodable, Equatable {
     let echoedFromThread: String?
     /// On a Home row marking a turn moved into a thread: that thread.
     let movedToThread: String?
+    /// The caller's rating of the row's turn, on every row of a rated turn.
+    let feedback: ChatTurnRating?
 
     enum CodingKeys: String, CodingKey {
         case internalID = "internal_id"
@@ -1021,6 +1037,7 @@ struct ChatBackendMessage: Decodable, Equatable {
         case metadata
         case echoedFromThread = "echoed_from_thread"
         case movedToThread = "moved_to_thread"
+        case feedback
     }
 
     init(from decoder: Decoder) throws {
@@ -1045,6 +1062,7 @@ struct ChatBackendMessage: Decodable, Equatable {
         metadata = try container.decodeIfPresent([String: JSONValue].self, forKey: .metadata)
         echoedFromThread = try container.decodeIfPresent(String.self, forKey: .echoedFromThread)
         movedToThread = try container.decodeIfPresent(String.self, forKey: .movedToThread)
+        feedback = try container.decodeIfPresent(ChatTurnRating.self, forKey: .feedback)
 
         if let content = try? container.decode(String.self, forKey: .content) {
             text = content

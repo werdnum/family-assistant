@@ -588,6 +588,9 @@ struct MessageBubble: View {
     /// Tier id to user-facing name. Empty where no profile list is available (a
     /// shared transcript), which falls back to naming the tier by its id.
     let modelTierLabels: [String: String]
+    @State private var isAskingWhatWasWrong = false
+    @State private var feedbackComment = ""
+    @State private var feedbackSaveFailed = false
 
     init(
         message: ChatMessage,
@@ -778,6 +781,9 @@ struct MessageBubble: View {
                 .disabled(retryViewModel.isStreaming)
                 .accessibilityIdentifier("chat-retry-\(message.id)")
             }
+            if let retryViewModel, retryViewModel.canRate(message) {
+                feedbackButtons
+            }
         }
         // One textSelection for the whole bubble. It applies to every Text in the
         // subtree, so per-element copies are redundant and only add layout work.
@@ -795,6 +801,21 @@ struct MessageBubble: View {
             }
             threadActionMenuItems
         }
+        .alert("What was wrong?", isPresented: $isAskingWhatWasWrong) {
+            TextField("Optional", text: $feedbackComment)
+            Button("Send") {
+                let comment = feedbackComment.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !comment.isEmpty {
+                    Task { await rate(.down, comment: comment) }
+                }
+            }
+            Button("Skip", role: .cancel) {}
+        }
+        .alert("Couldn't save your feedback", isPresented: $feedbackSaveFailed) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Try again.")
+        }
         .padding(12)
         .background(isUser ? Color.accentColor.opacity(0.16) : Color(.secondarySystemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -811,6 +832,56 @@ struct MessageBubble: View {
         // (selectable, possibly markdown) text repeatedly — a layout-watchdog hazard.
         .frame(maxWidth: 680, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
+    }
+
+    /// Thumbs up and down under a finished reply. Pressing the active one
+    /// withdraws the rating; a thumbs down then asks, optionally, what was wrong.
+    private var feedbackButtons: some View {
+        HStack(spacing: 4) {
+            feedbackButton(.up, label: "Good response", systemImage: "hand.thumbsup")
+            feedbackButton(.down, label: "Bad response", systemImage: "hand.thumbsdown")
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+
+    private func feedbackButton(_ rating: ChatTurnRating, label: String, systemImage: String) -> some View {
+        let isActive = message.feedback == rating
+        return Button {
+            Task { await toggle(rating) }
+        } label: {
+            Image(systemName: isActive ? "\(systemImage).fill" : systemImage)
+                .foregroundStyle(isActive ? (rating == .up ? Color.accentColor : Color.red) : Color.secondary)
+                .frame(minWidth: 32, minHeight: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityAddTraits(isActive ? .isSelected : [])
+        .accessibilityIdentifier("feedback-\(rating.rawValue)-\(message.id)")
+    }
+
+    private func toggle(_ rating: ChatTurnRating) async {
+        if message.feedback == rating {
+            await rate(nil)
+            return
+        }
+        if await rate(rating), rating == .down {
+            feedbackComment = ""
+            isAskingWhatWasWrong = true
+        }
+    }
+
+    @discardableResult
+    private func rate(_ rating: ChatTurnRating?, comment: String? = nil) async -> Bool {
+        guard let retryViewModel, let turnID = message.turnID else {
+            return false
+        }
+        let saved = await retryViewModel.rateTurn(turnID, rating: rating, comment: comment)
+        if !saved {
+            feedbackSaveFailed = true
+        }
+        return saved
     }
 
     private var roleTitle: String {
