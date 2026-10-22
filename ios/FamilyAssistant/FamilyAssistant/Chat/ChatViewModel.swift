@@ -303,6 +303,11 @@ final class ChatViewModel {
 
     @ObservationIgnored private let apiClient: ChatAPIClient
     @ObservationIgnored private var feedbackRequestByTurnID: [String: Int] = [:]
+    // The last write sent for each turn, which the next one waits behind.
+    @ObservationIgnored private var feedbackWriteByTurnID: [String: Task<TurnFeedbackOutcome, Never>] = [:]
+    // The rating the server last took for each turn rated here: what a
+    // refused write restores. The outer optional is whether it is known.
+    @ObservationIgnored private var confirmedFeedbackByTurnID: [String: ChatTurnRating?] = [:]
     // Injectable so tests can observe the diagnostic breadcrumbs emitted on a
     // stream drop without going through the shared singleton.
     @ObservationIgnored private let errorReporter: ErrorReporter
@@ -2092,46 +2097,73 @@ final class ChatViewModel {
         )
     }
 
-    /// Whether `message` offers thumbs up and down. A reply is rated once its
-    /// turn has ended, and an echoed thread outcome is rated in its thread.
+    /// Whether `message` offers thumbs up and down: the last bubble of a
+    /// finished turn, whether that is the reply's text or, for a turn that
+    /// ended on a tool call, its tool group. An echoed thread outcome is rated
+    /// in its thread.
     func canRate(_ message: ChatMessage) -> Bool {
-        guard message.role == .assistant, message.toolCalls.isEmpty,
+        guard message.role == .assistant,
               message.echoedFromThread == nil, message.movedToThread == nil,
               message.status != .running, !message.isLoading,
-              let turnID = message.turnID, conversationID != nil
+              let turnID = message.turnID, conversationID != nil,
+              !knownRunningTurnIDs.contains(turnID), activeTurnIdentity?.turnID != turnID,
+              let last = messages.last(where: { $0.turnID == turnID && $0.role == .assistant })
         else {
             return false
         }
-        return !knownRunningTurnIDs.contains(turnID) && activeTurnIdentity?.turnID != turnID
+        // A tool group's bubble is named after its first step, so the turn's
+        // last step is found among its calls.
+        return last.id == message.id
+            || last.toolCalls.last.map { lastCall in message.toolCalls.contains { $0.id == lastCall.id } } ?? false
     }
 
-    /// Record the user's rating of `turnID`, or withdraw it with nil. Shown at
-    /// once on every message of the turn, and restored if the server does not
-    /// take it; returns whether it did.
-    func rateTurn(_ turnID: String, rating: ChatTurnRating?, comment: String? = nil) async -> Bool {
+    /// Record the user's rating of `turnID`, or withdraw it with nil. It is
+    /// shown at once on every message of the turn. Writes for a turn go out in
+    /// the order they were made, and one a newer choice replaced before it was
+    /// sent is skipped. If the latest is refused, the rating the server last
+    /// took is shown again.
+    func rateTurn(_ turnID: String, rating: ChatTurnRating?, comment: String? = nil) async -> TurnFeedbackOutcome {
         guard let conversationID else {
-            return false
+            return .failed
         }
-        // Only the latest request for a turn may restore its rating, so a slow
-        // failure cannot undo a newer choice the server kept.
         let request = (feedbackRequestByTurnID[turnID] ?? 0) + 1
         feedbackRequestByTurnID[turnID] = request
-        let previous = messages.first { $0.turnID == turnID }?.feedback
-        setFeedback(rating, onTurn: turnID)
-        do {
-            try await apiClient.setTurnFeedback(
-                conversationID: conversationID,
-                turnID: turnID,
-                rating: rating,
-                comment: comment
-            )
-            return true
-        } catch {
-            if feedbackRequestByTurnID[turnID] == request, self.conversationID == conversationID {
-                setFeedback(previous, onTurn: turnID)
-            }
-            return false
+        if confirmedFeedbackByTurnID[turnID] == nil {
+            confirmedFeedbackByTurnID[turnID] = .some(messages.first { $0.turnID == turnID }?.feedback)
         }
+        setFeedback(rating, onTurn: turnID)
+
+        let earlier = feedbackWriteByTurnID[turnID]
+        let write = Task { [apiClient] () -> TurnFeedbackOutcome in
+            await earlier?.value
+            guard self.feedbackRequestByTurnID[turnID] == request else {
+                return .superseded
+            }
+            do {
+                try await apiClient.setTurnFeedback(
+                    conversationID: conversationID,
+                    turnID: turnID,
+                    rating: rating,
+                    comment: comment
+                )
+            } catch {
+                return .failed
+            }
+            self.confirmedFeedbackByTurnID[turnID] = .some(rating)
+            return .saved
+        }
+        feedbackWriteByTurnID[turnID] = write
+        let outcome = await write.value
+        guard feedbackRequestByTurnID[turnID] == request else {
+            // A newer choice owns what is shown, and its outcome is reported.
+            return .superseded
+        }
+        feedbackWriteByTurnID[turnID] = nil
+        if outcome == .failed, self.conversationID == conversationID,
+           let confirmed = confirmedFeedbackByTurnID[turnID] {
+            setFeedback(confirmed, onTurn: turnID)
+        }
+        return outcome
     }
 
     private func setFeedback(_ rating: ChatTurnRating?, onTurn turnID: String) {

@@ -430,6 +430,17 @@ enum ChatTurnRating: String, Codable, Equatable {
     case down
 }
 
+/// How a rating write ended. `superseded` means a newer choice for the same
+/// turn replaced it, so its result says nothing about what is shown.
+enum TurnFeedbackOutcome: Equatable {
+    case saved
+    case superseded
+    case failed
+}
+
+/// The longest comment the server keeps with a rating.
+let maxTurnFeedbackCommentLength = 2000
+
 /// The intelligence level a persisted reply ran at, as reported on the message's
 /// `reasoning_info`. Only the tier fields are decoded: the token counts and
 /// request id in the same blob have no surface on iOS.

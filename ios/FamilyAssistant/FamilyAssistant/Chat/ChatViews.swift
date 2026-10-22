@@ -803,6 +803,11 @@ struct MessageBubble: View {
         }
         .alert("What was wrong?", isPresented: $isAskingWhatWasWrong) {
             TextField("Optional", text: $feedbackComment)
+                .onChange(of: feedbackComment) { _, comment in
+                    if comment.count > maxTurnFeedbackCommentLength {
+                        feedbackComment = String(comment.prefix(maxTurnFeedbackCommentLength))
+                    }
+                }
             Button("Send") {
                 let comment = feedbackComment.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !comment.isEmpty {
@@ -865,22 +870,22 @@ struct MessageBubble: View {
             await rate(nil)
             return
         }
-        if await rate(rating), rating == .down {
+        if await rate(rating) == .saved, rating == .down {
             feedbackComment = ""
             isAskingWhatWasWrong = true
         }
     }
 
     @discardableResult
-    private func rate(_ rating: ChatTurnRating?, comment: String? = nil) async -> Bool {
+    private func rate(_ rating: ChatTurnRating?, comment: String? = nil) async -> TurnFeedbackOutcome {
         guard let retryViewModel, let turnID = message.turnID else {
-            return false
+            return .failed
         }
-        let saved = await retryViewModel.rateTurn(turnID, rating: rating, comment: comment)
-        if !saved {
+        let outcome = await retryViewModel.rateTurn(turnID, rating: rating, comment: comment)
+        if outcome == .failed {
             feedbackSaveFailed = true
         }
-        return saved
+        return outcome
     }
 
     private var roleTitle: String {
