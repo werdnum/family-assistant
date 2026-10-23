@@ -379,6 +379,10 @@ cmd = "python scripts/extract_review_history.py"
 help = "Snapshot this deployment's tool registry (local + MCP) for the review eval"
 cmd = "python scripts/dump_tool_registry.py"
 
+[tool.poe.tasks.workhorse-extract-turns]
+help = "Export historical turns and a stratified workhorse-eval candidate list (private dir only)"
+cmd = "python scripts/extract_workhorse_turns.py"
+
 
 [tool.ruff.lint.isort]
 known-first-party = ["family_assistant"]
