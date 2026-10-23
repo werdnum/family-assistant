@@ -1852,6 +1852,7 @@ dev = [
     { name = "ruff" },
     { name = "symbex" },
     { name = "telegram-bot-api-mock", extra = ["dev"] },
+    { name = "time-machine" },
     { name = "types-aiofiles" },
     { name = "types-assertpy" },
     { name = "types-passlib" },
@@ -1998,6 +1999,7 @@ requires-dist = [
     { name = "symbex", marker = "extra == 'dev'", specifier = ">=2.0" },
     { name = "telegram-bot-api-mock", extras = ["dev"], marker = "extra == 'dev'", git = "https://github.com/werdnum/telegram-bot-api-mock" },
     { name = "telegramify-markdown", specifier = ">=0.5.1" },
+    { name = "time-machine", marker = "extra == 'dev'", specifier = ">=2.16" },
     { name = "toons", specifier = ">=0.5.4" },
     { name = "torch", marker = "extra == 'local-embeddings'", specifier = ">=2.4.0", index = "https://download.pytorch.org/whl/cpu" },
     { name = "types-aiofiles", marker = "extra == 'dev'" },
@@ -6604,6 +6606,22 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/b7/4d/08c89e34946fce2aec4fbb45c9016efd5f4d7f24af8e5d93296e935631d8/threadpoolctl-3.6.0.tar.gz", hash = "sha256:8ab8b4aa3491d812b623328249fab5302a68d2d71745c8a4c719a2fcaba9f44e", size = 21274, upload-time = "2025-03-13T13:49:23.031Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/32/d5/f9a850d79b0851d1d4ef6456097579a9005b31fea68726a4ae5f2d82ddd9/threadpoolctl-3.6.0-py3-none-any.whl", hash = "sha256:43a0b8fd5a2928500110039e43a5eed8480b918967083ea48dc3ab9f13c4a7fb", size = 18638, upload-time = "2025-03-13T13:49:21.846Z" },
+]
+
+[[package]]
+name = "time-machine"
+version = "3.5.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/65/d2/065a4d202d7ba093145e6f803fafd84bdcea41f3ce5f5ee6dacc77330719/time_machine-3.5.1.tar.gz", hash = "sha256:eb2c50404820fde8bfc6a0713b2a0b8eabececfecefde3a5847ae8006037829f", size = 28434, upload-time = "2026-09-08T22:19:49.989Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8e/aa/f2dd3acae3168f5e5076b46c42f52550d39b1b69906f77e81b486721a06a/time_machine-3.5.1-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:31aa239f2e02ec71682eadbf387d43bfe372b9409ff0dd148eca19d736402c73", size = 27663, upload-time = "2026-09-08T22:19:04.61Z" },
+    { url = "https://files.pythonhosted.org/packages/41/ce/8aa00371e2e0ced89534e84753a880989794effae19736a9ef9d59934110/time_machine-3.5.1-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:cd9252e190b2c6079fd3ec9a7afc26fd26008fee1dc9940714e7d4755668b7ea", size = 27780, upload-time = "2026-09-08T22:19:05.614Z" },
+    { url = "https://files.pythonhosted.org/packages/99/fc/970e954e53e0cc3e241fc665b0f797a2708dc680553641942acf61ed6265/time_machine-3.5.1-cp313-cp313-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:8a39af6fad7115e2c9d0deef287645260b096919d8918d52191d80ac31e43525", size = 59870, upload-time = "2026-09-08T22:19:06.624Z" },
+    { url = "https://files.pythonhosted.org/packages/2b/e1/e1814122b0ea321e2714f369dd3de8f052eb132097757112a9fe497129cb/time_machine-3.5.1-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:6edb56e4a41b2d717f28fbdc04ac3fc7cff43b2f573e88189d67650680eb672e", size = 60776, upload-time = "2026-09-08T22:19:08.005Z" },
+    { url = "https://files.pythonhosted.org/packages/f6/1b/09acb019f25d918c04e470e7a410d5aeffb087b8457d6e0815c576e013ef/time_machine-3.5.1-cp313-cp313-musllinux_1_2_aarch64.whl", hash = "sha256:d4cea8ed128c65fe262cc216a4f46fb6080b745a3013baba188e45992ce673c5", size = 59584, upload-time = "2026-09-08T22:19:09.13Z" },
+    { url = "https://files.pythonhosted.org/packages/10/15/c4df8f02cbe773462dd60da9ab263407b4dd06b615350b889b70f6bd49b7/time_machine-3.5.1-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:c615f45b3668fa2ccd4ad2b81899d22efe4e33d23b3540283922796de57ad37c", size = 59088, upload-time = "2026-09-08T22:19:10.587Z" },
+    { url = "https://files.pythonhosted.org/packages/3f/e8/cae3230abdbd7fcf81bbd70c7a1047f07e98a31536db979960dbbdc2b72e/time_machine-3.5.1-cp313-cp313-win_amd64.whl", hash = "sha256:c0a865aca362e645947159f2e0e3022131e591ba113b95f2b355410c36ddcd60", size = 29621, upload-time = "2026-09-08T22:19:11.688Z" },
+    { url = "https://files.pythonhosted.org/packages/20/47/224a9428327db95abe9bd52462db744fdc84db61da0cd19df2a611da3afd/time_machine-3.5.1-cp313-cp313-win_arm64.whl", hash = "sha256:27095e90a2b42c2979f40146feb1bbf077dcf6a610889ae5dc36fa015e4fe2ef", size = 28956, upload-time = "2026-09-08T22:19:12.748Z" },
 ]
 
 [[package]]
