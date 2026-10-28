@@ -199,7 +199,7 @@ dev = [
     "hupper>=1.12.1",
     "watchdog>=3.0.0",
     "pytest-playwright-asyncio>=0.8.0",
-    "playwright==1.52.0", # Pin to match rebrowser-playwright version for shared browser binaries
+    "playwright==1.64.0", # Pin to match rebrowser-playwright version for shared browser binaries
     "homeassistant>=2025.4.4",
     "pixeltable-pgserver>=0.4.0",
     "monkeytype>=23.3.0", # Runtime type inference from tests
