@@ -9,7 +9,7 @@ import { ToolFallback, toolUIsByName } from '../ToolUI';
 const ToolUI = ({ toolCall, toolResponse }) => {
   const toolName = toolCall?.function?.name;
 
-  let args = {};
+  let args;
   try {
     args = toolCall?.function?.arguments ? JSON.parse(toolCall.function.arguments) : {};
   } catch (_e) {
@@ -682,7 +682,7 @@ describe('ToolUI Component', () => {
       // Create a modified ToolUI component that accepts attachments
       const ToolUIWithAttachments = ({ toolCall, toolResponse, attachments }) => {
         const toolName = toolCall?.function?.name;
-        let args = {};
+        let args;
         try {
           args = toolCall?.function?.arguments ? JSON.parse(toolCall.function.arguments) : {};
         } catch (_e) {
