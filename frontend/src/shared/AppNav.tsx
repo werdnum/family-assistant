@@ -24,7 +24,7 @@ const NavLink: React.FC<NavLinkProps> = ({ item, collapsed, onNavigate }) => {
       className={cn(
         'group flex h-8 items-center gap-3 rounded-md px-2.5 text-sm font-medium text-muted-foreground transition-colors',
         'hover:bg-accent hover:text-accent-foreground',
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        'focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring',
         active && 'bg-accent text-foreground',
         collapsed && 'justify-center px-0'
       )}

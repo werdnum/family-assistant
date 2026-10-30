@@ -83,7 +83,7 @@ const AboutPage: React.FC = () => {
                     <GitBranch className="w-5 h-5 text-muted-foreground" />
                     <span className="font-medium">Git Commit</span>
                   </div>
-                  <code className="bg-muted px-2 py-1 rounded text-sm">
+                  <code className="bg-muted px-2 py-1 rounded-sm text-sm">
                     {versionInfo.git_commit.substring(0, 8)}
                   </code>
                 </div>

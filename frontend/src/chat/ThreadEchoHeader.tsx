@@ -33,7 +33,7 @@ export const ThreadEchoHeader: React.FC<{ threadConversationId: string }> = ({
     <button
       type="button"
       onClick={() => threads.openConversation(threadConversationId)}
-      className={`${className} rounded-md text-left hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring`}
+      className={`${className} rounded-md text-left hover:text-foreground focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring`}
       aria-label={thread ? `Open thread: ${thread.title}` : 'Open the thread this came from'}
       data-testid="thread-echo-header"
       data-conversation-id={threadConversationId}

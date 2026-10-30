@@ -116,7 +116,7 @@ export const AttachmentPreview: React.FC<AttachmentPreviewProps> = ({
             <button
               type="button"
               aria-label={`Preview ${metadata.filename}`}
-              className="relative flex h-full cursor-pointer items-center justify-center bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              className="relative flex h-full cursor-pointer items-center justify-center bg-muted focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
             >
               {!imageLoaded && (
                 <div className="absolute inset-0 flex items-center justify-center">

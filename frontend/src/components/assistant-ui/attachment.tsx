@@ -106,7 +106,7 @@ const AttachmentThumb: FC = () => {
   const isImage = useAuiState((s) => s.attachment.type === 'image');
   const src = useAttachmentSrc();
   return (
-    <Avatar className="bg-muted flex size-10 items-center justify-center rounded border text-sm">
+    <Avatar className="bg-muted flex size-10 items-center justify-center rounded-sm border text-sm">
       <AvatarFallback delayMs={isImage ? 200 : 0}>
         <FileIcon />
       </AvatarFallback>
