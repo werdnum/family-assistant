@@ -2,6 +2,11 @@
 
 @config '../../tailwind.config.js';
 
+/* Tailwind 4 gates hover: behind @media (hover: hover). Hover-revealed controls
+   (the message action bar) must still appear on touch devices, where a tap
+   applies :hover, so keep the v3 behaviour. */
+@custom-variant hover (&:hover);
+
 @layer base {
   :root {
     color-scheme: light;
