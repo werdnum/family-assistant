@@ -161,7 +161,7 @@ const ErrorDetail = () => {
           {error.traceback && (
             <div className="mb-3">
               <h6>Traceback</h6>
-              <div className="bg-dark text-light p-3 rounded" style={{ overflowX: 'auto' }}>
+              <div className="bg-dark text-light p-3 rounded-sm" style={{ overflowX: 'auto' }}>
                 <pre className="mb-0">
                   <code>{error.traceback}</code>
                 </pre>
@@ -172,7 +172,7 @@ const ErrorDetail = () => {
           {error.extra_data && (
             <div className="mb-3">
               <h6>Additional Data</h6>
-              <div className="bg-light p-3 rounded">
+              <div className="bg-light p-3 rounded-sm">
                 <pre className="mb-0">
                   <code>{JSON.stringify(error.extra_data, null, 2)}</code>
                 </pre>

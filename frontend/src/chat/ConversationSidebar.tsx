@@ -309,7 +309,7 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
             placeholder="Search..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full h-8 pl-8 pr-3 text-sm rounded-lg border border-border/60 bg-muted/30 placeholder:text-muted-foreground/40 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-all"
+            className="w-full h-8 pl-8 pr-3 text-sm rounded-lg border border-border/60 bg-muted/30 placeholder:text-muted-foreground/40 focus:outline-hidden focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-all"
           />
         </div>
       </div>

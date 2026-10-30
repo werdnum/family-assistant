@@ -125,7 +125,7 @@ const LandingPage: React.FC = () => {
                 setPrompt(s);
                 navigate(`/chat?q=${encodeURIComponent(s)}`);
               }}
-              className="text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring bg-secondary hover:bg-secondary/80 text-secondary-foreground px-3 py-1.5 rounded-full transition-colors flex items-center gap-1"
+              className="text-xs focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring bg-secondary hover:bg-secondary/80 text-secondary-foreground px-3 py-1.5 rounded-full transition-colors flex items-center gap-1"
             >
               {s} <ArrowRight className="w-3 h-3" />
             </button>
@@ -138,9 +138,9 @@ const LandingPage: React.FC = () => {
           <Link
             key={index}
             to={item.link}
-            className="group rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            className="group rounded-xl focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
           >
-            <Card className="h-full hover:shadow-lg transition-shadow shadow-sm overflow-hidden">
+            <Card className="h-full hover:shadow-lg transition-shadow shadow-xs overflow-hidden">
               <CardHeader className="pb-2">
                 <div
                   className={`w-12 h-12 rounded-2xl ${item.color} flex items-center justify-center mb-2 group-hover:scale-110 transition-transform`}

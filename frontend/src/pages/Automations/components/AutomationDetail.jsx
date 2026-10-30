@@ -127,7 +127,7 @@ const ScheduleTrigger = ({ automation }) => {
     <Section eyebrow="When" title={summary ?? 'On a custom schedule'}>
       <dl className="divide-y">
         <DetailRow label="Recurrence Rule">
-          <code className="break-all rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
+          <code className="break-all rounded-sm bg-muted px-1.5 py-0.5 font-mono text-xs">
             {automation.recurrence_rule}
           </code>
         </DetailRow>

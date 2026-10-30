@@ -299,7 +299,7 @@ const ThreadWelcomeSuggestions: React.FC = () => {
         return (
           <ThreadPrimitive.Suggestion
             key={index}
-            className="flex items-center gap-3 px-4 py-3.5 text-left rounded-xl border border-border/60 bg-card hover:bg-accent/50 hover:border-border transition-all duration-200 hover:shadow-sm cursor-pointer group"
+            className="flex items-center gap-3 px-4 py-3.5 text-left rounded-xl border border-border/60 bg-card hover:bg-accent/50 hover:border-border transition-all duration-200 hover:shadow-xs cursor-pointer group"
             prompt={suggestion.prompt}
             method="replace"
             autoSend
@@ -420,7 +420,7 @@ const Composer: React.FC = () => {
               isRunning ? 'Steer the assistant while it works…' : 'Message Family Assistant...'
             }
             onKeyDown={handleKeyDown}
-            className="w-full min-h-11 max-h-48 pl-4 pr-4 py-2.5 text-sm border rounded-2xl bg-muted/40 border-border/60 resize-none focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-all duration-200 placeholder:text-muted-foreground/60"
+            className="w-full min-h-11 max-h-48 pl-4 pr-4 py-2.5 text-sm border rounded-2xl bg-muted/40 border-border/60 resize-none focus:outline-hidden focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-all duration-200 placeholder:text-muted-foreground/60"
             data-testid="chat-input"
           />
         </div>
@@ -570,7 +570,7 @@ const UserMessage: React.FC = () => {
         <UserMessageAttachments />
         <div className="flex items-end gap-2.5 justify-end min-w-0">
           <div
-            className="max-w-full md:max-w-[75%] min-w-0 px-4 py-2.5 bg-primary text-primary-foreground rounded-2xl rounded-br-md shadow-sm overflow-x-auto"
+            className="max-w-full md:max-w-[75%] min-w-0 px-4 py-2.5 bg-primary text-primary-foreground rounded-2xl rounded-br-md shadow-xs overflow-x-auto"
             data-testid="user-message-content"
           >
             <MessagePrimitive.Parts />
@@ -586,7 +586,7 @@ const EditComposer: React.FC = () => {
     <Card className="p-4 m-2">
       <ComposerPrimitive.Root className="space-y-3">
         <ComposerPrimitive.Input
-          className="w-full p-3 border rounded-lg bg-background min-h-[60px] resize-y focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
+          className="w-full p-3 border rounded-lg bg-background min-h-[60px] resize-y focus:outline-hidden focus:ring-2 focus:ring-ring focus:border-transparent"
           autoFocus
         />
         <div className="flex gap-2 justify-end">
@@ -799,7 +799,7 @@ const MovedTurnMarker: React.FC<{ threadConversationId: string }> = ({ threadCon
           <button
             type="button"
             onClick={() => threads.openConversation(threadConversationId)}
-            className="flex min-w-0 items-center gap-1.5 rounded-full border border-dashed border-border/70 px-3 py-1 text-xs text-muted-foreground hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="flex min-w-0 items-center gap-1.5 rounded-full border border-dashed border-border/70 px-3 py-1 text-xs text-muted-foreground hover:text-foreground focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
             aria-label={thread ? `Open thread: ${thread.title}` : 'Open the thread it moved to'}
             data-testid="moved-turn-link"
           >
@@ -936,7 +936,7 @@ const AssistantActionBar: React.FC<{
             placeholder="What was wrong? (optional)"
             aria-label="What was wrong with this response"
             maxLength={2000}
-            className="h-8 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="h-8 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-sm focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
           />
           <Button type="submit" size="sm" variant="secondary" className="h-8">
             Send
@@ -960,7 +960,7 @@ const AssistantActionBar: React.FC<{
         hideWhenRunning
         autohide="never"
         data-testid="assistant-action-bar"
-        className="absolute left-0 top-full z-10 mt-1 flex items-center gap-1 rounded-lg border border-border/50 bg-background/95 p-1 opacity-0 shadow-sm backdrop-blur-sm pointer-events-none transition-opacity duration-200 group-hover:opacity-100 group-hover:pointer-events-auto focus-within:opacity-100 focus-within:pointer-events-auto"
+        className="absolute left-0 top-full z-10 mt-1 flex items-center gap-1 rounded-lg border border-border/50 bg-background/95 p-1 opacity-0 shadow-xs backdrop-blur-sm pointer-events-none transition-opacity duration-200 group-hover:opacity-100 group-hover:pointer-events-auto focus-within:opacity-100 focus-within:pointer-events-auto"
       >
         {canCopy && (
           <>

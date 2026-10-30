@@ -28,7 +28,7 @@ const ImageTile: React.FC<{ image: ResponseImage; onOpen: () => void }> = ({ ima
     <button
       type="button"
       onClick={onOpen}
-      className="block cursor-zoom-in rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="block cursor-zoom-in rounded-lg focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
       title={image.name}
       aria-label={`View ${image.name}`}
       data-testid="response-image-trigger"
