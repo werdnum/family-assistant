@@ -131,7 +131,11 @@ from family_assistant.processing.interactions_agent_service import (
 )
 from family_assistant.security.taint import SinkClass as RuntimeSinkClass
 from family_assistant.security.taint import TaintMetadata, merge_taint_policy_config
-from family_assistant.services.api_backend import HttpApiBackend
+from family_assistant.services.api_backend import (
+    ApiBackend,
+    ConnectedAccountTransport,
+    HttpApiBackend,
+)
 from family_assistant.services.apns import APNsService, load_apns_auth_key
 from family_assistant.services.attachment_registry import (
     AttachmentRegistry,
@@ -623,8 +627,10 @@ class Assistant:
         llm_client_overrides: dict[str, LLMInterface] | None = None,
         database_engine: AsyncEngine | None = None,
         server_socket: socket.socket | None = None,
+        connected_account_transport: ConnectedAccountTransport | None = None,
     ) -> None:
         self.config: AppConfig = config
+        self._connected_account_transport = connected_account_transport
         self._injected_database_engine = database_engine
         self.shutdown_event = asyncio.Event()
         self.server_socket = server_socket
@@ -666,7 +672,7 @@ class Assistant:
         self.confirmation_result_waiters: ConfirmationResultWaiterRegistry | None = None
         self.oauth_integration_states: dict[str, OAuthIntegrationState] = {}
         self.credential_resolvers: dict[str, OAuthCredentialResolver] = {}
-        self.api_backend: HttpApiBackend | None = None
+        self.api_backend: ApiBackend | None = None
         # Pool of in-process TaskWorker instances and their run() tasks, kept
         # index-aligned so the health monitor can restart an individual worker.
         self.task_workers: list[TaskWorker] = []
@@ -1231,14 +1237,19 @@ class Assistant:
             encryption = CredentialEncryption(
                 self.config.google_integration.credential_encryption_key.get_secret_value()
             )
+            transport = self._connected_account_transport
             self.credential_resolvers[GOOGLE_PROVIDER.name] = OAuthCredentialResolver(
                 GOOGLE_PROVIDER,
                 self.config.google_integration,
                 encryption,
-                self.shared_httpx_client,
+                transport.token_http_client if transport else self.shared_httpx_client,
                 self.notification_dispatcher,
             )
-            self.api_backend = HttpApiBackend(self.shared_httpx_client)
+            self.api_backend = (
+                transport.api_backend
+                if transport
+                else HttpApiBackend(self.shared_httpx_client)
+            )
         return google_integration_state
 
     async def _reject_duplicate_tool_names(self) -> None:

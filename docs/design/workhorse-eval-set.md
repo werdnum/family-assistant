@@ -287,8 +287,10 @@ note in the house style.
 
 - **In-app state** is loaded into the sandbox database (Postgres with pgvector, so the production
   index is queryable as-is).
-- **Calendar** is served by the Radicale fixture already used in tests, seeded from the exported
-  iCalendar.
+- **Calendar** is rebuilt from recorded calendar results, like mail: the deployment's calendars from
+  `list_calendars`, and every event a turn saw, created or deleted, with its observations over time.
+  The writable CalDAV calendar and the read-only iCal feeds are served by one Radicale process; the
+  Google calendars by the Google fake. Calendar ids and names are the deployment's.
 - **Time.** Each trial runs with the **process clock frozen at the case's asked-at moment** using
   `time-machine`, which patches the interpreter's clock sources so the roughly two hundred direct
   wall-clock reads under `Assistant` all agree, without a clock seam. The fixture is not re-dated:
@@ -296,14 +298,15 @@ note in the house style.
   prompt was written on, and past calendar events are found where they were. Database-side `now()`
   defaults are the one clock this does not reach; they stamp bookkeeping columns, not anything a
   case asserts on.
-- **State is the fixture's, not history's.** The snapshot holds the household as it is now, not as
-  it was when each turn was asked, and notes, automations and calendar entries change. A case's
-  expectations are therefore **authored against the fixture revision it names**, which is the only
-  ground truth the sandbox has; the historical reply is a reference for the judge, flagged where
-  curation found the state has since moved. A case whose required state no longer exists in any
-  fixture is excluded rather than reconstructed, and the export reports how many that was. Where a
-  case needs state the fixture lacks, curation adds it as a declared per-case delta applied on
-  materialisation, so the fixture stays one revision and the delta is visible in the case.
+- **State is rewound to the case's moment.** The snapshot holds the household after every case in
+  it, so replayed as is a case sees its own future: notes its original turn went on to write, later
+  documents, the rest of the conversation. Each trial runs on a fresh copy rewound to the moment the
+  case was asked. Rows created after it are removed; notes, which keep no history, are rebuilt from
+  the recorded reads and writes of them, which reproduce later observations almost exactly; calendar
+  events and mail are filtered to what existed then. The prompt is replayed in its original
+  conversation, so the rewound history is the context it had. What the record cannot rewind is
+  reported per trial rather than guessed, and where a case needs state the record lacks, curation
+  adds it as a declared per-case delta.
 
 ### Tool surface
 
@@ -323,26 +326,70 @@ another is exactly the non-uniform bias a comparison cannot carry. Four classes,
    household owns: the drift is the same for every candidate in a run, and a replay would reject
    most of the varied queries a search tool receives.
 3. **Household-owned external state** — Home Assistant, the task tracker, Google mail and drive — is
-   served by **deterministic fakes seeded from the snapshot**, so that two candidates phrasing a
-   lookup differently both get a correct answer. Where no seeded fake exists yet, a replay of the
-   case's recorded results is the interim backing, and a call the replay cannot answer ends the
-   trial as `unbacked_call`, which is excluded from quality metrics and reported as a harness gap.
+   served from **what the household's turns actually saw**, so two candidates phrasing a lookup
+   differently both get a correct answer. The snapshot holds no mailbox and no house, but it holds
+   every result those tools returned, and pooled across the history that is a small real world: each
+   item is some case's needle and every other case's distractor. A case sees the part of it that
+   existed when it was asked. No bulk export of the mailbox or the house is taken; one is worth
+   adding only if this proves too easy, for instance if every candidate aces the mail cases.
+   - **Google mail and drive** are a fake behind the connected-account transport, the one seam every
+     Gmail, Drive and Google Calendar request already passes through. Everything above it runs as in
+     production: the integration enabled by configuration, the user's connection stored encrypted, a
+     token refreshed before every request, the tools' scope checks and parsing.
+   - **Home Assistant** is a real `hass` process, as the integration tests already run, configured
+     with the entities and states the recorded results show, so templates, service calls and state
+     changes behave as they would at home. Recorder history starts empty.
+   - What the record cannot supply stays absent rather than invented. A message only ever seen in a
+     listing is served with its snippet as its body and the trial is marked partial; content that
+     was never recorded at all — attachment bytes, an unread Drive file — is unbacked. A call
+     nothing can answer ends the trial as `unbacked_call`, which is excluded from quality metrics
+     and reported as a harness gap.
 4. **External writes** — messaging, email, Home Assistant service calls, anything that leaves the
    sandbox — go to **capture backends** that record the call and return a success-shaped result.
    Captured calls are part of the end state and are what "no message was sent" assertions check.
 
 Delegation is part of the ordinary workload, so a **delegated profile runs for real inside the
-sandbox** on its configured tier, under the same backing rules; the browser profile reads the live
-web as a live read-only service. Targets that reach outside the sandbox by design — the Kubernetes
-agent, the managed coder, remote agents — are capture-backed with the recorded result returned, and
-a case that depends on their output says so.
+sandbox** on its configured tier, under the same backing rules. The sandbox is **sealed**: profiles
+whose work happens outside it — remote agents, the managed coder, computer use, the browser
+profiles, deep research — are removed, and every remaining profile carries an operator-layer rule
+denying browser, worker, GitHub, authenticated-site and shopping-cart tools, which no profile grant
+outranks. A case that depends on one of them is scored as a harness gap.
+
+Services the household owns run **for real, locally**, from the deployment's own source and settings
+rather than as fakes: the task tracker (Tuit, seeded through its own API from recorded results, its
+clock set to the case's moment), the code-execution server (confined with a `sandbox-exec` profile
+in place of its container), and Home Assistant with `ha-mcp` in front of it, built from recorded
+entity states. The sandbox starts from the deployment's own `config.yaml` and keeps only the MCP
+servers it runs locally, pointed at them.
 
 This is the one place the sandbox needs new seams. Concretely: a generic fake MCP server process
 that serves a registry snapshot with seeded-fake, replay or capture semantics per tool covers every
-MCP-backed tool in one mechanism; the `Assistant` needs config-selectable backends for the weather
-service and Home Assistant (there is no constructor seam today) and the outbound messaging paths.
-Prefer one mechanism keyed by tool name over per-integration fakes, so a tool added later either has
-a backing or fails loudly as unbacked, never silently succeeds.
+MCP-backed tool in one mechanism; the `Assistant` takes a connected-account transport for Google,
+and needs config-selectable backends for the weather service and the outbound messaging paths. Home
+Assistant needs no seam: its plugin instance is configuration, pointed at the sandbox `hass`. Prefer
+one mechanism keyed by tool name over per-integration fakes, so a tool added later either has a
+backing or fails loudly as unbacked, never silently succeeds.
+
+### Measuring the simulation
+
+Coverage is measured, not assumed, two ways. **Traffic replay** re-executes a sample of every tool's
+recorded calls through the sandbox's tool API under the recorded profile and classifies each result
+against the recording (similar, different, missing tool, missing configuration, new error); weighted
+by production call volume this is the coverage figure, and it is re-run whenever backing changes.
+**Probing** has agents act as an assistant against the sandbox in one area each, comparing what they
+get with the recorded traffic, to find the walls replay cannot: semantics a fake gets consistently
+wrong, results that leak the sandbox, state from the future. For a fake that answers queries, the
+recorded searches are its conformance suite: each is replayed with its own evidence withheld, and
+recall and precision against the real results are reported.
+
+The first measurement found about half of production's tool-call volume backed. In order of the
+workload share they gate, the remaining gaps are: Home Assistant (native and MCP, from recorded
+entity listings and the snapshot's state-change events, on a real `hass`); web search and the other
+read-only lookups (a replay cache keyed on normalised arguments, returning an explicit miss); the
+code-execution server; the task tracker (a stateful fake from its recorded results); attachment
+payloads, which the snapshot does not hold; and delegations that leave the sandbox (the browser and
+deep research profiles), which must be backed or blocked, because a live answer is neither
+reproducible nor the household's.
 
 ### Driving a turn
 
@@ -352,13 +399,22 @@ answers confirmation prompts with a per-case policy (default: approve, and count
 collects: reply text, the tool-call sequence, confirmations, errors, iteration count, the
 `reasoning_info` envelope (tier, serving model, usage), latency, and the sandbox state diff.
 
+The sandbox runs with real web authentication, and the runner calls as the case's household user
+with an API token. Connected-account integrations refuse the shared development identity by design,
+and the user-scoped state a case reads (notes visibility, reminders, the Google connection) belongs
+to the real user, so running as anyone else would test a different assistant.
+
 ## Part 3 — Grading and reporting
 
 Three layers, cheapest first:
 
-1. **Deterministic checks** from the case's expectations against the end state: required effects
-   happened, forbidden effects did not, the turn completed without error. These decide pass/fail for
-   the side-effect half of the task.
+1. **State checks** by a grading agent that holds the household's own read tools, called through the
+   sandbox's tool API as the household user after the turn, with the clock still at the case's
+   moment. It inspects the calendar, notes, mail, the house and the task list the way the household
+   would, rather than reading the action log, and records each check with its evidence, any unwanted
+   effects (the wrong item, duplicates, more than asked), and whether the reply was true. Write
+   tools are never offered to it. Where a case states expectations, they are given to it as checks
+   to make.
 2. **LLM judge** for the reply: a rubric score (did it do the thing, is the information correct
    against the fixture, is it concise) and a **pairwise preference** against the historical
    production reply, with position swapped. The judge runs on a strong model from a different
@@ -423,12 +479,12 @@ Each milestone is independently useful and verifiable.
    suite behind an opt-in marker. Verified by the first self-test: one synthetic case with the mock
    LLM scripted to call a calendar tool "tomorrow" relative to a frozen date, and the end state
    showing the event on the right day, running in CI.
-4. **Tool backing.** The fake MCP server with seeded-fake, replay and capture semantics, seeded
-   fakes for Home Assistant and the task tracker, live read-only wiring for search and weather, and
-   the config seams for weather, Home Assistant and messaging. Verified by a conformance check that
-   every tool in the registry snapshot has a backing class for every case, failing the run
-   otherwise, and by self-test cases for each class including an unbacked call ending a trial as
-   unscorable.
+4. **Tool backing.** The Google fake and its transport seam, a sandbox `hass` built from recorded
+   Home Assistant results, the fake MCP server with seeded-fake, replay and capture semantics for
+   the task tracker and other MCP tools, live read-only wiring for search and weather, and the
+   config seams for weather and messaging. Verified by a conformance check that every tool in the
+   registry snapshot has a backing class for every case, failing the run otherwise, and by self-test
+   cases for each class including an unbacked call ending a trial as unscorable.
 5. **Runner, outcome classification and deterministic grading.** Drive turns, collect traces,
    classify each trial's outcome, apply the checks, write run records. Verified by running the dev
    slice on the current `standard` tier, inspecting a handful of traces by hand, and fixing every
@@ -448,9 +504,13 @@ Each milestone is independently useful and verifiable.
 - **Live reads drift.** Web search, weather and transport answers change between runs; a comparison
   within one run sees the same drift for every candidate, and runs are not compared on those tools'
   content across time.
-- **Fixture state is current, not historical.** Expectations are authored against the fixture, the
-  historical reply is only a reference, and cases whose state is gone are excluded and counted
-  rather than reconstructed.
+- **Rewind is as good as the record.** Notes edited outside a recorded turn, or deleted without one,
+  cannot be placed exactly; such notes keep their snapshot content and are reported. Automations and
+  event listeners stay disabled rather than rewound, since a frozen clock would otherwise fire them
+  mid-trial.
+- **Household-owned services see only what was recorded.** Mail bodies, Drive content and calendar
+  descriptions exist only where some turn read them; search over the rest falls back on recorded
+  search verdicts, measured by replaying every recorded search with its own evidence withheld.
 - **Single-turn by default.** Multi-turn journeys are supported through preludes, but the first set
   is dominated by single turns because that is what the workload is and what can be graded cleanly.
 - **Raw text lives in the private tree.** No pseudonymisation on the hot path; the existing scrubber
