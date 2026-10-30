@@ -49,7 +49,7 @@ function captureTurnId(onCapture: (id: string) => void) {
 }
 
 // Run sequentially to avoid MSW handler conflicts with parallel tests
-describe.sequential('ErrorHandling', () => {
+describe('ErrorHandling', () => {
   const originalTuning = { ...streamResumeTuning };
 
   beforeEach(() => {

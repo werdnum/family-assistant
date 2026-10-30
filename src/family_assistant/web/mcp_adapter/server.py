@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -86,6 +87,13 @@ class MCPAdapter:
             instructions=SERVER_INSTRUCTIONS,
             stateless_http=True,
             json_response=True,
+            # FastMCP's default host turns on DNS-rebinding protection that
+            # accepts only localhost Host headers. This endpoint is mounted in
+            # the public app behind the edge's auth and bearer tokens, where
+            # Host is the deployment's own domain.
+            transport_security=TransportSecuritySettings(
+                enable_dns_rebinding_protection=False
+            ),
         )
         running_turns = RunningTurns()
         register_tools(mcp, running_turns)

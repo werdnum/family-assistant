@@ -12,98 +12,95 @@ describe('Streaming with Tool Calls', () => {
     vi.clearAllMocks();
   });
 
-  it(
-    'correctly renders a message with both text and a tool call',
-    async () => {
-      // This is the crucial part: we mock the SSE stream to send a single
-      // event that contains both content and a tool call.
-      server.use(
-        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
-          const encoder = new TextEncoder();
-          const stream = new ReadableStream({
-            start(controller) {
-              const payload = {
-                content: 'Of course, here is your photo',
-                tool_call: {
-                  id: 'attach_tool_call',
-                  type: 'function',
-                  function: {
-                    name: 'attach_to_response',
-                    arguments: JSON.stringify({ attachment_ids: ['some-id'] }),
-                  },
+  it('correctly renders a message with both text and a tool call', { timeout: 30000 }, async () => {
+    // This is the crucial part: we mock the SSE stream to send a single
+    // event that contains both content and a tool call.
+    server.use(
+      http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+        const encoder = new TextEncoder();
+        const stream = new ReadableStream({
+          start(controller) {
+            const payload = {
+              content: 'Of course, here is your photo',
+              tool_call: {
+                id: 'attach_tool_call',
+                type: 'function',
+                function: {
+                  name: 'attach_to_response',
+                  arguments: JSON.stringify({ attachment_ids: ['some-id'] }),
                 },
-              };
-              // Note: We send a single 'data' packet with both fields.
-              // We also don't specify an 'event' type, so it defaults to 'message'.
-              controller.enqueue(
-                encoder.encode(`data: ${JSON.stringify(payload)}
+              },
+            };
+            // Note: We send a single 'data' packet with both fields.
+            // We also don't specify an 'event' type, so it defaults to 'message'.
+            controller.enqueue(
+              encoder.encode(`data: ${JSON.stringify(payload)}
+  
+  `)
+            );
+            controller.enqueue(
+              encoder.encode(
+                `event: turn_ended\ndata: ${JSON.stringify({ status: 'complete' })}\n\n`
+              )
+            );
+            controller.close();
+          },
+        });
 
-`)
-              );
-              controller.enqueue(
-                encoder.encode(
-                  `event: turn_ended\ndata: ${JSON.stringify({ status: 'complete' })}\n\n`
-                )
-              );
-              controller.close();
-            },
-          });
+        return new HttpResponse(stream, {
+          headers: {
+            'Content-Type': 'text/event-stream',
+          },
+        });
+      })
+    );
 
-          return new HttpResponse(stream, {
-            headers: {
-              'Content-Type': 'text/event-stream',
-            },
-          });
-        })
-      );
+    const user = userEvent.setup();
+    await renderChatApp({ waitForReady: true });
 
-      const user = userEvent.setup();
-      await renderChatApp({ waitForReady: true });
+    const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+    await user.type(messageInput, 'Send the image');
+    await user.keyboard('{Enter}');
 
-      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
-      await user.type(messageInput, 'Send the image');
-      await user.keyboard('{Enter}');
+    // Now, we assert that both the text and the tool call are visible.
+    // This is what was failing in the Playwright test.
 
-      // Now, we assert that both the text and the tool call are visible.
-      // This is what was failing in the Playwright test.
+    // 1. Check for the assistant's text message
+    await waitFor(
+      () => {
+        expect(screen.getByText('Of course, here is your photo')).toBeInTheDocument();
+      },
+      { timeout: 5000 }
+    );
 
-      // 1. Check for the assistant's text message
-      await waitFor(
-        () => {
-          expect(screen.getByText('Of course, here is your photo')).toBeInTheDocument();
-        },
-        { timeout: 5000 }
-      );
+    // 2. The tool call is wrapped in a ToolGroup that starts collapsed once complete
+    // Verify the ToolGroup trigger is present (now shows category-based summary)
+    await waitFor(
+      () => {
+        // The text will be something like "1 attachments" based on the tool category
+        expect(screen.getByTestId('tool-group-trigger')).toBeInTheDocument();
+      },
+      { timeout: 5000 }
+    );
 
-      // 2. The tool call is wrapped in a ToolGroup that starts collapsed once complete
-      // Verify the ToolGroup trigger is present (now shows category-based summary)
-      await waitFor(
-        () => {
-          // The text will be something like "1 attachments" based on the tool category
-          expect(screen.getByTestId('tool-group-trigger')).toBeInTheDocument();
-        },
-        { timeout: 5000 }
-      );
+    const toolGroupContent = screen.getByTestId('tool-group-content');
+    expect(toolGroupContent).toHaveAttribute('data-state', 'closed');
+    expect(screen.queryByText('📎 Attachments')).not.toBeInTheDocument();
 
-      const toolGroupContent = screen.getByTestId('tool-group-content');
-      expect(toolGroupContent).toHaveAttribute('data-state', 'closed');
-      expect(screen.queryByText('📎 Attachments')).not.toBeInTheDocument();
+    await user.click(screen.getByTestId('tool-group-trigger'));
 
-      await user.click(screen.getByTestId('tool-group-trigger'));
-
-      // Check for the attachment UI element after expanding the collapsed tool group
-      await waitFor(
-        () => {
-          expect(screen.getByText('📎 Attachments')).toBeInTheDocument();
-        },
-        { timeout: 5000 }
-      );
-    },
-    { timeout: 30000 }
-  );
+    // Check for the attachment UI element after expanding the collapsed tool group
+    await waitFor(
+      () => {
+        expect(screen.getByText('📎 Attachments')).toBeInTheDocument();
+      },
+      { timeout: 5000 }
+    );
+  });
 
   it(
     'renders per-file attachment events emitted by the turn producer',
+    { timeout: 30000 },
     async () => {
       let ourTurnId = '';
       const attachmentFetches: string[] = [];
@@ -202,8 +199,7 @@ describe('Streaming with Tool Calls', () => {
       expect(await screen.findByText('1 attachment ready')).toBeInTheDocument();
       expect(screen.getByText('A photo')).toBeInTheDocument();
       expect(attachmentFetches).toEqual([]);
-    },
-    { timeout: 30000 }
+    }
   );
 
   // Streams one add_or_update_note call with the given result, then a reply,
@@ -269,31 +265,24 @@ describe('Streaming with Tool Calls', () => {
     return screen.findByTestId('tool-call');
   }
 
-  it(
-    'shows a streamed failed tool result as failed, not done',
-    async () => {
-      const call = await streamNoteCall('Error: Database temporarily unavailable', 'failed');
+  it('shows a streamed failed tool result as failed, not done', { timeout: 30000 }, async () => {
+    const call = await streamNoteCall('Error: Database temporarily unavailable', 'failed');
 
-      expect(call).toHaveAttribute('data-tool-outcome', 'failed');
-      expect(call.querySelector('.tool-success')).toBeNull();
-      expect(screen.getByTestId('tool-outcome-note')).toHaveTextContent('Failed');
-    },
-    { timeout: 30000 }
-  );
+    expect(call).toHaveAttribute('data-tool-outcome', 'failed');
+    expect(call.querySelector('.tool-success')).toBeNull();
+    expect(screen.getByTestId('tool-outcome-note')).toHaveTextContent('Failed');
+  });
 
-  it(
-    'treats an empty streamed result as a finished call',
-    async () => {
-      const call = await streamNoteCall('', 'succeeded');
+  it('treats an empty streamed result as a finished call', { timeout: 30000 }, async () => {
+    const call = await streamNoteCall('', 'succeeded');
 
-      expect(call).toHaveAttribute('data-tool-outcome', 'succeeded');
-      expect(screen.queryByTestId('tool-outcome-note')).toBeNull();
-    },
-    { timeout: 30000 }
-  );
+    expect(call).toHaveAttribute('data-tool-outcome', 'succeeded');
+    expect(screen.queryByTestId('tool-outcome-note')).toBeNull();
+  });
 
   it(
     'shows an inline image for an enriched attach_to_response tool result',
+    { timeout: 30000 },
     async () => {
       let ourTurnId = '';
       server.use(
@@ -379,12 +368,12 @@ describe('Streaming with Tool Calls', () => {
       const image = await screen.findByTestId('response-image', undefined, { timeout: 5000 });
       expect(image).toHaveAttribute('src', '/api/attachments/att-9');
       expect(image).toHaveAttribute('alt', 'Sales chart');
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'ignores events tagged with a different turn_id (concurrent foreign turn)',
+    { timeout: 30000 },
     async () => {
       // Capture the turn_id the client generates so the mock stream can emit
       // both a matching event and a foreign-turn event interleaved.
@@ -458,7 +447,6 @@ describe('Streaming with Tool Calls', () => {
       // The concurrent foreign turn's text must never have been rendered into
       // this send's assistant message.
       expect(screen.queryByText(/FOREIGN-REPLY/)).not.toBeInTheDocument();
-    },
-    { timeout: 30000 }
+    }
   );
 });

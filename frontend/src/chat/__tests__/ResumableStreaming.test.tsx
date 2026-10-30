@@ -64,6 +64,7 @@ describe('Resumable streaming client', () => {
 
   it(
     'only accumulates response-source attachments, ignoring trigger uploads',
+    { timeout: 30000 },
     async () => {
       let ourTurnId = '';
       server.use(
@@ -121,12 +122,12 @@ describe('Resumable streaming client', () => {
       const srcs = Array.from(images).map((img) => img.getAttribute('src'));
       expect(srcs.some((src) => src?.includes('assistant-att'))).toBe(true);
       expect(srcs.some((src) => src?.includes('user-upload'))).toBe(false);
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'resubscribes from the last seq after a stream_dropped event',
+    { timeout: 30000 },
     async () => {
       let ourTurnId = '';
       let streamCalls = 0;
@@ -172,12 +173,12 @@ describe('Resumable streaming client', () => {
       // last applied seq (5 + 1 = 6) since the hub replays seq >= from_seq.
       expect(subscribedSeqs[0]).toBe('0');
       expect(subscribedSeqs[1]).toBe('6');
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'resumes when the stream errors mid-read (not a clean EOF) after a tool call',
+    { timeout: 30000 },
     async () => {
       // A proxy reset / network drop rejects reader.read() instead of yielding a
       // clean EOF or stream_dropped frame. That thrown error must be treated as
@@ -237,12 +238,12 @@ describe('Resumable streaming client', () => {
         screen.queryByText(/encountered an error after running tools/)
       ).not.toBeInTheDocument();
       expect(screen.queryByText(/couldn't confirm the reply/i)).not.toBeInTheDocument();
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'resume cursor advances past other turns; ack stays our turn',
+    { timeout: 30000 },
     async () => {
       // The replay cursor (from_seq) must advance past a concurrent turn's seqs
       // so a resume stays ahead of the bounded conversation-wide buffer (else a
@@ -296,12 +297,12 @@ describe('Resumable streaming client', () => {
       // resume from 7.
       expect(fromSeqs[1]).toBe('7');
       expect(ackSeqs[1]).toBe('1');
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'silently reconciles from history when a turn is gone (no error)',
+    { timeout: 30000 },
     async () => {
       let messagesFetches = 0;
       let ourTurnId = '';
@@ -349,58 +350,54 @@ describe('Resumable streaming client', () => {
       expect(messagesFetches).toBeGreaterThan(0);
       expect(screen.queryByText(/couldn't confirm the reply/i)).not.toBeInTheDocument();
       expect(screen.queryByText(/connection was interrupted/i)).not.toBeInTheDocument();
-    },
-    { timeout: 30000 }
+    }
   );
 
-  it(
-    'a 410 surfaces the durably-persisted reply (no error)',
-    async () => {
-      // The common 410: the turn finished and its events rotated out of the hub
-      // buffer. Reconciling history must surface the persisted reply with no
-      // "couldn't confirm" marker.
-      let ourTurnId = '';
-      server.use(
-        captureTurnId((id) => {
-          ourTurnId = id;
-        }, 'web_conv_410_done'),
-        http.get('/api/v1/chat/conversations/:conversationId/messages', () =>
-          HttpResponse.json({
-            messages: [
-              {
-                internal_id: 'a1',
-                role: 'assistant',
-                turn_id: ourTurnId,
-                content: 'Reply after buffer eviction',
-                timestamp: '2026-06-09T10:00:00Z',
-              },
-            ],
-          })
-        ),
-        http.get('/api/v1/chat/conversations/:conversationId/stream', () =>
-          HttpResponse.json({ detail: 'gone' }, { status: 410 })
-        )
-      );
+  it('a 410 surfaces the durably-persisted reply (no error)', { timeout: 30000 }, async () => {
+    // The common 410: the turn finished and its events rotated out of the hub
+    // buffer. Reconciling history must surface the persisted reply with no
+    // "couldn't confirm" marker.
+    let ourTurnId = '';
+    server.use(
+      captureTurnId((id) => {
+        ourTurnId = id;
+      }, 'web_conv_410_done'),
+      http.get('/api/v1/chat/conversations/:conversationId/messages', () =>
+        HttpResponse.json({
+          messages: [
+            {
+              internal_id: 'a1',
+              role: 'assistant',
+              turn_id: ourTurnId,
+              content: 'Reply after buffer eviction',
+              timestamp: '2026-06-09T10:00:00Z',
+            },
+          ],
+        })
+      ),
+      http.get('/api/v1/chat/conversations/:conversationId/stream', () =>
+        HttpResponse.json({ detail: 'gone' }, { status: 410 })
+      )
+    );
 
-      const user = userEvent.setup();
-      await renderChatApp({ waitForReady: true });
-      const input = screen.getByPlaceholderText('Message Family Assistant...');
-      await user.type(input, 'Will 410');
-      await user.keyboard('{Enter}');
+    const user = userEvent.setup();
+    await renderChatApp({ waitForReady: true });
+    const input = screen.getByPlaceholderText('Message Family Assistant...');
+    await user.type(input, 'Will 410');
+    await user.keyboard('{Enter}');
 
-      await waitFor(
-        () => {
-          expect(screen.getByText('Reply after buffer eviction')).toBeInTheDocument();
-        },
-        { timeout: 10000 }
-      );
-      expect(screen.queryByText(/couldn't confirm the reply/i)).not.toBeInTheDocument();
-    },
-    { timeout: 30000 }
-  );
+    await waitFor(
+      () => {
+        expect(screen.getByText('Reply after buffer eviction')).toBeInTheDocument();
+      },
+      { timeout: 10000 }
+    );
+    expect(screen.queryByText(/couldn't confirm the reply/i)).not.toBeInTheDocument();
+  });
 
   it(
     'a 410 while the turn is still running reconciles its partial without error',
+    { timeout: 30000 },
     async () => {
       // A 410 can also fire while the turn is STILL running (early events
       // evicted). Reconciling must NOT flag a failure for a turn the server still
@@ -466,12 +463,12 @@ describe('Resumable streaming client', () => {
         { timeout: 10000 }
       );
       expect(screen.queryByText(/couldn't confirm the reply/i)).not.toBeInTheDocument();
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'a 410 with no persisted reply does NOT surface a marker (assumes success)',
+    { timeout: 30000 },
     async () => {
       // Unlike a give-up (resume loop exhausted), a 410 means the reply was
       // durably persisted before eviction — it may just be lagging. A 410 whose
@@ -515,12 +512,12 @@ describe('Resumable streaming client', () => {
         { timeout: 10000 }
       );
       expect(screen.queryByText(/couldn't confirm the reply/i)).not.toBeInTheDocument();
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'does not treat a tool-only persisted row as terminal on give-up',
+    { timeout: 30000 },
     async () => {
       // Tool-call assistant rows can be persisted before the final reply/error
       // commits. After a give-up reconcile, that row is not proof that the turn
@@ -587,12 +584,12 @@ describe('Resumable streaming client', () => {
         { timeout: 10000 }
       );
       expect(screen.getByText(/couldn't confirm the reply/i)).toBeInTheDocument();
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'accepts a completed tool-only persisted reply as terminal on give-up',
+    { timeout: 30000 },
     async () => {
       // If the hub still has an explicit completed TurnRecord for this turn,
       // then a tool-call-only assistant row is durable terminal history, not an
@@ -663,12 +660,12 @@ describe('Resumable streaming client', () => {
         { timeout: 10000 }
       );
       expect(screen.queryByText(/couldn't confirm the reply/i)).not.toBeInTheDocument();
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'does not flag a still-running turn whose reply is still coming',
+    { timeout: 30000 },
     async () => {
       // The give-up means we could not hold the stream open, NOT that the turn
       // failed. When /messages still reports the turn as running (active_turns),
@@ -738,12 +735,12 @@ describe('Resumable streaming client', () => {
         { timeout: 10000 }
       );
       expect(screen.queryByText(/couldn't confirm the reply/i)).not.toBeInTheDocument();
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'keeps the loading bubble when a still-running reconcile has no assistant row',
+    { timeout: 30000 },
     async () => {
       let ourTurnId = '';
       let messagesCalls = 0;
@@ -801,12 +798,12 @@ describe('Resumable streaming client', () => {
         expect(bubbleContent).not.toHaveTextContent(/\S/);
       });
       expect(screen.queryByText(/couldn't confirm the reply/i)).not.toBeInTheDocument();
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'reconciles a still-running give-up turn via the fallback poll',
+    { timeout: 30000 },
     async () => {
       // A give-up while the turn is still running relies on a later reload to
       // surface the reply. The always-on follow stream can miss the turn_ended
@@ -905,12 +902,12 @@ describe('Resumable streaming client', () => {
       } finally {
         Object.assign(reconcilePollTuning, originalTuning);
       }
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'keeps a bailed 410 reconcile silent at the poll cap unless the turn was observed running',
+    { timeout: 30000 },
     async () => {
       // A plain 410 assumes the reply is durably persisted and may just be lagging.
       // If its first reconcile is bailed by a newer active stream, the fallback
@@ -1016,12 +1013,12 @@ describe('Resumable streaming client', () => {
         releaseFirstReload.resolve();
         Object.assign(reconcilePollTuning, originalTuning);
       }
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'marks a 410 turn that was seen running but then finished with no reply',
+    { timeout: 30000 },
     async () => {
       // A 410 normally assumes success — but once we OBSERVE the turn running, we
       // own its completion. If it then finishes with no persisted reply (producer
@@ -1077,58 +1074,54 @@ describe('Resumable streaming client', () => {
       } finally {
         Object.assign(reconcilePollTuning, originalTuning);
       }
-    },
-    { timeout: 30000 }
+    }
   );
 
-  it(
-    'surfaces an error when a gone turn left no persisted reply',
-    async () => {
-      // A stream_dropped before turn_ended (e.g. server shutdown) is NOT proof
-      // the reply was committed. If the reconciled history has no terminal reply
-      // for the turn, surface an error rather than silently leaving the user
-      // with just their message and no response.
-      server.use(
-        captureTurnId(() => {}, 'web_conv_gone_noreply'),
-        http.get('/api/v1/chat/conversations/:conversationId/messages', () =>
-          // Only the user message persisted — the producer never committed a reply.
-          HttpResponse.json({
-            messages: [
-              {
-                internal_id: 'persisted-user',
-                role: 'user',
-                content: 'Do the thing',
-                timestamp: '2026-06-09T10:00:00Z',
-              },
-            ],
-          })
-        ),
-        http.get('/api/v1/chat/conversations/:conversationId/stream', () =>
-          sse([`event: stream_dropped\ndata: ${JSON.stringify({ reason: 'server_shutdown' })}\n\n`])
-        )
-      );
+  it('surfaces an error when a gone turn left no persisted reply', { timeout: 30000 }, async () => {
+    // A stream_dropped before turn_ended (e.g. server shutdown) is NOT proof
+    // the reply was committed. If the reconciled history has no terminal reply
+    // for the turn, surface an error rather than silently leaving the user
+    // with just their message and no response.
+    server.use(
+      captureTurnId(() => {}, 'web_conv_gone_noreply'),
+      http.get('/api/v1/chat/conversations/:conversationId/messages', () =>
+        // Only the user message persisted — the producer never committed a reply.
+        HttpResponse.json({
+          messages: [
+            {
+              internal_id: 'persisted-user',
+              role: 'user',
+              content: 'Do the thing',
+              timestamp: '2026-06-09T10:00:00Z',
+            },
+          ],
+        })
+      ),
+      http.get('/api/v1/chat/conversations/:conversationId/stream', () =>
+        sse([`event: stream_dropped\ndata: ${JSON.stringify({ reason: 'server_shutdown' })}\n\n`])
+      )
+    );
 
-      const user = userEvent.setup();
-      await renderChatApp({ waitForReady: true });
+    const user = userEvent.setup();
+    await renderChatApp({ waitForReady: true });
 
-      const input = screen.getByPlaceholderText('Message Family Assistant...');
-      await user.type(input, 'Do the thing');
-      await user.keyboard('{Enter}');
+    const input = screen.getByPlaceholderText('Message Family Assistant...');
+    await user.type(input, 'Do the thing');
+    await user.keyboard('{Enter}');
 
-      await waitFor(
-        () => {
-          expect(screen.getByText(/couldn't confirm the reply/i)).toBeInTheDocument();
-        },
-        { timeout: 10000 }
-      );
-      // The marker has no stored reply behind it, so there is nothing to rate.
-      expect(screen.queryByRole('button', { name: 'Good response' })).not.toBeInTheDocument();
-    },
-    { timeout: 30000 }
-  );
+    await waitFor(
+      () => {
+        expect(screen.getByText(/couldn't confirm the reply/i)).toBeInTheDocument();
+      },
+      { timeout: 10000 }
+    );
+    // The marker has no stored reply behind it, so there is nothing to rate.
+    expect(screen.queryByRole('button', { name: 'Good response' })).not.toBeInTheDocument();
+  });
 
   it(
     'surfaces an error when the give-up history reload itself fails',
+    { timeout: 30000 },
     async () => {
       // A failed /messages reconcile (non-OK) after a give-up gives us no server
       // truth, so we must NOT go silent — surface the unconfirmed-reply error
@@ -1160,12 +1153,12 @@ describe('Resumable streaming client', () => {
       // must not see a perpetual loading spinner alongside the error. This
       // no-content give-up would otherwise leave a LOADING_MARKER bubble.
       expect(screen.getAllByTestId('assistant-message-content')).toHaveLength(1);
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'still flags an unconfirmed reply when partial output streamed but the reload fails',
+    { timeout: 30000 },
     async () => {
       // The stream rendered PARTIAL text before dropping; the resume loop then
       // gives up and the /messages reconcile fails. The optimistic partial is NOT
@@ -1209,12 +1202,12 @@ describe('Resumable streaming client', () => {
         },
         { timeout: 10000 }
       );
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'surfaces an error even if a concurrent turn left a reply in history',
+    { timeout: 30000 },
     async () => {
       // A concurrent turn (another tab/device) may leave its assistant reply in
       // history while THIS turn produced none. Matching the reply by turn_id
@@ -1265,12 +1258,12 @@ describe('Resumable streaming client', () => {
       );
       // Sanity: ours is a fresh client-generated id, not the other turn's.
       expect(ourTurnId).not.toBe('other-turn');
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'surfaces an error when every subscribe attempt fails (never reaches the hub)',
+    { timeout: 30000 },
     async () => {
       // Unlike a drop after connecting, a persistent 5xx subscribe means we
       // never observed any server truth about the turn, so we must NOT silently
@@ -1303,12 +1296,12 @@ describe('Resumable streaming client', () => {
       // We reconciled from history (which had no reply) and surfaced an error
       // rather than silently swallowing the turn.
       expect(messagesFetches).toBeGreaterThan(0);
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'never treats a subscribe failure as liveness (gives up, no spin)',
+    { timeout: 30000 },
     async () => {
       // A subscribe_failed must NEVER count as a held-open live turn, regardless
       // of how long it took — otherwise the resume loop resets its give-up
@@ -1354,12 +1347,12 @@ describe('Resumable streaming client', () => {
       } finally {
         Object.assign(streamResumeTuning, originalTuning);
       }
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'gives up a held-open leg when only a CONCURRENT turn is running, not ours',
+    { timeout: 30000 },
     async () => {
       // The backend holds the conversation stream open while ANY of the user's
       // turns runs. A leg held open by a concurrent turn (another tab) must NOT
@@ -1426,12 +1419,12 @@ describe('Resumable streaming client', () => {
       } finally {
         Object.assign(streamResumeTuning, originalTuning);
       }
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'gives up when the active-turn check itself keeps failing (no spin)',
+    { timeout: 30000 },
     async () => {
       // The held-open active-turn check must NOT count an unverifiable leg as
       // liveness: if /messages keeps failing while a concurrent turn holds the
@@ -1476,12 +1469,12 @@ describe('Resumable streaming client', () => {
       } finally {
         Object.assign(streamResumeTuning, originalTuning);
       }
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'surfaces an error when the first leg connects but every resume fails (5xx)',
+    { timeout: 30000 },
     async () => {
       // Connecting once does not prove the turn finished: if the connection
       // drops after a tool call and every resume returns 5xx, we cannot confirm
@@ -1535,12 +1528,12 @@ describe('Resumable streaming client', () => {
       // We reconciled from history; it had no terminal reply for the turn, so an
       // error was surfaced rather than silently swallowing it.
       expect(messagesFetches).toBeGreaterThan(0);
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'POSTs an ack with the turn_ended seq after rendering its turn',
+    { timeout: 30000 },
     async () => {
       let ourTurnId = '';
       const ackBodies: Array<{ conversation_id: string; ack_seq: number }> = [];
@@ -1574,12 +1567,12 @@ describe('Resumable streaming client', () => {
         { timeout: 5000 }
       );
       expect(ackBodies[0].ack_seq).toBe(11);
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'passes ack_seq=-1 on the initial subscribe when nothing applied yet',
+    { timeout: 30000 },
     async () => {
       let ourTurnId = '';
       let ackSeqParam: string | null = null;
@@ -1608,12 +1601,12 @@ describe('Resumable streaming client', () => {
         },
         { timeout: 5000 }
       );
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'reloads history instead of opening /stream when the turn is already_complete',
+    { timeout: 30000 },
     async () => {
       let streamOpened = false;
       let messagesFetches = 0;
@@ -1661,12 +1654,12 @@ describe('Resumable streaming client', () => {
       );
       expect(streamOpened).toBe(false);
       expect(messagesFetches).toBeGreaterThan(0);
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'surfaces a recovery error when a retried turn is durably incomplete',
+    { timeout: 30000 },
     async () => {
       // already_complete + incomplete: the durable record has the prompt but no
       // reply (the turn was interrupted by a crash/restart). The client must
@@ -1713,12 +1706,12 @@ describe('Resumable streaming client', () => {
         },
         { timeout: 10000 }
       );
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'retries the subscribe after a transient 500 and renders the reply',
+    { timeout: 30000 },
     async () => {
       // The turn keeps running server-side even if the subscribe GET fails,
       // so a transient 5xx must lead to a resubscribe (mirroring the follow
@@ -1756,7 +1749,6 @@ describe('Resumable streaming client', () => {
       );
       expect(streamCalls).toBeGreaterThanOrEqual(2);
       expect(screen.queryByText(/Sorry, I encountered an error/)).not.toBeInTheDocument();
-    },
-    { timeout: 30000 }
+    }
   );
 });
