@@ -104,6 +104,17 @@ class StoredRefreshToken(RefreshToken):
     user_identifier: str
 
 
+def registered_client_id(client: OAuthClientInformationFull) -> str:
+    """The client_id of a client this server registered.
+
+    The SDK types ``client_id`` as optional because a registration *request*
+    carries none; every client we store or look up was issued one.
+    """
+    if client.client_id is None:
+        raise ValueError("OAuth client has no client_id")
+    return client.client_id
+
+
 def _as_utc(value: datetime) -> datetime:
     # SQLite returns naive datetimes even for DateTime(timezone=True).
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
@@ -337,7 +348,7 @@ class FamilyAssistantOAuthProvider(
                     code=code,
                     scopes=params.scopes or [ASSISTANT_SCOPE],
                     expires_at=time.time() + AUTHORIZATION_CODE_TTL_SECONDS,
-                    client_id=pending.client.client_id,
+                    client_id=registered_client_id(pending.client),
                     code_challenge=params.code_challenge,
                     redirect_uri=params.redirect_uri,
                     redirect_uri_provided_explicitly=params.redirect_uri_provided_explicitly,
@@ -429,7 +440,7 @@ class FamilyAssistantOAuthProvider(
             return None
         return StoredRefreshToken(
             token=refresh_token,
-            client_id=client.client_id,
+            client_id=registered_client_id(client),
             scopes=[ASSISTANT_SCOPE],
             expires_at=_expiry_timestamp(row["expires_at"]),
             token_id=row["id"],
