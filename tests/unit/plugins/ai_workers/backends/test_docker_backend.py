@@ -15,7 +15,7 @@ from family_assistant.plugins.ai_workers.backends.docker import DockerBackend
 from family_assistant.plugins.ai_workers.config import DockerBackendConfig
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
 
 
 class FakeDockerProcess:
@@ -47,7 +47,7 @@ class FakeDockerCli:
 @contextmanager
 def fake_docker(
     stdout: bytes = b"", stderr: bytes = b"", returncode: int = 0
-) -> Iterator[FakeDockerCli]:
+) -> Generator[FakeDockerCli]:
     cli = FakeDockerCli(stdout, stderr, returncode)
     with patch.object(asyncio, "create_subprocess_exec", new=cli):
         yield cli

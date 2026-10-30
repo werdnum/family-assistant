@@ -42,7 +42,7 @@ from family_assistant.utils.stealth_browser import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Awaitable, Callable
+    from collections.abc import AsyncGenerator, Awaitable, Callable
 
     from family_assistant.services.ucp import MerchantUCPProfile
     from family_assistant.tools.types import ToolExecutionContext, ToolResult
@@ -143,7 +143,7 @@ class BrowserSession:
     @asynccontextmanager
     async def operation(
         self, exec_context: ToolExecutionContext
-    ) -> AsyncIterator[None]:
+    ) -> AsyncGenerator[None]:
         """Hold the conversation's browser for one operation, in issue order.
 
         The model's tool calls run concurrently, so without this two browser
@@ -299,7 +299,7 @@ async def delegated_browser_scope(
     exec_context: ToolExecutionContext,
     subconversation_id: str,
     target_profile_id: str,
-) -> AsyncIterator[None]:
+) -> AsyncGenerator[None]:
     """Give an inline delegated turn its browser scope for its lifetime.
 
     The inline path mints a subconversation with no run row, so the child could

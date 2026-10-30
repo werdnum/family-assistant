@@ -24,7 +24,7 @@ from family_assistant.plugins.ai_workers.backends.kubernetes import KubernetesBa
 from family_assistant.plugins.ai_workers.config import KubernetesBackendConfig
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
 
 
 @pytest.fixture
@@ -125,7 +125,7 @@ class FakeCoreV1Api:
 @contextmanager
 def fake_kubernetes_apis(
     batch: FakeBatchV1Api | None = None, core: FakeCoreV1Api | None = None
-) -> Iterator[None]:
+) -> Generator[None]:
     """Route the backend's API objects to fakes; the ApiClient itself is real."""
     batch_api = batch or FakeBatchV1Api()
     core_api = core or FakeCoreV1Api()

@@ -11,7 +11,7 @@ import os
 import re
 import tempfile
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -55,7 +55,7 @@ logger = logging.getLogger(__name__)
 @contextlib.asynccontextmanager
 async def _cleanup_after_test(
     cleanup: Callable[[bool], Awaitable[None]],
-) -> AsyncIterator[None]:
+) -> AsyncGenerator[None]:
     test_failed = False
     try:
         yield

@@ -18,11 +18,11 @@ from typing import TYPE_CHECKING
 from family_assistant.config_models import AppConfig
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
 
 
 @contextmanager
-def _cwd(target: Path) -> Iterator[Path]:
+def _cwd(target: Path) -> Generator[Path]:
     """Temporarily chdir to ``target`` for the duration of the block."""
     original = Path.cwd()
     os.chdir(target)
