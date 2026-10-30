@@ -160,7 +160,7 @@ dev = [
     "pytest-xdist>=3.8.0", # Parallel test execution
     "pytest-rerunfailures>=16.4", # Enable @pytest.mark.flaky reruns in CI
     "hypothesis>=6.152.9", # Property-based testing
-    "vcrpy>=7.0.0", # HTTP record/replay for testing - v7 fixes urllib3 conflicts
+    "vcrpy>=8.5.0", # HTTP record/replay for testing - v8.5 fixes replayed aiohttp streams
     "aiosqlite",
     "assertpy>=1.1", # Add assertpy
     "ast-grep-cli>=0.39.0", # For code pattern matching and transformations

@@ -2004,7 +2004,7 @@ requires-dist = [
     { name = "types-vobject", marker = "extra == 'dev'" },
     { name = "typing-extensions", specifier = ">=4.15.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.29.0" },
-    { name = "vcrpy", marker = "extra == 'dev'", specifier = ">=7.0.0" },
+    { name = "vcrpy", marker = "extra == 'dev'", specifier = ">=8.5.0" },
     { name = "vl-convert-python", specifier = ">=1.6.0" },
     { name = "vobject", specifier = ">=0.9.6" },
     { name = "watchdog", marker = "extra == 'dev'", specifier = ">=3.0.0" },
@@ -7223,19 +7223,15 @@ wheels = [
 
 [[package]]
 name = "vcrpy"
-version = "7.0.0"
+version = "9.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pyyaml" },
-    { name = "urllib3", version = "1.26.20", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13.2' or platform_python_implementation == 'PyPy'" },
-    { name = "urllib3", version = "2.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13.2' and platform_python_implementation != 'PyPy'" },
     { name = "wrapt" },
-    { name = "yarl", version = "1.18.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13.2'" },
-    { name = "yarl", version = "1.20.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13.2'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/25/d3/856e06184d4572aada1dd559ddec3bedc46df1f2edc5ab2c91121a2cccdb/vcrpy-7.0.0.tar.gz", hash = "sha256:176391ad0425edde1680c5b20738ea3dc7fb942520a48d2993448050986b3a50", size = 85502, upload-time = "2024-12-31T00:07:57.894Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9a/5e/7e75478db669231809ba9f4197f3460d1a4603e5ecb1d894b967cca5a7e8/vcrpy-9.2.0.tar.gz", hash = "sha256:c325fa276b175de06bc7afe1b2a45204dbe1fddd90d1b2a18ab14dff2e8e2e4a", size = 113323, upload-time = "2026-10-25T22:29:44.293Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/13/5d/1f15b252890c968d42b348d1e9b0aa12d5bf3e776704178ec37cceccdb63/vcrpy-7.0.0-py2.py3-none-any.whl", hash = "sha256:55791e26c18daa363435054d8b35bd41a4ac441b6676167635d1b37a71dbe124", size = 42321, upload-time = "2024-12-31T00:07:55.277Z" },
+    { url = "https://files.pythonhosted.org/packages/2e/27/4a23141b26d604e5c1a67d5d9df726a517ca625499860bae4bf7a75b6faa/vcrpy-9.2.0-py3-none-any.whl", hash = "sha256:a22f6f2cd47687e363c64ff77fbc7b7bbfbc036db793b4413faf6dd9d6718f93", size = 54278, upload-time = "2026-10-25T22:29:42.674Z" },
 ]
 
 [[package]]

@@ -16,14 +16,6 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 import pytest
 import requests
 
-# Import VCR compatibility patch (autouse fixture activates automatically)
-from tests.integration.home_assistant.vcr_patches import (
-    patch_vcr_mock_client_response,
-)
-
-# Prevent unused import warning
-_ = patch_vcr_mock_client_response
-
 logger = logging.getLogger(__name__)
 
 
