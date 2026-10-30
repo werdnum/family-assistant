@@ -131,7 +131,7 @@ const DocumentsListWithDataTable = () => {
       accessorKey: 'source_id',
       header: 'Source ID',
       cell: ({ row }) => (
-        <code className="text-xs bg-muted px-1 py-0.5 rounded break-all">
+        <code className="text-xs bg-muted px-1 py-0.5 rounded-sm break-all">
           {row.getValue('source_id')}
         </code>
       ),

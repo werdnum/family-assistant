@@ -35,7 +35,7 @@ export const StartThreadCard: React.FC<StartThreadCardProps> = ({ toolCallId, fa
       type="button"
       onClick={() => threads.openConversation(thread.conversation_id)}
       className={cn(
-        'my-1 flex w-full min-w-0 flex-col gap-1 rounded-xl border px-4 py-3 text-left shadow-sm transition-colors hover:border-primary/40 hover:bg-muted/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        'my-1 flex w-full min-w-0 flex-col gap-1 rounded-xl border px-4 py-3 text-left shadow-xs transition-colors hover:border-primary/40 hover:bg-muted/40 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring',
         isFailed
           ? 'border-destructive/40 bg-destructive/5'
           : isDone

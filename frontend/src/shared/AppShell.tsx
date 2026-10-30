@@ -67,7 +67,7 @@ const Brand: React.FC<BrandProps> = ({ showName, onNavigate }) => (
     to="/"
     onClick={onNavigate}
     aria-label={showName ? undefined : 'Family Assistant home'}
-    className="flex min-w-0 items-center gap-2.5 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    className="flex min-w-0 items-center gap-2.5 rounded-md focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
   >
     <img src={logoUrl} alt="" className="h-7 w-7 shrink-0 rounded-md" />
     {showName && <span className="truncate text-sm font-semibold">Family Assistant</span>}
@@ -248,7 +248,7 @@ const AppShell: React.FC<AppShellProps> = ({ children, fullBleed = false }) => {
           <main
             id="main-content"
             tabIndex={-1}
-            className={cn('min-w-0 flex-1 focus:outline-none', fullBleed && 'flex flex-col')}
+            className={cn('min-w-0 flex-1 focus:outline-hidden', fullBleed && 'flex flex-col')}
           >
             {children}
           </main>
