@@ -488,14 +488,10 @@ interface ComposerActionProps {
 }
 
 const ComposerAction: React.FC<ComposerActionProps> = ({ steering, onSteer }) => {
-  // The composer refuses to send while it is already sending, which is the
-  // window in which attachments upload. Reading that rather than attachment
-  // status keeps the button honest whatever an attachment adapter reports.
-  // Sending is also refused while the open conversation's history loads, which
-  // is not a send in progress.
+  // A send waits as the composer's submission while its attachments upload.
+  // Sending is also refused while the open conversation's history loads.
   const conversationLoading = (useChatControls()?.conversationLoadStatus ?? null) !== null;
-  const isSending =
-    useAuiState((s) => !s.composer.canSend && !s.composer.isEmpty) && !conversationLoading;
+  const isSending = useAuiState((s) => s.composer.submission !== undefined);
   // While running, the single action button steers when there's text to send
   // and stops the turn when the composer is empty.
   const hasText = useAuiState((s) => s.composer.text.trim().length > 0);

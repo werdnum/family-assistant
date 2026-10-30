@@ -87,6 +87,13 @@ interface ConversationModelTier {
 }
 
 /** *state* if it belongs to this conversation and profile, else null (the default). */
+class SentToAnotherThreadError extends Error {
+  constructor() {
+    super('The message was sent as a new thread.');
+    this.name = 'SentToAnotherThreadError';
+  }
+}
+
 function modelTierFor(
   state: ConversationModelTier | null,
   conversationId: string | null,
@@ -2376,7 +2383,11 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
           message.content.map((part) => part.text).join('\n'),
           processedAttachments ?? []
         );
-        return;
+        // The runtime shows a send whose attachments it uploaded as "in
+        // transit" in this thread until a new user message lands here or the
+        // send rejects. This one landed in another thread, so reject with an
+        // error that, unlike MessageNotSentError, leaves the draft cleared.
+        throw new SentToAnotherThreadError();
       }
       // Sending to Home instead gives up on a failed send-as-thread: its error
       // no longer applies, and a later start of the same text is a new one.
@@ -2834,16 +2845,12 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
     },
   });
 
-  const sendDisabledRef = useRef(false);
-  sendDisabledRef.current = conversationLoadStatus !== null;
   useEffect(() => {
     const composer = runtime.thread.composer;
-    // While sending, the composer has emptied its text but still holds the
-    // attachments it is uploading, so it is non-empty yet unable to send for a
-    // reason other than the open conversation's history still loading.
+    // A send waiting on attachment uploads is the composer's submission; the
+    // draft itself has already been cleared from the composer.
     return composer.subscribe(() => {
-      const state = composer.getState();
-      composerSendingRef.current = !state.canSend && !state.isEmpty && !sendDisabledRef.current;
+      composerSendingRef.current = composer.getState().submission !== undefined;
     });
   }, [runtime]);
 
