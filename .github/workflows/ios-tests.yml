@@ -16,7 +16,7 @@ jobs:
     runs-on: macos-26
     # Headroom over the ~9-minute happy path: the UI step can retry failing
     # tests up to 3 iterations, which adds wall-clock time on a slow runner.
-    timeout-minutes: 40
+    timeout-minutes: 60
     defaults:
       run:
         working-directory: ios/FamilyAssistant
