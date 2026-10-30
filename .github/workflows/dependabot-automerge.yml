@@ -1,0 +1,167 @@
+name: Dependabot automerge
+
+# Review-gated automatic merging of routine Dependabot PRs; see
+# docs/design/dependabot-automerge.md. Scheduled only: no workflow_dispatch,
+# because dispatch can run another branch's copy of this file with these
+# credentials. Every job checks out trusted main and never runs candidate code.
+#
+# `evaluate` always runs. Its only writes are, in `merge` mode, one
+# `automerge: ...` status label per Dependabot PR, set from the report it just
+# wrote. An open issue labelled dependabot-automerge-paused stops merging. The
+# other jobs act only when the policy's mode is `merge`:
+#   nudge  - posts `@codex review` once per head commit (agent App token);
+#   merge  - re-evaluates one PR and merges it at the expected head
+#            (merge App, only via the dependabot-automerge environment).
+on:
+  schedule:
+    - cron: '7,22,37,52 * * * *'
+
+permissions: {}
+
+concurrency:
+  group: dependabot-automerge
+  cancel-in-progress: false
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Write access is for the status labels only: labelling a PR needs
+    # pull-requests, creating a missing label needs issues. Labels set with
+    # the workflow token trigger no workflows, and the lane never reads them.
+    permissions:
+      contents: read
+      pull-requests: write
+      checks: read
+      actions: read
+      issues: write
+    outputs:
+      mode: ${{ steps.report.outputs.mode }}
+      candidate: ${{ steps.report.outputs.candidate }}
+      candidate_head: ${{ steps.report.outputs.candidate_head }}
+      nudge: ${{ steps.report.outputs.nudge }}
+    steps:
+      - name: Checkout trusted default branch
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Evaluate open Dependabot pull requests and the lane
+        id: report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          python3 scripts/dependabot_automerge.py \
+            --repository "$REPOSITORY" \
+            --output-json automerge-report.json \
+            --output-markdown automerge-report.md \
+            --github-output "$GITHUB_OUTPUT"
+          cat automerge-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      # Same job, same report: a label can't disagree with this run's
+      # decision. A labelling failure shows here but never stops merging.
+      - name: Label each PR with its status
+        if: steps.report.outputs.mode == 'merge'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          python3 scripts/dependabot_automerge.py \
+            --repository "$REPOSITORY" \
+            --label automerge-report.json
+
+      - name: Retain evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: dependabot-automerge-report
+          path: |
+            automerge-report.json
+            automerge-report.md
+          retention-days: 30
+          if-no-files-found: warn
+
+  nudge:
+    needs: evaluate
+    if: needs.evaluate.outputs.mode == 'merge' && needs.evaluate.outputs.nudge != '[]' && needs.evaluate.outputs.nudge != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout trusted default branch
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # Codex does not answer github-actions[bot] comments, so the request
+      # comes from an App identity it does answer.
+      - name: Mint agent token
+        id: agent
+        uses: actions/create-github-app-token@v3.2.0
+        with:
+          app-id: ${{ secrets.AUTOMERGE_REVIEW_APP_ID }}
+          private-key: ${{ secrets.AUTOMERGE_REVIEW_PRIVATE_KEY }}
+          owner: werdnum
+          repositories: family-assistant
+          permission-issues: write
+          permission-pull-requests: read
+          permission-contents: read
+
+      - name: Request Codex reviews
+        env:
+          GH_TOKEN: ${{ steps.agent.outputs.token }}
+          REPOSITORY: ${{ github.repository }}
+          REQUESTS: ${{ needs.evaluate.outputs.nudge }}
+        run: |
+          python3 scripts/dependabot_automerge.py \
+            --repository "$REPOSITORY" \
+            --nudge "$REQUESTS"
+
+  merge:
+    needs: evaluate
+    if: needs.evaluate.outputs.mode == 'merge' && needs.evaluate.outputs.candidate != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Holds the AUTOMERGE_MERGE_* secrets; its deployment-branch policy allows
+    # only main.
+    environment: dependabot-automerge
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: read
+      actions: read
+      issues: read
+    steps:
+      - name: Checkout trusted default branch
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Mint merge token
+        id: merger
+        uses: actions/create-github-app-token@v3.2.0
+        with:
+          app-id: ${{ secrets.AUTOMERGE_MERGE_APP_ID }}
+          private-key: ${{ secrets.AUTOMERGE_MERGE_PRIVATE_KEY }}
+          owner: werdnum
+          repositories: family-assistant
+          permission-contents: write
+
+      # Reads use the read-only workflow token; only the merge call itself
+      # uses the App token.
+      - name: Re-evaluate and merge at the expected head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MERGE_TOKEN: ${{ steps.merger.outputs.token }}
+          REPOSITORY: ${{ github.repository }}
+          CANDIDATE: ${{ needs.evaluate.outputs.candidate }}
+          HEAD_SHA: ${{ needs.evaluate.outputs.candidate_head }}
+        run: |
+          # A refused merge exits non-zero; keep that through the tee.
+          set -o pipefail
+          python3 scripts/dependabot_automerge.py \
+            --repository "$REPOSITORY" \
+            --final "$CANDIDATE" --head "$HEAD_SHA" | tee -a "$GITHUB_STEP_SUMMARY"

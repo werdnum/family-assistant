@@ -34,6 +34,7 @@ from family_assistant.storage.database import (
     DatabaseExecutor,
     sanitize_text_for_postgres,
 )
+from family_assistant.storage.sync_tracking import sync_cursor_column
 from family_assistant.storage.types import MessageHistoryRow
 
 logger = logging.getLogger(__name__)
@@ -139,6 +140,7 @@ message_history_table = Table(
         sql_func.to_tsvector(MESSAGE_CONTENT_SEARCH_CONFIG, literal_column("content")),
         postgresql_using="gin",
     ).ddl_if(dialect="postgresql"),
+    sync_cursor_column(),
 )
 
 # The conversation-list search predicate uses this expression, and it must match

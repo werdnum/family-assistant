@@ -9,6 +9,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import functions as func
 
 from family_assistant.storage.base import metadata
+from family_assistant.storage.sync_tracking import sync_cursor_column
 
 if TYPE_CHECKING:
     from family_assistant.storage.repositories.delegation_runs import DelegationRunDict
@@ -319,6 +320,7 @@ delegation_runs_table = Table(
         sqlite_where=text("status NOT IN ('completed', 'failed')"),
         postgresql_where=text("status NOT IN ('completed', 'failed')"),
     ),
+    sync_cursor_column(),
 )
 
 

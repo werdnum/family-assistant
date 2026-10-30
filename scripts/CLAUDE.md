@@ -55,6 +55,13 @@ Runs a built image, waits for `/health`, then verifies the MCP servers in `$MCP_
 `time`) start inside it. Invoked by the `smoke-test` job in `build-containers.yml` via
 `.github/actions/smoke-test-action`, which gates the push of the main image.
 
+### `check_sse_frontdoor.py`
+
+Holds an event stream open through the production front door and prints when each frame arrives. The
+server sends heartbeats at a fixed cadence, so late, bunched or missing frames show the front door
+buffering or cutting long-lived responses, which the server cannot see. It needs a user access token
+in `FA_ACCESS_TOKEN`; the read-only diagnostics token is rejected by the chat endpoints.
+
 ### `run_pytest_adaptive.py`
 
 Default pytest runner used by `scripts/run-tests.sh`. It collects nodeids, groups complete test

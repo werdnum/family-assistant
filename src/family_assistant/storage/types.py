@@ -263,6 +263,9 @@ class MessageHistoryRow(TypedDict):
     echoed_from_conversation_id: str | None
     # The thread a Home row's turn was moved into, when it marks a move.
     moved_to_conversation_id: str | None
+    # The cursor of the transaction that last wrote the row (see
+    # storage/sync_tracking.py). Absent on rows built outside a query.
+    sync_cursor: NotRequired[int]
 
 
 class ConversationSummaryRow(TypedDict):

@@ -842,6 +842,7 @@ async def test_disconnect_without_ack_fires_push(
     assert llm_response in body
     assert metadata is not None
     assert metadata.category == MESSAGE_CATEGORY
+    assert metadata.turn_id == turn_id
 
     # Drain any background producer.
     pending = hub.get_active_producer_tasks(conversation_id)

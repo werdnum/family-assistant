@@ -16,6 +16,9 @@ This file provides guidance for working with GitHub Actions workflows.
 - **`build-containers.yml`**: builds and pushes the application and devcontainer images.
 - **`ios-tests.yml`**: iOS app tests (`workflow_call` / `workflow_dispatch`).
 - **`auto-request-review.yml`**: requests reviewers when a PR is opened or marked ready.
+- **`dependabot-automerge.yml`**: scheduled, review-gated merging of routine Dependabot PRs, driven
+  by `scripts/dependabot_automerge.py` and `.github/dependabot-automerge-policy.json`. See
+  [docs/design/dependabot-automerge.md](../../docs/design/dependabot-automerge.md).
 
 ## When Working on CI Workflows
 

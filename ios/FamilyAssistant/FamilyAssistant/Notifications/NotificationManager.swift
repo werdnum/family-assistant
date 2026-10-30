@@ -32,6 +32,7 @@ final class NotificationManager {
     var pendingPushHint: PushHint?
 
     @ObservationIgnored private weak var authManager: AuthManager?
+    @ObservationIgnored private let pushGapTracker: PushGapTracker
     @ObservationIgnored private let logger = Logger(
         subsystem: "com.familyassistant.app",
         category: "notifications"
@@ -53,7 +54,8 @@ final class NotificationManager {
         static let message = "FAMILY_ASSISTANT_MESSAGE"
     }
 
-    init() {
+    init(pushGapTracker: PushGapTracker = .shared) {
+        self.pushGapTracker = pushGapTracker
         notificationsEnabled = UserDefaults.standard.bool(forKey: Keys.notificationsEnabled)
         registrationState = notificationsEnabled ? .registering : .disabled
         #if DEBUG
@@ -196,8 +198,11 @@ final class NotificationManager {
     /// still presents the banner; this only mirrors the payload's `conversation_id`
     /// into an @Observable value so the chat view model can do a targeted refresh
     /// (§4.6). Silent-push/background refresh stays out of scope (§4.8).
-    func handleForegroundPushPresentation(userInfo: [AnyHashable: Any]) {
+    func handleForegroundPushPresentation(userInfo: [AnyHashable: Any], deliveredAt: Date = Date()) {
         pendingPushHint = PushHint(conversationID: stringValue(userInfo["conversation_id"]))
+        if let turnID = stringValue(userInfo["turn_id"]) {
+            pushGapTracker.pushDelivered(turnID: turnID, deliveredAt: deliveredAt, delivery: .foreground)
+        }
     }
 
     func clearPendingPushHint() {
@@ -206,6 +211,15 @@ final class NotificationManager {
 
     func handleNotificationResponse(_ response: UNNotificationResponse) {
         let content = response.notification.request.content
+        if response.actionIdentifier == UNNotificationDefaultActionIdentifier,
+           let turnID = stringValue(content.userInfo["turn_id"])
+        {
+            pushGapTracker.pushDelivered(
+                turnID: turnID,
+                deliveredAt: response.notification.date,
+                delivery: .tapped
+            )
+        }
         handleNotificationAction(
             actionIdentifier: response.actionIdentifier,
             categoryIdentifier: content.categoryIdentifier,
@@ -603,5 +617,127 @@ private enum NotificationError: LocalizedError {
                 "Notification server request failed with status \(statusCode)."
             }
         }
+    }
+}
+
+/// Measures how far the app lags the notification that announces a reply.
+///
+/// A push for a finished turn carries the turn's `turn_id`. The gap is the moment the reply
+/// became visible in the app minus the moment the push was delivered: positive means the banner
+/// beat the app, zero or negative means the app was already showing the reply. A tapped push also
+/// records how long the reply took to appear after the tap. "Visible" means a completed assistant
+/// reply for that turn is in a chat view model's messages, which is what the screen renders.
+/// See docs/design/mobile-state-sync.md, "Production telemetry".
+@MainActor
+final class PushGapTracker {
+    enum Delivery: String {
+        case foreground
+        case tapped
+    }
+
+    static let shared = PushGapTracker { extraData in
+        ErrorReporter.shared.report(
+            message: "iOS chat sync breadcrumb",
+            component: "Sync.pushGap",
+            errorType: .component,
+            extraData: extraData,
+            bypassDedupe: true
+        )
+    }
+
+    /// How many trailing messages a scan inspects. A reply becomes visible at the end of the
+    /// transcript, so a short tail is enough and keeps the per-change cost flat.
+    static let scanDepth = 12
+
+    private struct PendingPush {
+        let deliveredAt: Date
+        let delivery: Delivery
+        let openedAt: Date?
+    }
+
+    private let report: ([String: String]) -> Void
+    private let now: () -> Date
+    private let capacity: Int
+    private var visibleAt: [String: Date] = [:]
+    private var visibleOrder: [String] = []
+    private var pending: [String: PendingPush] = [:]
+    private var reported: [String] = []
+
+    init(
+        capacity: Int = 200,
+        now: @escaping () -> Date = Date.init,
+        report: @escaping ([String: String]) -> Void
+    ) {
+        self.capacity = capacity
+        self.now = now
+        self.report = report
+    }
+
+    /// Record every completed assistant reply near the end of `messages` as visible.
+    func noteVisibleReplies(in messages: [ChatMessage]) {
+        for message in messages.suffix(Self.scanDepth)
+        where message.role == .assistant
+            && message.status == .complete
+            && !message.isLoading
+            && !message.text.isEmpty
+        {
+            if let turnID = message.turnID {
+                replyVisible(turnID: turnID)
+            }
+        }
+    }
+
+    func replyVisible(turnID: String) {
+        guard visibleAt[turnID] == nil else {
+            return
+        }
+        let at = now()
+        visibleAt[turnID] = at
+        visibleOrder.append(turnID)
+        if visibleOrder.count > capacity {
+            visibleAt.removeValue(forKey: visibleOrder.removeFirst())
+        }
+        if let push = pending.removeValue(forKey: turnID) {
+            emit(turnID: turnID, push: push, visibleAt: at)
+        }
+    }
+
+    func pushDelivered(turnID: String, deliveredAt: Date, delivery: Delivery) {
+        guard !reported.contains(turnID), pending[turnID] == nil else {
+            return
+        }
+        let push = PendingPush(
+            deliveredAt: deliveredAt,
+            delivery: delivery,
+            openedAt: delivery == .tapped ? now() : nil
+        )
+        if let visible = visibleAt[turnID] {
+            emit(turnID: turnID, push: push, visibleAt: visible)
+            return
+        }
+        if pending.count >= capacity, let oldest = pending.min(by: { $0.value.deliveredAt < $1.value.deliveredAt }) {
+            pending.removeValue(forKey: oldest.key)
+        }
+        pending[turnID] = push
+    }
+
+    private func emit(turnID: String, push: PendingPush, visibleAt: Date) {
+        reported.append(turnID)
+        if reported.count > capacity {
+            reported.removeFirst()
+        }
+        var extraData = [
+            "turn_id": turnID,
+            "delivery": push.delivery.rawValue,
+            "gap_ms": Self.milliseconds(visibleAt.timeIntervalSince(push.deliveredAt)),
+        ]
+        if let openedAt = push.openedAt {
+            extraData["open_to_visible_ms"] = Self.milliseconds(max(0, visibleAt.timeIntervalSince(openedAt)))
+        }
+        report(extraData)
+    }
+
+    private static func milliseconds(_ interval: TimeInterval) -> String {
+        String(Int((interval * 1000).rounded()))
     }
 }

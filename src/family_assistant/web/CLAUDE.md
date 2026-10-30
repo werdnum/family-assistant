@@ -43,6 +43,28 @@ Routers live in `routers/`, one per feature area. `api.py` is the aggregator tha
 - **Tools**: MCP integration for external tools, plus a confirmation mechanism for destructive
   operations.
 
+## Client Sync
+
+`GET /api/v1/sync` (`routers/sync_api.py`) returns everything that changed since a client's cursor:
+conversation rows, messages of the conversations it has open, pending confirmations and delegations,
+and the progress of running turns. `wait` turns it into a long poll and `/api/v1/sync/stream`
+repeats it over one connection. See
+[docs/design/mobile-state-sync.md](../../../docs/design/mobile-state-sync.md).
+
+Change tracking is not something an endpoint or repository does by hand. Every row of a table listed
+in `storage/sync_tracking.py`'s `SYNCED_TABLES` carries a `sync_cursor`, and `DatabaseTransaction`
+stamps it on every symbolic insert, update and delete (a delete leaves a tombstone). Two
+consequences:
+
+- **A raw SQL write to a synced table is invisible to clients.** Write symbolically, as the project
+  already requires.
+- **Giving clients a new collection** means adding its table to `SYNCED_TABLES`, giving the table
+  `sync_cursor_column()` and a migration, and teaching `build_sync_response` to report it. A poll a
+  client still runs for that data is removed only once the collection is synced.
+
+The reference client in `tests/sync/reference_client.py` is the protocol's executable specification;
+the convergence test checks it against a client that bootstrapped from nothing.
+
 ## Error Reports vs. Telemetry Breadcrumbs
 
 Frontend clients POST to `POST /api/errors/`. The report's optional `severity` selects the lane:

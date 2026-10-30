@@ -4,6 +4,7 @@ from sqlalchemy import Column, DateTime, Integer, String, Table, Text, UniqueCon
 from sqlalchemy.sql import functions as func
 
 from family_assistant.storage.base import metadata
+from family_assistant.storage.sync_tracking import sync_cursor_column
 
 turn_feedback_table = Table(
     "turn_feedback",
@@ -28,4 +29,5 @@ turn_feedback_table = Table(
         server_default=func.now(),
     ),
     UniqueConstraint("turn_id", "user_id", name="uq_turn_feedback_turn_user"),
+    sync_cursor_column(),
 )

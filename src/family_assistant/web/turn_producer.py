@@ -451,6 +451,7 @@ async def run_turn_producer(
                 web_chat_interface,
                 interface_type=interface_type,
                 conversation_id=conversation_id,
+                turn_id=turn_id,
                 reply_text="".join(final_reply_parts).strip(),
             )
 
@@ -875,6 +876,7 @@ async def _notify_disconnected_reply(
     *,
     interface_type: str,
     conversation_id: str,
+    turn_id: str,
     reply_text: str,
 ) -> None:
     """Deliver a completed assistant reply via push when no subscriber acked.
@@ -898,6 +900,7 @@ async def _notify_disconnected_reply(
             metadata=NotificationMetadata(
                 category=MESSAGE_CATEGORY,
                 conversation_id=conversation_id,
+                turn_id=turn_id,
             ),
         )
     except Exception:

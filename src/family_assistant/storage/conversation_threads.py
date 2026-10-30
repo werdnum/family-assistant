@@ -18,6 +18,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 
 from family_assistant.storage.base import metadata
+from family_assistant.storage.sync_tracking import sync_cursor_column
 
 conversation_homes_table = Table(
     "conversation_homes",
@@ -68,6 +69,7 @@ conversation_threads_table = Table(
     Column("echo_message_id", Integer, nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
+    sync_cursor_column(),
 )
 
 conversation_read_markers_table = Table(
@@ -80,4 +82,5 @@ conversation_read_markers_table = Table(
     Column("last_read_message_id", Integer, nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
     PrimaryKeyConstraint("conversation_id", "viewer_user_id"),
+    sync_cursor_column(),
 )

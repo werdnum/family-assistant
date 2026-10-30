@@ -24,7 +24,7 @@ ARG PLAYWRIGHT_VERSION=1.52.0
 FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
 
 # Build stage for gh-token
-FROM golang:1.24 AS gh-token-builder
+FROM golang:1.25 AS gh-token-builder
 ARG GH_TOKEN_VERSION
 RUN go install "github.com/Link-/gh-token@${GH_TOKEN_VERSION}"
 

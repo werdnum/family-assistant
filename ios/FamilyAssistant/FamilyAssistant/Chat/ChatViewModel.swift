@@ -61,6 +61,7 @@ final class ChatViewModel {
         // messages runs once the position has settled, not per streamed token.
         didSet {
             readPositionMayHaveChanged()
+            pushGapTracker.noteVisibleReplies(in: messages)
             if role == .home {
                 userStartedTurnIDs = HomeTurnThreadActions.userStartedTurnIDs(in: messages)
             }
@@ -69,6 +70,7 @@ final class ChatViewModel {
     /// Home's turns that hold a message the user wrote, kept with `messages`
     /// so a bubble's context menu need not scan the transcript.
     @ObservationIgnored private var userStartedTurnIDs: Set<String> = []
+    @ObservationIgnored private let pushGapTracker: PushGapTracker
     // Fixed upper bound on how many grouped bubbles are realized into the chat
     // view at once. The full thread is still loaded into `messages`; only a
     // recent window is shown, and `showEarlierMessages()` /
@@ -643,8 +645,10 @@ final class ChatViewModel {
         resyncEstablishTimeoutSeconds: Double = 8,
         streamTextFlushInterval: Duration = .milliseconds(50),
         errorReporter: ErrorReporter = .shared,
-        pathMonitor: PathMonitoring? = nil
+        pathMonitor: PathMonitoring? = nil,
+        pushGapTracker: PushGapTracker = .shared
     ) {
+        self.pushGapTracker = pushGapTracker
         self.role = role
         self.liveReconnectInitialDelaySeconds = liveReconnectInitialDelaySeconds
         self.liveReconnectMaxDelaySeconds = liveReconnectMaxDelaySeconds
