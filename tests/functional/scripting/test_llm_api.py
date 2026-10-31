@@ -1,6 +1,6 @@
 """Tests for the scripting LLM API."""
 
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
@@ -58,7 +58,7 @@ def _messages_sent_to(
 
 
 @contextmanager
-def _factory_serving(client: LLMInterface) -> Iterator[RecordingClientFactory]:
+def _factory_serving(client: LLMInterface) -> Generator[RecordingClientFactory]:
     factory = RecordingClientFactory(client)
     with patch.object(LLMClientFactory, "create_client", new=factory):
         yield factory

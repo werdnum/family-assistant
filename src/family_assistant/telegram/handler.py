@@ -82,7 +82,7 @@ from family_assistant.telegram.types import AttachmentData, TriggerAttachment
 from family_assistant.tools.confirmation import render_tool_confirmation
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncGenerator
 
     from family_assistant.interfaces import ChatInterface
     from family_assistant.llm.model_selection import ResolvedModelSelection
@@ -362,7 +362,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         self,
         chat_id: int,
         controller: TelegramMidTurnController | None = None,
-    ) -> AsyncIterator[TelegramMidTurnController]:
+    ) -> AsyncGenerator[TelegramMidTurnController]:
         """Hold this chat's turn slot for the length of one LLM loop.
 
         Telegram dispatches updates concurrently, so this registration is the
@@ -458,7 +458,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         bot: Bot,
         chat_id: int,
         action: str = ChatAction.TYPING,
-    ) -> AsyncIterator[None]:
+    ) -> AsyncGenerator[None]:
         """Context manager to send typing notifications periodically."""
         stop_event = asyncio.Event()
 

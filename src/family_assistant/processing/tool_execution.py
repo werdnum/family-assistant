@@ -48,7 +48,7 @@ from .types import (
 from .utils import get_file_extension_from_mime_type
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping, Sequence
+    from collections.abc import Generator, Mapping, Sequence
 
     from family_assistant.events.indexing_source import IndexingSource
     from family_assistant.interfaces import ChatInterface
@@ -104,7 +104,7 @@ class _ToolOutput:
 
 
 @contextlib.contextmanager
-def _batch_completion(batch: ToolCallBatch | None, call_id: str) -> Iterator[None]:
+def _batch_completion(batch: ToolCallBatch | None, call_id: str) -> Generator[None]:
     """Report this call's completion to its batch however the call ends.
 
     Siblings that wait for issue order wait on this, so a denied, failed or

@@ -2,7 +2,7 @@ import asyncio
 import struct
 import wave
 from array import array
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import datetime
@@ -107,7 +107,7 @@ class FakeLiveClient:
         self.connect_configs: list[object] = []
 
     @asynccontextmanager
-    async def connect(self, config: object) -> AsyncIterator[FakeLiveSession]:
+    async def connect(self, config: object) -> AsyncGenerator[FakeLiveSession]:
         self.connect_configs.append(config)
         if self._on_connect is not None:
             self._on_connect()

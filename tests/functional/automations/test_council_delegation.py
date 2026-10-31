@@ -57,7 +57,7 @@ from tests.mocks.mock_llm import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable
+    from collections.abc import AsyncGenerator, Callable
     from unittest.mock import MagicMock
 
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -442,7 +442,7 @@ async def _workers(
     task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
     db_engine: AsyncEngine,
     mock_clock: MockClock,
-) -> AsyncIterator[None]:
+) -> AsyncGenerator[None]:
     """Two workers, as production runs, so members can finish out of order."""
     _worker, new_task_event, _shutdown = task_worker_manager(
         council.main, cast("MagicMock", council.chat)

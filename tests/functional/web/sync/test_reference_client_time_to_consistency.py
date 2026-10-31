@@ -14,7 +14,7 @@ import asyncio
 import contextlib
 import time
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 
@@ -86,7 +86,7 @@ async def proxy(live_server_port: int) -> AsyncGenerator[ImpairedNetworkProxy]:
 @contextlib.asynccontextmanager
 async def _running_client(
     proxy: ImpairedNetworkProxy, *, focus: str
-) -> AsyncIterator[ReferenceSyncClient]:
+) -> AsyncGenerator[ReferenceSyncClient]:
     timeout = httpx.Timeout(
         connect=10.0, read=_LONG_POLL_S + 15.0, write=10.0, pool=10.0
     )

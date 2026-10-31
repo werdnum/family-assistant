@@ -7,7 +7,7 @@ import logging
 import mimetypes
 import secrets
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -1085,7 +1085,7 @@ async def _reserve_non_streaming_turn(
     *,
     turn_id: str,
     user_id: str,
-) -> AsyncIterator[_NonStreamingTurnReservation]:
+) -> AsyncGenerator[_NonStreamingTurnReservation]:
     """Hold the one-turn-per-conversation reservation across a non-streaming send.
 
     ``POST /send_message`` drives a full LLM loop over the same history as the

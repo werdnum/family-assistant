@@ -3,7 +3,7 @@
 import asyncio
 import json
 import os
-from collections.abc import AsyncIterator, Generator
+from collections.abc import AsyncGenerator, AsyncIterator, Generator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -52,7 +52,7 @@ class _FakeLive:
     @asynccontextmanager
     async def connect(
         self, *, model: str, config: object
-    ) -> AsyncIterator[_FakeLiveSession]:
+    ) -> AsyncGenerator[_FakeLiveSession]:
         self.connect_calls.append({"model": model, "config": config})
         yield self._session
 

@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, AsyncIterator, Iterator
+    from collections.abc import AsyncGenerator, AsyncIterator, Generator
 
     from family_assistant.llm.model_selection import ResolvedModelSelection
 
@@ -138,7 +138,7 @@ def reset_model_selection(token: ModelSelectionToken) -> None:
 
 
 @contextlib.contextmanager
-def attributed_call(attribution: CallAttribution) -> Iterator[None]:
+def attributed_call(attribution: CallAttribution) -> Generator[None]:
     """Attribute the calls made inside this block to *attribution*.
 
     For a plain awaited call, where :func:`attributed_to_profile`'s reason for
@@ -190,7 +190,7 @@ def current_workload() -> Workload:
 
 
 @contextlib.contextmanager
-def running_as(workload: Workload) -> Iterator[None]:
+def running_as(workload: Workload) -> Generator[None]:
     """Run the block, and every LLM call it makes, as *workload*.
 
     For the code that starts a unit of work -- the task worker around a
@@ -209,7 +209,7 @@ def current_service_tier() -> ServiceTier:
 
 
 @contextlib.contextmanager
-def with_service_tier(tier: ServiceTier) -> Iterator[None]:
+def with_service_tier(tier: ServiceTier) -> Generator[None]:
     """Send the provider requests made inside this block at *tier*.
 
     Callers bracket each awaited step of an attempt, never a ``yield``, for the

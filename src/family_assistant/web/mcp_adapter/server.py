@@ -1,7 +1,7 @@
 """The mounted MCP endpoint: transport, enablement gate and lifecycle."""
 
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
@@ -78,7 +78,7 @@ class MCPAdapter:
         await self._session_manager.handle_request(scope, receive, send)
 
     @asynccontextmanager
-    async def run(self) -> AsyncIterator[None]:
+    async def run(self) -> AsyncGenerator[None]:
         """Serve requests for the duration of the context; enter it for the app's lifespan."""
         if self._session_manager is not None:
             raise RuntimeError("MCPAdapter.run() is already active.")

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import asyncio
-    from collections.abc import Iterator
+    from collections.abc import Generator
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,9 @@ class RunningDelegationTurns:
         self._turns: dict[str, asyncio.Task[object]] = {}
 
     @contextmanager
-    def running(self, delegation_id: str, turn: asyncio.Task[object]) -> Iterator[None]:
+    def running(
+        self, delegation_id: str, turn: asyncio.Task[object]
+    ) -> Generator[None]:
         """Register ``turn`` as the delegation's running turn for the block."""
         self._turns[delegation_id] = turn
         try:

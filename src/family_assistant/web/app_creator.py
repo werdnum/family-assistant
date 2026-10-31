@@ -1,7 +1,7 @@
 import json
 import logging
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any
 
@@ -157,7 +157,7 @@ middleware.append(Middleware(AuthMiddlewareWrapper))
 
 # --- Lifespan context manager for startup/shutdown ---
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     """Manage application lifecycle events."""
     # Startup
     logger.info("Application starting up...")
