@@ -205,7 +205,7 @@ async def test_no_connection_fails_closed(db_context: Database) -> None:
     with pytest.raises(OAuthNotConnectedError) as exc_info:
         await resolver.access_token_for(exec_context, GoogleScope.GMAIL_READONLY)
 
-    assert "connect from Settings" in str(exc_info.value)
+    assert "Settings → Connected Accounts" in str(exc_info.value)
 
 
 @pytest.mark.asyncio
@@ -235,7 +235,7 @@ async def test_scope_not_granted_fails_closed(db_context: Database) -> None:
         await resolver.access_token_for(exec_context, GoogleScope.DRIVE_READONLY)
 
     assert DRIVE in str(exc_info.value)
-    assert "reconnect from Settings" in str(exc_info.value)
+    assert "reconnect in the web app" in str(exc_info.value)
 
 
 # --------------------------------------------------------------------------- #

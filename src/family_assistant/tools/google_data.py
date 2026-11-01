@@ -997,7 +997,8 @@ async def gmail_create_draft_tool(
         )
         if connection is None:
             raise GoogleApiError(
-                "No Google account is connected — connect from Settings."
+                "No Google account is connected — connect one in the web app under "
+                "Settings → Connected Accounts."
             )
 
         if len(body.encode("utf-8")) > _GMAIL_DRAFT_ATTACHMENT_BYTES_LIMIT:
