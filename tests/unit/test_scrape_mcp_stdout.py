@@ -12,29 +12,43 @@ SCRIPT = Path(__file__).parents[2] / "contrib" / "scrape_mcp.py"
 
 @pytest.mark.no_db
 def test_stdout_holds_only_protocol_messages() -> None:
-    requests = [
-        {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2025-03-26",
-                "capabilities": {},
-                "clientInfo": {"name": "test", "version": "1"},
-            },
+    initialize = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-03-26",
+            "capabilities": {},
+            "clientInfo": {"name": "test", "version": "1"},
         },
-        {"jsonrpc": "2.0", "method": "notifications/initialized"},
-        {"jsonrpc": "2.0", "id": 2, "method": "ping"},
-    ]
-    done = subprocess.run(
-        [sys.executable, str(SCRIPT)],
-        input="".join(json.dumps(request) + "\n" for request in requests),
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=60,
-    )
+    }
+    initialized = {"jsonrpc": "2.0", "method": "notifications/initialized"}
+    ping = {"jsonrpc": "2.0", "id": 2, "method": "ping"}
 
-    assert done.stdout.strip(), done.stderr
-    replies = [json.loads(line) for line in done.stdout.splitlines()]
-    assert [reply["id"] for reply in replies] == [1, 2]
+    with subprocess.Popen(
+        [sys.executable, str(SCRIPT)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        bufsize=1,
+    ) as server:
+        assert server.stdin is not None
+        assert server.stdout is not None
+        try:
+            # The server stops at end of input, even with a request in hand, so
+            # each reply has to arrive before the next step.
+            server.stdin.write(json.dumps(initialize) + "\n")
+            server.stdin.flush()
+            first = json.loads(server.stdout.readline())
+            server.stdin.write(json.dumps(initialized) + "\n")
+            server.stdin.write(json.dumps(ping) + "\n")
+            server.stdin.flush()
+            second = json.loads(server.stdout.readline())
+            server.stdin.close()
+            remaining = server.stdout.read()
+        finally:
+            server.kill()
+
+    assert [first["id"], second["id"]] == [1, 2]
+    assert not remaining
