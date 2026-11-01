@@ -696,6 +696,7 @@ async def _stream_frames(
             query = _next_query(query, response)
         else:
             yield f"event: heartbeat\ndata: {json.dumps({'cursor': response.cursor})}\n\n"
+    yield 'event: stream_dropped\ndata: {"reason": "server_shutdown"}\n\n'
 
 
 @sync_api_router.get("/v1/sync/stream")

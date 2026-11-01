@@ -96,6 +96,28 @@ async def test_closing_a_stream_records_the_client_left_and_closes_the_source(
 
 @pytest.mark.no_db
 @pytest.mark.asyncio
+async def test_a_stream_records_closing_even_if_its_cleanup_is_cancelled(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def source() -> AsyncGenerator[str]:
+        try:
+            yield "event: text\ndata: {}\n\n"
+        finally:
+            raise asyncio.CancelledError
+
+    with (
+        caplog.at_level(logging.INFO, logger=LOGGER),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        stream = observed_stream(source(), kind="sync")
+        await anext(stream)
+        await stream.aclose()
+
+    assert 'event="closed"' in _lines(caplog, "chat_stream")[-1]
+
+
+@pytest.mark.no_db
+@pytest.mark.asyncio
 async def test_a_stream_that_raises_records_an_error(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

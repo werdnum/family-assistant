@@ -390,3 +390,17 @@ async def test_paging_back_keeps_messages_whose_timestamps_are_out_of_order(
 
     assert [m["content"] for m in latest] == ["newer"]
     assert [m["content"] for m in earlier] == ["older"]
+
+
+async def test_a_sync_stream_says_when_the_server_is_shutting_down(
+    client: AsyncClient, app_fixture: FastAPI
+) -> None:
+    app_fixture.state.shutdown_event = asyncio.Event()
+    app_fixture.state.shutdown_event.set()
+
+    response = await client.get("/api/v1/sync/stream")
+
+    assert response.status_code == 200
+    assert response.text.endswith(
+        'event: stream_dropped\ndata: {"reason": "server_shutdown"}\n\n'
+    )

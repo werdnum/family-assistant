@@ -105,9 +105,10 @@ They never carry message content. `web/chat_telemetry.py` writes them.
   decision.
 
 `chat_stream` lines record `opened` and `closed` for each client stream. `closed` carries `reason`
-(`finished`, `client_gone`, `error`, or the reason from a `stream_dropped` frame), the duration, how
-many event and heartbeat frames were written, and how long the stream had been quiet. A new
-long-lived stream must go through `observed_stream`.
+(`finished`, `client_gone`, `error`, or the reason from a `stream_dropped` frame); `finished`
+includes a sync stream that noticed by itself that its client had left, the duration, how many event
+and heartbeat frames were written, and how long the stream had been quiet. A new long-lived stream
+must go through `observed_stream`.
 
 `frontend.telemetry` lines hold each breadcrumb as JSON, which outlasts the ring buffer. Order them
 by the client's own `client_seq`, because the line's timestamp is arrival time.

@@ -96,17 +96,19 @@ async def observed_stream(
         tally.reason = "error"
         raise
     finally:
-        await frames.aclose()
-        closed_at = clock()
-        logger.info(
-            "chat_stream %s",
-            _rendered({
-                "event": "closed",
-                **identity,
-                "reason": tally.reason,
-                "duration_s": closed_at - tally.opened_at,
-                "events": tally.events,
-                "heartbeats": tally.heartbeats,
-                "quiet_s": closed_at - tally.last_event_at,
-            }),
-        )
+        try:
+            await frames.aclose()
+        finally:
+            closed_at = clock()
+            logger.info(
+                "chat_stream %s",
+                _rendered({
+                    "event": "closed",
+                    **identity,
+                    "reason": tally.reason,
+                    "duration_s": closed_at - tally.opened_at,
+                    "events": tally.events,
+                    "heartbeats": tally.heartbeats,
+                    "quiet_s": closed_at - tally.last_event_at,
+                }),
+            )
