@@ -1,10 +1,93 @@
 import Foundation
 import UniformTypeIdentifiers
 
+/// The URLSessions the app's network traffic is split across.
+///
+/// On HTTP/1.1, which the production gateway serves, every open event stream
+/// holds a connection for as long as it lives, and URLSession allows only a few
+/// per host per session. With streams and ordinary requests in one session, a
+/// few open screens fill the pool and every request queues behind them
+/// indefinitely: sends, polls and telemetry alike. Each class of traffic
+/// therefore gets its own pool. See docs/design/mobile-state-sync.md.
+enum ChatNetworkSessions {
+    /// Enough for every stream the app can hold open, with room for reconnects
+    /// that overlap the connection they replace.
+    static let maximumStreamConnections = 16
+    /// Telemetry runs behind everything else and never needs to be parallel.
+    static let maximumTelemetryConnections = 2
+
+    static func streamConfiguration() -> URLSessionConfiguration {
+        let configuration = URLSessionConfiguration.default
+        configuration.httpMaximumConnectionsPerHost = maximumStreamConnections
+        return configuration
+    }
+
+    static func telemetryConfiguration() -> URLSessionConfiguration {
+        let configuration = URLSessionConfiguration.default
+        configuration.httpMaximumConnectionsPerHost = maximumTelemetryConnections
+        return configuration
+    }
+
+    static let streams = session(streamConfiguration())
+    static let telemetry = session(telemetryConfiguration())
+
+    /// Tests intercept traffic with `URLProtocol.registerClass`, which reaches
+    /// only the shared session.
+    private static func session(_ configuration: URLSessionConfiguration) -> URLSession {
+        let isUnderTest = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            || ProcessInfo.processInfo.arguments.contains("--ui-testing")
+        return isUnderTest ? .shared : URLSession(configuration: configuration)
+    }
+}
+
+/// How one request spent its time, from `URLSessionTaskMetrics`. `queuedSeconds`
+/// is the wait before URLSession gave the request a connection, which is the
+/// direct measure of a full connection pool.
+struct ChatRequestTiming: Equatable {
+    let operation: String
+    let queuedSeconds: Double
+    let totalSeconds: Double
+    let networkProtocol: String
+    let reusedConnection: Bool
+}
+
+private final class ChatRequestTimingRecorder: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    private let operation: String
+    private let report: @Sendable (ChatRequestTiming) -> Void
+
+    init(operation: String, report: @escaping @Sendable (ChatRequestTiming) -> Void) {
+        self.operation = operation
+        self.report = report
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didFinishCollecting metrics: URLSessionTaskMetrics
+    ) {
+        guard let transaction = metrics.transactionMetrics.last else {
+            return
+        }
+        let start = metrics.taskInterval.start
+        let assigned = transaction.connectStartDate ?? transaction.requestStartDate ?? metrics.taskInterval.end
+        report(ChatRequestTiming(
+            operation: operation,
+            queuedSeconds: max(0, assigned.timeIntervalSince(start)),
+            totalSeconds: metrics.taskInterval.duration,
+            networkProtocol: transaction.networkProtocolName ?? "unknown",
+            reusedConnection: transaction.isReusedConnection
+        ))
+    }
+}
+
 @MainActor
 struct ChatAPIClient {
     let authManager: AuthManager
     var urlSession: URLSession = .shared
+    /// Long-lived event streams only: see ``ChatNetworkSessions``.
+    var streamSession: URLSession = ChatNetworkSessions.streams
+    /// Receives the timing of the requests a send depends on.
+    var requestTimingObserver: (@Sendable (ChatRequestTiming) -> Void)?
     private static let conversationPageSize = 100
     private static let iso8601Formatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
@@ -268,7 +351,9 @@ struct ChatAPIClient {
         conversationID: String,
         after: Date?,
         limit: Int,
-        includeConversationProfile: Bool = false
+        includeConversationProfile: Bool = false,
+        timeout: TimeInterval? = nil,
+        timedOperation: String? = nil
     ) async throws -> ChatConversationMessagesResponse {
         let encodedID = Self.encodedPathComponent(conversationID)
         var components = URLComponents(
@@ -286,7 +371,11 @@ struct ChatAPIClient {
         guard let url = components?.url else {
             throw ChatAPIError.invalidServerURL
         }
-        let (data, response) = try await authorizedGETWithAuthRetry(url: url)
+        let (data, response) = try await authorizedGETWithAuthRetry(
+            url: url,
+            timeout: timeout,
+            timedOperation: timedOperation
+        )
         try validate(response: response, data: data)
         return try JSONDecoder.chatDecoder.decode(ChatConversationMessagesResponse.self, from: data)
     }
@@ -468,7 +557,11 @@ struct ChatAPIClient {
                 modelTier: modelTier
             )
         )
-        let (startData, startResponse) = try await urlSession.dataExpectingJSON(for: startRequest, authWallError: ChatAPIError.authWall)
+        let (startData, startResponse) = try await urlSession.dataExpectingJSON(
+            for: startRequest,
+            authWallError: ChatAPIError.authWall,
+            delegate: timingDelegate(operation: "start_turn")
+        )
         if (startResponse as? HTTPURLResponse)?.statusCode == 409,
            let conflict = try? JSONDecoder.chatDecoder.decode(ChatTurnConflictResponse.self, from: startData) {
             throw ChatAPIError.turnAlreadyRunning(activeTurnID: conflict.detail.activeTurnID)
@@ -581,7 +674,7 @@ struct ChatAPIClient {
             method: "GET"
         )
         // auth-wall-stream-chokepoint: validatedStreamResponse sniffs the prefix.
-        let (bytes, response) = try await urlSession.bytes(for: request)
+        let (bytes, response) = try await streamSession.bytes(for: request)
         let (initialBytes, iterator) = try await validatedStreamResponse(
             bytes,
             response: response
@@ -722,7 +815,7 @@ struct ChatAPIClient {
         // Callers rely on errors surfacing here so reconnect backoff is not reset
         // for a stream object that immediately fails.
         // auth-wall-stream-chokepoint: validatedStreamResponse sniffs the prefix.
-        let (bytes, response) = try await urlSession.bytes(for: request)
+        let (bytes, response) = try await streamSession.bytes(for: request)
         let (initialBytes, iterator) = try await validatedStreamResponse(
             bytes,
             response: response
@@ -892,13 +985,31 @@ struct ChatAPIClient {
     /// terminal ``AuthManager/authRequired`` state is latched (which drives the
     /// coordinator's `.authRequired` presentation). The view model suppresses the
     /// generic error modal for that error, so a persistent 401 never modals.
-    private func authorizedGETWithAuthRetry(url: URL) async throws -> (Data, URLResponse) {
+    private func timingDelegate(operation: String?) -> URLSessionTaskDelegate? {
+        guard let operation, let requestTimingObserver else {
+            return nil
+        }
+        return ChatRequestTimingRecorder(operation: operation, report: requestTimingObserver)
+    }
+
+    private func authorizedGETWithAuthRetry(
+        url: URL,
+        timeout: TimeInterval? = nil,
+        timedOperation: String? = nil
+    ) async throws -> (Data, URLResponse) {
         // Capture the epoch before the first request so a logout/re-login that
         // completes while the refresh or retried GET is in flight cannot make a
         // stale rejection clear the newly issued credentials.
         let capturedEpoch = authManager.authEpoch
-        let request = try await authManager.authorizedRequest(url: url, method: "GET")
-        let (data, response) = try await urlSession.dataExpectingJSON(for: request, authWallError: ChatAPIError.authWall)
+        var request = try await authManager.authorizedRequest(url: url, method: "GET")
+        if let timeout {
+            request.timeoutInterval = timeout
+        }
+        let (data, response) = try await urlSession.dataExpectingJSON(
+            for: request,
+            authWallError: ChatAPIError.authWall,
+            delegate: timingDelegate(operation: timedOperation)
+        )
         try rejectAuthWall(response: response, data: data)
         guard (response as? HTTPURLResponse)?.statusCode == 401 else {
             return (data, response)
@@ -1538,10 +1649,11 @@ extension URLSession {
     /// endpoint cannot accidentally accept redirected login markup.
     func dataExpectingJSON<E: Error>(
         for request: URLRequest,
-        authWallError: @autoclosure () -> E
+        authWallError: @autoclosure () -> E,
+        delegate: URLSessionTaskDelegate? = nil
     ) async throws -> (Data, URLResponse) {
         // auth-wall-transport-chokepoint: all expected-JSON requests route here.
-        let (data, response) = try await self.data(for: request)
+        let (data, response) = try await self.data(for: request, delegate: delegate)
         try AuthWallDetection.rejectIfLikely(
             response: response,
             data: data,

@@ -90,6 +90,18 @@ final class ErrorReporterTests: XCTestCase {
         XCTAssertEqual(payload.severity, "error")
     }
 
+    func testReportsCarryWhenAndInWhatOrderTheyHappened() {
+        let reporter = makeReporter()
+
+        let first = reporter.stampingOccurrence([:])
+        let second = reporter.stampingOccurrence(["kept": "yes"])
+
+        XCTAssertEqual(second["client_seq"].flatMap(Int.init), first["client_seq"].flatMap(Int.init).map { $0 + 1 })
+        XCTAssertEqual(first["client_session"], second["client_session"])
+        XCTAssertNotNil(first["client_time"])
+        XCTAssertEqual(second["kept"], "yes")
+    }
+
     func testDeliverDeduplicatesWithinWindow() async {
         MockErrorURLProtocol.respond { _ in .init(statusCode: 200) }
         let reporter = makeReporter()

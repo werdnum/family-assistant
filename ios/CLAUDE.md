@@ -39,6 +39,27 @@ See [docs/design/ios_error_reporting.md](../docs/design/ios_error_reporting.md) 
 [src/family_assistant/web/CLAUDE.md](../src/family_assistant/web/CLAUDE.md) for the server side of
 the contract.
 
+### Reading chat breadcrumbs
+
+Every report carries `client_time`, `client_seq` and `client_session`, stamped when it was raised.
+The ring buffer's own timestamp is the time the report reached the server, which can be minutes
+later on a bad network, so order events by `client_seq` within a `client_session`.
+
+Chat breadcrumbs also carry `model_id` and `model_role`, which identify the `ChatViewModel` that
+wrote them; two models following one thread show up as two `model_id` values.
+
+- `Chat.modelLifecycle`: a model was created or released, or its screen was shown or hidden.
+- `Chat.sendStep`: each stage of a send, from the preflight to the server accepting the turn.
+- `Chat.requestTiming`: where a request's time went, including how long it waited for a connection.
+- `Chat.stateAnomaly`: the client saw a state that should not happen.
+
+## HTTP/1.1 Connection Limits
+
+Production Envoy serves HTTP/1.1 only, so each open event stream holds a whole connection. A
+`URLSession` allows six per host by default, and those limits are per session. Long-lived streams
+therefore run on `ChatNetworkSessions.streams`, and telemetry on `ChatNetworkSessions.telemetry`, so
+neither can queue a send behind them. A new stream must use the stream session.
+
 ## Privacy Manifest
 
 `FamilyAssistant/FamilyAssistant/PrivacyInfo.xcprivacy` is a bundled resource of the app target and

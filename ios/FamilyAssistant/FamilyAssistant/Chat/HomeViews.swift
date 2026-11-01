@@ -573,6 +573,8 @@ private struct PushedConversationView: View {
                 }
                 await viewModel.bootstrap()
             }
+            .onAppear { viewModel.setScreenVisible(true) }
+            .onDisappear { viewModel.setScreenVisible(false) }
             .alert(
                 "Chat Error",
                 isPresented: Binding(

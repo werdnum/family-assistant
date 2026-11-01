@@ -1485,6 +1485,24 @@ final class ChatAPIClientTests: XCTestCase {
     }
 }
 
+final class ChatNetworkSessionsTests: XCTestCase {
+    func testStreamsHaveRoomForEveryStreamTheAppCanOpen() {
+        // Two streams per chat model plus overlapping reconnects. The shared
+        // session's per-host limit is the stall this split exists to prevent.
+        XCTAssertGreaterThan(
+            ChatNetworkSessions.streamConfiguration().httpMaximumConnectionsPerHost,
+            URLSessionConfiguration.default.httpMaximumConnectionsPerHost
+        )
+    }
+
+    func testTelemetryStaysOutOfTheStreamPool() {
+        XCTAssertLessThan(
+            ChatNetworkSessions.telemetryConfiguration().httpMaximumConnectionsPerHost,
+            ChatNetworkSessions.streamConfiguration().httpMaximumConnectionsPerHost
+        )
+    }
+}
+
 final class HangingStreamTests: XCTestCase {
     func testFinishNotifiesEveryActiveObserverWithoutAWorkerWait() {
         let stream = HangingStream()
