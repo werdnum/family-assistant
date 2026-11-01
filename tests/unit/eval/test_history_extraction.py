@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from family_assistant.eval import private_paths
+from family_assistant.eval.history_access import read_only_database_url
 from family_assistant.eval.private_paths import (
     PrivateEvalPathError,
     resolve_private_eval_path,
@@ -391,8 +392,7 @@ async def test_history_extraction_does_not_create_a_mistyped_database(
 def test_read_only_url_rewrites_only_file_backed_sqlite(
     url: str, expected: str
 ) -> None:
-    script = _load_history_extraction_script()
-    assert script._read_only_url(url) == expected
+    assert read_only_database_url(url) == expected
 
 
 def test_a_nonempty_output_directory_is_refused(tmp_path: Path) -> None:

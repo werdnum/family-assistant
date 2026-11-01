@@ -1,0 +1,11 @@
+{
+  "domain": "eval_home",
+  "name": "Eval household",
+  "codeowners": [],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/werdnum/family-assistant",
+  "iot_class": "local_push",
+  "requirements": [],
+  "version": "1.0.0"
+}

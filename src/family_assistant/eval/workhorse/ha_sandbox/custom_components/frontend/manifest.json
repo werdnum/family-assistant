@@ -1,0 +1,10 @@
+{
+  "domain": "frontend",
+  "name": "Frontend (sandbox stand-in)",
+  "codeowners": [],
+  "dependencies": [],
+  "documentation": "https://github.com/werdnum/family-assistant",
+  "integration_type": "system",
+  "requirements": [],
+  "version": "1.0.0"
+}
