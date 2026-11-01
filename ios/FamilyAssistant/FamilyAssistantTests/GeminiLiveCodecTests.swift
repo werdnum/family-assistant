@@ -293,6 +293,16 @@ final class GeminiLiveCodecTests: XCTestCase {
         XCTAssertTrue(echo.silencesMic(at: second), "a new session has its own first reply")
     }
 
+    func testMicReturnsWhenAShortFirstReplyEndsInsideTheWindow() {
+        var echo = VoiceEchoConvergence()
+        let start = ContinuousClock.now
+        echo.replyStarted(at: start)
+        XCTAssertTrue(echo.silencesMic(at: start + .milliseconds(300)))
+
+        _ = echo.replyFinished()
+        XCTAssertFalse(echo.silencesMic(at: start + .milliseconds(400)))
+    }
+
     func testEchoLevelsAreSplitAtTheConvergenceWindow() {
         var echo = VoiceEchoConvergence()
         let start = ContinuousClock.now

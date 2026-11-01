@@ -205,7 +205,8 @@ struct VoiceEchoConvergence {
     }
 
     func silencesMic(at now: ContinuousClock.Instant) -> Bool {
-        firstReplyStartedAt.map { now - $0 < Self.window } ?? false
+        guard replyStartedAt != nil, let firstReplyStartedAt else { return false }
+        return now - firstReplyStartedAt < Self.window
     }
 
     mutating func recordCaptured(rms: Double, frames: Int, at now: ContinuousClock.Instant) {
