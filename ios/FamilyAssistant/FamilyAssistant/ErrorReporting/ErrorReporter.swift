@@ -59,6 +59,10 @@ final class ErrorReporter: @unchecked Sendable {
     private var baseURLProvider: (() -> URL?)?
     private var authTokenProvider: (() async throws -> String?)?
     private var recentReports: [String: Date] = [:]
+    private var nextOccurrenceSequence = 0
+    private static let occurrenceTimeFormat = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
+    /// Identifies this launch, so `client_seq` orders reports within it.
+    private static let clientSessionID = String(UUID().uuidString.prefix(8))
 
     /// Cap on spooled reports so a server outage cannot grow the cache without bound.
     private let maxSpooledReports = 50
@@ -66,7 +70,7 @@ final class ErrorReporter: @unchecked Sendable {
     private static var previousExceptionHandler: (@convention(c) (NSException) -> Void)?
 
     init(
-        session: URLSession = .shared,
+        session: URLSession = ChatNetworkSessions.telemetry,
         spoolDirectory: URL? = ErrorReporter.defaultSpoolDirectory,
         dedupeWindow: TimeInterval = 60,
         deliversReports: Bool = true
@@ -108,13 +112,14 @@ final class ErrorReporter: @unchecked Sendable {
     func report(_ error: Error, component: String, errorType: ErrorType = .handled) {
         let message = error.localizedDescription
         let typeName = String(describing: type(of: error))
+        let extraData = stampingOccurrence(["error_type_name": typeName])
         Task { [weak self] in
             await self?.deliver(
                 message: message,
                 component: component,
                 errorType: errorType,
                 stack: nil,
-                extraData: ["error_type_name": typeName]
+                extraData: extraData
             )
         }
     }
@@ -130,16 +135,33 @@ final class ErrorReporter: @unchecked Sendable {
         extraData: [String: String] = [:],
         bypassDedupe: Bool = false
     ) {
+        let stamped = stampingOccurrence(extraData)
         Task { [weak self] in
             await self?.deliver(
                 message: message,
                 component: component,
                 errorType: errorType,
                 stack: stack,
-                extraData: extraData,
+                extraData: stamped,
                 bypassDedupe: bypassDedupe
             )
         }
+    }
+
+    /// Record when and in what order something happened, on this device. The
+    /// server stamps a report when it arrives, which can be long after: a report
+    /// made during a network stall, or spooled across launches, would otherwise
+    /// look as if it happened at delivery.
+    func stampingOccurrence(_ extraData: [String: String]) -> [String: String] {
+        let sequence = lock.withLock {
+            nextOccurrenceSequence += 1
+            return nextOccurrenceSequence
+        }
+        var stamped = extraData
+        stamped["client_time"] = Date().formatted(Self.occurrenceTimeFormat)
+        stamped["client_seq"] = String(sequence)
+        stamped["client_session"] = Self.clientSessionID
+        return stamped
     }
 
     /// Awaitable delivery used by ``report(...)`` and tests. Deduplicates, then sends (spooling on
