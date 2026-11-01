@@ -633,6 +633,14 @@ async def start_thread_tool(
         target_service_id,
         delegation_id,
     )
+    # Otherwise clients learn of the thread only when this Home turn ends.
+    publisher = getattr(
+        exec_context.processing_service, "home_activity_publisher", None
+    )
+    if publisher is not None:
+        await publisher.publish_activity(
+            home_conversation_id, user_id=owner, reason="thread_started"
+        )
     return ToolResult(
         text=(
             f"Started the thread '{title}' on '{target_service_id}'. Tell the user "

@@ -81,7 +81,11 @@ from family_assistant.storage.repositories.turn_feedback import (
 )
 from family_assistant.storage.types import MessageHistoryRow
 from family_assistant.threads.home import viewer_for
-from family_assistant.threads.listing import ThreadSummary, summarize_threads
+from family_assistant.threads.listing import (
+    ThreadSummary,
+    is_quiet,
+    summarize_threads,
+)
 from family_assistant.tools.confirmation import render_tool_confirmation
 from family_assistant.tools.infrastructure import (
     ToolDescriptorProvider,
@@ -631,6 +635,13 @@ class ThreadSummaryResponse(BaseModel):
             "the caller did not write"
         ),
     )
+    quiet: bool = Field(
+        default=False,
+        description=(
+            "A waiting thread the caller has read and that has been idle for "
+            "days: listed apart and not counted as waiting on them"
+        ),
+    )
     source_tool_call_id: str | None = Field(
         default=None, description="The Home tool call that started the thread, if any"
     )
@@ -666,6 +677,12 @@ def thread_summary_response(
         closed_at=summary.closed_at,
         echo_message_id=summary.echo_message_id,
         unread_count=summary.unread_count or 0,
+        quiet=is_quiet(
+            summary.state,
+            unread_count=summary.unread_count,
+            updated_at=summary.updated_at,
+            now=datetime.now(UTC),
+        ),
         source_tool_call_id=summary.source_tool_call_id,
         anchor_message_id=summary.anchor_message_id,
         seed_request=summary.seed_request,
