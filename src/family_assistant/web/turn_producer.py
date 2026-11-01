@@ -61,6 +61,7 @@ from family_assistant.tools.types import (
     ToolExecutionContext,
 )
 from family_assistant.utils.text_normalization import StreamingLatexNormalizer
+from family_assistant.web.chat_telemetry import log_turn_event
 from family_assistant.web.conversation_stream_hub import (
     ConversationStreamHub,
     StreamEvent,
@@ -439,6 +440,12 @@ async def run_turn_producer(
 
         delivered = await hub.wait_for_delivery(
             conversation_id, turn_id, timeout=ack_grace_seconds
+        )
+        log_turn_event(
+            "delivery_wait_finished",
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+            acked=delivered,
         )
         if not delivered:
             # The streaming transaction is already closed; the disconnect-push
@@ -888,9 +895,15 @@ async def _notify_disconnected_reply(
     """
     notifier = getattr(web_chat_interface, "notifier", None)
     if not reply_text or notifier is None:
+        log_turn_event(
+            "push_skipped",
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+            reason="no_reply_text" if not reply_text else "no_notifier",
+        )
         return
     try:
-        await notify_conversation(
+        dispatched = await notify_conversation(
             notifier,
             db_context,
             interface_type=interface_type,
@@ -904,8 +917,16 @@ async def _notify_disconnected_reply(
             ),
         )
     except Exception:
+        log_turn_event("push_failed", conversation_id=conversation_id, turn_id=turn_id)
         logger.warning(
             "Failed to send disconnect push notification for conv=%s",
             conversation_id,
             exc_info=True,
+        )
+    else:
+        log_turn_event(
+            "push_sent" if dispatched else "push_skipped",
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+            reason=None if dispatched else "not_dispatched",
         )
