@@ -20,7 +20,7 @@ See docs/design/mobile-state-sync.md.
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator, Collection
+from collections.abc import AsyncGenerator, AsyncIterator, Collection
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated, Any
@@ -35,6 +35,7 @@ from family_assistant.storage.sync_tracking import sync_wakeup_for
 from family_assistant.storage.types import MessageHistoryRow
 from family_assistant.threads.home import find_home, viewer_for
 from family_assistant.threads.listing import summarize_threads
+from family_assistant.web.chat_telemetry import observed_stream
 from family_assistant.web.conversation_stream_hub import ConversationStreamHub
 from family_assistant.web.dependencies import (
     get_attachment_registry,
@@ -722,7 +723,7 @@ async def sync_stream(
     ctx = await _context(request, current_user, db, attachment_registry)
     query = _query(cursor, focus, fresh, running, focus_seq, limit)
 
-    async def frames() -> AsyncIterator[str]:
+    async def frames() -> AsyncGenerator[str]:
         # Flush the response head at once, so a front door that waits for the
         # first byte does not hold the connection open silently.
         yield "event: heartbeat\ndata: {}\n\n"
@@ -730,7 +731,7 @@ async def sync_stream(
             yield frame
 
     return StreamingResponse(
-        frames(),
+        observed_stream(frames(), kind="sync"),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

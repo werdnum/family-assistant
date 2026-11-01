@@ -89,6 +89,29 @@ See
 [docs/design/ios-frontend-telemetry-lane.md](../../../docs/design/ios-frontend-telemetry-lane.md)
 and [ios/CLAUDE.md](../../../ios/CLAUDE.md), where the split originated.
 
+## Chat Telemetry in the Backend Log
+
+The hub lives in memory and a client's reports can arrive minutes late, so the backend log is the
+durable record of a turn. Stdout reaches the log store with no level filter, so these are at INFO.
+They never carry message content. `web/chat_telemetry.py` writes them.
+
+`chat_turn` lines share a `turn_id`. Their `event` is one of:
+
+- `request_received`, `retry_matched`, `user_message_saved`: `POST /turns` progress. `retry_matched`
+  means a client resent a turn the server already had, and `source` says how it was recognised.
+- `started`, `first_output`, `ended`, `acked`: written by the hub, so they cover every kind of turn.
+  `acked` can come after the push decision, which is how to measure a notification beating the app.
+- `delivery_wait_finished`, `push_sent`, `push_skipped`, `push_failed`: the disconnect push
+  decision.
+
+`chat_stream` lines record `opened` and `closed` for each client stream. `closed` carries `reason`
+(`finished`, `client_gone`, `error`, or the reason from a `stream_dropped` frame), the duration, how
+many event and heartbeat frames were written, and how long the stream had been quiet. A new
+long-lived stream must go through `observed_stream`.
+
+`frontend.telemetry` lines hold each breadcrumb as JSON, which outlasts the ring buffer. Order them
+by the client's own `client_seq`, because the line's timestamp is arrival time.
+
 ## Dependency Injection
 
 Use FastAPI dependencies for shared resources:
