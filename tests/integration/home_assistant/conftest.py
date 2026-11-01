@@ -16,6 +16,8 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 import pytest
 import requests
 
+from tests.integration.home_assistant.bulk_entities import BULK_ENTITY_ID_PREFIX
+
 # Import VCR compatibility patch (autouse fixture activates automatically)
 from tests.integration.home_assistant.vcr_patches import (
     patch_vcr_mock_client_response,
@@ -53,6 +55,11 @@ def vcr_config() -> dict[str, Any]:
             request.host == "localhost"
             and request.port == 8123
             and request.path in {"/api/", "/api/onboarding/users", "/auth/token"}
+        ):
+            return None
+        # Bulk entities a test creates and removes around its own requests
+        if request.path.startswith(f"/api/states/{BULK_ENTITY_ID_PREFIX}") and (
+            request.method in {"POST", "DELETE"}
         ):
             return None
 
