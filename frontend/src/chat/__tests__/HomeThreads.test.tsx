@@ -555,6 +555,26 @@ describe('Thread state, unread and echoes', () => {
     expect(screen.getByTestId('home-waiting-count')).toHaveTextContent('2 waiting');
   });
 
+  it('lists working threads first and a quiet thread apart from those waiting', async () => {
+    serveThreads([
+      QUOTES,
+      thread({ conversation_id: 'web_conv_old', title: 'Old', state: 'waiting', quiet: true }),
+      thread({ conversation_id: 'web_conv_flights', title: 'Flights', state: 'working' }),
+    ]);
+
+    await renderChatApp({ waitForReady: true });
+
+    expect(
+      within(await screen.findByTestId('thread-group-quiet')).getByTestId(
+        'thread-item-web_conv_old'
+      )
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByTestId(/^thread-group-/).map((group) => group.getAttribute('data-testid'))
+    ).toEqual(['thread-group-working', 'thread-group-waiting', 'thread-group-quiet']);
+    expect(screen.getByTestId('home-waiting-count')).toHaveTextContent('1 waiting');
+  });
+
   it('marks Home read through its newest message once it is on screen', async () => {
     const threads = serveThreads();
 

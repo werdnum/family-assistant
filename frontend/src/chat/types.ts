@@ -32,6 +32,8 @@ export interface ThreadSummary {
   echo_message_id?: number | null;
   /** Messages in the thread the caller has not read. */
   unread_count?: number;
+  /** Waiting, but read and idle for days, so no longer asking for attention. */
+  quiet?: boolean;
   /** The Home tool call that started the thread, if any. */
   source_tool_call_id?: string | null;
   /** The Home message the user continued the thread from, for its "Started from" quote. */
