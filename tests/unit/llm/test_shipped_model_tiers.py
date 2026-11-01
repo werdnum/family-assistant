@@ -79,7 +79,6 @@ def test_standard_tier_falls_back_to_sonnet_at_medium_effort(
     "profile_id",
     [
         pytest.param("default_assistant", id="default-assistant"),
-        pytest.param("camera_analyst", id="camera-analyst"),
         pytest.param("engineer", id="engineer"),
     ],
 )

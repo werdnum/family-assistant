@@ -57,10 +57,6 @@ service_profiles:
     processing_config:
       provider: "openai"
       llm_model: "deepseek/deepseek-v4-flash"
-  - id: "artist"
-    processing_config:
-      provider: "openai"
-      llm_model: "deepseek/deepseek-v4-flash"
   - id: "complex_tasks"
     processing_config:
       provider: "openai"
@@ -75,16 +71,6 @@ service_profiles:
     processing_config:
       provider: "openai"
       llm_model: "deepseek/deepseek-v4-flash"
-  # camera_analyst pins its model via retry_config, which takes precedence over
-  # llm_model/provider. Override the retry_config itself: single cheap primary,
-  # no fallback.
-  - id: "camera_analyst"
-    processing_config:
-      retry_config:
-        primary:
-          provider: "openai"
-          model: "deepseek/deepseek-v4-flash"
-        fallback: null
 
 email_intake:
   # The email webhook is the main untrusted-input channel. It is inert without

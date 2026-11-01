@@ -88,11 +88,11 @@ Restrict a skill to specific processing profiles:
 name: Data Analysis Workflow
 description: Step-by-step guide for analyzing datasets with charts.
 visibility_labels:
-  - data_visualization
+  - research
 ---
 ```
 
-This skill would only appear in the catalog for sessions using the `data_visualization` profile.
+This skill would only appear in the catalog for sessions using the `research` profile.
 
 ## Built-in vs User Skills
 
