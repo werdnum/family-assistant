@@ -22,6 +22,7 @@ if TYPE_CHECKING:
         ThreadClose,
     )
 
+# CI control run: this comment only triggers the backend jobs.
 ThreadState = Literal["working", "waiting", "done", "failed"]
 
 _ACTIVE_RUN_STATUSES = frozenset({

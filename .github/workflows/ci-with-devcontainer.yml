@@ -418,7 +418,7 @@ jobs:
                 echo "No pre-built frontend assets found at /opt/frontend-dist"; \
               fi && \
               mkdir -p test-results && \
-              .venv/bin/python scripts/run_pytest_adaptive.py -q --timeout=300 --db sqlite -m "not postgres and not playwright and not llm_integration and not gemini_live" \
+              { (sleep 720; .venv/bin/python scripts/ci_hang_diag.py; sleep 300; .venv/bin/python scripts/ci_hang_diag.py) & true; } && .venv/bin/python scripts/run_pytest_adaptive.py -q --timeout=300 --db sqlite -m "not postgres and not playwright and not llm_integration and not gemini_live" \
                 --json-report --json-report-file=test-results/backend-sqlite-report.json'
       - name: Summarize backend test results (SQLite)
         if: always()
