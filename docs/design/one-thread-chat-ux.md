@@ -212,6 +212,12 @@ one chokepoint**, so a path added later can't skip a rule. It applies three rule
 - **Done:** the thread's assistant ends the job with a tool call, or the user marks it done.
 - **Waiting on you:** anything else. The thread is not working, failed or done, so the next move is
   the user's. Every thread is always in exactly one state.
+- **Quiet is how a waiting thread is listed once it has stopped asking.** Waiting is a catch-all: it
+  holds every thread nobody closed, including all those on profiles that cannot call
+  `finish_thread`. A waiting thread the viewer has read, with nothing new for three days, is listed
+  apart under Quiet and leaves the waiting count. It is still waiting, so the assistant sees no
+  difference, and anything new in it brings it back. The server decides, per viewer, so clients
+  agree.
 - **A done thread reopens when something new arrives in it.** That could be a reminder or callback
   it scheduled, a late delegation result, or a user message. The day the plumber comes is the same
   thread, not a new one. The thread goes back to working or waiting, its card and switcher row
@@ -407,6 +413,11 @@ and each path is governed:
   is retried only when a newer message arrives, never in a loop. "At the bottom" comes from the
   scroll view's own visibility report, which iOS 17 lacks. There it falls back to the bottom of the
   transcript having appeared, which can stay true after scrolling up within the loaded page.
+
+- **A thread the user starts has no card in Home.** Cards are drawn from `start_thread` calls, and a
+  user-started thread has none, so until it finishes Home shows it only in iOS's working bar and the
+  web sidebar. That bar lists what is running, whichever way it started, rather than adding a second
+  kind of row to Home's history.
 
 - **iOS starts threads, not conversations.** Where Home exists, the app offers no way to create a
   legacy conversation: the pencil on Home and on the switcher starts a thread, and a "new chat"

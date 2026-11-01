@@ -244,12 +244,13 @@ background doesn't mark anything read, so the count is still there when you come
 counts are your own: someone else in the household reading a thread doesn't clear yours.
 
 The sidebar lists **Home** first, with a count of the threads waiting on you, then your threads
-grouped by where they stand, with whatever needs you at the top. Each thread shows its unread count,
-and one you closed yourself says so. Conversations from before threads, and any you start with the
-new-chat button, are listed under **Earlier**. Searching looks through all of them, and matches
-words said anywhere in a conversation, not just its latest message: every word you type must start a
-word somewhere in the chat, and each result shows a snippet of where it matched. The iOS chat list
-searches the same way.
+grouped by where they stand: **Working**, **Waiting on you**, **Failed**, **Quiet** and **Done**. A
+thread you've read that has had nothing new for three days is listed under **Quiet**, not counted as
+waiting, until something new arrives in it. Each thread shows its unread count, and one you closed
+yourself says so. Conversations from before threads, and any you start with the new-chat button, are
+listed under **Earlier**. Searching looks through all of them, and matches words said anywhere in a
+conversation, not just its latest message: every word you type must start a word somewhere in the
+chat, and each result shows a snippet of where it matched. The iOS chat list searches the same way.
 
 ### Voice
 
@@ -363,17 +364,23 @@ label; tap the label to open that thread. Tap a card to open the thread; Back re
 where you left it. A thread keeps its own profile, so it has no profile picker, and its top shows
 the request the assistant started it with. To close a thread yourself, choose **Mark Done** from the
 **…** menu at the top of the thread, or long-press its card in Home. It's offered while the thread
-is **Waiting on you** or **Failed**; a thread that is still working can be marked done once it
-stops. It reopens by itself when something new arrives in it.
+is **Waiting on you**, **Quiet** or **Failed**; a thread that is still working can be marked done
+once it stops. It reopens by itself when something new arrives in it. In the chat list, swipe a
+thread left to mark it done.
+
+While a thread is working, a bar at the top of Home shows it; tap to open it, or to open the chat
+list when several are running. A thread you've read that has had nothing new for three days moves
+from **Waiting on you** to **Quiet** and stops counting towards the number on the **Chats** button.
+Anything new in it brings it back.
 
 Home and threads count as read once you have scrolled to their newest message with the app open, so
 opening a thread clears its unread count. The **Chats** button at the top right counts threads
-waiting on you. It opens the chat list: Home, then your threads grouped as **Waiting on you**,
-**Working**, **Failed** and **Done**, then your conversations from before threads under **Earlier**.
-Those can still be read and continued, each with the profile it already has. The list also has
-search. Something you share into the app lands in Home's composer, and the **New Chat** quick action
-opens Home ready to type. An intelligence level picked in Home applies to that one message. See
-[Home and threads](#home-and-threads) for how threads work.
+waiting on you. It opens the chat list: Home, then your threads grouped as **Working**, **Waiting on
+you**, **Failed**, **Quiet** and **Done**, then your conversations from before threads under
+**Earlier**. Those can still be read and continued, each with the profile it already has. The list
+also has search. Something you share into the app lands in Home's composer, and the **New Chat**
+quick action opens Home ready to type. An intelligence level picked in Home applies to that one
+message. See [Home and threads](#home-and-threads) for how threads work.
 
 You can start and fill threads yourself:
 
