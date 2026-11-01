@@ -123,6 +123,16 @@ endpoint's behaviour for existing callers is unchanged.
   constant, not a setting: the model passes its own `limit` when it wants fewer, and an operator has
   no reason to tune it.
 
+## What a voice session is told
+
+The chat system prompt describes a different agent: one that activates tools, formats Markdown and
+can spend a turn exploring. `default_assistant` therefore has a short `voice_system_prompt` of its
+own. It says what a session can reach and how to look before refusing: skills, then the catalog,
+then the household's notes. Work that needs many steps goes to `delegate_to_service`, targeting the
+same profile, because that runs the full chat assistant and needs no list of what voice can do. A
+profile without a voice prompt keeps its chat one, so a profile's own instructions are never
+replaced by a prompt written for another.
+
 ## Deliberate simplifications
 
 - **No activation state in a live session.** A hidden tool stays hidden for the session's life;
