@@ -1875,7 +1875,10 @@ final class ChatViewModel {
     /// and no tool calls is how a turn finishes.
     static func repliedTurnIDs(in messages: [ChatMessage]) -> Set<String> {
         Set(messages.lazy
-            .filter { $0.id.hasPrefix("msg_") && $0.role == .assistant && $0.toolCalls.isEmpty && !$0.text.isEmpty }
+            .filter { message in
+                message.id.hasPrefix("msg_") && message.role == .assistant && message.status != .failed
+                    && message.toolCalls.isEmpty && !message.text.isEmpty
+            }
             .compactMap(\.turnID))
     }
 

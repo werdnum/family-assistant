@@ -8938,6 +8938,51 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertNil(model.failedSend(for: reply))
     }
 
+    func testASavedErrorKeepsRetryOnASendThatLostItsResponse() async throws {
+        // The server ran the turn and it failed. The saved row is the failure, so
+        // Retry stays even though the client never saw the stream.
+        let turnIDs = AtomicStringList()
+        let replySaved = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                turnIDs.append(try XCTUnwrap(payload["turn_id"] as? String))
+                throw URLError(.timedOut)
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_saved_error/messages"):
+                if replySaved.value == 0 {
+                    return .json(
+                        #"{"conversation_id":"web_conv_saved_error","messages":[{"internal_id":1,"role":"user","content":"Earlier","timestamp":"2026-06-08T12:00:00Z"}],"count":1,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                    )
+                }
+                let turnID = turnIDs.values.first ?? ""
+                return .json(
+                    #"{"conversation_id":"web_conv_saved_error","messages":[{"internal_id":5,"role":"assistant","content":"It broke","error_traceback":"Traceback","turn_id":"\#(turnID)","timestamp":"2099-06-08T12:06:00Z"}],"count":1,"total_messages":2,"has_more_before":false,"has_more_after":false}"#
+                )
+            case ("GET", "/api/v1/chat/conversations/web_conv_saved_error/stream"):
+                return .text("")
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_saved_error")
+        await model.selectConversation("web_conv_saved_error")
+        model.draftText = "Hi"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming && !model.failedSends.isEmpty }
+
+        replySaved.increment()
+        model.pushHintReceived(conversationID: "web_conv_saved_error")
+        try await waitUntil { model.messages.contains { $0.text == "It broke" } }
+
+        let reply = try XCTUnwrap(model.messages.first { $0.text == "It broke" })
+        XCTAssertNotNil(model.failedSend(for: reply))
+    }
+
     func testHidingAScreenReleasesAModelWithASendRunning() async throws {
         // A running send's transport holds its model strongly, so a closed thread
         // would keep its streams open with no screen to tell it about the app's
