@@ -30,11 +30,14 @@ protocol VoiceAudioIO: AnyObject {
     func flushPlayback()
     /// Mute or unmute the microphone without tearing down the session.
     func setMuted(_ muted: Bool)
-    /// Whether captured audio is currently turned down because assistant audio
-    /// is playing (see ``VoiceMicDucking``).
+    /// Whether assistant audio is playing or its echo tail has yet to pass, which
+    /// is when captured audio is turned down (see ``VoiceMicDucking``).
     var isDucked: Bool { get }
     /// Where audio is going right now, and whether echo cancellation is on.
     var routeSnapshot: VoiceAudioRouteSnapshot { get }
+    /// Called on the main thread when assistant audio has stopped playing: the
+    /// queue drained or was discarded and the echo tail has passed.
+    var onPlaybackFinished: (() -> Void)? { get set }
     /// Called on the main thread with breadcrumbs about the audio path (route
     /// changes, interruptions) and with failures that do not end the session
     /// but degrade it, which are passed with their error.
@@ -86,9 +89,17 @@ struct VoiceMicDucking {
         return isDucked ? releaseToken : nil
     }
 
-    mutating func release(token: Int) {
-        guard token == releaseToken, pendingBuffers == 0 else { return }
+    /// Returns whether this ended the ducking; a stale token leaves it alone.
+    @discardableResult
+    mutating func release(token: Int) -> Bool {
+        guard isDucked, token == releaseToken, pendingBuffers == 0 else { return false }
         isDucked = false
+        return true
+    }
+
+    /// Whether a buffer from `generation` is one a flush has not discarded.
+    func isCurrent(generation: Int) -> Bool {
+        generation == self.generation
     }
 
     mutating func reset() {
@@ -107,6 +118,128 @@ struct VoiceMicDucking {
                 samples[index] = Int16(Float(samples[index]) * gain)
             }
         }
+    }
+}
+
+/// Linear fade-in for assistant audio that starts after silence. Apple's echo
+/// canceller takes about 200 ms to converge on what is playing, and what it has
+/// not yet converged on reaches the microphone. Starting quietly keeps that echo
+/// small: https://developer.apple.com/forums/thread/829784
+struct VoicePlaybackRamp {
+    static let frameCount = Int(VoiceAudioFormat.outputSampleRate / 4)
+
+    private var position = Self.frameCount
+
+    mutating func restart() {
+        position = 0
+    }
+
+    /// Scales samples in place, continuing across the chunks a reply arrives in.
+    mutating func apply(to samples: UnsafeMutableBufferPointer<Int16>) {
+        for index in samples.indices {
+            guard position < Self.frameCount else { return }
+            samples[index] = Int16(Float(samples[index]) * Float(position) / Float(Self.frameCount))
+            position += 1
+        }
+    }
+}
+
+/// What a session does and measures while the echo canceller converges: the
+/// microphone sends silence for ``window`` of the session's first reply, the one
+/// the canceller has never heard, and each reply's microphone and played levels
+/// are kept apart for ``window`` and for the rest of the reply.
+///
+/// Timed from scheduling the reply's first buffer, which precedes hearing it by
+/// the route's output latency. Mic levels are taken before ducking and silencing,
+/// because what the canceller let through is the question they answer.
+struct VoiceEchoConvergence {
+    static let window: Duration = .milliseconds(500)
+
+    private struct Levels {
+        var micEnergy = 0.0
+        var micFrames = 0
+        var micPeak = 0.0
+        var playedEnergy = 0.0
+        var playedFrames = 0
+
+        mutating func addMic(rms: Double, frames: Int) {
+            micEnergy += rms * rms * Double(frames)
+            micFrames += frames
+            micPeak = max(micPeak, rms)
+        }
+
+        mutating func addPlayed(rms: Double, frames: Int) {
+            playedEnergy += rms * rms * Double(frames)
+            playedFrames += frames
+        }
+
+        func fields(suffix: String) -> [String: String] {
+            var fields: [String: String] = [:]
+            if micFrames > 0 {
+                fields["mic_rms_dbfs_\(suffix)"] = Self.dBFS((micEnergy / Double(micFrames)).squareRoot())
+                fields["mic_peak_dbfs_\(suffix)"] = Self.dBFS(micPeak)
+            }
+            if playedFrames > 0 {
+                fields["played_rms_dbfs_\(suffix)"] = Self.dBFS((playedEnergy / Double(playedFrames)).squareRoot())
+            }
+            return fields
+        }
+
+        private static func dBFS(_ rms: Double) -> String {
+            String(format: "%.1f", 20 * log10(max(rms, 0.00001)))
+        }
+    }
+
+    private var firstReplyStartedAt: ContinuousClock.Instant?
+    private var replyStartedAt: ContinuousClock.Instant?
+    private var replyIndex = 0
+    private var converging = Levels()
+    private var converged = Levels()
+
+    mutating func replyStarted(at now: ContinuousClock.Instant) {
+        replyIndex += 1
+        replyStartedAt = now
+        firstReplyStartedAt = firstReplyStartedAt ?? now
+        converging = Levels()
+        converged = Levels()
+    }
+
+    func silencesMic(at now: ContinuousClock.Instant) -> Bool {
+        guard replyStartedAt != nil, let firstReplyStartedAt else { return false }
+        return now - firstReplyStartedAt < Self.window
+    }
+
+    mutating func recordCaptured(rms: Double, frames: Int, at now: ContinuousClock.Instant) {
+        guard let replyStartedAt else { return }
+        if now - replyStartedAt < Self.window {
+            converging.addMic(rms: rms, frames: frames)
+        } else {
+            converged.addMic(rms: rms, frames: frames)
+        }
+    }
+
+    /// `now` is when the buffer finished playing, so a buffer counts wholly on
+    /// the side of ``window`` it ends on.
+    mutating func recordPlayed(rms: Double, frames: Int, at now: ContinuousClock.Instant) {
+        guard let replyStartedAt else { return }
+        if now - replyStartedAt < Self.window {
+            converging.addPlayed(rms: rms, frames: frames)
+        } else {
+            converged.addPlayed(rms: rms, frames: frames)
+        }
+    }
+
+    /// Ends the reply and returns its levels as telemetry fields.
+    mutating func replyFinished() -> [String: String] {
+        var fields = ["reply_index": String(replyIndex)]
+        fields.merge(converging.fields(suffix: "first_500ms")) { _, new in new }
+        fields.merge(converged.fields(suffix: "after_500ms")) { _, new in new }
+        replyStartedAt = nil
+        return fields
+    }
+
+    mutating func reset() {
+        self = VoiceEchoConvergence()
     }
 }
 
@@ -269,6 +402,7 @@ final class VoiceAudioEngine: VoiceAudioIO {
     private struct TapState {
         var muted = false
         var ducking = VoiceMicDucking()
+        var echo = VoiceEchoConvergence()
         var converter: StreamingPCMConverter?
         var onCaptured: (@Sendable (Data) -> Void)?
         var onInputLevel: (@Sendable (Double) -> Void)?
@@ -291,6 +425,8 @@ final class VoiceAudioEngine: VoiceAudioIO {
 
     var onEngineFailure: ((Error) -> Void)?
 
+    var onPlaybackFinished: (() -> Void)?
+
     var onDiagnostic: ((String, [String: String], Error?) -> Void)?
 
     // Recreated on a media-services reset (which invalidates every audio object),
@@ -298,6 +434,7 @@ final class VoiceAudioEngine: VoiceAudioIO {
     private var engine = AVAudioEngine()
     private var playerNode = AVAudioPlayerNode()
     private let playbackFormat: AVAudioFormat
+    private var playbackRamp = VoicePlaybackRamp()
     private let tapState = OSAllocatedUnfairLock(initialState: TapState())
     private let logger = Logger(subsystem: "com.familyassistant.app", category: "voice-audio")
     private var isRunning = false
@@ -400,15 +537,20 @@ final class VoiceAudioEngine: VoiceAudioIO {
 
         input.installTap(onBus: 0, bufferSize: 2048, format: inputFormat) { [weak self] buffer, _ in
             guard let self else { return }
-            let (muted, ducked, converter, audioCallback, levelCallback) = self.tapState.withLock {
-                $0.lastCaptureAt = .now
-                $0.captureCount &+= 1
-                return ($0.muted, $0.ducking.isDucked, $0.converter, $0.onCaptured, $0.onInputLevel)
+            let now = ContinuousClock.now
+            let (muted, gain, converter, audioCallback, levelCallback) = self.tapState.withLock { state in
+                state.lastCaptureAt = now
+                state.captureCount &+= 1
+                let gain: Float = state.echo.silencesMic(at: now) ? 0
+                    : state.ducking.isDucked ? VoiceMicDucking.duckedGain : 1
+                return (state.muted, gain, state.converter, state.onCaptured, state.onInputLevel)
             }
             guard !muted, let converter, var data = converter.convertToData(buffer) else { return }
-            if ducked {
-                VoiceMicDucking.apply(gain: VoiceMicDucking.duckedGain, toPCM16: &data)
+            let capturedRMS = Self.rms(forPCM16: data)
+            self.tapState.withLock {
+                $0.echo.recordCaptured(rms: capturedRMS, frames: data.count / MemoryLayout<Int16>.size, at: now)
             }
+            VoiceMicDucking.apply(gain: gain, toPCM16: &data)
             levelCallback?(Self.normalizedLevel(forPCM16: data))
             audioCallback?(data)
         }
@@ -444,6 +586,7 @@ final class VoiceAudioEngine: VoiceAudioIO {
             $0.converter = nil
             $0.lastCaptureAt = nil
             $0.ducking.reset()
+            $0.echo.reset()
         }
         if activation.isSelfManaged {
             try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
@@ -452,16 +595,38 @@ final class VoiceAudioEngine: VoiceAudioIO {
 
     func enqueue(_ pcm24k: Data) {
         guard isRunning,
-              let buffer = PCMConverter.makeBuffer(pcm16: pcm24k, sampleRate: VoiceAudioFormat.outputSampleRate)
+              let buffer = PCMConverter.makeBuffer(pcm16: pcm24k, sampleRate: VoiceAudioFormat.outputSampleRate),
+              let channel = buffer.int16ChannelData
         else {
             return
         }
-        let generation = tapState.withLock { $0.ducking.bufferScheduled() }
+        let samples = UnsafeMutableBufferPointer(start: channel[0], count: Int(buffer.frameLength))
+        // Still ducked means a gap too short for the release delay, which is an
+        // underrun inside a reply rather than a new start.
+        let now = ContinuousClock.now
+        let (generation, startsAfterSilence) = tapState.withLock { state in
+            let startsAfterSilence = !state.ducking.isDucked
+            if startsAfterSilence {
+                state.echo.replyStarted(at: now)
+            }
+            return (state.ducking.bufferScheduled(), startsAfterSilence)
+        }
+        if startsAfterSilence {
+            playbackRamp.restart()
+        }
+        playbackRamp.apply(to: samples)
+        let playedRMS = Self.rms(of: UnsafeBufferPointer(samples))
+        let playedFrames = samples.count
         // `.dataPlayedBack`, not the default: the default fires when the data is
         // consumed, which can precede hearing it by the route's output latency.
         playerNode.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
             guard let self else { return }
-            let token = self.tapState.withLock { $0.ducking.bufferFinished(generation: generation) }
+            let token = self.tapState.withLock { state in
+                if state.ducking.isCurrent(generation: generation) {
+                    state.echo.recordPlayed(rms: playedRMS, frames: playedFrames, at: .now)
+                }
+                return state.ducking.bufferFinished(generation: generation)
+            }
             self.scheduleDuckingRelease(token: token)
         }
         if !playerNode.isPlaying {
@@ -498,8 +663,23 @@ final class VoiceAudioEngine: VoiceAudioIO {
         guard let token else { return }
         Task { [weak self] in
             try? await Task.sleep(for: VoiceMicDucking.releaseDelay)
-            self?.tapState.withLock { $0.ducking.release(token: token) }
+            guard let self else { return }
+            let echoLevels = self.tapState.withLock { state -> [String: String]? in
+                state.ducking.release(token: token) ? state.echo.replyFinished() : nil
+            }
+            guard let echoLevels else { return }
+            DispatchQueue.main.async { [weak self] in
+                self?.playbackDidFinish(echoLevels: echoLevels)
+            }
         }
+    }
+
+    private func playbackDidFinish(echoLevels: [String: String]) {
+        guard isRunning else { return }
+        var fields = echoLevels
+        fields["output_volume"] = String(format: "%.2f", AVAudioSession.sharedInstance().outputVolume)
+        recordAudioEvent("audio_echo_levels", fields: fields)
+        onPlaybackFinished?()
     }
 
     var routeSnapshot: VoiceAudioRouteSnapshot {
@@ -537,19 +717,21 @@ final class VoiceAudioEngine: VoiceAudioIO {
     }
 
     private static func normalizedLevel(forPCM16 data: Data) -> Double {
-        guard data.count >= MemoryLayout<Int16>.size else { return 0 }
-        let sampleCount = data.count / MemoryLayout<Int16>.size
-        let sumSquares = data.withUnsafeBytes { rawBuffer -> Double in
-            guard let samples = rawBuffer.bindMemory(to: Int16.self).baseAddress else { return 0 }
-            var total = 0.0
-            for index in 0 ..< sampleCount {
-                let sample = Double(samples[index]) / Double(Int16.max)
-                total += sample * sample
-            }
-            return total
+        min(1.0, rms(forPCM16: data) * 8.0)
+    }
+
+    private static func rms(forPCM16 data: Data) -> Double {
+        data.withUnsafeBytes { rms(of: $0.bindMemory(to: Int16.self)) }
+    }
+
+    private static func rms(of samples: UnsafeBufferPointer<Int16>) -> Double {
+        guard !samples.isEmpty else { return 0 }
+        var total = 0.0
+        for sample in samples {
+            let value = Double(sample) / Double(Int16.max)
+            total += value * value
         }
-        let rms = sqrt(sumSquares / Double(sampleCount))
-        return min(1.0, rms * 8.0)
+        return sqrt(total / Double(samples.count))
     }
 
     // MARK: - Configuration changes, interruptions & resets
@@ -758,6 +940,8 @@ final class SimulatorVoiceAudioIO: VoiceAudioIO {
     }
 
     var onEngineFailure: ((Error) -> Void)?
+
+    var onPlaybackFinished: (() -> Void)?
 
     private let state = OSAllocatedUnfairLock(initialState: State())
     private var captureTask: Task<Void, Never>?
