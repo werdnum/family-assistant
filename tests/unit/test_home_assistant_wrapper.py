@@ -10,6 +10,10 @@ import pytest_asyncio
 from homeassistant_api.models.domains import Domain
 
 from family_assistant.plugins.home_assistant.client import HomeAssistantClientWrapper
+from tests.mocks.home_assistant_client import (
+    make_home_assistant_client,
+    serve_entities,
+)
 
 
 @pytest_asyncio.fixture
@@ -91,3 +95,33 @@ async def test_entity_histories_filters_by_entity_id(
     assert url == "history/period/2026-09-23T12:00:00+00:00"
     assert "filter_entity_id=person.test" in kwargs["params"]
     assert "end_time=2026-09-30T12%3A00%3A01%2B00%3A00" in kwargs["params"]
+
+
+@pytest.mark.asyncio
+async def test_entity_list_fits_home_assistant_output_limit_on_a_large_install() -> (
+    None
+):
+    """Every entity is listed even when one render of them all would exceed HA's limit.
+
+    Home Assistant rejects a template whose output is longer than
+    MAX_TEMPLATE_OUTPUT_CHARS; the fake renderer enforces the same limit.
+    """
+    entities = [
+        {
+            "entity_id": f"sensor.upstairs_bedroom_climate_sensor_{n}_temperature",
+            "name": f"Upstairs Bedroom Climate Sensor {n} Temperature",
+            "area_name": "Upstairs Bedroom" if n % 2 else None,
+            "device_id": f"{n:032x}",
+            "device_name": f"Upstairs Bedroom Climate Sensor {n}",
+            "device_class": "temperature" if n % 3 else None,
+        }
+        for n in range(2500)
+    ]
+    home_assistant = make_home_assistant_client()
+    serve_entities(home_assistant.api, entities)
+
+    listed = await home_assistant.wrapper.async_get_entity_list_with_metadata()
+
+    assert sorted(listed, key=lambda e: e["entity_id"]) == sorted(
+        entities, key=lambda e: str(e["entity_id"])
+    )
