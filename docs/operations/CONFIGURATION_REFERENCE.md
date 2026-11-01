@@ -4517,6 +4517,9 @@ That is the complete list. Any other placeholder is an error, and every profile'
 once at startup, so a template naming an unknown one fails the boot rather than the first
 conversation with that profile. Escape literal braces as `{{` and `}}`.
 
+A profile's `voice_system_prompt` replaces its `system_prompt` in browser, iOS and watch voice
+sessions, and takes the same placeholders. A profile without one uses its `system_prompt` there too.
+
 > **⚠️ BREAKING CHANGE for custom prompts**: `{current_time}` and `{aggregated_other_context}` are
 > no longer template variables. Each user message carries the time it was sent, and the context
 > providers' output is appended to the system prompt, so that the system prompt and conversation
