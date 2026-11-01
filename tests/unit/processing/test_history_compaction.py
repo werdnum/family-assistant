@@ -271,14 +271,14 @@ def test_a_compacted_turn_keeps_the_request_stubs_and_answer() -> None:
     )
 
 
-def test_compacting_a_turn_keeps_its_activations() -> None:
+def test_compacting_a_turn_ends_its_activations() -> None:
+    """The instructions that came with a tool are gone, so the tool goes too."""
     turn = _tool_turn()
+    assert activated_tool_names([row.message for row in turn])
 
     rendered = render_compacted_turn(turn, ZoneInfo("UTC"))
 
-    assert activated_tool_names(rendered) == activated_tool_names([
-        row.message for row in turn
-    ])
+    assert not activated_tool_names(rendered)
 
 
 def test_compacting_a_turn_does_not_reduce_its_taint() -> None:
