@@ -93,10 +93,10 @@ compaction events the history window makes no edits to the prompt, only appends.
   response output an adapter would otherwise prefer over the messages), so every adapter renders it
   from its compacted messages.
 - **Tool activations follow their turn.** Under append-only prompts the active tool set comes from
-  the activating messages in history, and an activation lasts until the window drops the message
-  that made it. A compacted turn keeps its activations (the stub carries them); a turn that is
-  dropped, whether for budget or age, takes its activations with it, as `append-only-prompt.md`
-  specifies, and the model can activate them again.
+  the activating messages in history, and an activation lasts as long as the message that made it,
+  as `append-only-prompt.md` specifies. Compacting a turn ends its activations just as dropping it
+  does, because the skill's instructions that explained those tools are gone. An event already
+  rebuilds the window, so it costs no extra cache miss, and the model can activate them again.
 - **The emergency fallback** becomes a compaction event at a smaller budget through the same
   renderer, and `prune_messages_for_context` is deleted. It is the one event that can run inside a
   tool round, where today's retry runs.
@@ -182,10 +182,10 @@ today. Window taint is computed over the rendered window by the same loader on e
    turns keeps the previous request, and that two consecutive turns with no event between them
    render as strict prefix plus append.
 2. **Compaction events and rendering**, including attachment references, thinking stripped from kept
-   Claude turns, activations kept by compacted turns, and the emergency fallback moved onto the
-   renderer. Verified by tests that compacting a turn does not change the active tool set or reduce
-   taint relative to the verbatim turns, a compacted history renders as stubs, and is accepted, on
-   each provider adapter, and the cached-token share in diagnostics does not regress.
+   Claude turns, and the emergency fallback moved onto the renderer. Verified by tests that
+   compacting a turn does not reduce taint relative to the verbatim turns, a compacted history
+   renders as stubs, and is accepted, on each provider adapter, and the cached-token share in
+   diagnostics does not regress.
 3. **Jev relevance and Auto in shadow mode.** Probabilities and tier choices are logged beside the
    current behaviour. Verified against whether the model then called `get_message_history`, whether
    the user had to repeat themselves, and the outcomes Auto shadow mode already records; it switches

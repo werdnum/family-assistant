@@ -14,7 +14,9 @@ profile's ordinary provider chain, so ``call_tool`` dispatches the inner call
 back into that chain and inherits policy evaluation, taint tracking, tool-call
 review and metrics unchanged. Any name that is not a meta-tool is delegated
 untouched, which is what lets a single provider serve both the declaration list
-and every execution a live session performs.
+and every execution a live session performs. The one result it rewrites is a
+skill's ``get_note``: a skill cannot activate its tools here, so it hands over
+what the model needs to run them through ``call_tool`` instead.
 
 See docs/design/voice-mode-on-demand-tools.md.
 """
@@ -49,6 +51,17 @@ LIVE_META_TOOL_NAMES = frozenset({SEARCH_TOOLS_TOOL_NAME, CALL_TOOL_TOOL_NAME})
 
 DEFAULT_SEARCH_RESULT_LIMIT = 5
 MAX_SEARCH_RESULT_LIMIT = 15
+
+GET_NOTE_TOOL_NAME = "get_note"
+SKILL_ACTIVATION_KEYS = frozenset({"activate_tools", "activate_mcp_servers"})
+SKILL_TOOLS_KEY = "skill_tools"
+SKILL_TOOLS_INSTRUCTION = (
+    "Run these with `call_tool`, or directly if already_declared is true. One "
+    "listed with only a summary needs `search_tools` with its exact name first."
+)
+# A Live model prefills the whole result before it speaks, so a skill with a
+# long tool list hands over the schemas it leads with and summarises the rest.
+SKILL_SCHEMA_BUDGET_CHARS = 8000
 
 CATALOG_HEADING = "## Tools you can reach with search_tools"
 # Names only, no summaries: `search_tools` returns each tool's full description
@@ -282,9 +295,78 @@ class LiveMetaToolsProvider:
             if name == SEARCH_TOOLS_TOOL_NAME:
                 return await self._search_tools(arguments)
             return await self._call_tool(arguments, context, call_id)
-        return await self._wrapped_provider.execute_tool(
+        return await self._run_wrapped(name, arguments, context, call_id)
+
+    async def _run_wrapped(
+        self,
+        name: str,
+        # ast-grep-ignore: no-dict-any - Tool arguments are dynamic JSON from the LLM
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        call_id: str | None,
+    ) -> str | ToolResult:
+        result = await self._wrapped_provider.execute_tool(
             name, arguments, context, call_id
         )
+        if name == GET_NOTE_TOOL_NAME and isinstance(result, ToolResult):
+            return await self._with_skill_tools(result)
+        return result
+
+    async def _with_skill_tools(self, result: ToolResult) -> ToolResult:
+        """Swap a skill's activation keys for what running its tools takes."""
+        data = result.data
+        if not isinstance(data, dict) or not SKILL_ACTIVATION_KEYS & data.keys():
+            return result
+        payload = {
+            key: value
+            for key, value in data.items()
+            if key not in SKILL_ACTIVATION_KEYS
+        }
+        entries = await self._skill_tool_entries(
+            tool_names=data.get("activate_tools", []),
+            mcp_server_ids=data.get("activate_mcp_servers", []),
+        )
+        if entries:
+            payload[SKILL_TOOLS_KEY] = entries
+            payload["how_to_run_skill_tools"] = SKILL_TOOLS_INSTRUCTION
+        return replace(result, data=payload)
+
+    async def _skill_tool_entries(
+        self, *, tool_names: list[str], mcp_server_ids: list[str]
+    ) -> list[dict[str, object]]:
+        """The tools a skill brings, schemas first and as far as the budget goes.
+
+        A skill names its own tools, so they get their schemas in the order it
+        lists them. A whole MCP server is named without its contents being
+        chosen, so its tools are only summarised.
+        """
+        advertised = await self._advertised_definitions()
+        visible = await self._view.get_visible_definitions(can_confirm=False)
+        server_tool_names = [
+            descriptor.name
+            for descriptor in await self.get_tool_descriptors()
+            if descriptor.mcp_server_id in mcp_server_ids
+        ]
+        entries: list[dict[str, object]] = []
+        budget = SKILL_SCHEMA_BUDGET_CHARS
+        for name in dict.fromkeys([*tool_names, *server_tool_names]):
+            definition = advertised.get(name)
+            if definition is None:
+                continue
+            declared = name not in visible.hidden_names
+            size = len(json.dumps(definition.get("function", {})))
+            with_schema = not declared and name in tool_names and size <= budget
+            if with_schema:
+                budget -= size
+            entries.append(
+                _search_entry(
+                    name,
+                    definition,
+                    already_declared=declared,
+                    with_schema=with_schema,
+                )
+            )
+        return entries
 
     async def _advertised_definitions(self) -> dict[str, ToolDefinition]:
         """Every tool this live session may run, keyed by name."""
@@ -402,9 +484,7 @@ class LiveMetaToolsProvider:
             return rejection
 
         logger.info("call_tool dispatching to '%s'", inner_name)
-        return await self._wrapped_provider.execute_tool(
-            inner_name, parsed, context, call_id
-        )
+        return await self._run_wrapped(inner_name, parsed, context, call_id)
 
     # --- Delegation -------------------------------------------------------
 

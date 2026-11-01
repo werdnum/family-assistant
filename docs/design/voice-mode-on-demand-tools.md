@@ -65,7 +65,8 @@ tracking → policy enforcement → root providers). Both live paths already fun
   tracking, tool-call review, confirmation rules and metrics apply exactly as they would have if the
   model had called the tool directly. There is no second execution path to keep in sync, and no way
   for `call_tool` to reach a tool the model could not otherwise have reached.
-- Everything that is not a meta tool delegating through untouched.
+- Everything that is not a meta tool delegating through untouched, apart from a skill's `get_note`
+  result (see Details).
 
 The web path picks the same wrapper up because `POST /api/tools/execute/{name}` resolves the
 provider from the processing service; for every non-meta name the wrapper is transparent, so that
@@ -107,6 +108,15 @@ endpoint's behaviour for existing callers is unchanged.
 - **Results are what the chat model sees.** A result carrying both `text` and `data` reaches a live
   model as its text alone, because `data` is the same result shaped for a script. A `search_tools`
   result is never swapped for a large-result attachment: it is the schema the next call needs.
+- **Skills hand over their tools.** A skill's frontmatter declares what it brings (`activate_tools`,
+  `activate_mcp_servers`), on a database skill as on a file skill. The chat loop activates those; a
+  Live session cannot, so `LiveMetaToolsProvider` swaps the keys in a `get_note` result for the same
+  entries a search returns. Tools the skill names get their schemas, in the order it lists them, up
+  to a budget; the rest, and a whole MCP server's tools, get a summary and are one exact-name search
+  away. A skill therefore works in both paths without knowing which it is in, and the result is
+  never swapped for a large-result attachment. Declaring tools grants nothing: every name still has
+  to be something the session may run, and a skill the ambient rule keeps out of the catalog
+  declares none.
 - **Recursion.** `call_tool` refuses the meta tool names.
 - **Kill switch.** `gemini_live_config.tools.on_demand` (default `true`) turns the whole mechanism
   off, restoring flat declaration of every advertisable tool. How many tools a search returns is a

@@ -1496,11 +1496,11 @@ half its budget, so the next one is many turns away:
 
 A stub is only left for a profile that can follow it: a profile without `get_message_history` (or,
 for images, `delegate_to_service`, the only way to have a model look at one again) keeps such turns
-verbatim or drops them whole. A compacted turn keeps the on-demand tools it activated and the taint
-of everything it read. Each event's decision is recorded in `history_compaction_events`, and later
-requests render from it, so nothing about a compacted turn is stored beyond the decision. If a
-provider still rejects a request as too long, the window is compacted once more to half its size and
-the request retried.
+verbatim or drops them whole. A compacted turn keeps the taint of everything it read, but not the
+on-demand tools it activated, which the model can activate again. Each event's decision is recorded
+in `history_compaction_events`, and later requests render from it, so nothing about a compacted turn
+is stored beyond the decision. If a provider still rejects a request as too long, the window is
+compacted once more to half its size and the request retried.
 
 An inlined image counts as 4,000 characters. Cached history is cheap on every current provider, so
 the budget is a setting for the model's attention rather than for cost; tune it from the prompt and

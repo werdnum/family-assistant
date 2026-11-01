@@ -30,6 +30,11 @@ Detailed step-by-step instructions here...
 
 - `visibility_labels` — List of profile labels that can access this skill (omit for universal
   access)
+- `activate_tools` — On-demand tools the skill needs, available once it is loaded, with the most
+  used first
+- `activate_mcp_servers` — Whole MCP servers the skill needs
+
+Neither grants anything a profile's tool policy does not already allow.
 
 ## How Skills Work
 
