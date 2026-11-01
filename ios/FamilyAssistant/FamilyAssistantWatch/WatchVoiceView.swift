@@ -25,7 +25,7 @@ struct WatchVoiceView: View {
                     } else {
                         Button("Start Voice", systemImage: "mic.fill") { begin() }
                             .buttonStyle(.borderedProminent)
-                        Text("Voice chats aren't saved to history.")
+                        Text("Voice chats are saved to Chat.")
                             .font(.footnote)
                     }
                 }
