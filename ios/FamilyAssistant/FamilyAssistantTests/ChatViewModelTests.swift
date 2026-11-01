@@ -8721,6 +8721,335 @@ final class ChatViewModelTests: XCTestCase {
         model = nil
     }
 
+    func testLateFramesAfterAMergedReplyLeaveNoDuplicate() async throws {
+        // The saved reply can arrive by plain HTTP before the stream's last frames.
+        // Those frames must not stream the reply a second time, and the merge after
+        // turn_ended has nothing new, so it must not be what leaves a bubble behind.
+        let streamConnects = AtomicCounter()
+        let acks = AtomicCounter()
+        let phase = AtomicCounter() // 0: nothing new; 1: reply saved; 2: client holds it
+        let leg1 = HangingStream()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                if Self.queryItems(from: request)["after"] == nil {
+                    return .json(
+                        #"{"conversation_id":"web_conv_dup","messages":[{"internal_id":1,"role":"user","content":"Earlier","timestamp":"2026-06-08T12:00:00Z"}],"count":1,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                    )
+                }
+                if phase.value == 1 {
+                    return .json(
+                        #"{"conversation_id":"web_conv_dup","messages":[{"internal_id":3,"role":"assistant","content":"Hello there","turn_id":"turn-x","timestamp":"2026-06-08T12:06:00Z"}],"count":1,"total_messages":2,"has_more_before":false,"has_more_after":false}"#
+                    )
+                }
+                return .json(
+                    #"{"conversation_id":"web_conv_dup","messages":[],"count":0,"total_messages":2,"has_more_before":false,"has_more_after":false}"#
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            if request.httpMethod == "POST", path == "/api/v1/chat/ack" {
+                acks.increment()
+                return .json("{}")
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                if streamConnects.increment() == 1 {
+                    return .hangingStream(
+                        "event: text\ndata: {\"turn_id\":\"turn-x\",\"content\":\"Hello\",\"seq\":5}\n\n",
+                        controller: leg1
+                    )
+                }
+                return .text("")
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        var model: ChatViewModel? = makeViewModel(
+            conversationID: "web_conv_dup",
+            liveReconnectInitialDelaySeconds: 0.01,
+            liveReconnectMaxDelaySeconds: 0.01
+        )
+        await model?.selectConversation("web_conv_dup")
+        try await waitUntil { model?.messages.contains { $0.text == "Hello" } == true }
+
+        phase.increment()
+        model?.pushHintReceived(conversationID: "web_conv_dup")
+        try await waitUntil { model?.messages.contains { $0.text == "Hello there" } == true }
+        phase.increment()
+        leg1.finish(
+            appending: "event: text\ndata: {\"turn_id\":\"turn-x\",\"content\":\" there\",\"seq\":6}\n\n"
+                + "event: turn_ended\ndata: {\"turn_id\":\"turn-x\",\"status\":\"complete\",\"seq\":7}\n\n"
+        )
+        try await waitUntil { acks.value >= 1 && streamConnects.value >= 3 }
+
+        XCTAssertEqual(model?.messages.map(\.text), ["Earlier", "Hello there"])
+        model = nil
+    }
+
+    func testAMergedToolRowDoesNotEndARunningTurnsBubble() async throws {
+        // Tool rows share the turn's id and are saved while it runs. Only the reply
+        // ends it, so the live bubble keeps its text and keeps streaming.
+        let phase = AtomicCounter()
+        let leg1 = HangingStream()
+        let streamConnects = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                if Self.queryItems(from: request)["after"] == nil {
+                    return .json(
+                        #"{"conversation_id":"web_conv_tool","messages":[{"internal_id":1,"role":"user","content":"Earlier","timestamp":"2026-06-08T12:00:00Z"}],"count":1,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                    )
+                }
+                if phase.value == 1 {
+                    return .json(
+                        #"{"conversation_id":"web_conv_tool","messages":[{"internal_id":2,"role":"assistant","content":"","turn_id":"turn-x","timestamp":"2026-06-08T12:06:00Z","tool_calls":[{"id":"call-1","type":"function","function":{"name":"lookup","arguments":"{}"}}]}],"count":1,"total_messages":2,"has_more_before":false,"has_more_after":false}"#
+                    )
+                }
+                return .json(
+                    #"{"conversation_id":"web_conv_tool","messages":[],"count":0,"total_messages":2,"has_more_before":false,"has_more_after":false}"#
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                if streamConnects.increment() == 1 {
+                    return .hangingStream(
+                        "event: text\ndata: {\"turn_id\":\"turn-x\",\"content\":\"Working\",\"seq\":5}\n\n",
+                        controller: leg1
+                    )
+                }
+                return .text("")
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        var model: ChatViewModel? = makeViewModel(conversationID: "web_conv_tool")
+        await model?.selectConversation("web_conv_tool")
+        try await waitUntil { model?.messages.contains { $0.text == "Working" } == true }
+
+        phase.increment()
+        model?.pushHintReceived(conversationID: "web_conv_tool")
+        try await waitUntil { model?.messages.contains { $0.id == "msg_2" } == true }
+
+        XCTAssertEqual(model?.messages.first { $0.id == "local_follow_turn-x" }?.text, "Working")
+        XCTAssertFalse(ChatViewModel.repliedTurnIDs(in: model?.messages ?? []).contains("turn-x"))
+        leg1.finish(appending: "")
+        model = nil
+    }
+
+    func testALostTurnStartResponseIsRetriedWithTheSameTurnID() async throws {
+        // The first POST reached the server but its response was lost. Asking again
+        // with the same id returns that turn, so the send simply carries on.
+        let postedTurnIDs = AtomicStringList()
+        let postCount = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                let turnID = try XCTUnwrap(payload["turn_id"] as? String)
+                postedTurnIDs.append(turnID)
+                if postCount.increment() == 1 {
+                    throw URLError(.timedOut)
+                }
+                return .json(#"{"turn_id":"\#(turnID)","conversation_id":"web_conv_lost","first_seq":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_lost/stream"):
+                return .text(
+                    """
+                    event: text
+                    data: {"content":"Arrived"}
+
+                    event: turn_ended
+                    data: {"status":"complete"}
+
+                    """
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_lost/messages"):
+                return .json(
+                    #"{"conversation_id":"web_conv_lost","messages":[{"internal_id":1,"role":"assistant","content":"Arrived","timestamp":"2026-06-08T12:00:00Z"}],"count":1,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                )
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(
+            conversationID: "web_conv_lost",
+            liveReconnectInitialDelaySeconds: 0.01,
+            liveReconnectMaxDelaySeconds: 0.01,
+            lostStartRetries: 2
+        )
+        model.draftText = "Hi"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming && postCount.value == 2 }
+
+        XCTAssertEqual(Set(postedTurnIDs.values).count, 1)
+        XCTAssertTrue(model.failedSends.isEmpty)
+        XCTAssertEqual(model.messages.last { $0.role == .assistant }?.text, "Arrived")
+    }
+
+    func testASavedReplyRetiresAFailedSend() async throws {
+        // Every response to the start was lost, but the server had the turn. When
+        // its reply is saved the send did not fail, so Retry must go.
+        let turnIDs = AtomicStringList()
+        let replySaved = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                turnIDs.append(try XCTUnwrap(payload["turn_id"] as? String))
+                throw URLError(.timedOut)
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_saved/messages"):
+                if replySaved.value == 0 {
+                    return .json(
+                        #"{"conversation_id":"web_conv_saved","messages":[{"internal_id":1,"role":"user","content":"Earlier","timestamp":"2026-06-08T12:00:00Z"}],"count":1,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                    )
+                }
+                let turnID = turnIDs.values.first ?? ""
+                return .json(
+                    #"{"conversation_id":"web_conv_saved","messages":[{"internal_id":5,"role":"assistant","content":"It worked","turn_id":"\#(turnID)","timestamp":"2099-06-08T12:06:00Z"}],"count":1,"total_messages":2,"has_more_before":false,"has_more_after":false}"#
+                )
+            case ("GET", "/api/v1/chat/conversations/web_conv_saved/stream"):
+                return .text("")
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_saved")
+        await model.selectConversation("web_conv_saved")
+        model.draftText = "Hi"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming && !model.failedSends.isEmpty }
+
+        replySaved.increment()
+        model.pushHintReceived(conversationID: "web_conv_saved")
+        try await waitUntil { model.messages.contains { $0.text == "It worked" } }
+
+        XCTAssertTrue(model.failedSends.isEmpty)
+        let reply = try XCTUnwrap(model.messages.first { $0.text == "It worked" })
+        XCTAssertNil(model.failedSend(for: reply))
+    }
+
+    func testHidingAScreenReleasesAModelWithASendRunning() async throws {
+        // A running send's transport holds its model strongly, so a closed thread
+        // would keep its streams open with no screen to tell it about the app's
+        // lifecycle. Closing the screen has to end that transport.
+        let stream = HangingStream()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                let turnID = try XCTUnwrap(payload["turn_id"] as? String)
+                return .json(#"{"turn_id":"\#(turnID)","conversation_id":"web_conv_hide","first_seq":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_hide/stream"):
+                if Self.queryItems(from: request)["follow"] == "true" {
+                    return .text("")
+                }
+                return .hangingStream(
+                    "event: text\ndata: {\"seq\":1,\"content\":\"Partial\"}\n\n",
+                    controller: stream
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_hide/messages"):
+                return .json(
+                    #"{"conversation_id":"web_conv_hide","messages":[],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false}"#
+                )
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        var model: ChatViewModel? = makeViewModel(
+            conversationID: "web_conv_hide",
+            liveReconnectInitialDelaySeconds: 0.01,
+            liveReconnectMaxDelaySeconds: 0.01,
+            streamTextFlushInterval: .milliseconds(1),
+            role: .pushed
+        )
+        weak let released = model
+        await model?.selectConversation("web_conv_hide")
+        model?.draftText = "Hi"
+        await model?.sendDraft()
+        try await waitUntil { released?.messages.contains { $0.text == "Partial" } == true }
+
+        model = nil
+        XCTAssertNotNil(released, "the send transport keeps a closed screen's model alive")
+
+        released?.setScreenVisible(false)
+
+        try await waitUntil { released == nil }
+        stream.finish(appending: "")
+    }
+
+    func testAScreenThatComesBackResyncsWhenItsSceneIsActive() async throws {
+        let resynced = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                resynced.increment()
+                return .json(
+                    #"{"conversation_id":"web_conv_back","messages":[{"internal_id":1,"role":"user","content":"Earlier","timestamp":"2026-06-08T12:00:00Z"}],"count":1,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                return .text("")
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_back", role: .pushed)
+        await model.selectConversation("web_conv_back")
+        let before = resynced.value
+
+        model.setScreenVisible(false)
+        model.scenePhaseChanged(old: .inactive, new: .active)
+        model.setScreenVisible(true)
+
+        try await waitUntil { resynced.value > before }
+    }
+
+    func testTheSendPreflightHasAShortTimeout() async throws {
+        let preflightTimeout = AtomicStringList()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("GET", "/api/v1/chat/conversations/web_conv_pre/messages"):
+                if Self.queryItems(from: request)["limit"] == "1" {
+                    preflightTimeout.append(String(request.timeoutInterval))
+                }
+                return .json(
+                    #"{"conversation_id":"web_conv_pre","messages":[],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false}"#
+                )
+            case ("POST", "/api/v1/chat/turns"):
+                return .json(#"{"detail":"stop here"}"#, statusCode: 500)
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_pre")
+        model.draftText = "Hi"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertEqual(preflightTimeout.values, [String(ChatViewModel.sendPreflightTimeoutSeconds)])
+    }
+
     func testResendDuringStreamSupersedesWithoutClobbering() async throws {
         // Sending again while the first turn is still streaming must supersede it
         // cleanly: the first (cancelled) task must not flip the new turn's
@@ -12237,7 +12566,8 @@ final class ChatViewModelTests: XCTestCase {
         streamResumeLivenessSeconds: Double = 2,
         streamTextFlushInterval: Duration = .milliseconds(50),
         pathMonitor: PathMonitoring? = nil,
-        role: ChatViewModel.Role = .standalone
+        role: ChatViewModel.Role = .standalone,
+        lostStartRetries: Int = 0
     ) -> ChatViewModel {
         let authManager = AuthManager()
         authManager.serverURL = serverURL
@@ -12253,7 +12583,8 @@ final class ChatViewModelTests: XCTestCase {
             streamResumeLivenessSeconds: streamResumeLivenessSeconds,
             streamTextFlushInterval: streamTextFlushInterval,
             errorReporter: ErrorReporter(spoolDirectory: nil),
-            pathMonitor: pathMonitor ?? StubPathMonitor(isSatisfied: true)
+            pathMonitor: pathMonitor ?? StubPathMonitor(isSatisfied: true),
+            lostStartRetries: lostStartRetries
         ))
     }
 
