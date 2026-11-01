@@ -106,9 +106,9 @@ final class HomeThreadsTests: XCTestCase {
 
         let sections = ThreadSwitcherSections(threads: threads, conversations: [], homeConversationID: "home")
 
-        XCTAssertEqual(sections.groups.map(\.title), ["Waiting on you", "Working", "Failed"])
-        XCTAssertEqual(sections.groups[0].threads.map(\.conversationID), ["q1", "q2", "u1"])
-        XCTAssertEqual(sections.groups[1].threads.map(\.conversationID), ["w1"])
+        XCTAssertEqual(sections.groups.map(\.title), ["Working", "Waiting on you", "Failed"])
+        XCTAssertEqual(sections.groups[0].threads.map(\.conversationID), ["w1"])
+        XCTAssertEqual(sections.groups[1].threads.map(\.conversationID), ["q1", "q2", "u1"])
         XCTAssertEqual(sections.groups[2].threads.map(\.conversationID), ["f1"])
         XCTAssertEqual(ThreadSwitcherSections.waitingCount(in: threads), 3)
     }
@@ -312,15 +312,46 @@ final class HomeThreadsTests: XCTestCase {
         }
     }
 
-    func testSwitcherOrdersGroupsWaitingWorkingFailedDone() {
+    func testSwitcherOrdersWhatIsMovingFirstAndWhatHasSettledLast() {
         let sections = ThreadSwitcherSections(
             threads: [thread("d", .done), thread("f", .failed), thread("w", .working), thread("q", .waiting)],
             conversations: [conversation("old", kind: "conversation")],
             homeConversationID: "home"
         )
 
-        XCTAssertEqual(sections.groups.map(\.title), ["Waiting on you", "Working", "Failed", "Done"])
+        XCTAssertEqual(sections.groups.map(\.title), ["Working", "Waiting on you", "Failed", "Done"])
         XCTAssertEqual(sections.earlier.map(\.conversationID), ["old"])
+    }
+
+    func testAQuietThreadIsListedApartAndNotCountedAsWaiting() {
+        var quiet = thread("old", .waiting)
+        quiet.isQuiet = true
+        let threads = [quiet, thread("new", .waiting), thread("d", .done)]
+
+        let sections = ThreadSwitcherSections(threads: threads, conversations: [], homeConversationID: "home")
+
+        XCTAssertEqual(sections.groups.map(\.title), ["Waiting on you", "Quiet", "Done"])
+        XCTAssertEqual(sections.groups[1].threads.map(\.conversationID), ["old"])
+        XCTAssertEqual(ThreadSwitcherSections.waitingCount(in: threads), 1)
+        XCTAssertTrue(quiet.canMarkDone, "A quiet thread can still be closed.")
+    }
+
+    func testOnlyAWaitingThreadReadsAsQuiet() {
+        var working = thread("w", .working)
+        working.isQuiet = true
+
+        XCTAssertEqual(working.presentationState, .working)
+    }
+
+    func testThreadDecodesQuietAndDefaultsToNotQuiet() throws {
+        let json = #"{"conversation_id":"t1","home_conversation_id":"home","title":"T","profile_id":"p","state":"waiting","created_at":"2026-06-08T12:00:00Z","updated_at":"2026-06-08T12:00:00Z"QUIET}"#
+        func decoded(_ quiet: String) throws -> ChatThreadSummary {
+            let body = json.replacingOccurrences(of: "QUIET", with: quiet)
+            return try JSONDecoder.chatDecoder.decode(ChatThreadSummary.self, from: Data(body.utf8))
+        }
+
+        XCTAssertTrue(try decoded(#","quiet":true"#).isQuiet)
+        XCTAssertFalse(try decoded("").isQuiet)
     }
 
     func testUnreadCountIsInTheCardsSpokenSummaryOnlyWhenNonZero() {
