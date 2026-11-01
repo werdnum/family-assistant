@@ -167,24 +167,6 @@ The assistant accepts common image formats:
 - Maximum file size: 20MB for image processing
 - Very large images may be resized automatically for optimal processing
 
-## Using the Artist Profile
-
-For more complex creative work, you can use the specialized artist profile by starting your message
-with `/artist` or `/image`. This activates a profile optimized for creative image work with:
-
-- Enhanced prompt refinement
-- Access to video generation capabilities
-- Specialized knowledge of effective prompting techniques
-- Reference-image editing: when you attach an image (or ask for a result that builds on or stays
-  consistent with an existing image), the artist edits and combines those reference images instead
-  of generating something from scratch
-
-Example:
-
-- `/artist Create a detailed fantasy landscape with a magical forest and floating islands`
-- `/image Generate a professional product photo of a coffee mug`
-- `/artist` with a photo attached: "Put this same character on a beach at sunset"
-
 ## Examples
 
 ### Creating Images

@@ -629,7 +629,6 @@ class ProcessingConfig(BaseModel):
     review_guidance: str = ""
     delegation_security_level: DelegationSecurityLevel = DelegationSecurityLevel.CONFIRM
     allowed_delegation_sources: list[str] | None = None
-    include_system_docs: list[str] | None = None
     # Context providers inject the household's own data -- always-loaded notes,
     # the skills catalog, known users -- into the system prompt. A profile
     # that exists to look at one attachment and answer in text has no use for
