@@ -22,6 +22,7 @@ from family_assistant.security.ambient_admission import (
 from family_assistant.security.note_provenance import (
     NoteProvenanceStamp,
     NoteWriteOrigin,
+    is_ambient_eligible,
     note_read_taint,
     stored_note_state,
 )
@@ -34,12 +35,14 @@ from family_assistant.security.taint import (
     merge_taint_state_into_tracker,
     merge_taint_states,
 )
+from family_assistant.skills.frontmatter import parse_frontmatter, skill_activations
 from family_assistant.tools.taint_helpers import merge_artifact_taint_into_context
 from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.storage.database import Database
+    from family_assistant.storage.repositories.notes import NoteModel
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -670,6 +673,29 @@ NOTE_TOOLS_DEFINITION: list[ToolDefinition] = [
 # We need to create wrapper functions that match the tool signatures.
 
 
+def _database_skill_activations(note: NoteModel) -> dict[str, list[str]]:
+    """The activation keys a database skill adds to its ``get_note`` result.
+
+    These name tools the profile's policy already governs, so they widen
+    nothing, but a skill the ambient rule keeps out of the catalog gets no say
+    in what the turn has to hand either.
+    """
+    if not note.is_skill or not is_ambient_eligible(
+        note.provenance_metadata, title=note.title
+    ):
+        return {}
+    frontmatter, _ = parse_frontmatter(note.content)
+    if frontmatter is None:
+        return {}
+    tools, servers = skill_activations(frontmatter)
+    activations: dict[str, list[str]] = {}
+    if tools:
+        activations["activate_tools"] = list(tools)
+    if servers:
+        activations["activate_mcp_servers"] = list(servers)
+    return activations
+
+
 async def get_note_tool(
     title: str,
     exec_context: ToolExecutionContext,
@@ -678,9 +704,10 @@ async def get_note_tool(
     db_context = exec_context.db_context
     attachment_registry = exec_context.attachment_registry
 
+    read_policy = exec_context.note_read_policy()
     note = await db_context.notes.get_by_title(
-        title, read_policy=exec_context.note_read_policy()
-    )
+        title, read_policy=read_policy
+    ) or await db_context.notes.get_skill_by_name(title, read_policy=read_policy)
     if not note:
         # Fall back to file-based skills via NoteRegistry
         if exec_context.note_registry:
@@ -753,6 +780,7 @@ async def get_note_tool(
             else []
         ),
     }
+    result_data.update(_database_skill_activations(note))
 
     # Fetch attachment metadata and content
     attachments: list[ToolAttachment] = []
