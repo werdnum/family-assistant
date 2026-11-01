@@ -95,6 +95,9 @@ final class VoiceSessionViewModel {
     /// When the assistant's current reply started playing, so an interruption
     /// can be told apart as a real barge-in or the model hearing itself.
     private var assistantSpeechStartedAt: ContinuousClock.Instant?
+    /// When the session's first reply started playing, which is when the echo
+    /// canceller first had anything to converge on.
+    private var firstPlaybackAt: ContinuousClock.Instant?
     /// When tool results last went back to Gemini, until it next speaks or asks
     /// for another tool. The gap is the model's own silence, which is invisible
     /// to the backend and indistinguishable from a dropped call on the user's end.
@@ -150,6 +153,13 @@ final class VoiceSessionViewModel {
         audio.onEngineFailure = { [weak self] error in
             Task { @MainActor in
                 self?.fail(error)
+            }
+        }
+        audio.onPlaybackFinished = { [weak self] in
+            Task { @MainActor in
+                // A reply that began after this was posted is still playing.
+                guard let self, !self.audio.isDucked else { return }
+                self.isAssistantSpeaking = false
             }
         }
         audio.onDiagnostic = { [diagnostics] event, fields, error in
@@ -338,12 +348,14 @@ final class VoiceSessionViewModel {
                 ])
                 self.toolResultsSentAt = nil
             }
-            if !isAssistantSpeaking {
-                assistantSpeechStartedAt = .now
-            }
-            isAssistantSpeaking = true
             silenceBrokenAt = .now
             audio.enqueue(data)
+            let isPlaying = audio.isDucked
+            if isPlaying, !isAssistantSpeaking {
+                assistantSpeechStartedAt = .now
+                firstPlaybackAt = firstPlaybackAt ?? .now
+            }
+            isAssistantSpeaking = isPlaying
         case let .outputTranscription(text):
             transcript.appendAssistant(text)
         case let .inputTranscription(text):
@@ -351,7 +363,10 @@ final class VoiceSessionViewModel {
             silenceBrokenAt = .now
             transcript.appendUser(text)
         case .turnComplete, .generationComplete:
-            isAssistantSpeaking = false
+            // Gemini generates faster than it plays, so these arrive while the
+            // reply is still coming out of the speaker. Playback ending clears
+            // isAssistantSpeaking.
+            break
         case .interrupted:
             recordInterruption()
             isAssistantSpeaking = false
@@ -379,6 +394,9 @@ final class VoiceSessionViewModel {
         if isAssistantSpeaking, let assistantSpeechStartedAt {
             let elapsed = ContinuousClock.now - assistantSpeechStartedAt
             fields["assistant_speech_ms"] = String(Int(elapsed / .milliseconds(1)))
+        }
+        if let firstPlaybackAt {
+            fields["since_first_playback_ms"] = Self.milliseconds(since: firstPlaybackAt)
         }
         diagnostics.record("interrupted", fields: fields.merging(audio.routeSnapshot.telemetryFields) { current, _ in current })
     }
@@ -631,6 +649,7 @@ final class VoiceSessionViewModel {
         audio.onCapturedAudio = nil
         audio.onInputLevel = nil
         audio.onEngineFailure = nil
+        audio.onPlaybackFinished = nil
         audio.onDiagnostic = nil
         toolResultsSentAt = nil
         audioOut?.finish()
