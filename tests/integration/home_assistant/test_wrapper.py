@@ -5,6 +5,7 @@ import homeassistant_api
 import pytest
 
 from family_assistant.plugins.home_assistant.client import HomeAssistantClientWrapper
+from tests.integration.home_assistant.bulk_entities import BULK_ENTITY_ID_PREFIX
 
 
 @pytest.mark.integration
@@ -76,3 +77,54 @@ async def test_camera_snapshot_nonexistent_camera(
 
     finally:
         await ha_lib_client.async_cache_session.close()
+
+
+BULK_ENTITY_COUNT = 1200
+
+
+@pytest.mark.integration
+# The chunk renders share a URL, so each recorded response is replayed once, in order.
+@pytest.mark.vcr(allow_playback_repeats=False)
+async def test_entity_list_on_an_install_too_large_for_one_template(
+    home_assistant_service: tuple[str, str | None],
+) -> None:
+    """Every entity is listed when one render of them all passes HA's output limit.
+
+    The old single-template listing failed here with HA's "template is invalid".
+    """
+    base_url, token = home_assistant_service
+    bulk = {
+        f"{BULK_ENTITY_ID_PREFIX}{n:04d}": f"Upstairs bedroom climate sensor number {n:04d} temperature"
+        for n in range(BULK_ENTITY_COUNT)
+    }
+    headers = {"Authorization": f"Bearer {token}"}
+    ha_lib_client = homeassistant_api.Client(
+        api_url=f"{base_url}/api", token=token or "test", use_async=True
+    )
+    wrapper = HomeAssistantClientWrapper(
+        api_url=base_url, token=token or "test", client=ha_lib_client
+    )
+    # Recording runs against a live HA, which needs the entities created; a
+    # replay has no token and reads the recorded renders instead.
+    async with aiohttp.ClientSession(headers=headers) as setup:
+        try:
+            if token is not None:
+                for entity_id, name in bulk.items():
+                    async with setup.post(
+                        f"{base_url}/api/states/{entity_id}",
+                        json={"state": "21.5", "attributes": {"friendly_name": name}},
+                    ) as response:
+                        response.raise_for_status()
+
+            listed = await wrapper.async_get_entity_list_with_metadata()
+        finally:
+            if token is not None:
+                for entity_id in bulk:
+                    async with setup.delete(f"{base_url}/api/states/{entity_id}"):
+                        pass
+            await ha_lib_client.async_cache_session.close()
+
+    names = {entity["entity_id"]: entity["name"] for entity in listed}
+    assert {entity_id: names.get(entity_id) for entity_id in bulk} == bulk
+    assert len(names) == len(listed)
+    assert "input_boolean.test_switch" in names
