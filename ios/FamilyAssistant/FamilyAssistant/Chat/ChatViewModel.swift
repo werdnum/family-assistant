@@ -2207,6 +2207,20 @@ final class ChatViewModel {
         guard !isSubmittingDraft else {
             return
         }
+        if let startHomeThread, !isStreaming {
+            guard canSendDraftAsThread else {
+                // Only text is missing from a draft that could otherwise go.
+                if canSendDraft {
+                    presentErrorAlert(
+                        "Add a message to send with your attachment.",
+                        reason: .sendAttachmentNeedsMessage
+                    )
+                }
+                return
+            }
+            await sendDraftAsThread(profileID: defaultProfileID, using: startHomeThread)
+            return
+        }
         _ = await sendDraft(fallbackFromSteer: false)
     }
 
@@ -2328,6 +2342,13 @@ final class ChatViewModel {
             && !draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// How a send from Home starts a thread: every send there does. Set by
+    /// Home, which holds the thread store; nil in any other conversation.
+    @ObservationIgnored var startHomeThread: (@MainActor (HomeThreadStart) async -> Bool)?
+
+    /// The turn id each routed prompt's thread start is retried under.
+    @ObservationIgnored private var routedThreadTurnIDs: [String: String] = [:]
+
     /// The start a send-as-thread of the composer's contents is retried under,
     /// so a retry of the same draft to the same profile reuses its turn id.
     @ObservationIgnored private var pendingThreadSend: (draft: ChatDraft, start: HomeThreadStart)?
@@ -2424,6 +2445,21 @@ final class ChatViewModel {
                   !isSubmittingDraft
             else {
                 return false
+            }
+            if let startHomeThread {
+                // A held prompt is retried under the same id, so a start whose
+                // answer was lost isn't made twice.
+                let turnID = routedThreadTurnIDs[prompt] ?? UUID().uuidString
+                routedThreadTurnIDs[prompt] = turnID
+                let started = await startHomeThread(HomeThreadStart(
+                    turnID: turnID,
+                    profileID: defaultProfileID,
+                    prompt: prompt
+                ))
+                if started {
+                    routedThreadTurnIDs[prompt] = nil
+                }
+                return started
             }
         }
         guard isRouted || draftAttachments.allSatisfy({ $0.uploadState != .uploading }) else {
@@ -5070,6 +5106,7 @@ final class ChatViewModel {
         case profilesLoad = "profiles_load"
         case sendAttachmentsUploading = "send_attachments_uploading"
         case sendAttachmentFailed = "send_attachment_failed"
+        case sendAttachmentNeedsMessage = "send_attachment_needs_message"
         case attachmentImportFailed = "attachment_import_failed"
         case attachmentDownloadFailed = "attachment_download_failed"
         case pendingApprovalsPoll = "pending_approvals_poll"
@@ -6186,6 +6223,7 @@ final class ChatViewModel {
                 modelTierRequested: backend.reasoningInfo?.modelTierRequested,
                 echoedFromThread: backend.echoedFromThread,
                 movedToThread: backend.movedToThread,
+                startedThread: backend.startedThread,
                 feedback: backend.feedback
             )
         }

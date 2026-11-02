@@ -120,6 +120,8 @@ export interface Message {
   echoed_from_thread?: string;
   /** On the Home marker left by a turn moved into a thread: that thread's conversation. */
   moved_to_thread?: string;
+  /** On the Home marker left by a thread the user started: that thread's conversation. */
+  started_thread?: string;
   /** The user's thumbs up/down on the turn this message belongs to. */
   feedback?: TurnRating;
   /** A marker made here with no stored reply behind it, so nothing to rate. */
@@ -205,6 +207,8 @@ export interface BackendConversationMessage extends Record<string, unknown> {
   echoed_from_thread?: string | null;
   /** On the Home marker left by a turn moved into a thread: that thread's conversation. */
   moved_to_thread?: string | null;
+  /** On the Home marker left by a thread the user started: that thread's conversation. */
+  started_thread?: string | null;
   feedback?: TurnRating | null;
 }
 

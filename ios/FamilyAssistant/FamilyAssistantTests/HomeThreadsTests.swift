@@ -1823,6 +1823,61 @@ final class HomeThreadsTests: XCTestCase {
         XCTAssertNil(starts.first?.modelTier)
     }
 
+    func testSendingInHomeStartsAThreadOnTheDefaultProfile() async throws {
+        let model = try await makeHomeModelWithProfiles()
+        var starts: [HomeThreadStart] = []
+        model.startHomeThread = { starts.append($0); return true }
+        model.draftText = "Is the bin out?"
+
+        await model.sendDraft()
+
+        XCTAssertEqual(starts.map(\.profileID), [model.defaultProfileID])
+        XCTAssertEqual(starts.first?.prompt, "Is the bin out?")
+        XCTAssertEqual(model.draftText, "")
+    }
+
+    func testAnAttachmentSentAloneInHomeAsksForAMessageAndStaysInTheComposer() async throws {
+        let model = try await makeHomeModelWithProfiles()
+        var starts: [HomeThreadStart] = []
+        model.startHomeThread = { starts.append($0); return true }
+        model.draftAttachments = [uploadedAttachment()]
+
+        await model.sendDraft()
+
+        XCTAssertTrue(starts.isEmpty)
+        XCTAssertEqual(model.draftAttachments.count, 1)
+    }
+
+    func testARoutedPromptRetriesItsThreadStartUnderTheSameTurnID() async throws {
+        let model = try await makeHomeModelWithProfiles()
+        var starts: [HomeThreadStart] = []
+        var accepts = false
+        model.startHomeThread = { starts.append($0); return accepts }
+        await model.bootstrap()
+
+        await model.sendPromptInPlace("Book the plumber")
+        accepts = true
+        await model.reloadMessages()
+        try await waitUntil { starts.count == 2 }
+        guard starts.count == 2 else {
+            return
+        }
+
+        XCTAssertEqual(starts[0].turnID, starts[1].turnID)
+        XCTAssertTrue(model.heldRoutedPrompts.isEmpty)
+    }
+
+    func testAStartedThreadMarkerDecodesItsThread() throws {
+        let json = """
+        {"internal_id": 5, "role": "assistant", "content": "(marker)",
+         "timestamp": "2026-10-18T09:30:00Z", "started_thread": "t1"}
+        """
+
+        let message = try JSONDecoder.chatDecoder.decode(ChatBackendMessage.self, from: Data(json.utf8))
+
+        XCTAssertEqual(message.startedThread, "t1")
+    }
+
     func testSendAsThreadNeedsTextAndIsHomeOnly() async throws {
         let model = try await makeHomeModelWithProfiles()
         model.draftAttachments = [uploadedAttachment()]

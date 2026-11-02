@@ -582,6 +582,14 @@ class ConversationMessage(BaseModel):
             "in the thread"
         ),
     )
+    started_thread: str | None = Field(
+        None,
+        description=(
+            "On a Home message marking a thread the user started: that "
+            "thread's conversation id. Render it as the thread's card rather "
+            "than showing its content"
+        ),
+    )
     feedback: TurnRating | None = Field(
         None,
         description=(
@@ -677,12 +685,7 @@ def thread_summary_response(
         closed_at=summary.closed_at,
         echo_message_id=summary.echo_message_id,
         unread_count=summary.unread_count or 0,
-        quiet=is_quiet(
-            summary.state,
-            unread_count=summary.unread_count,
-            updated_at=summary.updated_at,
-            now=datetime.now(UTC),
-        ),
+        quiet=is_quiet(summary.state, unread_count=summary.unread_count),
         source_tool_call_id=summary.source_tool_call_id,
         anchor_message_id=summary.anchor_message_id,
         seed_request=summary.seed_request,
@@ -3258,6 +3261,7 @@ def serialize_conversation_messages(
                 reasoning_info=msg.get("reasoning_info"),
                 echoed_from_thread=msg.get("echoed_from_conversation_id"),
                 moved_to_thread=msg.get("moved_to_conversation_id"),
+                started_thread=msg.get("started_thread_conversation_id"),
                 feedback=feedback.rating if feedback is not None else None,
                 metadata=None,
             )

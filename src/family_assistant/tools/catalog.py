@@ -228,6 +228,7 @@ from family_assistant.tools.threads import (
     THREAD_TOOLS_DEFINITION,
     finish_thread_tool,
     list_threads_tool,
+    read_home_messages_tool,
     start_thread_tool,
 )
 from family_assistant.tools.video_generation import (
@@ -361,6 +362,7 @@ _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
     "start_thread": start_thread_tool,
     "finish_thread": finish_thread_tool,
     "list_threads": list_threads_tool,
+    "read_home_messages": read_home_messages_tool,
     "get_delegation_status": get_delegation_status_tool,
     "list_delegations": list_delegations_tool,
     "cancel_delegation": cancel_delegation_tool,
@@ -544,6 +546,12 @@ _CORE_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     # OUTPUT_TRUSTED: like list_delegations, the tool adds each fact's own taint
     # to the turn -- a title its creating turn's, an outcome its echo's.
     "list_threads": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    # OUTPUT_TRUSTED: the tool adds each message's own taint to the turn.
+    "read_home_messages": _metadata(
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.OUTPUT_TRUSTED,

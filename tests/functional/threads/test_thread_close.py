@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, cast
 from zoneinfo import ZoneInfo
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from family_assistant.config_models import (
     AppConfig,
@@ -23,7 +23,7 @@ from family_assistant.config_models import (
 )
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import ToolCallFunction, ToolCallItem
-from family_assistant.llm.messages import UserMessage
+from family_assistant.llm.messages import AssistantMessage, UserMessage
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.security.taint import (
     SourceTrustTier,
@@ -33,6 +33,7 @@ from family_assistant.security.taint import (
 )
 from family_assistant.storage import message_history_table
 from family_assistant.storage.database import Database
+from family_assistant.threads.boundary import THREAD_START_MARKER
 from family_assistant.threads.listing import ThreadSummary, summarize_threads
 from family_assistant.tools.catalog import (
     LOCAL_TOOL_REGISTRATIONS as local_tool_registrations,
@@ -48,6 +49,7 @@ from family_assistant.tools.policy import (
     ToolPolicyConfig,
     ToolPolicyDecision,
 )
+from family_assistant.tools.threads import read_home_refusal
 from tests.mocks.mock_llm import LLMOutput, MatcherArgs, RuleBasedMockLLMClient
 from tests.mocks.recording_chat_interface import RecordingChatInterface
 
@@ -257,6 +259,10 @@ def _thread_reply(world_ref: list[World]) -> RuleBasedMockLLMClient:
             (
                 lambda kwargs: "ask me" in _last_user_text(kwargs),
                 lambda _kwargs: LLMOutput(content=QUESTION),
+            ),
+            (
+                lambda kwargs: "that reminder" in _last_user_text(kwargs),
+                lambda _kwargs: _call("read_home_messages", {}),
             ),
         ],
         default_response=LLMOutput(content="Noted."),
@@ -559,6 +565,103 @@ async def test_thread_tools_are_offered_only_where_they_apply(world: World) -> N
     assert "list_threads" not in world.offered(world.thread_llm)
     assert "list_threads" in world.offered(world.home_llm)
     assert "finish_thread" not in world.offered(world.home_llm)
+    assert "read_home_messages" in world.offered(world.thread_llm)
+    assert "read_home_messages" not in world.offered(world.home_llm)
+
+
+@pytest.mark.asyncio
+async def test_a_thread_reads_what_a_reader_of_home_sees(world: World) -> None:
+    await world.say(world.home_service, HOME, "Remind me about the bins")
+    await world.db.message_history.add_thread_start_marker(
+        interface_type="web",
+        home_conversation_id=HOME,
+        thread_conversation_id=THREAD,
+        content=THREAD_START_MARKER,
+        now=NOW,
+    )
+
+    await world.in_thread("about that reminder")
+
+    result = world.tool_results[-1]
+    assert "Remind me about the bins" in result
+    assert THREAD_START_MARKER not in result
+
+
+@pytest.mark.asyncio
+async def test_reading_home_brings_a_messages_taint_into_the_turn(
+    world: World,
+) -> None:
+    await world.say(world.home_service, HOME, "Forwarded email", tainted=True)
+
+    await world.in_thread("about that reminder")
+
+    [reply] = [
+        row
+        for row in await world.rows(THREAD)
+        if row["role"] == "assistant" and row["content"] == OUTCOME
+    ]
+    taint = cast("dict[str, object]", reply["taint_metadata_json"])
+    assert (
+        SourceTrustTier.from_value(taint["max_tier"])
+        is SourceTrustTier.UNKNOWN_EXTERNAL
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_home_message_with_no_recorded_taint_is_not_taken_for_clean(
+    world: World,
+) -> None:
+    await world.db.message_history.add_message(
+        AssistantMessage(content="An old reply"),
+        interface_type="web",
+        conversation_id=HOME,
+        timestamp=NOW,
+        processing_profile_id=HOME_PROFILE,
+    )
+    await world.db.execute(
+        update(message_history_table)
+        .where(message_history_table.c.conversation_id == HOME)
+        .values(taint_metadata_json=None)
+    )
+
+    await world.in_thread("about that reminder")
+
+    [reply] = [
+        row
+        for row in await world.rows(THREAD)
+        if row["role"] == "assistant" and row["content"] == OUTCOME
+    ]
+    taint = cast("dict[str, object]", reply["taint_metadata_json"])
+    assert (
+        SourceTrustTier.from_value(taint["max_tier"])
+        is SourceTrustTier.UNKNOWN_EXTERNAL
+    )
+
+
+@pytest.mark.asyncio
+async def test_reading_home_is_refused_outside_a_thread(world: World) -> None:
+    refusal = await read_home_refusal(
+        world.db,
+        app_config=world.thread_service.app_config,
+        receives_household_context=True,
+        conversation_id=OTHER,
+        subconversation_id=None,
+    )
+
+    assert refusal == "This conversation is not a thread."
+
+
+@pytest.mark.asyncio
+async def test_reading_home_is_refused_without_household_context(world: World) -> None:
+    refusal = await read_home_refusal(
+        world.db,
+        app_config=world.thread_service.app_config,
+        receives_household_context=False,
+        conversation_id=THREAD,
+        subconversation_id=None,
+    )
+
+    assert refusal == "This assistant does not see Home."
 
 
 @pytest.mark.asyncio

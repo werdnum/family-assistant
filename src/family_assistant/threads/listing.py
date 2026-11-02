@@ -9,7 +9,7 @@ cannot disagree about which state a thread is in.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
@@ -23,10 +23,6 @@ if TYPE_CHECKING:
     )
 
 ThreadState = Literal["working", "waiting", "done", "failed"]
-
-# How long a waiting thread the viewer has read stays "Waiting on you" with
-# nothing happening in it.
-QUIET_AFTER = timedelta(days=3)
 
 _ACTIVE_RUN_STATUSES = frozenset({
     "queued",
@@ -132,25 +128,16 @@ def derive_state(
     return DerivedState("waiting")
 
 
-def is_quiet(
-    state: ThreadState,
-    *,
-    unread_count: int | None,
-    updated_at: datetime,
-    now: datetime,
-) -> bool:
+def is_quiet(state: ThreadState, *, unread_count: int | None) -> bool:
     """Whether a waiting thread has stopped asking for the viewer's attention.
 
     "Waiting" is the state a thread falls into whenever nothing else applies,
-    so it includes every thread nobody closed. One the viewer has read and left
-    alone has been answered by their silence: clients list it apart, and do not
-    count it as waiting on them. Anything new in the thread brings it back.
+    so it includes every thread nobody closed, and sending in Home starts one
+    per message. One the viewer has read has nothing new to ask of them: clients
+    list it apart, and do not count it as waiting on them. Anything new in the
+    thread brings it back.
     """
-    return (
-        state == "waiting"
-        and unread_count == 0
-        and now - _as_utc(updated_at) >= QUIET_AFTER
-    )
+    return state == "waiting" and unread_count == 0
 
 
 @dataclass(frozen=True, slots=True)

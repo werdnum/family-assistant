@@ -684,6 +684,8 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
   // The profile the next send goes to as a new thread's opening message, set
   // by the composer's send-as-thread menu just before it sends.
   const sendAsThreadProfileRef = useRef<string | null>(null);
+  const homeProfileIdRef = useRef<string | null>(null);
+  homeProfileIdRef.current = isHome ? lockedProfileId : null;
   const sendAsThreadRef = useRef<
     (profileId: string, text: string, attachments: ThreadAttachment[]) => Promise<void>
   >(async () => {});
@@ -1779,6 +1781,7 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
               internalId: Number(msg.internal_id),
               echoed_from_thread: msg.echoed_from_thread ?? undefined,
               moved_to_thread: msg.moved_to_thread ?? undefined,
+              started_thread: msg.started_thread ?? undefined,
               feedback: msg.feedback ?? undefined,
             });
             return;
@@ -1849,6 +1852,7 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
             internalId: Number(msg.internal_id),
             echoed_from_thread: msg.echoed_from_thread ?? undefined,
             moved_to_thread: msg.moved_to_thread ?? undefined,
+            started_thread: msg.started_thread ?? undefined,
             feedback: msg.feedback ?? undefined,
           });
         });
@@ -2322,7 +2326,9 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
       }>;
     }) => {
       // Taken first, so a send refused below can't leave it set for the next.
-      const threadProfileId = sendAsThreadProfileRef.current;
+      // Every send from Home starts a thread: on the assistant picked for this
+      // message, or else on Home's own.
+      const threadProfileId = sendAsThreadProfileRef.current ?? homeProfileIdRef.current;
       sendAsThreadProfileRef.current = null;
       // An attachment whose upload failed at send has no content to send. The
       // runtime puts a draft refused with MessageNotSentError back into the
@@ -2378,9 +2384,6 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
         );
         return;
       }
-      // Sending to Home instead gives up on a failed send-as-thread: its error
-      // no longer applies, and a later start of the same text is a new one.
-      abandonSendAsThreadRef.current();
 
       // Tag the optimistic bubbles with this turn's id so an interrupted-stream
       // give-up can identify THIS turn's stranded loading bubble (e.g. to replace
@@ -2527,10 +2530,10 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
     });
   };
 
-  // Send-as-thread: the composed message opens a new thread on the chosen
-  // profile instead of becoming a Home turn. A tier chosen here goes with it
-  // where that profile offers the tier. A retry of the same message reuses the
-  // start's id, so a start whose answer was lost isn't made twice.
+  // A message sent from Home opens a new thread instead of becoming a Home
+  // turn. A tier chosen here goes with it where the thread's profile offers the
+  // tier. A retry of the same message reuses the start's id, so a start whose
+  // answer was lost isn't made twice.
   const [sendAsThreadError, setSendAsThreadError] = useState<string | null>(null);
   const pendingThreadStartRef = useRef<{ key: string; turnId: string } | null>(null);
   sendAsThreadRef.current = async (
@@ -2582,11 +2585,13 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
 
   const sendAsThreadProfiles = useMemo(
     () =>
-      threadProfiles(Object.values(profilesById)).map((profile) => ({
-        id: profile.id,
-        label: getProfileDisplayName(profile.id),
-      })),
-    [profilesById]
+      threadProfiles(Object.values(profilesById))
+        .filter((profile) => profile.id !== lockedProfileId)
+        .map((profile) => ({
+          id: profile.id,
+          label: getProfileDisplayName(profile.id),
+        })),
+    [profilesById, lockedProfileId]
   );
 
   // Home's messages as text, by stored id, for the "Started from" quote a
@@ -2606,7 +2611,7 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
     const quotes = new Map<number, string>();
     for (const msg of messagesRef.current) {
       const text = messageText(msg);
-      if (msg.internalId !== undefined && !msg.moved_to_thread && text) {
+      if (msg.internalId !== undefined && !msg.moved_to_thread && !msg.started_thread && text) {
         quotes.set(msg.internalId, text);
       }
     }
@@ -2762,6 +2767,7 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
           reasoning_info: message.reasoning_info,
           echoed_from_thread: message.echoed_from_thread,
           moved_to_thread: message.moved_to_thread,
+          started_thread: message.started_thread,
           internal_id: message.internalId,
           turn_id: message.turnId,
           feedback: message.feedback,
