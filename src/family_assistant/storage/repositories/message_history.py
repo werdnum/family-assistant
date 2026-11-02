@@ -443,6 +443,16 @@ class LatestVisibleMessage:
     turn_id: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class HomeMessage:
+    """A message a reader of Home sees, with its taint resolved."""
+
+    role: str
+    content: str
+    timestamp: datetime
+    taint_metadata: TaintMetadata | None
+
+
 def _nth_copy_time(start: datetime, index: int) -> datetime:
     """When the ``index``-th row of a copy is stamped.
 
@@ -2355,6 +2365,8 @@ class MessageHistoryRepository(BaseRepository):
                 content=content,
                 processing_profile_id=None,
                 subconversation_id=None,
+                taint_metadata_json=TurnTaintState.empty().to_metadata(),
+                taint_metadata_version=TAINT_METADATA_VERSION,
                 is_internal=False,
                 started_thread_conversation_id=thread_conversation_id,
             )
@@ -2363,12 +2375,18 @@ class MessageHistoryRepository(BaseRepository):
         return cast("int", result.scalar_one())
 
     async def recent_home_messages(
-        self, *, conversation_id: str, limit: int
-    ) -> list[Mapping[str, Any]]:
+        self,
+        *,
+        conversation_id: str,
+        limit: int,
+        history_taint_epoch: datetime | None,
+    ) -> list[HomeMessage]:
         """The newest messages a reader of Home sees, newest last, at most ``limit``.
 
         Only what was said: tool rows have no place here, and the markers of
-        moved turns and started threads are not messages.
+        moved turns and started threads are not messages. Taint is resolved as
+        every other history read resolves it, so a row with none recorded is
+        not taken for clean.
         """
         rows = await self._db.fetch_all(
             select(message_history_table)
@@ -2384,7 +2402,17 @@ class MessageHistoryRepository(BaseRepository):
             .order_by(message_history_table.c.internal_id.desc())
             .limit(limit)
         )
-        return list(reversed(rows))
+        return [
+            HomeMessage(
+                role=row["role"],
+                content=row["content"],
+                timestamp=row["timestamp"],
+                taint_metadata=_message_history_taint_metadata(
+                    row, history_taint_epoch=history_taint_epoch
+                ),
+            )
+            for row in reversed(rows)
+        ]
 
     async def moved_turn_conversation(self, turn_id: str) -> str | None:
         """The conversation a turn was moved out of, if ``turn_id`` names a moved turn.

@@ -506,20 +506,27 @@ async def read_home_messages_tool(exec_context: ToolExecutionContext) -> ToolRes
     db = exec_context.db_context
     thread = await db.conversation_threads.get_thread(exec_context.conversation_id)
     assert thread is not None
+    app_config = _app_config(exec_context)
     rows = await db.message_history.recent_home_messages(
-        conversation_id=thread.home_conversation_id, limit=READ_HOME_LIMIT
+        conversation_id=thread.home_conversation_id,
+        limit=READ_HOME_LIMIT,
+        history_taint_epoch=(
+            app_config.taint_policy.history_taint_epoch
+            if app_config is not None
+            else None
+        ),
     )
     messages: list[dict[str, object]] = []
     lines: list[str] = []
     for row in rows:
-        _merge_fact_taint(exec_context, row["taint_metadata_json"])
-        sent_at = row["timestamp"].isoformat()
+        _merge_fact_taint(exec_context, row.taint_metadata)
+        sent_at = row.timestamp.isoformat()
         messages.append({
-            "role": row["role"],
+            "role": row.role,
             "sent_at": sent_at,
-            "content": row["content"],
+            "content": row.content,
         })
-        lines.append(f"[{sent_at}] {row['role']}: {row['content']}")
+        lines.append(f"[{sent_at}] {row.role}: {row.content}")
     text = (
         "Latest messages in Home, oldest first:\n" + "\n\n".join(lines)
         if lines

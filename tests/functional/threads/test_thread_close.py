@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, cast
 from zoneinfo import ZoneInfo
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from family_assistant.config_models import (
     AppConfig,
@@ -23,7 +23,7 @@ from family_assistant.config_models import (
 )
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import ToolCallFunction, ToolCallItem
-from family_assistant.llm.messages import UserMessage
+from family_assistant.llm.messages import AssistantMessage, UserMessage
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.security.taint import (
     SourceTrustTier,
@@ -592,6 +592,37 @@ async def test_reading_home_brings_a_messages_taint_into_the_turn(
     world: World,
 ) -> None:
     await world.say(world.home_service, HOME, "Forwarded email", tainted=True)
+
+    await world.in_thread("about that reminder")
+
+    [reply] = [
+        row
+        for row in await world.rows(THREAD)
+        if row["role"] == "assistant" and row["content"] == OUTCOME
+    ]
+    taint = cast("dict[str, object]", reply["taint_metadata_json"])
+    assert (
+        SourceTrustTier.from_value(taint["max_tier"])
+        is SourceTrustTier.UNKNOWN_EXTERNAL
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_home_message_with_no_recorded_taint_is_not_taken_for_clean(
+    world: World,
+) -> None:
+    await world.db.message_history.add_message(
+        AssistantMessage(content="An old reply"),
+        interface_type="web",
+        conversation_id=HOME,
+        timestamp=NOW,
+        processing_profile_id=HOME_PROFILE,
+    )
+    await world.db.execute(
+        update(message_history_table)
+        .where(message_history_table.c.conversation_id == HOME)
+        .values(taint_metadata_json=None)
+    )
 
     await world.in_thread("about that reminder")
 
