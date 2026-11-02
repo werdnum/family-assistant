@@ -2343,6 +2343,9 @@ final class ChatViewModel {
     /// Home, which holds the thread store; nil in any other conversation.
     @ObservationIgnored var startHomeThread: (@MainActor (HomeThreadStart) async -> Bool)?
 
+    /// The turn id each routed prompt's thread start is retried under.
+    @ObservationIgnored private var routedThreadTurnIDs: [String: String] = [:]
+
     /// The start a send-as-thread of the composer's contents is retried under,
     /// so a retry of the same draft to the same profile reuses its turn id.
     @ObservationIgnored private var pendingThreadSend: (draft: ChatDraft, start: HomeThreadStart)?
@@ -2441,11 +2444,19 @@ final class ChatViewModel {
                 return false
             }
             if let startHomeThread {
-                return await startHomeThread(HomeThreadStart(
-                    turnID: UUID().uuidString,
+                // A held prompt is retried under the same id, so a start whose
+                // answer was lost isn't made twice.
+                let turnID = routedThreadTurnIDs[prompt] ?? UUID().uuidString
+                routedThreadTurnIDs[prompt] = turnID
+                let started = await startHomeThread(HomeThreadStart(
+                    turnID: turnID,
                     profileID: defaultProfileID,
                     prompt: prompt
                 ))
+                if started {
+                    routedThreadTurnIDs[prompt] = nil
+                }
+                return started
             }
         }
         guard isRouted || draftAttachments.allSatisfy({ $0.uploadState != .uploading }) else {

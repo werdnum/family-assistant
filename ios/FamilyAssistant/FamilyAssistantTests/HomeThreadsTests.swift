@@ -1848,6 +1848,25 @@ final class HomeThreadsTests: XCTestCase {
         XCTAssertEqual(model.draftAttachments.count, 1)
     }
 
+    func testARoutedPromptRetriesItsThreadStartUnderTheSameTurnID() async throws {
+        let model = try await makeHomeModelWithProfiles()
+        var starts: [HomeThreadStart] = []
+        var accepts = false
+        model.startHomeThread = { starts.append($0); return accepts }
+        await model.bootstrap()
+
+        await model.sendPromptInPlace("Book the plumber")
+        accepts = true
+        await model.reloadMessages()
+        try await waitUntil { starts.count == 2 }
+        guard starts.count == 2 else {
+            return
+        }
+
+        XCTAssertEqual(starts[0].turnID, starts[1].turnID)
+        XCTAssertTrue(model.heldRoutedPrompts.isEmpty)
+    }
+
     func testAStartedThreadMarkerDecodesItsThread() throws {
         let json = """
         {"internal_id": 5, "role": "assistant", "content": "(marker)",
