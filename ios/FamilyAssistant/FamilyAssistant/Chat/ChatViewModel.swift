@@ -2207,12 +2207,15 @@ final class ChatViewModel {
         guard !isSubmittingDraft else {
             return
         }
-        if let startHomeThread {
+        if let startHomeThread, !isStreaming {
             guard canSendDraftAsThread else {
-                presentErrorAlert(
-                    "Add a message to send with your attachment.",
-                    reason: .sendAttachmentNeedsMessage
-                )
+                // Only text is missing from a draft that could otherwise go.
+                if canSendDraft {
+                    presentErrorAlert(
+                        "Add a message to send with your attachment.",
+                        reason: .sendAttachmentNeedsMessage
+                    )
+                }
                 return
             }
             await sendDraftAsThread(profileID: defaultProfileID, using: startHomeThread)
