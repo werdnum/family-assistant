@@ -95,6 +95,7 @@ describe('Web turn control (Stop / Steer)', () => {
 
   it(
     'Stop button cancels the running turn server-side and renders a stopped marker',
+    { timeout: 30000 },
     async () => {
       const { ready, turnIdRef } = installOpenStream();
       let cancelBody: { conversation_id: string } | null = null;
@@ -141,12 +142,12 @@ describe('Web turn control (Stop / Steer)', () => {
         expect(screen.getByText('Stopped.')).toBeInTheDocument();
       }, WAIT);
       expect(screen.queryByText(/encountered an error/i)).not.toBeInTheDocument();
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'Steer input injects a mid-turn message and renders the steering bubble',
+    { timeout: 30000 },
     async () => {
       const { ready, turnIdRef } = installOpenStream();
       let steerBody: { conversation_id: string; prompt: string; input_id: string } | null = null;
@@ -205,12 +206,12 @@ describe('Web turn control (Stop / Steer)', () => {
         sse('turn_ended', { turn_id: turnIdRef.current, status: 'complete', seq: 2 })
       );
       controller.close();
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'clicking Steer injects mid-turn without also submitting a new turn',
+    { timeout: 30000 },
     async () => {
       // The Steer button lives inside the composer form, so a click must reach
       // only the steer endpoint and never also submit the form as a second
@@ -271,12 +272,12 @@ describe('Web turn control (Stop / Steer)', () => {
       await screen.findByTestId('send-button', undefined, WAIT);
       expect(kickoffPrompts).toEqual(['Plan my week']);
       expect(steerPosts).toBe(1);
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'Enter during IME composition does not steer; a committed Enter does',
+    { timeout: 30000 },
     async () => {
       const { ready, turnIdRef } = installOpenStream();
       let steerPosts = 0;
@@ -330,68 +331,60 @@ describe('Web turn control (Stop / Steer)', () => {
         sse('turn_ended', { turn_id: turnIdRef.current, status: 'complete', seq: 2 })
       );
       controller.close();
-    },
-    { timeout: 30000 }
+    }
   );
 
-  it(
-    'hides the attachment UI while a turn is running',
-    async () => {
-      const { ready, turnIdRef } = installOpenStream();
-      const user = userEvent.setup();
-      await renderChatApp({ waitForReady: true });
+  it('hides the attachment UI while a turn is running', { timeout: 30000 }, async () => {
+    const { ready, turnIdRef } = installOpenStream();
+    const user = userEvent.setup();
+    await renderChatApp({ waitForReady: true });
 
-      // Idle: the add-attachment affordance is available.
+    // Idle: the add-attachment affordance is available.
+    expect(screen.getByTestId('add-attachment-button')).toBeInTheDocument();
+
+    const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+    await user.type(messageInput, 'Plan my week');
+    await user.keyboard('{Enter}');
+
+    const controller = await ready;
+
+    // Running (steer mode): no attachment button, since a steer is text-only and
+    // a picked file would otherwise be silently dropped from the steer.
+    await waitFor(() => {
+      expect(screen.queryByTestId('add-attachment-button')).not.toBeInTheDocument();
+    }, WAIT);
+
+    controller.enqueue(
+      sse('turn_ended', { turn_id: turnIdRef.current, status: 'complete', seq: 1 })
+    );
+    controller.close();
+
+    // Idle again: the attachment button returns.
+    await waitFor(() => {
       expect(screen.getByTestId('add-attachment-button')).toBeInTheDocument();
+    }, WAIT);
+  });
 
-      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
-      await user.type(messageInput, 'Plan my week');
-      await user.keyboard('{Enter}');
+  it('clears composer text when switching conversations', { timeout: 30000 }, async () => {
+    // The main composer doubles as the steer input and its runtime is shared
+    // across conversations, so text left in it (e.g. a half-typed steer for a
+    // running turn) must not leak into a newly selected conversation. The clear
+    // is driven purely by the conversation-id change, so this exercises it
+    // without an active stream.
+    const user = userEvent.setup();
+    await renderChatApp({ waitForReady: true });
 
-      const controller = await ready;
+    const input = screen.getByTestId('chat-input');
+    await user.type(input, 'half-typed steer');
+    expect(input).toHaveValue('half-typed steer');
 
-      // Running (steer mode): no attachment button, since a steer is text-only and
-      // a picked file would otherwise be silently dropped from the steer.
-      await waitFor(() => {
-        expect(screen.queryByTestId('add-attachment-button')).not.toBeInTheDocument();
-      }, WAIT);
-
-      controller.enqueue(
-        sse('turn_ended', { turn_id: turnIdRef.current, status: 'complete', seq: 1 })
-      );
-      controller.close();
-
-      // Idle again: the attachment button returns.
-      await waitFor(() => {
-        expect(screen.getByTestId('add-attachment-button')).toBeInTheDocument();
-      }, WAIT);
-    },
-    { timeout: 30000 }
-  );
-
-  it(
-    'clears composer text when switching conversations',
-    async () => {
-      // The main composer doubles as the steer input and its runtime is shared
-      // across conversations, so text left in it (e.g. a half-typed steer for a
-      // running turn) must not leak into a newly selected conversation. The clear
-      // is driven purely by the conversation-id change, so this exercises it
-      // without an active stream.
-      const user = userEvent.setup();
-      await renderChatApp({ waitForReady: true });
-
-      const input = screen.getByTestId('chat-input');
-      await user.type(input, 'half-typed steer');
-      expect(input).toHaveValue('half-typed steer');
-
-      await user.click(await screen.findByTestId('new-chat-button', undefined, WAIT));
-      await waitFor(() => expect(screen.getByTestId('chat-input')).toHaveValue(''), WAIT);
-    },
-    { timeout: 30000 }
-  );
+    await user.click(await screen.findByTestId('new-chat-button', undefined, WAIT));
+    await waitFor(() => expect(screen.getByTestId('chat-input')).toHaveValue(''), WAIT);
+  });
 
   it(
     'steering a finished turn falls back to sending a normal new message',
+    { timeout: 30000 },
     async () => {
       const { ready, turnIdRef, kickoffPrompts } = installOpenStream();
       server.use(
@@ -425,12 +418,12 @@ describe('Web turn control (Stop / Steer)', () => {
       await waitFor(() => {
         expect(kickoffPrompts).toEqual(['Plan my week', 'do it differently']);
       }, WAIT);
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'abandons an un-echoed accepted steer when the user stops the turn',
+    { timeout: 30000 },
     async () => {
       const { ready, controllers, turnIdRef, kickoffPrompts } = installOpenStream();
       server.use(
@@ -493,57 +486,53 @@ describe('Web turn control (Stop / Steer)', () => {
         sse('turn_ended', { turn_id: turnIdRef.current, status: 'complete', seq: 1 })
       );
       controllers[1].close();
-    },
-    { timeout: 30000 }
+    }
   );
 
-  it(
-    'recovers an accepted steer that the turn never echoes',
-    async () => {
-      const { ready, turnIdRef, kickoffPrompts } = installOpenStream();
-      server.use(
-        // Accept the steer, but the stream below never echoes a user_input for
-        // it (simulating a final text-only iteration that never drains it).
-        http.post('/api/v1/chat/turns/:turnId/steer', async ({ request }) => {
-          const body = (await request.json()) as { conversation_id: string; prompt: string };
-          return HttpResponse.json({
-            turn_id: turnIdRef.current,
-            conversation_id: body.conversation_id,
-            accepted: true,
-          });
-        })
-      );
+  it('recovers an accepted steer that the turn never echoes', { timeout: 30000 }, async () => {
+    const { ready, turnIdRef, kickoffPrompts } = installOpenStream();
+    server.use(
+      // Accept the steer, but the stream below never echoes a user_input for
+      // it (simulating a final text-only iteration that never drains it).
+      http.post('/api/v1/chat/turns/:turnId/steer', async ({ request }) => {
+        const body = (await request.json()) as { conversation_id: string; prompt: string };
+        return HttpResponse.json({
+          turn_id: turnIdRef.current,
+          conversation_id: body.conversation_id,
+          accepted: true,
+        });
+      })
+    );
 
-      const user = userEvent.setup();
-      await renderChatApp({ waitForReady: true });
+    const user = userEvent.setup();
+    await renderChatApp({ waitForReady: true });
 
-      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
-      await user.type(messageInput, 'Plan my week');
-      await user.keyboard('{Enter}');
+    const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+    await user.type(messageInput, 'Plan my week');
+    await user.keyboard('{Enter}');
 
-      const controller = await ready;
+    const controller = await ready;
 
-      const steerInput = screen.getByTestId('chat-input');
-      await user.type(steerInput, 'use the newer plan');
-      await user.click(await screen.findByTestId('steer-button', undefined, WAIT));
-      await waitFor(() => expect(steerInput).toHaveValue(''), WAIT);
+    const steerInput = screen.getByTestId('chat-input');
+    await user.type(steerInput, 'use the newer plan');
+    await user.click(await screen.findByTestId('steer-button', undefined, WAIT));
+    await waitFor(() => expect(steerInput).toHaveValue(''), WAIT);
 
-      // The turn completes WITHOUT echoing the accepted steer; on completion it
-      // is recovered as a normal follow-up (a 2nd kickoff) rather than lost.
-      controller.enqueue(
-        sse('turn_ended', { turn_id: turnIdRef.current, status: 'complete', seq: 1 })
-      );
-      controller.close();
+    // The turn completes WITHOUT echoing the accepted steer; on completion it
+    // is recovered as a normal follow-up (a 2nd kickoff) rather than lost.
+    controller.enqueue(
+      sse('turn_ended', { turn_id: turnIdRef.current, status: 'complete', seq: 1 })
+    );
+    controller.close();
 
-      await waitFor(() => {
-        expect(kickoffPrompts).toEqual(['Plan my week', 'use the newer plan']);
-      }, WAIT);
-    },
-    { timeout: 30000 }
-  );
+    await waitFor(() => {
+      expect(kickoffPrompts).toEqual(['Plan my week', 'use the newer plan']);
+    }, WAIT);
+  });
 
   it(
     'retries Stop through the turn-registration race (404 then 200)',
+    { timeout: 30000 },
     async () => {
       const { ready, turnIdRef } = installOpenStream();
       let cancelCalls = 0;
@@ -589,12 +578,12 @@ describe('Web turn control (Stop / Steer)', () => {
       }, WAIT);
       // No stop-failure warning, since the retry secured the stop.
       expect(screen.queryByText(/could not confirm the turn/i)).not.toBeInTheDocument();
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'retries a steer through the turn-registration race (404 then accepted)',
+    { timeout: 30000 },
     async () => {
       const { ready, turnIdRef, kickoffPrompts } = installOpenStream();
       let steerCalls = 0;
@@ -653,68 +642,51 @@ describe('Web turn control (Stop / Steer)', () => {
         sse('turn_ended', { turn_id: turnIdRef.current, status: 'complete', seq: 2 })
       );
       controller.close();
-    },
-    { timeout: 30000 }
+    }
   );
 
-  it(
-    'recovers every accepted steer when the turn never echoes',
-    async () => {
-      const enc2 = new TextEncoder();
-      const turnIdRef = { current: 'mock-turn' };
-      const conversationIdRef = { current: '' };
-      let turnsPosts = 0;
-      let firstOpened = false;
-      let resolveFirst: (c: ReadableStreamDefaultController<Uint8Array>) => void;
-      const ready = new Promise<ReadableStreamDefaultController<Uint8Array>>((r) => {
-        resolveFirst = r;
-      });
-      server.use(
-        http.post('/api/v1/chat/turns', async ({ request }) => {
-          turnsPosts += 1;
-          const body = (await request.json()) as { turn_id: string; conversation_id?: string };
-          turnIdRef.current = body.turn_id;
-          conversationIdRef.current = body.conversation_id || `web_conv_${Date.now()}`;
-          return HttpResponse.json({
-            turn_id: body.turn_id,
-            conversation_id: conversationIdRef.current,
-            first_seq: 0,
+  it('recovers every accepted steer when the turn never echoes', { timeout: 30000 }, async () => {
+    const enc2 = new TextEncoder();
+    const turnIdRef = { current: 'mock-turn' };
+    const conversationIdRef = { current: '' };
+    let turnsPosts = 0;
+    let firstOpened = false;
+    let resolveFirst: (c: ReadableStreamDefaultController<Uint8Array>) => void;
+    const ready = new Promise<ReadableStreamDefaultController<Uint8Array>>((r) => {
+      resolveFirst = r;
+    });
+    server.use(
+      http.post('/api/v1/chat/turns', async ({ request }) => {
+        turnsPosts += 1;
+        const body = (await request.json()) as { turn_id: string; conversation_id?: string };
+        turnIdRef.current = body.turn_id;
+        conversationIdRef.current = body.conversation_id || `web_conv_${Date.now()}`;
+        return HttpResponse.json({
+          turn_id: body.turn_id,
+          conversation_id: conversationIdRef.current,
+          first_seq: 0,
+        });
+      }),
+      http.post('/api/v1/chat/turns/:turnId/steer', async ({ request }) => {
+        const body = (await request.json()) as { conversation_id: string };
+        return HttpResponse.json({
+          turn_id: turnIdRef.current,
+          conversation_id: body.conversation_id,
+          accepted: true,
+        });
+      }),
+      http.get('/api/v1/chat/conversations/:conversationId/stream', ({ params }) => {
+        // A stray stream request from an earlier test is parked, so it can
+        // neither take the controllable first stream nor count as it.
+        if (String(params.conversationId) !== conversationIdRef.current) {
+          return new HttpResponse(new ReadableStream<Uint8Array>({ start() {} }), {
+            headers: { 'Content-Type': 'text/event-stream' },
           });
-        }),
-        http.post('/api/v1/chat/turns/:turnId/steer', async ({ request }) => {
-          const body = (await request.json()) as { conversation_id: string };
-          return HttpResponse.json({
-            turn_id: turnIdRef.current,
-            conversation_id: body.conversation_id,
-            accepted: true,
-          });
-        }),
-        http.get('/api/v1/chat/conversations/:conversationId/stream', ({ params }) => {
-          // A stray stream request from an earlier test is parked, so it can
-          // neither take the controllable first stream nor count as it.
-          if (String(params.conversationId) !== conversationIdRef.current) {
-            return new HttpResponse(new ReadableStream<Uint8Array>({ start() {} }), {
-              headers: { 'Content-Type': 'text/event-stream' },
-            });
-          }
-          // The first turn is controllable; follow-up (recovery) turns
-          // auto-complete so each queued recovery fires the next sequentially.
-          if (!firstOpened) {
-            firstOpened = true;
-            return new HttpResponse(
-              new ReadableStream<Uint8Array>({
-                start(controller) {
-                  controller.enqueue(
-                    enc2.encode(
-                      `event: turn_started\ndata: ${JSON.stringify({ turn_id: turnIdRef.current, seq: 0 })}\n\n`
-                    )
-                  );
-                  resolveFirst(controller);
-                },
-              }),
-              { headers: { 'Content-Type': 'text/event-stream' } }
-            );
-          }
+        }
+        // The first turn is controllable; follow-up (recovery) turns
+        // auto-complete so each queued recovery fires the next sequentially.
+        if (!firstOpened) {
+          firstOpened = true;
           return new HttpResponse(
             new ReadableStream<Uint8Array>({
               start(controller) {
@@ -723,55 +695,67 @@ describe('Web turn control (Stop / Steer)', () => {
                     `event: turn_started\ndata: ${JSON.stringify({ turn_id: turnIdRef.current, seq: 0 })}\n\n`
                   )
                 );
-                controller.enqueue(
-                  enc2.encode(
-                    `event: turn_ended\ndata: ${JSON.stringify({ turn_id: turnIdRef.current, status: 'complete', seq: 1 })}\n\n`
-                  )
-                );
-                controller.close();
+                resolveFirst(controller);
               },
             }),
             { headers: { 'Content-Type': 'text/event-stream' } }
           );
-        })
-      );
+        }
+        return new HttpResponse(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(
+                enc2.encode(
+                  `event: turn_started\ndata: ${JSON.stringify({ turn_id: turnIdRef.current, seq: 0 })}\n\n`
+                )
+              );
+              controller.enqueue(
+                enc2.encode(
+                  `event: turn_ended\ndata: ${JSON.stringify({ turn_id: turnIdRef.current, status: 'complete', seq: 1 })}\n\n`
+                )
+              );
+              controller.close();
+            },
+          }),
+          { headers: { 'Content-Type': 'text/event-stream' } }
+        );
+      })
+    );
 
-      const user = userEvent.setup();
-      await renderChatApp({ waitForReady: true });
+    const user = userEvent.setup();
+    await renderChatApp({ waitForReady: true });
 
-      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
-      await user.type(messageInput, 'Plan my week');
-      await user.keyboard('{Enter}');
+    const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+    await user.type(messageInput, 'Plan my week');
+    await user.keyboard('{Enter}');
 
-      const controller = await ready;
-      await waitFor(() => {
-        expect(turnsPosts).toBe(1);
-      }, WAIT);
+    const controller = await ready;
+    await waitFor(() => {
+      expect(turnsPosts).toBe(1);
+    }, WAIT);
 
-      // Two accepted steers during the same turn. Each accept clears the
-      // composer; wait for that before typing the next so the in-flight clear
-      // can't clobber it.
-      const steerInput = screen.getByTestId('chat-input');
-      await user.type(steerInput, 'first steer');
-      await user.click(await screen.findByTestId('steer-button', undefined, WAIT));
-      await waitFor(() => expect(steerInput).toHaveValue(''), WAIT);
-      await user.type(steerInput, 'second steer');
-      await user.click(await screen.findByTestId('steer-button', undefined, WAIT));
-      await waitFor(() => expect(steerInput).toHaveValue(''), WAIT);
+    // Two accepted steers during the same turn. Each accept clears the
+    // composer; wait for that before typing the next so the in-flight clear
+    // can't clobber it.
+    const steerInput = screen.getByTestId('chat-input');
+    await user.type(steerInput, 'first steer');
+    await user.click(await screen.findByTestId('steer-button', undefined, WAIT));
+    await waitFor(() => expect(steerInput).toHaveValue(''), WAIT);
+    await user.type(steerInput, 'second steer');
+    await user.click(await screen.findByTestId('steer-button', undefined, WAIT));
+    await waitFor(() => expect(steerInput).toHaveValue(''), WAIT);
 
-      // The turn ends without echoing either steer; BOTH are recovered as
-      // follow-ups (sequentially), so two extra kickoffs fire.
-      controller.enqueue(
-        sse('turn_ended', { turn_id: turnIdRef.current, status: 'complete', seq: 1 })
-      );
-      controller.close();
+    // The turn ends without echoing either steer; BOTH are recovered as
+    // follow-ups (sequentially), so two extra kickoffs fire.
+    controller.enqueue(
+      sse('turn_ended', { turn_id: turnIdRef.current, status: 'complete', seq: 1 })
+    );
+    controller.close();
 
-      await waitFor(() => {
-        expect(turnsPosts).toBe(3);
-      }, WAIT);
-    },
-    { timeout: 30000 }
-  );
+    await waitFor(() => {
+      expect(turnsPosts).toBe(3);
+    }, WAIT);
+  });
 
   // A send that arrives while the conversation already has a running turn is
   // refused with 409. The client only gets there having lost track of that turn
@@ -856,6 +840,7 @@ describe('Web turn control (Stop / Steer)', () => {
 
   it(
     'a send refused by a running turn is delivered to that turn and follows it',
+    { timeout: 30000 },
     async () => {
       const { ready, steerBodies, steeredTurnIds, streamFromSeqs } = installConflictingTurn(
         'running-turn-1',
@@ -910,12 +895,12 @@ describe('Web turn control (Stop / Steer)', () => {
         sse('turn_ended', { turn_id: 'running-turn-1', status: 'complete', seq: 10 })
       );
       controller.close();
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'a later steer on an adopted turn still renders its own bubble',
+    { timeout: 30000 },
     async () => {
       // Only the adopted send's own echo is swallowed; the dedupe must not eat
       // every subsequent user_input on that turn.
@@ -952,12 +937,12 @@ describe('Web turn control (Stop / Steer)', () => {
         sse('turn_ended', { turn_id: 'running-turn-2', status: 'complete', seq: 6 })
       );
       controller.close();
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'follows an adopted turn from the steer, not from the work it had already done',
+    { timeout: 30000 },
     async () => {
       // The adopted turn has usually been running a while. Replaying it from
       // its first event would pour that earlier answer into the bubble the
@@ -1002,12 +987,12 @@ describe('Web turn control (Stop / Steer)', () => {
         sse('turn_ended', { turn_id: 'running-turn-3', status: 'complete', seq: 8 })
       );
       controller.close();
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'resends an adopted message the turn ended without ever consuming',
+    { timeout: 30000 },
     async () => {
       // The adopted turn can already be streaming its final, tool-free response
       // when the steer lands, in which case the LLM loop breaks before its
@@ -1086,12 +1071,12 @@ describe('Web turn control (Stop / Steer)', () => {
         expect(turnsPosts).toBe(2);
       }, WAIT);
       expect(kickoffPrompts[1]).toBe('and the dentist too');
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'holds back the adopted turn output until it echoes the new prompt',
+    { timeout: 30000 },
     async () => {
       // queued_after_seq marks when the steer was queued, not when the turn got
       // to it: the turn keeps finishing the response already in flight. Those
@@ -1133,12 +1118,12 @@ describe('Web turn control (Stop / Steer)', () => {
         sse('turn_ended', { turn_id: 'running-turn-8', status: 'complete', seq: 8 })
       );
       controller.close();
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'resends an unconsumed adopted message even when the turn fails',
+    { timeout: 30000 },
     async () => {
       // A failed turn abandons ordinary steers — resending them just repeats the
       // failure and the user still has them in the thread. The adopted prompt is
@@ -1218,12 +1203,12 @@ describe('Web turn control (Stop / Steer)', () => {
         expect(turnsPosts).toBe(2);
       }, WAIT);
       expect(kickoffPrompts[1]).toBe('and the dentist too');
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'resends an accepted steer the turn never echoed before failing',
+    { timeout: 30000 },
     async () => {
       // submitSteer clears the composer on accept, and the backend only
       // persists a steer once the loop drains it and emits the echo. A failed
@@ -1261,12 +1246,12 @@ describe('Web turn control (Stop / Steer)', () => {
       await waitFor(() => {
         expect(kickoffPrompts).toEqual(['Plan my week', 'and book the dentist']);
       }, WAIT);
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'keeps a retrying steer pinned to the turn it was submitted against',
+    { timeout: 30000 },
     async () => {
       // The retry loop must not follow the live-turn ref. It moves for reasons
       // unrelated to this steer — another conversation being opened, or a turn
@@ -1325,12 +1310,12 @@ describe('Web turn control (Stop / Steer)', () => {
       expect(steeredTurnIds.length).toBeGreaterThan(0);
       expect(new Set(steeredTurnIds)).toEqual(new Set(['turn-in-A']));
       result.current.cancelStream();
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'does not resend an adopted prompt the user stopped before it was placed',
+    { timeout: 30000 },
     async () => {
       // Stop pressed after the kickoff adopted the running turn but before the
       // steer landed: the cancel wins, so /steer answers 409. No stream ever
@@ -1403,12 +1388,12 @@ describe('Web turn control (Stop / Steer)', () => {
       expect(completions).toHaveLength(1);
       expect(completions[0].undeliveredPrompt).toBeNull();
       expect(streamRequests).toBe(0);
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'hands back an accepted steer when the stream never sees the turn end',
+    { timeout: 30000 },
     async () => {
       // The stream gave up before the turn echoed this steer, so whether the
       // turn drained it is unknowable from here: resending could repeat an
@@ -1508,12 +1493,12 @@ describe('Web turn control (Stop / Steer)', () => {
       } finally {
         Object.assign(streamResumeTuning, originalTuning);
       }
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'hands back an adopted prompt when the stream never sees the turn end',
+    { timeout: 30000 },
     async () => {
       // The adopted prompt is the one message with no copy anywhere: the
       // backend persists a steer only once the loop drains it, the composer has
@@ -1572,12 +1557,12 @@ describe('Web turn control (Stop / Steer)', () => {
       } finally {
         Object.assign(streamResumeTuning, originalTuning);
       }
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'sends a queued follow-up even when the stream it was queued behind gives up',
+    { timeout: 30000 },
     async () => {
       // A steer that hit an already-finished turn is queued as a normal
       // follow-up rather than sent immediately, so it doesn't race the stream
@@ -1677,12 +1662,12 @@ describe('Web turn control (Stop / Steer)', () => {
       } finally {
         Object.assign(streamResumeTuning, originalTuning);
       }
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'never lets a retrying Stop land on a turn the user started later',
+    { timeout: 30000 },
     async () => {
       // A Stop that is still retrying when its turn finishes must not follow the
       // conversation onto whatever turn comes next: the user asked to stop the
@@ -1742,12 +1727,12 @@ describe('Web turn control (Stop / Steer)', () => {
 
       expect(cancelledTurnIds.length).toBeGreaterThan(1);
       expect(new Set(cancelledTurnIds)).toEqual(new Set(['turn-first']));
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'replays a lost kickoff before the steer that was typed after it',
+    { timeout: 30000 },
     async () => {
       // A steer submitted while the kickoff POST is still pending 404s (the turn
       // is not registered) and queues as a follow-up. If the kickoff then adopts
@@ -1839,12 +1824,12 @@ describe('Web turn control (Stop / Steer)', () => {
         expect(kickoffPrompts).toHaveLength(3);
       }, WAIT);
       expect(kickoffPrompts).toEqual(['book the dentist', 'book the dentist', 'make it a Friday']);
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'starts its own turn when the adopted turn is already gone by the steer',
+    { timeout: 30000 },
     async () => {
       // The named turn can finish between the kickoff's 409 and the steer. Then
       // the prompt reached nothing: the kickoff was refused, the steer rejected,
@@ -1911,12 +1896,12 @@ describe('Web turn control (Stop / Steer)', () => {
         expect(turnsPosts).toBe(2);
       }, WAIT);
       expect(kickoffPrompts[1]).toBe('is the dentist still on');
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'hands back the text when an adopted steer fails ambiguously',
+    { timeout: 30000 },
     async () => {
       // A 5xx may or may not have queued the steer, so it must not auto-resend.
       // The composer has already cleared and nothing persisted the prompt, so
@@ -1956,12 +1941,12 @@ describe('Web turn control (Stop / Steer)', () => {
       // The text comes back with the error, and it renders as written.
       expect(errors[0].message).toContain('move the dentist to Friday');
       expect((errors[0] as Error & { userFacing?: boolean }).userFacing).toBe(true);
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'refuses to adopt a running turn when the send carried attachments',
+    { timeout: 30000 },
     async () => {
       // Steering carries text only. Adopting here would answer the prompt with
       // its files silently missing, so the send fails and the user keeps them.
@@ -2010,12 +1995,12 @@ describe('Web turn control (Stop / Steer)', () => {
       // instead of the generic "I encountered an error" line, which would hide
       // the only part that says what to do.
       expect((errors[0] as Error & { userFacing?: boolean }).userFacing).toBe(true);
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'retargets an in-flight Stop at the turn the refused send adopted',
+    { timeout: 30000 },
     async () => {
       // Stop clicked while the kickoff POST is still pending: the POST is then
       // refused and adopts the conversation's running turn, so the cancel must
@@ -2100,12 +2085,12 @@ describe('Web turn control (Stop / Steer)', () => {
       );
       controller.close();
       await sending;
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'does not resend a steer the turn consumed before the retry found it finished',
+    { timeout: 30000 },
     async () => {
       // The first POST queues the steer but its response is lost; steerStream
       // retries, and by then the turn has drained the message and ended, so the
@@ -2171,12 +2156,12 @@ describe('Web turn control (Stop / Steer)', () => {
       }, WAIT);
       // Only the original kickoff: the steer was not resent as a new turn.
       expect(kickoffPrompts).toEqual(['Plan my week']);
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'still recognises an adopted echo from a backend that sends no input_id',
+    { timeout: 30000 },
     async () => {
       // Older backend: the echo carries no id, so it is matched on text and
       // cursor as before. Failing to recognise it would hold back the whole
@@ -2212,12 +2197,12 @@ describe('Web turn control (Stop / Steer)', () => {
         sse('turn_ended', { turn_id: 'running-turn-13', status: 'complete', seq: 8 })
       );
       controller.close();
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'keeps a recovered prompt in the thread when its own kickoff fails',
+    { timeout: 30000 },
     async () => {
       // A recovered prompt is resent once; if that send fails outright there is
       // nothing to retry into, so it must at least stay in front of the user —
@@ -2294,12 +2279,12 @@ describe('Web turn control (Stop / Steer)', () => {
         .getAllByTestId('user-message-content')
         .filter((el) => el.textContent?.includes('and the dentist too'));
       expect(bubbles).toHaveLength(1);
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'clears the composer when a steer whose response was lost is echoed back',
+    { timeout: 30000 },
     async () => {
       // The turn can drain the steer and publish its echo while the POST is
       // still failing. Seeing that echo is what lets the composer clear instead
@@ -2359,71 +2344,67 @@ describe('Web turn control (Stop / Steer)', () => {
         sse('turn_ended', { turn_id: turnIdRef.current, status: 'complete', seq: 2 })
       );
       controller.close();
-    },
-    { timeout: 30000 }
+    }
   );
 
-  it(
-    'keeps the text when the echo belongs to someone else',
-    async () => {
-      // Same failing POST, but the echo names a submission this client never
-      // made — another interface sent the same words. Reading it as delivery
-      // would clear the composer and lose the only copy of this message.
-      const { ready, turnIdRef } = installOpenStream();
-      let steerPosts = 0;
-      let releaseSteer: () => void = () => {};
-      const steerGate = new Promise<void>((resolve) => {
-        releaseSteer = resolve;
-      });
-      server.use(
-        http.post('/api/v1/chat/turns/:turnId/steer', async () => {
-          steerPosts += 1;
-          await steerGate;
-          return new HttpResponse(null, { status: 503 });
-        })
-      );
+  it('keeps the text when the echo belongs to someone else', { timeout: 30000 }, async () => {
+    // Same failing POST, but the echo names a submission this client never
+    // made — another interface sent the same words. Reading it as delivery
+    // would clear the composer and lose the only copy of this message.
+    const { ready, turnIdRef } = installOpenStream();
+    let steerPosts = 0;
+    let releaseSteer: () => void = () => {};
+    const steerGate = new Promise<void>((resolve) => {
+      releaseSteer = resolve;
+    });
+    server.use(
+      http.post('/api/v1/chat/turns/:turnId/steer', async () => {
+        steerPosts += 1;
+        await steerGate;
+        return new HttpResponse(null, { status: 503 });
+      })
+    );
 
-      const user = userEvent.setup();
-      await renderChatApp({ waitForReady: true });
+    const user = userEvent.setup();
+    await renderChatApp({ waitForReady: true });
 
-      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
-      await user.type(messageInput, 'Plan my week');
-      await user.keyboard('{Enter}');
+    const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+    await user.type(messageInput, 'Plan my week');
+    await user.keyboard('{Enter}');
 
-      const controller = await ready;
-      const steerInput = screen.getByTestId('chat-input');
-      await user.type(steerInput, 'focus on tomorrow');
-      await user.click(await screen.findByTestId('steer-button', undefined, WAIT));
+    const controller = await ready;
+    const steerInput = screen.getByTestId('chat-input');
+    await user.type(steerInput, 'focus on tomorrow');
+    await user.click(await screen.findByTestId('steer-button', undefined, WAIT));
 
-      await waitFor(() => expect(steerPosts).toBeGreaterThan(0), WAIT);
-      controller.enqueue(
-        sse('user_input', {
-          turn_id: turnIdRef.current,
-          content: 'focus on tomorrow',
-          input_id: 'some-other-clients-submission',
-          seq: 1,
-        })
-      );
-      await waitFor(() => {
-        expect(screen.getByText('focus on tomorrow')).toBeInTheDocument();
-      }, WAIT);
-      releaseSteer();
+    await waitFor(() => expect(steerPosts).toBeGreaterThan(0), WAIT);
+    controller.enqueue(
+      sse('user_input', {
+        turn_id: turnIdRef.current,
+        content: 'focus on tomorrow',
+        input_id: 'some-other-clients-submission',
+        seq: 1,
+      })
+    );
+    await waitFor(() => {
+      expect(screen.getByText('focus on tomorrow')).toBeInTheDocument();
+    }, WAIT);
+    releaseSteer();
 
-      await waitFor(() => {
-        expect(screen.getByText(/Could not steer the assistant/)).toBeInTheDocument();
-      }, WAIT);
-      expect(steerInput).toHaveValue('focus on tomorrow');
+    await waitFor(() => {
+      expect(screen.getByText(/Could not steer the assistant/)).toBeInTheDocument();
+    }, WAIT);
+    expect(steerInput).toHaveValue('focus on tomorrow');
 
-      controller.enqueue(
-        sse('turn_ended', { turn_id: turnIdRef.current, status: 'complete', seq: 2 })
-      );
-      controller.close();
-    },
-    { timeout: 30000 }
-  );
+    controller.enqueue(
+      sse('turn_ended', { turn_id: turnIdRef.current, status: 'complete', seq: 2 })
+    );
+    controller.close();
+  });
 
   it(
     'does not carry steer text into the new conversation when a profile switch cancels a running turn',
+    { timeout: 30000 },
     async () => {
       // Radix Select needs pointer-capture/scroll APIs jsdom lacks; restored below.
       const proto = window.HTMLElement.prototype as unknown as Record<string, unknown>;
@@ -2479,7 +2460,6 @@ describe('Web turn control (Stop / Steer)', () => {
           restores.pop()?.();
         }
       }
-    },
-    { timeout: 30000 }
+    }
   );
 });

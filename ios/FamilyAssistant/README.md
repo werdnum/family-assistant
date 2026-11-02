@@ -268,7 +268,7 @@ to one name, so only `Call Family Assistant` and its variants belong here. See
 `Info.plist` registers static long-press app-icon shortcuts:
 
 - **New Chat** — queues `/chat?new=1` through `IntentNavigationCenter` and opens the native Chat tab
-  on a blank composer.
+  on a blank composer: Home's when threads are on, otherwise a new conversation's.
 - **Voice** — queues `/voice` through `IntentNavigationCenter` and opens the native Voice tab.
 
 Manual APNs configuration:

@@ -78,53 +78,50 @@ function latestFollowStream(): MockEventSource | undefined {
 }
 
 // Run sequentially to avoid MSW handler conflicts with parallel tests
-describe.sequential('Streaming Error Recovery', () => {
+describe('Streaming Error Recovery', () => {
   beforeEach(() => {
     resetLocalStorageMock();
     vi.clearAllMocks();
     window.history.replaceState({}, '', '/chat');
   });
 
-  it(
-    'continues displaying content after a mid-stream error',
-    async () => {
-      // Simulate: text content → error → more text content → done
-      server.use(
-        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
-          return createSSEStream([
-            { content: 'Starting response... ' },
-            { error: 'Tool execution failed: timeout' },
-            { content: 'But I can continue answering.' },
-            { status: 'complete' },
-          ]);
-        })
-      );
+  it('continues displaying content after a mid-stream error', { timeout: 30000 }, async () => {
+    // Simulate: text content → error → more text content → done
+    server.use(
+      http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+        return createSSEStream([
+          { content: 'Starting response... ' },
+          { error: 'Tool execution failed: timeout' },
+          { content: 'But I can continue answering.' },
+          { status: 'complete' },
+        ]);
+      })
+    );
 
-      const user = userEvent.setup();
-      await renderChatApp({ waitForReady: true });
+    const user = userEvent.setup();
+    await renderChatApp({ waitForReady: true });
 
-      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
-      await user.type(messageInput, 'Test mid-stream error');
-      await user.keyboard('{Enter}');
+    const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+    await user.type(messageInput, 'Test mid-stream error');
+    await user.keyboard('{Enter}');
 
-      // The final text should include content from BOTH before and after the error
-      await waitFor(
-        () => {
-          expect(
-            screen.getByText('Starting response... But I can continue answering.')
-          ).toBeInTheDocument();
-        },
-        { timeout: 5000 }
-      );
+    // The final text should include content from BOTH before and after the error
+    await waitFor(
+      () => {
+        expect(
+          screen.getByText('Starting response... But I can continue answering.')
+        ).toBeInTheDocument();
+      },
+      { timeout: 5000 }
+    );
 
-      // The error message should NOT replace the content
-      expect(screen.queryByText(/encountered an error/)).not.toBeInTheDocument();
-    },
-    { timeout: 30000 }
-  );
+    // The error message should NOT replace the content
+    expect(screen.queryByText(/encountered an error/)).not.toBeInTheDocument();
+  });
 
   it(
     'shows error message when stream ends with only an error and no content',
+    { timeout: 30000 },
     async () => {
       // Simulate: error only → done (no text content, no tool calls)
       server.use(
@@ -147,12 +144,12 @@ describe.sequential('Streaming Error Recovery', () => {
         },
         { timeout: 5000 }
       );
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'resumes after a drop following tool calls and shows the reply (no error)',
+    { timeout: 30000 },
     async () => {
       // The production bug: an SSE stream delivered a tool call then dropped
       // before the final text (a proxy-cut connection). The turn keeps running
@@ -235,134 +232,126 @@ describe.sequential('Streaming Error Recovery', () => {
       expect(screen.queryByText(/connection was interrupted/i)).not.toBeInTheDocument();
       expect(streamCalls).toBe(2);
       expect(fromSeqs[1]).toBe('3');
-    },
-    { timeout: 30000 }
+    }
   );
 
-  it(
-    'preserves tool calls when an error occurs mid-stream',
-    async () => {
-      // Simulate: tool call → error → done (with text content to finalize)
-      server.use(
-        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
-          return createSSEStream([
-            {
-              content: 'Let me look that up.',
-              tool_call: {
-                id: 'call-recovery-test',
-                type: 'function',
-                function: {
-                  name: 'search_notes',
-                  arguments: JSON.stringify({ query: 'test' }),
-                },
+  it('preserves tool calls when an error occurs mid-stream', { timeout: 30000 }, async () => {
+    // Simulate: tool call → error → done (with text content to finalize)
+    server.use(
+      http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+        return createSSEStream([
+          {
+            content: 'Let me look that up.',
+            tool_call: {
+              id: 'call-recovery-test',
+              type: 'function',
+              function: {
+                name: 'search_notes',
+                arguments: JSON.stringify({ query: 'test' }),
               },
             },
-            { error: 'Minor hiccup during processing' },
-            {
-              tool_call_id: 'call-recovery-test',
-              result: JSON.stringify({ notes: ['Test note'] }),
-            },
-            { content: ' Found some results.' },
-            { status: 'complete' },
-          ]);
-        })
-      );
+          },
+          { error: 'Minor hiccup during processing' },
+          {
+            tool_call_id: 'call-recovery-test',
+            result: JSON.stringify({ notes: ['Test note'] }),
+          },
+          { content: ' Found some results.' },
+          { status: 'complete' },
+        ]);
+      })
+    );
 
-      const user = userEvent.setup();
-      await renderChatApp({ waitForReady: true });
+    const user = userEvent.setup();
+    await renderChatApp({ waitForReady: true });
 
-      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
-      await user.type(messageInput, 'Search for test notes');
-      await user.keyboard('{Enter}');
+    const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+    await user.type(messageInput, 'Search for test notes');
+    await user.keyboard('{Enter}');
 
-      // Both chunks of text survive, on either side of the tool call they
-      // were written around.
-      await waitFor(
-        () => {
-          expect(screen.getByText('Let me look that up.')).toBeInTheDocument();
-          expect(screen.getByText('Found some results.')).toBeInTheDocument();
-          expect(screen.getByTestId('send-button')).toBeInTheDocument();
-        },
-        { timeout: 5000 }
-      );
-      const toolGroup = screen.getByTestId('tool-group');
-      expect(
-        screen.getByText('Let me look that up.').compareDocumentPosition(toolGroup) &
-          Node.DOCUMENT_POSITION_FOLLOWING
-      ).toBeTruthy();
-      expect(
-        toolGroup.compareDocumentPosition(screen.getByText('Found some results.')) &
-          Node.DOCUMENT_POSITION_FOLLOWING
-      ).toBeTruthy();
+    // Both chunks of text survive, on either side of the tool call they
+    // were written around.
+    await waitFor(
+      () => {
+        expect(screen.getByText('Let me look that up.')).toBeInTheDocument();
+        expect(screen.getByText('Found some results.')).toBeInTheDocument();
+        expect(screen.getByTestId('send-button')).toBeInTheDocument();
+      },
+      { timeout: 5000 }
+    );
+    const toolGroup = screen.getByTestId('tool-group');
+    expect(
+      screen.getByText('Let me look that up.').compareDocumentPosition(toolGroup) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    expect(
+      toolGroup.compareDocumentPosition(screen.getByText('Found some results.')) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
 
-      // Error should NOT be shown since content was delivered successfully
-      expect(screen.queryByText(/encountered an error/)).not.toBeInTheDocument();
+    // Error should NOT be shown since content was delivered successfully
+    expect(screen.queryByText(/encountered an error/)).not.toBeInTheDocument();
 
-      // The tool call survives the error, along with the result that arrived after it.
-      await user.click(screen.getByTestId('tool-group-trigger'));
-      expect(await screen.findByText('search_notes')).toBeInTheDocument();
-      expect(screen.getByTestId('tool-result')).toHaveTextContent('Test note');
-    },
-    { timeout: 30000 }
-  );
+    // The tool call survives the error, along with the result that arrived after it.
+    await user.click(screen.getByTestId('tool-group-trigger'));
+    expect(await screen.findByText('search_notes')).toBeInTheDocument();
+    expect(screen.getByTestId('tool-result')).toHaveTextContent('Test note');
+  });
 
-  it(
-    "does not carry a failed turn's error into the next reply",
-    async () => {
-      let callCount = 0;
+  it("does not carry a failed turn's error into the next reply", { timeout: 30000 }, async () => {
+    let callCount = 0;
 
-      server.use(
-        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
-          callCount++;
+    server.use(
+      http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+        callCount++;
 
-          if (callCount === 1) {
-            // First message: error only
-            return createSSEStream([{ error: 'Something went wrong' }, { status: 'complete' }]);
-          }
+        if (callCount === 1) {
+          // First message: error only
+          return createSSEStream([{ error: 'Something went wrong' }, { status: 'complete' }]);
+        }
 
-          // Second message: successful response
-          return createSSEStream([{ content: 'This works fine!' }, { status: 'complete' }]);
-        })
-      );
+        // Second message: successful response
+        return createSSEStream([{ content: 'This works fine!' }, { status: 'complete' }]);
+      })
+    );
 
-      const user = userEvent.setup();
-      await renderChatApp({ waitForReady: true });
+    const user = userEvent.setup();
+    await renderChatApp({ waitForReady: true });
 
-      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+    const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
 
-      // First message triggers error
-      await user.type(messageInput, 'First message fails');
-      await user.keyboard('{Enter}');
+    // First message triggers error
+    await user.type(messageInput, 'First message fails');
+    await user.keyboard('{Enter}');
 
-      await waitFor(
-        () => {
-          expect(screen.getByText(/encountered an error/)).toBeInTheDocument();
-        },
-        { timeout: 5000 }
-      );
+    await waitFor(
+      () => {
+        expect(screen.getByText(/encountered an error/)).toBeInTheDocument();
+      },
+      { timeout: 5000 }
+    );
 
-      // Second message should work fine without leftover error state
-      await user.type(messageInput, 'Second message works');
-      await user.keyboard('{Enter}');
+    // Second message should work fine without leftover error state
+    await user.type(messageInput, 'Second message works');
+    await user.keyboard('{Enter}');
 
-      await waitFor(
-        () => {
-          expect(screen.getByText('This works fine!')).toBeInTheDocument();
-          expect(screen.getByTestId('send-button')).toBeInTheDocument();
-        },
-        { timeout: 5000 }
-      );
+    await waitFor(
+      () => {
+        expect(screen.getByText('This works fine!')).toBeInTheDocument();
+        expect(screen.getByTestId('send-button')).toBeInTheDocument();
+      },
+      { timeout: 5000 }
+    );
 
-      const replies = screen.getAllByTestId('assistant-message-content');
-      expect(replies).toHaveLength(2);
-      expect(replies[0]).toHaveTextContent(/encountered an error processing your message/);
-      expect(replies[1]).toHaveTextContent(/^This works fine!$/);
-    },
-    { timeout: 30000 }
-  );
+    const replies = screen.getAllByTestId('assistant-message-content');
+    expect(replies).toHaveLength(2);
+    expect(replies[0]).toHaveTextContent(/encountered an error processing your message/);
+    expect(replies[1]).toHaveTextContent(/^This works fine!$/);
+  });
 
   it(
     'does not let live history reload replace an active activate_tools stream',
+    { timeout: 30000 },
     async () => {
       const originalEventSource = globalThis.EventSource;
       const originalFetch = globalThis.fetch;
@@ -534,12 +523,12 @@ describe.sequential('Streaming Error Recovery', () => {
         globalThis.EventSource = originalEventSource;
         globalThis.fetch = originalFetch;
       }
-    },
-    { timeout: 30000 }
+    }
   );
 
   it(
     'loads historical tool calls without results as terminal instead of pending',
+    { timeout: 30000 },
     async () => {
       mockLocalStorage.getItem.mockImplementation((key: string) =>
         key === 'lastConversationId' ? 'web_conv_stuck_tool' : null
@@ -592,66 +581,61 @@ describe.sequential('Streaming Error Recovery', () => {
       expect(screen.getByTestId('send-button')).toBeInTheDocument();
       expect(screen.queryByTestId('stop-button')).not.toBeInTheDocument();
       expect(screen.getByPlaceholderText('Message Family Assistant...')).toBeEnabled();
-    },
-    { timeout: 30000 }
+    }
   );
 
-  it(
-    'loads persisted error rows as assistant messages',
-    async () => {
-      mockLocalStorage.getItem.mockImplementation((key: string) =>
-        key === 'lastConversationId' ? 'web_conv_error_row' : null
-      );
+  it('loads persisted error rows as assistant messages', { timeout: 30000 }, async () => {
+    mockLocalStorage.getItem.mockImplementation((key: string) =>
+      key === 'lastConversationId' ? 'web_conv_error_row' : null
+    );
 
-      server.use(
-        http.get('/api/v1/chat/conversations/:conversationId/messages', ({ params }) => {
-          expect(params.conversationId).toBe('web_conv_error_row');
-          return HttpResponse.json({
-            messages: [
-              {
-                internal_id: '200',
-                role: 'user',
-                content: 'Please run the tool',
-                timestamp: '2026-01-01T10:00:00Z',
-              },
-              {
-                internal_id: '201',
-                role: 'assistant',
-                content: null,
-                timestamp: '2026-01-01T10:00:01Z',
-                tool_calls: [
-                  {
-                    id: 'call_before_error',
-                    type: 'function',
-                    function: {
-                      name: 'attach_to_response',
-                      arguments: JSON.stringify({ attachment_ids: ['missing'] }),
-                    },
+    server.use(
+      http.get('/api/v1/chat/conversations/:conversationId/messages', ({ params }) => {
+        expect(params.conversationId).toBe('web_conv_error_row');
+        return HttpResponse.json({
+          messages: [
+            {
+              internal_id: '200',
+              role: 'user',
+              content: 'Please run the tool',
+              timestamp: '2026-01-01T10:00:00Z',
+            },
+            {
+              internal_id: '201',
+              role: 'assistant',
+              content: null,
+              timestamp: '2026-01-01T10:00:01Z',
+              tool_calls: [
+                {
+                  id: 'call_before_error',
+                  type: 'function',
+                  function: {
+                    name: 'attach_to_response',
+                    arguments: JSON.stringify({ attachment_ids: ['missing'] }),
                   },
-                ],
-              },
-              {
-                internal_id: '202',
-                role: 'error',
-                content: 'An error occurred during a tool call.',
-                timestamp: '2026-01-01T10:00:02Z',
-                error_traceback: 'ValueError: missing attachment',
-              },
-            ],
-          });
-        })
-      );
+                },
+              ],
+            },
+            {
+              internal_id: '202',
+              role: 'error',
+              content: 'An error occurred during a tool call.',
+              timestamp: '2026-01-01T10:00:02Z',
+              error_traceback: 'ValueError: missing attachment',
+            },
+          ],
+        });
+      })
+    );
 
-      await renderChatApp({ waitForReady: true });
+    await renderChatApp({ waitForReady: true });
 
-      await waitFor(
-        () => {
-          expect(screen.getByText('An error occurred during a tool call.')).toBeInTheDocument();
-        },
-        { timeout: 5000 }
-      );
-      expect(screen.getByPlaceholderText('Message Family Assistant...')).toBeEnabled();
-    },
-    { timeout: 30000 }
-  );
+    await waitFor(
+      () => {
+        expect(screen.getByText('An error occurred during a tool call.')).toBeInTheDocument();
+      },
+      { timeout: 5000 }
+    );
+    expect(screen.getByPlaceholderText('Message Family Assistant...')).toBeEnabled();
+  });
 });

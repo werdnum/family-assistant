@@ -106,9 +106,9 @@ final class HomeThreadsTests: XCTestCase {
 
         let sections = ThreadSwitcherSections(threads: threads, conversations: [], homeConversationID: "home")
 
-        XCTAssertEqual(sections.groups.map(\.title), ["Waiting on you", "Working", "Failed"])
-        XCTAssertEqual(sections.groups[0].threads.map(\.conversationID), ["q1", "q2", "u1"])
-        XCTAssertEqual(sections.groups[1].threads.map(\.conversationID), ["w1"])
+        XCTAssertEqual(sections.groups.map(\.title), ["Working", "Waiting on you", "Failed"])
+        XCTAssertEqual(sections.groups[0].threads.map(\.conversationID), ["w1"])
+        XCTAssertEqual(sections.groups[1].threads.map(\.conversationID), ["q1", "q2", "u1"])
         XCTAssertEqual(sections.groups[2].threads.map(\.conversationID), ["f1"])
         XCTAssertEqual(ThreadSwitcherSections.waitingCount(in: threads), 3)
     }
@@ -312,15 +312,46 @@ final class HomeThreadsTests: XCTestCase {
         }
     }
 
-    func testSwitcherOrdersGroupsWaitingWorkingFailedDone() {
+    func testSwitcherOrdersWhatIsMovingFirstAndWhatHasSettledLast() {
         let sections = ThreadSwitcherSections(
             threads: [thread("d", .done), thread("f", .failed), thread("w", .working), thread("q", .waiting)],
             conversations: [conversation("old", kind: "conversation")],
             homeConversationID: "home"
         )
 
-        XCTAssertEqual(sections.groups.map(\.title), ["Waiting on you", "Working", "Failed", "Done"])
+        XCTAssertEqual(sections.groups.map(\.title), ["Working", "Waiting on you", "Failed", "Done"])
         XCTAssertEqual(sections.earlier.map(\.conversationID), ["old"])
+    }
+
+    func testAQuietThreadIsListedApartAndNotCountedAsWaiting() {
+        var quiet = thread("old", .waiting)
+        quiet.isQuiet = true
+        let threads = [quiet, thread("new", .waiting), thread("d", .done)]
+
+        let sections = ThreadSwitcherSections(threads: threads, conversations: [], homeConversationID: "home")
+
+        XCTAssertEqual(sections.groups.map(\.title), ["Waiting on you", "Quiet", "Done"])
+        XCTAssertEqual(sections.groups[1].threads.map(\.conversationID), ["old"])
+        XCTAssertEqual(ThreadSwitcherSections.waitingCount(in: threads), 1)
+        XCTAssertTrue(quiet.canMarkDone, "A quiet thread can still be closed.")
+    }
+
+    func testOnlyAWaitingThreadReadsAsQuiet() {
+        var working = thread("w", .working)
+        working.isQuiet = true
+
+        XCTAssertEqual(working.presentationState, .working)
+    }
+
+    func testThreadDecodesQuietAndDefaultsToNotQuiet() throws {
+        let json = #"{"conversation_id":"t1","home_conversation_id":"home","title":"T","profile_id":"p","state":"waiting","created_at":"2026-06-08T12:00:00Z","updated_at":"2026-06-08T12:00:00Z"QUIET}"#
+        func decoded(_ quiet: String) throws -> ChatThreadSummary {
+            let body = json.replacingOccurrences(of: "QUIET", with: quiet)
+            return try JSONDecoder.chatDecoder.decode(ChatThreadSummary.self, from: Data(body.utf8))
+        }
+
+        XCTAssertTrue(try decoded(#","quiet":true"#).isQuiet)
+        XCTAssertFalse(try decoded("").isQuiet)
     }
 
     func testUnreadCountIsInTheCardsSpokenSummaryOnlyWhenNonZero() {
@@ -688,7 +719,13 @@ final class HomeThreadsTests: XCTestCase {
                 ChatRoute(initialPrompt: "Plan", newConversationRequestID: "r1"),
                 homeConversationID: home
             ),
-            .newConversation(requestID: "r1", initialPrompt: "Plan")
+            .sendInHome(prompt: "Plan"),
+            "A new chat that comes with a prompt is Home's next message."
+        )
+        XCTAssertEqual(
+            HomeRouteAction.resolve(ChatRoute(newConversationRequestID: "r1"), homeConversationID: home),
+            .composeInHome,
+            "A new chat without one is Home's composer, never a conversation beside it."
         )
         XCTAssertEqual(
             HomeRouteAction.resolve(
@@ -1063,7 +1100,7 @@ final class HomeThreadsTests: XCTestCase {
         XCTAssertEqual(model.selectedProfileID, "browser_profile")
         XCTAssertEqual(model.conversationKind, .thread)
         XCTAssertEqual(model.threadSummary?.title, "Thread t1")
-        XCTAssertFalse(model.allowsProfileChange)
+        XCTAssertFalse(model.isConfirmedOrdinaryConversation)
     }
 
     func testPushedThreadStaysUnsendableUntilItsLoadSucceeds() async {
@@ -1141,16 +1178,6 @@ final class HomeThreadsTests: XCTestCase {
 
         await linked.retryConversationLoad()
         XCTAssertTrue(linked.isConversationDescribed)
-
-        let fresh = ChatViewModel(
-            authManager: makeAuthManager(),
-            startsNewConversation: true,
-            role: .pushed,
-            errorReporter: ErrorReporter(spoolDirectory: nil),
-            pathMonitor: StubPathMonitor(isSatisfied: true)
-        )
-        models.append(fresh)
-        XCTAssertTrue(fresh.isConversationDescribed, "A conversation started here is described from the start.")
     }
 
     func testStartupAppliesTheRouteWithoutWaitingForTheThreadList() async {
@@ -1196,10 +1223,10 @@ final class HomeThreadsTests: XCTestCase {
 
         XCTAssertEqual(model.selectedProfileID, "default_assistant")
         XCTAssertEqual(model.conversationKind, .home)
-        XCTAssertFalse(model.allowsProfileChange)
+        XCTAssertFalse(model.isConfirmedOrdinaryConversation)
     }
 
-    func testOrdinaryConversationOverHomeMayChangeProfile() async {
+    func testOrdinaryConversationOverHomeIsConfirmedByItsHistory() async {
         respondWithConversation(
             id: "old",
             messagesJSON: #"[{"internal_id":1,"role":"user","content":"Hi","timestamp":"2026-06-08T12:00:00Z","processing_profile_id":"research"}]"#,
@@ -1210,7 +1237,7 @@ final class HomeThreadsTests: XCTestCase {
         await model.selectConversation("old")
 
         XCTAssertEqual(model.selectedProfileID, "research")
-        XCTAssertTrue(model.allowsProfileChange)
+        XCTAssertTrue(model.isConfirmedOrdinaryConversation)
     }
 
     func testOnlyHomeAndPushedLoadsAskForConversationProfile() async {
@@ -1453,23 +1480,11 @@ final class HomeThreadsTests: XCTestCase {
         respondWithConversation(id: "t1", messagesJSON: "[]", extraJSON: #","conversation_kind":"thread""#)
         let linked = makeViewModel(conversationID: "t1", role: .pushed)
         XCTAssertFalse(
-            linked.allowsProfileChange,
+            linked.isConfirmedOrdinaryConversation,
             "A conversation opened by a link is not known to be ordinary before its history loads."
         )
         await linked.selectConversation("t1")
-        XCTAssertFalse(linked.allowsProfileChange)
-
-        let fresh = ChatViewModel(
-            authManager: makeAuthManager(),
-            startsNewConversation: true,
-            role: .pushed,
-            errorReporter: ErrorReporter(spoolDirectory: nil),
-            pathMonitor: StubPathMonitor(isSatisfied: true)
-        )
-        models.append(fresh)
-        XCTAssertTrue(fresh.allowsProfileChange, "A conversation started here is ordinary.")
-        fresh.startNewConversation()
-        XCTAssertTrue(fresh.allowsProfileChange)
+        XCTAssertFalse(linked.isConfirmedOrdinaryConversation)
     }
 
     func testHomeDoesNotBecomeTheRestoredConversation() {
@@ -1644,6 +1659,82 @@ final class HomeThreadsTests: XCTestCase {
         XCTAssertEqual(otherProfile.retrying(first).turnID, "second")
         XCTAssertEqual(unchanged.retrying(nil).turnID, "second")
     }
+
+    // MARK: - User overrides: the profile list
+
+    func testAProfileListMissedAtLaunchLoadsWhenAskedForAgain() async {
+        var loads = 0
+        ChatMockBackendURLProtocol.respond { _ in
+            loads += 1
+            if loads == 1 {
+                return .json(#"{"detail":"unavailable"}"#, statusCode: 500)
+            }
+            return .json(Self.oneProfileJSON)
+        }
+        let model = makeViewModel(conversationID: "home", role: .home)
+
+        await model.loadProfiles()
+        XCTAssertEqual(model.profileListState, .unavailable)
+
+        await model.ensureProfilesLoaded()
+        XCTAssertEqual(model.profileListState, .ready)
+        XCTAssertEqual(model.profiles.map(\.id), ["default_assistant"])
+
+        await model.ensureProfilesLoaded()
+        XCTAssertEqual(loads, 2, "A list it already holds is not fetched again.")
+    }
+
+    func testAnEmptyProfileListFromAServerStillStartingIsNotReady() async {
+        var loads = 0
+        ChatMockBackendURLProtocol.respond { _ in
+            loads += 1
+            return .json(loads == 1 ? #"{"profiles":[],"default_profile_id":"default_assistant"}"# : Self.oneProfileJSON)
+        }
+        let model = makeViewModel(conversationID: "home", role: .home)
+
+        await model.loadProfiles()
+        XCTAssertEqual(model.profileListState, .unavailable)
+
+        await model.ensureProfilesLoaded()
+        XCTAssertEqual(model.profileListState, .ready)
+    }
+
+    func testReturningToTheForegroundLoadsAMissingProfileList() async throws {
+        var loads = 0
+        ChatMockBackendURLProtocol.respond { request in
+            guard request.url?.path == "/api/v1/profiles" else {
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+            loads += 1
+            return .json(loads == 1 ? #"{"profiles":[],"default_profile_id":"default_assistant"}"# : Self.oneProfileJSON)
+        }
+        let model = makeViewModel(conversationID: "home", role: .home)
+        await model.loadProfiles()
+
+        model.scenePhaseChanged(old: .background, new: .active)
+
+        try await waitUntil { model.profileListState == .ready }
+    }
+
+    func testAProfileLoadInProgressIsNotDuplicated() async {
+        var loads = 0
+        ChatMockBackendURLProtocol.respond { _ in
+            loads += 1
+            return .json(Self.oneProfileJSON)
+        }
+        let model = makeViewModel(conversationID: "home", role: .home)
+        model.isLoadingProfiles = true
+        XCTAssertEqual(model.profileListState, .loading)
+
+        await model.ensureProfilesLoaded()
+
+        XCTAssertEqual(loads, 0)
+    }
+
+    private static let oneProfileJSON = """
+    {"profiles":[{"id":"default_assistant","description":"","available_tools":[],"enabled_mcp_servers":[],
+     "delegation_only":false}],"default_profile_id":"default_assistant"}
+    """
 
     // MARK: - User overrides: send-as-thread
 
@@ -1939,6 +2030,20 @@ final class HomeThreadsTests: XCTestCase {
 
     /// Home, described and loaded, with three profiles: the default and
     /// `research` offering a "deep" tier, and `plain` offering none.
+    private func waitUntil(
+        timeout: TimeInterval = 4,
+        predicate: @escaping @MainActor () -> Bool
+    ) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if predicate() {
+                return
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTFail("Timed out waiting for predicate")
+    }
+
     private func makeHomeModelWithProfiles() async throws -> ChatViewModel {
         let tiers = #"[{"id":"standard","label":"Standard"},{"id":"deep","label":"Deep"}]"#
         ChatMockBackendURLProtocol.respond { request in

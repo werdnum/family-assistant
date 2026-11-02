@@ -43,6 +43,28 @@ Routers live in `routers/`, one per feature area. `api.py` is the aggregator tha
 - **Tools**: MCP integration for external tools, plus a confirmation mechanism for destructive
   operations.
 
+## Client Sync
+
+`GET /api/v1/sync` (`routers/sync_api.py`) returns everything that changed since a client's cursor:
+conversation rows, messages of the conversations it has open, pending confirmations and delegations,
+and the progress of running turns. `wait` turns it into a long poll and `/api/v1/sync/stream`
+repeats it over one connection. See
+[docs/design/mobile-state-sync.md](../../../docs/design/mobile-state-sync.md).
+
+Change tracking is not something an endpoint or repository does by hand. Every row of a table listed
+in `storage/sync_tracking.py`'s `SYNCED_TABLES` carries a `sync_cursor`, and `DatabaseTransaction`
+stamps it on every symbolic insert, update and delete (a delete leaves a tombstone). Two
+consequences:
+
+- **A raw SQL write to a synced table is invisible to clients.** Write symbolically, as the project
+  already requires.
+- **Giving clients a new collection** means adding its table to `SYNCED_TABLES`, giving the table
+  `sync_cursor_column()` and a migration, and teaching `build_sync_response` to report it. A poll a
+  client still runs for that data is removed only once the collection is synced.
+
+The reference client in `tests/sync/reference_client.py` is the protocol's executable specification;
+the convergence test checks it against a client that bootstrapped from nothing.
+
 ## Error Reports vs. Telemetry Breadcrumbs
 
 Frontend clients POST to `POST /api/errors/`. The report's optional `severity` selects the lane:
@@ -66,6 +88,30 @@ tool events explicitly set `"info"` and the iOS client maps component breadcrumb
 See
 [docs/design/ios-frontend-telemetry-lane.md](../../../docs/design/ios-frontend-telemetry-lane.md)
 and [ios/CLAUDE.md](../../../ios/CLAUDE.md), where the split originated.
+
+## Chat Telemetry in the Backend Log
+
+The hub lives in memory and a client's reports can arrive minutes late, so the backend log is the
+durable record of a turn. Stdout reaches the log store with no level filter, so these are at INFO.
+They never carry message content. `web/chat_telemetry.py` writes them.
+
+`chat_turn` lines share a `turn_id`. Their `event` is one of:
+
+- `request_received`, `retry_matched`, `user_message_saved`: `POST /turns` progress. `retry_matched`
+  means a client resent a turn the server already had, and `source` says how it was recognised.
+- `started`, `first_output`, `ended`, `acked`: written by the hub, so they cover every kind of turn.
+  `acked` can come after the push decision, which is how to measure a notification beating the app.
+- `delivery_wait_finished`, `push_sent`, `push_skipped`, `push_failed`: the disconnect push
+  decision.
+
+`chat_stream` lines record `opened` and `closed` for each client stream. `closed` carries `reason`
+(`finished`, `client_gone`, `error`, or the reason from a `stream_dropped` frame); `finished`
+includes a sync stream that noticed by itself that its client had left, the duration, how many event
+and heartbeat frames were written, and how long the stream had been quiet. A new long-lived stream
+must go through `observed_stream`.
+
+`frontend.telemetry` lines hold each breadcrumb as JSON, which outlasts the ring buffer. Order them
+by the client's own `client_seq`, because the line's timestamp is arrival time.
 
 ## Dependency Injection
 

@@ -18,10 +18,9 @@ import copy
 import json
 import logging
 import os
-import pathlib
 import string
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import yaml
 from dotenv import find_dotenv, load_dotenv
@@ -30,6 +29,9 @@ from pydantic import SecretStr, ValidationError
 from .config_inspection import redact_sensitive_config
 from .config_models import AppConfig, ProcessingConfig
 from .config_sources import deep_merge_dicts, load_yaml_file
+
+if TYPE_CHECKING:
+    import pathlib
 
 logger = logging.getLogger(__name__)
 
@@ -659,81 +661,6 @@ def load_prompts_yaml(
     return loaded_prompts, service_profiles
 
 
-def load_user_documentation(filenames: list[str]) -> str:
-    """Load user documentation files from docs/user/ directory.
-
-    Args:
-        filenames: List of filenames to load (e.g., ['USER_GUIDE.md', 'scripting.md'])
-
-    Returns:
-        Combined content from all files, separated by markdown headers.
-        Returns empty string if no files can be loaded.
-    """
-    # Determine the docs/user directory
-    docs_user_dir_env = os.getenv("DOCS_USER_DIR")
-    if docs_user_dir_env:
-        docs_user_dir = pathlib.Path(docs_user_dir_env).resolve()
-    else:
-        docs_user_dir = pathlib.Path("docs") / "user"
-        # Try Docker default if the calculated path doesn't exist
-        if not docs_user_dir.exists() and pathlib.Path("/app/docs/user").exists():
-            docs_user_dir = pathlib.Path("/app/docs/user")
-
-    if not docs_user_dir.is_dir():
-        logger.warning(
-            f"User documentation directory not found: '{docs_user_dir}'. "
-            "Cannot load system docs for profile."
-        )
-        return ""
-
-    allowed_extensions = {".md", ".txt"}
-    combined_content = []
-
-    for filename in filenames:
-        # Security check: prevent directory traversal
-        if ".." in filename or not any(
-            filename.endswith(ext) for ext in allowed_extensions
-        ):
-            logger.warning(
-                f"Skipping invalid documentation filename: '{filename}' "
-                "(contains '..' or invalid extension)"
-            )
-            continue
-
-        file_path = (docs_user_dir / filename).resolve()
-
-        # Ensure resolved path is still within docs directory
-        if docs_user_dir.resolve() not in file_path.parents:
-            logger.warning(
-                f"Skipping documentation file outside allowed directory: '{filename}'"
-            )
-            continue
-
-        # Try to read the file
-        try:
-            with open(file_path, encoding="utf-8") as f:
-                content = f.read().strip()
-        except FileNotFoundError:
-            logger.warning(
-                f"Documentation file not found: '{filename}' in '{docs_user_dir}'"
-            )
-            continue
-        except Exception as e:
-            logger.exception(f"Error reading documentation file '{filename}': {e}")
-            continue
-
-        if content:
-            header = f"\n\n# Included Documentation: {filename}\n\n"
-            combined_content.append(header + content)
-            logger.info(
-                f"Loaded user documentation: '{filename}' ({len(content)} chars)"
-            )
-        else:
-            logger.warning(f"Documentation file is empty: '{filename}'")
-
-    return "\n".join(combined_content)
-
-
 # ProcessingConfig keys a profile may override by simple replacement. A field
 # absent from this set and not handled explicitly below is silently dropped from
 # a profile's processing_config -- it parses, validates, and then does nothing,
@@ -784,7 +711,6 @@ PROFILE_OVERRIDABLE_PROCESSING_KEYS: tuple[str, ...] = (
 # completeness test pass while the field stays silently discarded.
 PROFILE_SPECIALLY_HANDLED_PROCESSING_KEYS: frozenset[str] = frozenset({
     "prompts",  # deep-merged with the inherited prompts, not replaced
-    "include_system_docs",  # loaded into prompts.system_prompt_docs
 })
 
 
@@ -930,7 +856,7 @@ def _merge_profile_prompts(
     appended to -- the base prompt's notes on the web and iOS apps, say. A
     profile that replaces the system prompt is a different agent with a
     different audience, so it does not inherit the old prompt's docs unless it
-    supplies its own (directly or via ``include_system_docs``).
+    supplies its own.
     """
     merged = deep_merge_dicts(inherited, override)
     if "system_prompt" in override and SYSTEM_PROMPT_DOCS_KEY not in override:
@@ -1021,25 +947,6 @@ def resolve_service_profile(
             resolved["processing_config"],
             profile_declares_model=profile_declares_model,
         )
-
-        # Handle include_system_docs
-        if "include_system_docs" in profile_def["processing_config"]:
-            include_docs = profile_def["processing_config"]["include_system_docs"]
-            if isinstance(include_docs, list) and include_docs:
-                logger.info(
-                    f"Profile '{profile_id}' configured to load system docs: {include_docs}"
-                )
-                loaded_content = load_user_documentation(include_docs)
-                if loaded_content:
-                    resolved["processing_config"]["prompts"][SYSTEM_PROMPT_DOCS_KEY] = (
-                        loaded_content
-                    )
-                    logger.info(
-                        "Loaded %s chars of docs for '%s' into prompts.%s",
-                        len(loaded_content),
-                        profile_id,
-                        SYSTEM_PROMPT_DOCS_KEY,
-                    )
 
     # Merge tools_config so profiles can tune one operational setting without
     # accidentally making inherited on-demand tools eager.

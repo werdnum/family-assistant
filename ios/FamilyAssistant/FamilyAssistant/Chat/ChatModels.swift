@@ -233,6 +233,14 @@ struct ChatProfile: Codable, Equatable, Identifiable {
     }
 }
 
+/// How far the client has got with the profile list.
+enum ProfileListState: Equatable {
+    case loading
+    case ready
+    /// The last load failed or found nothing, and none is running.
+    case unavailable
+}
+
 struct ChatProfilesResponse: Decodable {
     let profiles: [ChatProfile]
     let defaultProfileID: String

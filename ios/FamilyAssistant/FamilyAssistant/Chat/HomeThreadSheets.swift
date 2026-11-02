@@ -20,7 +20,9 @@ struct StartThreadSheet: View {
     let onStarted: (ChatThreadSummary) -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @State private var profileID: String
+    /// Nil until the user picks: the default then follows the profile list,
+    /// which may arrive after the sheet opens.
+    @State private var chosenProfileID: String?
     @State private var prompt = ""
     @State private var includeContext = true
     /// The last start sent, so retrying it unchanged after a failure is the
@@ -39,7 +41,10 @@ struct StartThreadSheet: View {
         self.homeModel = homeModel
         self.store = store
         self.onStarted = onStarted
-        _profileID = State(initialValue: homeModel.defaultProfileID)
+    }
+
+    private var profileID: String {
+        chosenProfileID ?? homeModel.defaultProfileID
     }
 
     private var profiles: [ChatProfile] {
@@ -105,12 +110,7 @@ struct StartThreadSheet: View {
                     }
                 }
                 Section {
-                    Picker("Profile", selection: $profileID) {
-                        ForEach(profiles) { profile in
-                            Text(verbatim: profile.id).tag(profile.id)
-                        }
-                    }
-                    .accessibilityIdentifier("start-thread-profile")
+                    profileRow
                 } footer: {
                     if let selectedProfile, !selectedProfile.description.isEmpty {
                         Text(verbatim: selectedProfile.description)
@@ -133,6 +133,9 @@ struct StartThreadSheet: View {
             }
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
+            .task {
+                await homeModel.ensureProfilesLoaded()
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
@@ -161,6 +164,43 @@ struct StartThreadSheet: View {
                 Button("OK", role: .cancel) {}
             } message: { failure in
                 Text(verbatim: failure.message)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var profileRow: some View {
+        switch homeModel.profileListState {
+        case .ready:
+            Picker(
+                "Profile",
+                selection: Binding(
+                    get: { profileID },
+                    set: { chosenProfileID = $0 }
+                )
+            ) {
+                ForEach(profiles) { profile in
+                    Text(verbatim: profile.id).tag(profile.id)
+                }
+            }
+            .accessibilityIdentifier("start-thread-profile")
+        case .loading:
+            HStack {
+                Text("Loading profiles…")
+                    .foregroundStyle(.secondary)
+                Spacer()
+                ProgressView()
+            }
+            .accessibilityIdentifier("start-thread-profiles-loading")
+        case .unavailable:
+            HStack {
+                Text("Couldn’t load profiles.")
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Retry") {
+                    Task { await homeModel.ensureProfilesLoaded() }
+                }
+                .accessibilityIdentifier("start-thread-profiles-retry")
             }
         }
     }
@@ -283,7 +323,9 @@ struct MoveToThreadSheet: View {
                 }
             }
             .task {
+                async let profiles: Void = homeModel.ensureProfilesLoaded()
                 await store.refreshThreads()
+                await profiles
             }
             .alert(
                 failure?.title ?? "",

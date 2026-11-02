@@ -19,6 +19,8 @@ from family_assistant.tools.taint_helpers import inherit_attachment_taint
 from family_assistant.tools.types import ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -129,13 +131,27 @@ class _OutputTooLargeError(Exception):
     pass
 
 
-async def _read_capped(stream: asyncio.StreamReader, limit: int) -> bytes:
-    """Read a stream to EOF, raising once more than ``limit`` bytes arrive."""
+async def _read_capped(
+    stream: asyncio.StreamReader, limit: int, on_overflow: Callable[[], None]
+) -> bytes:
+    """Read a stream to EOF, raising if more than ``limit`` bytes arrive.
+
+    Past the limit, ``on_overflow`` is called to stop the writer and the rest is
+    discarded up to EOF rather than abandoned: a pipe nobody reads can be paused
+    with data still buffered, and asyncio reports a process's exit only once all
+    of its pipes have closed, so ``wait()`` would never return.
+    """
     buffer = bytearray()
+    overflowed = False
     while chunk := await stream.read(_READ_CHUNK_BYTES):
+        if overflowed:
+            continue
         buffer.extend(chunk)
         if len(buffer) > limit:
-            raise _OutputTooLargeError
+            overflowed = True
+            on_overflow()
+    if overflowed:
+        raise _OutputTooLargeError
     return bytes(buffer)
 
 
@@ -178,7 +194,7 @@ async def run_jq_in_subprocess(
     async def _collect() -> tuple[bytes, bytes, int]:
         assert process.stdout is not None and process.stderr is not None
         stdout, stderr = await asyncio.gather(
-            _read_capped(process.stdout, max_output_bytes),
+            _read_capped(process.stdout, max_output_bytes, process.kill),
             _read_truncated(process.stderr, _JQ_MAX_STDERR_BYTES),
         )
         return stdout, stderr, await process.wait()

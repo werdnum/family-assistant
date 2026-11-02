@@ -47,3 +47,20 @@ def parse_frontmatter(content: str) -> tuple[dict[str, Any] | None, str]:
         return None, content
 
     return parsed, body
+
+
+def _string_list(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return ()
+    return tuple(item for item in value if isinstance(item, str))
+
+
+def skill_activations(
+    # ast-grep-ignore: no-dict-any - Frontmatter is genuinely arbitrary YAML
+    frontmatter: dict[str, Any],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Return the tools and MCP servers a skill's frontmatter says it brings."""
+    return (
+        _string_list(frontmatter.get("activate_tools")),
+        _string_list(frontmatter.get("activate_mcp_servers")),
+    )

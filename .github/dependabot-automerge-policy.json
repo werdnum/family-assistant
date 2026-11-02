@@ -1,0 +1,37 @@
+{
+  "mode": "report-only",
+  "repository": "werdnum/family-assistant",
+  "creator_id": 49699333,
+  "commit_email": "49699333+dependabot[bot]@users.noreply.github.com",
+  "reviewer_id": 199175422,
+  "merger_login": "andrewgarrett-image-updater[bot]",
+  "merge_method": "merge",
+  "stop_label": "stop-updating",
+  "pause_label": "dependabot-automerge-paused",
+  "max_files": 10,
+  "merge_window": {
+    "timezone": "Australia/Sydney",
+    "start_hour": 7,
+    "end_hour": 21
+  },
+  "min_minutes_between_merges": 60,
+  "required_checks": ["all-tests"],
+  "checks": {
+    "all-tests": ".github/workflows/ci-with-devcontainer.yml"
+  },
+  "deny_paths": [
+    "^\\.github/",
+    "^\\.devcontainer/",
+    "^alembic/"
+  ],
+  "deny_packages": [
+    "\\btorch\\b",
+    "\\bsentence-transformers\\b",
+    "\\bsqlalchemy\\b",
+    "\\balembic\\b",
+    "\\basyncpg\\b",
+    "\\bpsycopg",
+    "\\bpgvector\\b",
+    "\\baiosqlite\\b"
+  ]
+}

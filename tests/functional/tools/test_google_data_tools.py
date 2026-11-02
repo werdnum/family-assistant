@@ -307,7 +307,7 @@ async def test_not_connected_message_surfaces(db_engine: AsyncEngine) -> None:
     db = Database(engine=db_engine)
     context = _make_context(db, user_id="user-a", resolver=resolver, backend=backend)
     result = await gmail_search_tool(context, query="hello")
-    assert "connect from settings" in result.get_text().lower()
+    assert "connected accounts" in result.get_text().lower()
 
 
 @pytest.mark.asyncio

@@ -14,6 +14,9 @@ export default defineConfig({
     css: true,
     testTimeout: 10000, // 10s per test (default 5s was too short)
     hookTimeout: 10000, // 10s for setup/teardown hooks
+    // Node 25+ defines its own localStorage global (undefined without
+    // --localstorage-file), which shadows jsdom's Storage.
+    execArgv: ['--no-experimental-webstorage'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],

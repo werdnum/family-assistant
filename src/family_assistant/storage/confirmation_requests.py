@@ -15,6 +15,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects import postgresql
 
 from family_assistant.storage.base import metadata
+from family_assistant.storage.sync_tracking import sync_cursor_column
 
 confirmation_requests_table = Table(
     "confirmation_requests",
@@ -84,4 +85,5 @@ confirmation_requests_table = Table(
         "status IN ('pending', 'approved', 'rejected', 'expired')",
         name="ck_confirmation_requests_status",
     ),
+    sync_cursor_column(),
 )

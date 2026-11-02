@@ -61,6 +61,10 @@ final class ChatViewModel {
         // messages runs once the position has settled, not per streamed token.
         didSet {
             readPositionMayHaveChanged()
+            pushGapTracker.noteVisibleReplies(in: messages)
+            if !failedSends.isEmpty {
+                retireFailuresWithSavedReplies()
+            }
             if role == .home {
                 userStartedTurnIDs = HomeTurnThreadActions.userStartedTurnIDs(in: messages)
             }
@@ -69,6 +73,22 @@ final class ChatViewModel {
     /// Home's turns that hold a message the user wrote, kept with `messages`
     /// so a bubble's context menu need not scan the transcript.
     @ObservationIgnored private var userStartedTurnIDs: Set<String> = []
+    @ObservationIgnored private let pushGapTracker: PushGapTracker
+    /// Tells this model's reports apart from those of the other live models, so
+    /// one that outlives its screen is visible in telemetry.
+    @ObservationIgnored private let modelID: String
+    /// Turns with a saved reply, and the turns the server last reported running.
+    /// Together they say which frames arriving now are late copies of a reply.
+    @ObservationIgnored private var savedReplyTurnIDs: Set<String> = []
+    @ObservationIgnored private var serverRunningTurnIDs: Set<String> = []
+    /// False while this model's screen is off-stack (see ``setScreenVisible(_:)``).
+    @ObservationIgnored private var isScreenVisible = true
+    /// How long the check before a send may take. It only guards against a rival
+    /// turn, which the turn-start endpoint refuses anyway, so it must never hold a
+    /// send for long.
+    static let sendPreflightTimeoutSeconds: TimeInterval = 5
+    /// How many more times a turn start is tried when its response is lost.
+    private let lostStartRetries: Int
     // Fixed upper bound on how many grouped bubbles are realized into the chat
     // view at once. The full thread is still loaded into `messages`; only a
     // recent window is shown, and `showEarlierMessages()` /
@@ -643,8 +663,12 @@ final class ChatViewModel {
         resyncEstablishTimeoutSeconds: Double = 8,
         streamTextFlushInterval: Duration = .milliseconds(50),
         errorReporter: ErrorReporter = .shared,
-        pathMonitor: PathMonitoring? = nil
+        pathMonitor: PathMonitoring? = nil,
+        pushGapTracker: PushGapTracker = .shared,
+        lostStartRetries: Int = 2
     ) {
+        self.pushGapTracker = pushGapTracker
+        self.lostStartRetries = lostStartRetries
         self.role = role
         self.liveReconnectInitialDelaySeconds = liveReconnectInitialDelaySeconds
         self.liveReconnectMaxDelaySeconds = liveReconnectMaxDelaySeconds
@@ -654,17 +678,37 @@ final class ChatViewModel {
         self.streamTextFlushInterval = streamTextFlushInterval
         self.errorReporter = errorReporter
         self.authManager = authManager
-        apiClient = ChatAPIClient(authManager: authManager)
+        let modelID = String(UUID().uuidString.prefix(8))
+        self.modelID = modelID
+        let modelTag = ["model_id": modelID, "model_role": String(describing: role)]
         let syncBreadcrumb: ChatSyncBreadcrumb = { component, extraData in
             errorReporter.report(
                 message: "iOS chat sync breadcrumb",
                 component: component,
                 errorType: .component,
-                extraData: extraData,
+                extraData: extraData.merging(modelTag) { current, _ in current },
                 bypassDedupe: true
             )
         }
         self.syncBreadcrumb = syncBreadcrumb
+        var client = ChatAPIClient(authManager: authManager)
+        client.requestTimingObserver = { timing in
+            errorReporter.report(
+                message: "iOS chat sync breadcrumb",
+                component: "Chat.requestTiming",
+                errorType: .component,
+                extraData: modelTag.merging([
+                    "operation": timing.operation,
+                    "queued_ms": String(Int((timing.queuedSeconds * 1000).rounded())),
+                    "total_ms": String(Int((timing.totalSeconds * 1000).rounded())),
+                    "protocol": timing.networkProtocol,
+                    "reused_connection": String(timing.reusedConnection),
+                ]) { current, _ in current },
+                bypassDedupe: true
+            )
+        }
+        apiClient = client
+        syncBreadcrumb("Chat.modelLifecycle", ["event": "created", "conversation_id": conversationID ?? "none"])
         syncCoordinator = SyncCoordinator(
             authManager: authManager,
             pathMonitor: pathMonitor ?? NetworkPathMonitor(),
@@ -688,11 +732,6 @@ final class ChatViewModel {
             // 404-loops the reconnect backoff and pins the connection indicator
             // to `.degraded`.
             opensGeneratedLaunchDraft = true
-            if role != .standalone {
-                // Minted here, so it is an ordinary conversation by construction.
-                conversationKind = .conversation
-                hasConversationMetadata = true
-            }
         } else if let initialPrompt, !initialPrompt.isEmpty {
             // Launched to start a brand-new chat (share extension / App Intent).
             self.conversationID = Self.generateConversationID()
@@ -725,6 +764,13 @@ final class ChatViewModel {
     }
 
     deinit {
+        errorReporter.report(
+            message: "iOS chat sync breadcrumb",
+            component: "Chat.modelLifecycle",
+            errorType: .component,
+            extraData: ["event": "released", "model_id": modelID],
+            bypassDedupe: true
+        )
         streamTask?.cancel()
         pendingConfirmationsTask?.cancel()
         pendingDelegationsPollTask?.cancel()
@@ -811,6 +857,11 @@ final class ChatViewModel {
         }
         heldRoutedPrompts.append(prompt)
         await drainRoutedPrompts()
+    }
+
+    /// Bring the keyboard up in the composer.
+    func requestComposerFocus() {
+        composerFocusRequestID = UUID()
     }
 
     /// What the composer holds.
@@ -1241,13 +1292,11 @@ final class ChatViewModel {
         }
     }
 
-    /// Whether the user may move this conversation to another profile. Home
-    /// stays on its profile and a thread runs on its own; switching either
-    /// would start an unrelated conversation in their place. Over Home that
-    /// holds only once the conversation is known to be ordinary: until its
-    /// history has said so, a thread opened by a link must not offer it.
-    var allowsProfileChange: Bool {
-        role == .standalone || (role == .pushed && conversationKind == .conversation && threadSummary == nil)
+    /// Whether the server has said this is an ordinary conversation. A thread
+    /// opened by a link is not known to be a thread until its history loads,
+    /// so controls meant only for ordinary conversations wait for this.
+    var isConfirmedOrdinaryConversation: Bool {
+        conversationKind == .conversation && threadSummary == nil
     }
 
     /// Restore the tier the conversation just loaded is on, for its profile.
@@ -1618,6 +1667,7 @@ final class ChatViewModel {
     /// snapshot before the foreign-turn loop: see `reconcileSuspendedSession`.
     private func attachDiscoveredActiveTurns(_ activeTurns: [ChatActiveTurnInfo]) async {
         knownRunningTurnIDs = Self.runningTurnIDs(in: activeTurns)
+        serverRunningTurnIDs = knownRunningTurnIDs
         await reconcileSuspendedSession(against: activeTurns)
         if activeTurnSession == nil, let reattachedRunningTurnID,
            !activeTurns.contains(where: {
@@ -1804,14 +1854,81 @@ final class ChatViewModel {
     private func reconcileLiveFollowBubbles(against persisted: [ChatMessage]) {
         let persistedTurnIDs = Set(persisted.compactMap(\.turnID))
         let backendTagsTurns = !persistedTurnIDs.isEmpty
+        // A saved reply means frames still in flight would render it a second
+        // time, so they are ignored unless the server says the turn is still
+        // running, as it is when a steer continues it. A turn with only saved tool
+        // rows has no reply yet, so its bubble stays.
+        savedReplyTurnIDs.formUnion(Self.repliedTurnIDs(in: persisted))
         let reconciled = liveFollowBubbleByTurnID.keys.filter { turnID in
-            persistedTurnIDs.contains(turnID)
+            hasFinishedWithSavedReply(turnID)
+                || (persistedTurnIDs.contains(turnID) && endedTurnIDs.contains(turnID))
                 || (!backendTagsTurns && endedTurnIDs.contains(turnID))
         }
         for turnID in reconciled {
             if let bubbleID = liveFollowBubbleByTurnID.removeValue(forKey: turnID) {
                 pendingTextByMessageID[bubbleID] = nil
             }
+        }
+    }
+
+    /// The turns whose reply has been saved: a persisted assistant row with text
+    /// and no tool calls is how a turn finishes.
+    static func repliedTurnIDs(in messages: [ChatMessage]) -> Set<String> {
+        Set(messages.lazy
+            .filter { message in
+                message.id.hasPrefix("msg_") && message.role == .assistant && message.status != .failed
+                    && message.toolCalls.isEmpty && !message.text.isEmpty
+            }
+            .compactMap(\.turnID))
+    }
+
+    private func hasFinishedWithSavedReply(_ turnID: String) -> Bool {
+        savedReplyTurnIDs.contains(turnID) && !serverRunningTurnIDs.contains(turnID)
+    }
+
+    /// Remove live bubbles whose reply is already saved. A merge that brings new
+    /// rows does this as it replaces the list, but one with nothing new returns
+    /// early, and a bubble made from a late frame has no later merge to clear it.
+    private func retireBubblesWithSavedReplies() {
+        savedReplyTurnIDs.formUnion(Self.repliedTurnIDs(in: messages))
+        let ownTurn = isSendActivelyStreaming ? activeTurnSession?.turnID : nil
+        let stale = messages.filter { message in
+            guard message.id.hasPrefix("local_"), message.role == .assistant,
+                  let turnID = message.turnID
+            else {
+                return false
+            }
+            return hasFinishedWithSavedReply(turnID) && turnID != ownTurn
+        }
+        guard !stale.isEmpty else {
+            return
+        }
+        let staleIDs = Set(stale.map(\.id))
+        for message in stale {
+            if let turnID = message.turnID {
+                markTurnEnded(turnID, status: nil)
+                knownRunningTurnIDs.remove(turnID)
+                liveFollowBubbleByTurnID[turnID] = nil
+            }
+            pendingTextByMessageID[message.id] = nil
+            syncBreadcrumb("Chat.stateAnomaly", [
+                "kind": "bubble_after_saved_reply",
+                "turn_id": message.turnID ?? "none",
+                "bubble_running": String(message.status == .running),
+            ])
+        }
+        replaceMessagesPreservingPagedBackWindow(messages.filter { !staleIDs.contains($0.id) })
+    }
+
+    /// A send that lost its connection but whose reply was saved did not fail:
+    /// its response was lost, not its turn. Retire the failure rather than leave
+    /// Retry on a reply that arrived. A failure the server itself reported stays,
+    /// because its saved row is the failure.
+    private func retireFailuresWithSavedReplies() {
+        let replied = Self.repliedTurnIDs(in: messages)
+        for (turnID, failed) in failedSends where replied.contains(turnID) && !failed.reportedByServer {
+            failedSends[turnID] = nil
+            syncBreadcrumb("Chat.stateAnomaly", ["kind": "failure_with_saved_reply", "turn_id": turnID])
         }
     }
 
@@ -1938,6 +2055,7 @@ final class ChatViewModel {
                 return
             }
             guard !delta.isEmpty else {
+                retireBubblesWithSavedReplies()
                 errorMessage = nil
                 recordAdvisorySuccess(operation: .messagesMerge)
                 return
@@ -2064,6 +2182,24 @@ final class ChatViewModel {
             errorReporter.report(error, component: "Chat.profiles")
         }
         isLoadingProfiles = false
+    }
+
+    /// Load the profile list if it is still missing. It is otherwise fetched
+    /// once, at bootstrap, so a timeout or a server still starting up would
+    /// leave it empty for as long as the app runs.
+    func ensureProfilesLoaded() async {
+        guard profiles.isEmpty, !isLoadingProfiles else {
+            return
+        }
+        await loadProfiles()
+    }
+
+    /// What a control offering a choice of profile should show.
+    var profileListState: ProfileListState {
+        if !profiles.isEmpty {
+            return .ready
+        }
+        return isLoadingProfiles ? .loading : .unavailable
     }
 
     func sendDraft() async {
@@ -2332,12 +2468,16 @@ final class ChatViewModel {
         // messages endpoint before starting a rival turn. A failed lookup is not
         // fatal — the turn-start endpoint's 409 response is the race-safe backstop.
         if !hadActiveTurnAtSubmission, !opensGeneratedLaunchDraft {
+            syncBreadcrumb("Chat.sendStep", ["step": "preflight_started", "conversation_id": id])
             do {
                 let response = try await apiClient.getMessagesPage(
                     conversationID: id,
                     after: nil,
-                    limit: 1
+                    limit: 1,
+                    timeout: Self.sendPreflightTimeoutSeconds,
+                    timedOperation: "send_preflight"
                 )
+                syncBreadcrumb("Chat.sendStep", ["step": "preflight_finished", "conversation_id": id])
                 guard conversationID == id else {
                     return false
                 }
@@ -2369,6 +2509,7 @@ final class ChatViewModel {
                     reportSteerDegradedToSend(reason: "no_running_server_turn")
                 }
             } catch {
+                syncBreadcrumb("Chat.sendStep", ["step": "preflight_failed", "conversation_id": id])
                 errorReporter.report(error, component: "Chat.activeTurnLookup")
                 guard conversationID == id,
                       isRouted || (draftText == submittedDraftText
@@ -2535,6 +2676,60 @@ final class ChatViewModel {
     ///
     /// CRITICAL: The retry must be transparent — the caller's post-start flow
     /// runs exactly once on the returned result, never duplicated for the retry.
+    /// Start a turn, asking again if the response is lost.
+    ///
+    /// A transport failure says nothing about whether the server got the request:
+    /// a response can be lost after the turn was saved and started. The turn id
+    /// makes the request idempotent, so asking again returns the turn the first
+    /// attempt started, or starts it if that attempt never arrived.
+    private func startTurnRecoveringLostResponse(
+        turnID: String,
+        prompt: String,
+        conversationID: String,
+        profileID: String?,
+        attachments: [ChatAttachment],
+        modelTier: String?,
+        ownerEpoch: Int
+    ) async throws -> ChatTurnStart {
+        var retriesLeft = lostStartRetries
+        var delay = liveReconnectInitialDelaySeconds
+        syncBreadcrumb("Chat.sendStep", ["step": "turn_start_requested", "turn_id": turnID])
+        while true {
+            do {
+                return try await startTurnWithAuthRetry(
+                    turnID: turnID,
+                    prompt: prompt,
+                    conversationID: conversationID,
+                    profileID: profileID,
+                    attachments: attachments,
+                    modelTier: modelTier,
+                    ownerEpoch: ownerEpoch
+                )
+            } catch let error as URLError where retriesLeft > 0 && Self.mayHaveLostResponse(error) {
+                retriesLeft -= 1
+                syncBreadcrumb("Chat.sendStep", [
+                    "step": "turn_start_retrying",
+                    "turn_id": turnID,
+                    "url_error_code": String(error.errorCode),
+                ])
+                try await Task.sleep(for: .seconds(delay))
+                delay = min(delay * 2, liveReconnectMaxDelaySeconds)
+            }
+        }
+    }
+
+    /// Transport failures after which the outcome of a request is unknown or it
+    /// never left. A cancellation is deliberate and is not retried.
+    static func mayHaveLostResponse(_ error: URLError) -> Bool {
+        switch error.code {
+        case .timedOut, .networkConnectionLost, .notConnectedToInternet, .cannotConnectToHost,
+             .cannotFindHost, .dnsLookupFailed, .secureConnectionFailed:
+            return true
+        default:
+            return false
+        }
+    }
+
     private func startTurnWithAuthRetry(
         turnID: String,
         prompt: String,
@@ -2630,7 +2825,7 @@ final class ChatViewModel {
         // removed on a later failure.
         var startSucceeded = false
         do {
-            let start = try await startTurnWithAuthRetry(
+            let start = try await startTurnRecoveringLostResponse(
                 turnID: turnID,
                 prompt: prompt,
                 conversationID: id,
@@ -2640,6 +2835,11 @@ final class ChatViewModel {
                 ownerEpoch: startEpoch
             )
             startSucceeded = true
+            syncBreadcrumb("Chat.sendStep", [
+                "step": "turn_started",
+                "turn_id": turnID,
+                "already_complete": String(start.alreadyComplete),
+            ])
             // The first send of a generated launch draft makes the conversation
             // server-backed. Clear the launch-draft sentinel — gated on
             // `id == self.conversationID` (this send is still for the displayed
@@ -3024,8 +3224,10 @@ final class ChatViewModel {
             if !(await cancelStopQueuedBeforeRegistration(for: turnID)) {
                 recoverPendingSteersAsDraft(for: turnID)
             }
-            // Reaching here means starting the turn itself failed — the prompt was
-            // never accepted, so there is no durable turn to recover; surface it.
+            // Reaching here means starting the turn failed even after asking again.
+            // The server may still have the turn if every response was lost; its
+            // saved reply retires this failure when it arrives (see
+            // `retireFailuresWithSavedReplies`).
             // Undo the optimistic list change: drop a brand-new conversation's
             // phantom row, or restore an existing conversation's pre-send summary
             // so the failed prompt doesn't stay pinned at the top (the freshness
@@ -3048,9 +3250,9 @@ final class ChatViewModel {
             } else {
                 underlyingError = error
             }
-            // The prompt was never accepted, so retry can re-POST the SAME turn id
-            // without any risk of double-send (the server dedupes on it). Surface
-            // inline at the point of action with that retry affordance, not a modal.
+            // Retry re-POSTs the SAME turn id, which cannot double-send whether or not
+            // the server got it (it dedupes on the id). Surface inline at the point
+            // of action with that retry affordance, not a modal.
             presentInlineSendFailure(
                 error.localizedDescription,
                 session: session,
@@ -4504,11 +4706,39 @@ final class ChatViewModel {
         )
         isSceneActive = new == .active
         readPositionMayHaveChanged()
+        guard isScreenVisible else {
+            return
+        }
         let effects = syncCoordinator.scenePhaseChanged(
             didBackground: new == .background,
             isActive: new == .active
         )
         for effect in effects {
+            execute(effect)
+        }
+        if new == .active {
+            Task { await ensureProfilesLoaded() }
+        }
+    }
+
+    /// Whether this model's screen is on the navigation stack.
+    ///
+    /// A pushed screen that closes must give up its connections, exactly as the
+    /// app does going to the background: a send's transport holds this model
+    /// strongly for as long as it runs, and a model with no screen gets no
+    /// scene-phase changes to tell it otherwise, so it would keep two streams open
+    /// with nothing showing them. The turn is durable, so nothing is lost, and a
+    /// screen that comes back resyncs the way the app does on foreground.
+    func setScreenVisible(_ visible: Bool) {
+        guard visible != isScreenVisible else {
+            return
+        }
+        isScreenVisible = visible
+        syncBreadcrumb("Chat.modelLifecycle", [
+            "event": visible ? "screen_shown" : "screen_hidden",
+            "conversation_id": conversationID ?? "none",
+        ])
+        for effect in syncCoordinator.scenePhaseChanged(didBackground: !visible, isActive: visible) {
             execute(effect)
         }
     }
@@ -4684,9 +4914,14 @@ final class ChatViewModel {
                 if let seq = event.seq {
                     recordAppliedSeq(seq)
                 }
+                // A steer means the turn continues past any reply saved so far.
+                savedReplyTurnIDs.remove(turnID)
                 appendUserInput(event)
             }
         case .text, .toolCall, .toolResult, .attachment:
+            if let turnID = event.turnID, hasFinishedWithSavedReply(turnID) {
+                break
+            }
             if let turnID = event.turnID, !endedTurnIDs.contains(turnID), !knownRunningTurnIDs.contains(turnID) {
                 knownRunningTurnIDs.insert(turnID)
             }
@@ -4820,6 +5055,8 @@ final class ChatViewModel {
         /// The highest applied seq at failure time, so an after-accept retry
         /// resubscribes from just past it rather than replaying the whole turn.
         let lastAppliedSeq: Int?
+        /// The server said the turn failed, rather than the connection dropping.
+        var reportedByServer = false
     }
 
     /// The operation whose failure raised the shared "Chat Error" modal. Each
@@ -5596,7 +5833,8 @@ final class ChatViewModel {
                 modelTier: session.modelTier,
                 previousSummary: session.previousSummary,
                 postAccepted: true,
-                lastAppliedSeq: session.lastAppliedSeq
+                lastAppliedSeq: session.lastAppliedSeq,
+                reportedByServer: true
             )
         }
         errorReporter.report(

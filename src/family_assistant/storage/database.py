@@ -35,8 +35,10 @@ import sqlite3
 import weakref
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy import Table, insert, select, update
 from sqlalchemy.exc import (
     DBAPIError,
     InvalidRequestError,
@@ -47,10 +49,17 @@ from sqlalchemy.sql import Delete, Insert, Update
 
 from family_assistant.memory.limits import MemoryLimits
 from family_assistant.request_side_effects import mark_state_changed
+from family_assistant.storage.sync_tracking import (
+    COUNTER_ROW_ID,
+    SYNC_CURSOR_COLUMN,
+    sync_cursor_counter_table,
+    sync_tombstones_table,
+    sync_wakeup_for,
+    synced_table,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Coroutine
-    from datetime import datetime
     from types import TracebackType
 
     from sqlalchemy import TextClause
@@ -89,6 +98,7 @@ if TYPE_CHECKING:
         WorkerTasksRepository,
     )
     from family_assistant.storage.repositories.a2a_tasks import A2ATasksRepository
+    from family_assistant.storage.repositories.sync import SyncRepository
 
 logger = logging.getLogger(__name__)
 
@@ -562,6 +572,16 @@ class DatabaseExecutor(ABC):
         return self._repository(TasksRepository)
 
     @property
+    def sync(self) -> SyncRepository:
+        """Get the client sync repository instance."""
+        # Repositories import this module, so a module-level import would be a cycle.
+        from family_assistant.storage.repositories.sync import (  # noqa: PLC0415
+            SyncRepository,
+        )
+
+        return self._repository(SyncRepository)
+
+    @property
     def turn_feedback(self) -> TurnFeedbackRepository:
         """Get the turn feedback repository instance."""
         from family_assistant.storage.repositories import (  # noqa: PLC0415
@@ -873,6 +893,9 @@ class DatabaseTransaction(DatabaseExecutor):
         self._token: contextvars.Token[bool] | None = None
         self._transaction_cm: Any = None
         self._on_commit_callbacks: list[Callable[[], Any]] = []
+        # Allocated by the first write to a synced table; every synced row this
+        # transaction writes carries it. See storage/sync_tracking.py.
+        self._sync_cursor: int | None = None
 
     @property
     def engine(self) -> AsyncEngine:
@@ -958,6 +981,7 @@ class DatabaseTransaction(DatabaseExecutor):
             # the surrounding transaction has not finished. Raw TextClause
             # writes go unreported; this project queries symbolically.
             mark_state_changed()
+            query = await self._stamp_for_sync(query)
         connection = self.connection
         result = (
             await connection.execute(query, params)
@@ -974,6 +998,86 @@ class DatabaseTransaction(DatabaseExecutor):
     ) -> T:
         """Join this transaction: run ``body`` once, with retry owned by its opener."""
         return await body(self)
+
+    async def _stamp_for_sync(
+        self, query: Insert | Update | Delete
+    ) -> Insert | Update | Delete:
+        """Stamp a write to a synced table with this transaction's cursor.
+
+        Inserts and updates set ``sync_cursor``; a delete first leaves a
+        tombstone for every row it is about to remove. Doing it here, for every
+        symbolic write, is what lets clients trust that nothing changes without
+        a cursor moving. See docs/design/mobile-state-sync.md.
+        """
+        table = query.table
+        if not isinstance(table, Table):
+            return query
+        spec = synced_table(table.name)
+        if spec is None:
+            return query
+        cursor = await self._allocate_sync_cursor()
+        if isinstance(query, Delete):
+            await self._record_tombstones(query, table, cursor)
+            return query
+        if isinstance(query, Insert) and _multi_row_values(query):
+            stamped = _stamp_multi_row_insert(query, cursor)
+        else:
+            stamped = query.values({SYNC_CURSOR_COLUMN: cursor})
+        if isinstance(stamped, Insert):
+            _stamp_upsert_update(stamped, cursor)
+        return stamped
+
+    async def _allocate_sync_cursor(self) -> int:
+        if self._sync_cursor is not None:
+            return self._sync_cursor
+        # The row lock taken here is held until this transaction ends, so any
+        # other writer to a synced table waits for this one to commit before it
+        # can take the next cursor: cursors become visible in order.
+        result = await self.execute(
+            update(sync_cursor_counter_table)
+            .where(sync_cursor_counter_table.c.id == COUNTER_ROW_ID)
+            .values(value=sync_cursor_counter_table.c.value + 1)
+            .returning(sync_cursor_counter_table.c.value)
+        )
+        if not result.rows:
+            raise RuntimeError(
+                "sync_cursor_counter has no row; the schema was created without it"
+            )
+        self._sync_cursor = int(result.rows[0]["value"])
+        engine = self.engine
+        self.on_commit(lambda: sync_wakeup_for(engine).notify())
+        return self._sync_cursor
+
+    async def _record_tombstones(
+        self, query: Delete, table: Table, cursor: int
+    ) -> None:
+        spec = synced_table(table.name)
+        assert spec is not None
+        selected = [table.c[spec.entity_column].label("entity_id")]
+        if spec.conversation_column is not None:
+            selected.append(table.c[spec.conversation_column].label("conversation_id"))
+        if spec.owner_column is not None:
+            selected.append(table.c[spec.owner_column].label("owner_user_id"))
+        doomed = select(*selected)
+        if query.whereclause is not None:
+            doomed = doomed.where(query.whereclause)
+        rows = (await self.execute(doomed)).rows
+        if not rows:
+            return
+        deleted_at = datetime.now(UTC)
+        await self.execute(
+            insert(sync_tombstones_table).values([
+                {
+                    SYNC_CURSOR_COLUMN: cursor,
+                    "kind": spec.kind,
+                    "entity_id": str(row["entity_id"]),
+                    "conversation_id": row.get("conversation_id"),
+                    "owner_user_id": row.get("owner_user_id"),
+                    "deleted_at": deleted_at,
+                }
+                for row in rows
+            ])
+        )
 
     def on_commit(self, callback: Callable[[], Any]) -> Callable[[], Any]:
         """Register a callback to run once this transaction has committed.
@@ -998,6 +1102,48 @@ class DatabaseTransaction(DatabaseExecutor):
         _ = self.connection
         self._on_commit_callbacks.append(callback)
         return callback
+
+
+# SQLAlchemy keeps the rows of ``insert(...).values([row, ...])`` here; a scalar
+# ``.values()`` cannot be added to that form, so the stamp goes into each row.
+_MULTI_VALUES_ATTRIBUTE = "_multi_values"
+
+
+# ast-grep-ignore: no-dict-any - insert rows map column keys to arbitrary bound values
+def _multi_row_values(statement: Insert) -> tuple[list[dict[Any, Any]], ...]:
+    return getattr(statement, _MULTI_VALUES_ATTRIBUTE, ())
+
+
+def _stamp_multi_row_insert(statement: Insert, cursor: int) -> Insert:
+    # SQLAlchemy's own copy step for generative edits; the caller's statement is untouched.
+    stamped = statement._generate()
+    setattr(
+        stamped,
+        _MULTI_VALUES_ATTRIBUTE,
+        tuple(
+            [{**row, SYNC_CURSOR_COLUMN: cursor} for row in rows]
+            for rows in _multi_row_values(statement)
+        ),
+    )
+    return stamped
+
+
+def _stamp_upsert_update(statement: Insert, cursor: int) -> None:
+    """Carry the cursor into an upsert's ``ON CONFLICT DO UPDATE`` branch.
+
+    ``Insert.values`` stamps the row the statement would insert, but when the
+    row already exists the update branch is what runs, and it sets only the
+    columns its ``set_`` names. Both dialects keep that list on the conflict
+    clause as ``update_values_to_set``.
+    """
+    clause = getattr(statement, "_post_values_clause", None)
+    to_set = getattr(clause, "update_values_to_set", None)
+    if to_set is None:
+        return
+    for key, _value in to_set:
+        if getattr(key, "name", key) == SYNC_CURSOR_COLUMN:
+            return
+    to_set.append((SYNC_CURSOR_COLUMN, cursor))
 
 
 def _reject_ambient_transaction(operation: str) -> None:

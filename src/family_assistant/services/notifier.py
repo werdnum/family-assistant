@@ -25,6 +25,10 @@ class NotificationMetadata(BaseModel):
     category: str | None = None
     request_id: str | None = None
     conversation_id: str | None = None
+    # The turn whose reply this notification announces, so a client can tell
+    # whether it is already showing that reply (see the push-gap telemetry in
+    # docs/design/mobile-state-sync.md).
+    turn_id: str | None = None
     path: str | None = None
     url: str | None = None
     action_kind: str | None = None
@@ -39,6 +43,7 @@ class NotificationMetadata(BaseModel):
         mapping = {
             "category": self.category,
             "conversationId": self.conversation_id,
+            "turnId": self.turn_id,
             "requestId": self.request_id,
             "path": self.path,
             "url": self.url,

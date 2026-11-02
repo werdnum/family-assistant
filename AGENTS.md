@@ -669,6 +669,11 @@ placement, auth, and the error-vs-telemetry reporting lanes.
   - **No transaction may span an LLM call, a tool dispatch, or a network round trip.** Split the
     work; do not widen the block.
 
+  Writes to the tables clients mirror (message history, threads, read markers, confirmations,
+  delegation runs, turn feedback) are stamped with a commit-ordered `sync_cursor` by the transaction
+  itself, so client sync sees them without the writer doing anything; a raw SQL write would not be
+  seen. See `storage/sync_tracking.py`.
+
   For multi-statement repository methods, use the closure form `await db.atomic(body)` rather than
   the block: it can be replayed after a rollback, which is what makes serialization failures and
   deadlocks retryable. See [docs/design/db-commit-as-you-go.md](docs/design/db-commit-as-you-go.md).

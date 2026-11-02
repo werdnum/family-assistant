@@ -17,20 +17,17 @@ for direct use, not the assistant's internal helpers.
 
 Which commands exist depends on how your deployment is configured; these are the standard ones.
 
-| Command                     | Use it for                                                                         |
-| --------------------------- | ---------------------------------------------------------------------------------- |
-| `/browse`                   | Web tasks needing navigation, forms, or JavaScript-heavy pages (anonymous)         |
-| `/browse_authenticated`     | Web tasks requiring stored credentials; fills passwords on demand via Keychute     |
-| `/browse_visual`            | Sites the DOM-based browser can't handle; drives the page visually                 |
-| `/research`                 | In-depth research on a topic — the right default for research questions            |
-| `/research_max`             | The most thorough multi-source research, when depth matters more than speed        |
-| `/complex`                  | Multi-step reasoning and planning that needs a long chain of work                  |
-| `/coder`                    | Writing and running code, data crunching, and other self-contained computing tasks |
-| `/visualize` or `/chart`    | Charts and graphs from data you provide or attach                                  |
-| `/artist`                   | Generating or editing images and video                                             |
-| `/camera` or `/investigate` | Searching and reviewing security camera footage                                    |
-| `/engineer`                 | Diagnostics: "why did the assistant do that?"                                      |
-| `/interrupt`                | (Telegram) stop the request currently being processed in that chat                 |
+| Command                 | Use it for                                                                         |
+| ----------------------- | ---------------------------------------------------------------------------------- |
+| `/browse`               | Web tasks needing navigation, forms, or JavaScript-heavy pages (anonymous)         |
+| `/browse_authenticated` | Web tasks requiring stored credentials; fills passwords on demand via Keychute     |
+| `/browse_visual`        | Sites the DOM-based browser can't handle; drives the page visually                 |
+| `/research`             | In-depth research on a topic — the right default for research questions            |
+| `/research_max`         | The most thorough multi-source research, when depth matters more than speed        |
+| `/complex`              | Multi-step reasoning and planning that needs a long chain of work                  |
+| `/coder`                | Writing and running code, data crunching, and other self-contained computing tasks |
+| `/engineer`             | Diagnostics: "why did the assistant do that?"                                      |
+| `/interrupt`            | (Telegram) stop the request currently being processed in that chat                 |
 
 Three more Telegram commands choose *how hard* the assistant thinks rather than which assistant
 answers: `/deep`, `/max` and `/standard`. They keep the conversation on whatever assistant it is

@@ -5,13 +5,28 @@ updates:
     schedule:
       interval: "monthly"
       day: "monday"
-    open-pull-requests-limit: 1
+    # Each group's PR counts against this limit, so a limit of 1 lets only the
+    # first group (python-dev-tools) open each month and starves the rest.
+    open-pull-requests-limit: 5
+    # playwright is pinned to rebrowser-playwright's version so the two share
+    # the browser binaries baked into the dev and CI images; bump all three
+    # together by hand.
+    ignore:
+      - dependency-name: "playwright"
+      - dependency-name: "rebrowser-playwright"
     cooldown:
       default-days: 14
       semver-major-days: 30
       semver-minor-days: 14
       semver-patch-days: 7
     groups:
+      # Security updates ignore the cooldown and the PR limit above, but only
+      # arrive when Dependabot security updates are enabled in the repository's
+      # Code security settings. Grouped so one advisory sweep is one PR.
+      python-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
       python-dev-tools:
         patterns:
           - "pylint*"
@@ -56,13 +71,17 @@ updates:
     schedule:
       interval: "monthly"
       day: "wednesday"
-    open-pull-requests-limit: 1
+    open-pull-requests-limit: 5
     cooldown:
       default-days: 14
       semver-major-days: 30
       semver-minor-days: 14
       semver-patch-days: 7
     groups:
+      frontend-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
       react-ecosystem:
         patterns:
           - "react*"

@@ -20,9 +20,13 @@ the broker needs to be promoted to Redis Streams or Postgres LISTEN/NOTIFY.
 import asyncio
 import logging
 from collections import OrderedDict, deque
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
+
+from family_assistant.storage.sync_tracking import SyncWakeup
+from family_assistant.web.chat_telemetry import log_turn_event
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -133,6 +137,8 @@ class TurnRecord:
     ended_seq: int | None = None  # seq of the turn_ended event, set when complete
     delivered: bool = False  # True once any subscriber has acked turn_ended.seq
     delivered_event: asyncio.Event = field(default_factory=asyncio.Event)
+    ended_at: datetime | None = None
+    has_output: bool = False  # True once the turn has published text or a tool call
     task: asyncio.Task[None] | None = None  # producer task (strong-ref)
     # Cooperative interrupt/steer handle for a running turn. The cancel/steer
     # endpoints look this up to request a graceful interrupt or inject a
@@ -163,6 +169,47 @@ class TurnRecord:
     # ``complete`` -- the client has shown the error and the turn is over -- so a
     # caller that needs to know whether the turn achieved anything reads this.
     error_reported: bool = False
+    # What the turn has produced so far, for a client that joins mid-turn: each
+    # event's payload with its type, consecutive text deltas merged into one.
+    # Cleared when the turn ends, when the persisted rows take over.
+    # ast-grep-ignore: no-dict-any - heterogeneous event payloads, as published
+    progress: list[dict[str, Any]] = field(default_factory=list)
+
+
+# The events that make up what a client renders for a turn in progress.
+_PROGRESS_EVENT_TYPES = frozenset({
+    "text",
+    "tool_call",
+    "tool_result",
+    "attachment",
+    "user_input",
+    "tool_confirmation_request",
+    "tool_confirmation_result",
+    "error",
+})
+
+
+def _record_progress(
+    turn: TurnRecord,
+    event_type: str,
+    # ast-grep-ignore: no-dict-any - heterogeneous event payloads, as published
+    payload: dict[str, Any],
+) -> None:
+    if event_type not in _PROGRESS_EVENT_TYPES:
+        return
+    content = payload.get("content")
+    if (
+        event_type == "text"
+        and isinstance(content, str)
+        and turn.progress
+        and turn.progress[-1]["type"] == "text"
+    ):
+        turn.progress[-1] = {
+            "type": "text",
+            "content": turn.progress[-1]["content"] + content,
+        }
+        return
+    turn.progress.append({"type": event_type, **payload})
 
 
 @dataclass(slots=True)
@@ -281,6 +328,9 @@ class ConversationStreamHub:
         # producer-task done-callback (see attach_producer_task), so they aren't
         # garbage-collected before they run.
         self._safety_net_tasks: set[asyncio.Task[None]] = set()
+        # Notified on every publish and turn start or end, so a waiting sync
+        # long poll can check whether something it reports has moved.
+        self.changes = SyncWakeup()
 
     # ------------------------------------------------------------------ #
     # Registry / lookups
@@ -424,6 +474,17 @@ class ConversationStreamHub:
             turn.status == "running" for turn in self.active_turns(conversation_id)
         )
 
+    def running_conversation_ids(self, user_ids: Collection[str]) -> list[str]:
+        """Conversations with a turn in progress started by one of ``user_ids``."""
+        return [
+            conversation_id
+            for conversation_id, state in self._conversations.items()
+            if any(
+                turn.status == "running" and turn.user_id in user_ids
+                for turn in state.turns.values()
+            )
+        ]
+
     def latest_seq(self, conversation_id: str) -> int:
         """Return the seq of the most recently published event, or -1 if the
         conversation has published none.
@@ -468,6 +529,17 @@ class ConversationStreamHub:
             )
             if turn is not None:
                 turn.latest_seq = event.seq
+                _record_progress(turn, event_type, payload)
+                if not turn.has_output and event_type in {"text", "tool_call"}:
+                    turn.has_output = True
+                    log_turn_event(
+                        "first_output",
+                        conversation_id=conversation_id,
+                        turn_id=turn.turn_id,
+                        output=event_type,
+                        after_s=(datetime.now(UTC) - turn.started_at).total_seconds(),
+                    )
+        self.changes.notify()
 
         return event
 
@@ -696,6 +768,12 @@ class ConversationStreamHub:
             )
             state.turns[turn_id] = turn
             self._prune_completed_turns(state)
+            log_turn_event(
+                "started",
+                conversation_id=conversation_id,
+                turn_id=turn_id,
+                first_seq=event.seq,
+            )
 
         # NB: no activity broadcast here. ``start_turn`` runs before the caller
         # persists the user message, and the conversation-list endpoint only
@@ -704,6 +782,7 @@ class ConversationStreamHub:
         # optimistic row). The ``/turns`` endpoint emits ``publish_activity``
         # itself, after the user-message commit. ``end_turn`` (reply persisted)
         # still broadcasts directly.
+        self.changes.notify()
         return turn
 
     async def end_turn(
@@ -775,6 +854,17 @@ class ConversationStreamHub:
                 turn.status = status
                 turn.latest_seq = event.seq
                 turn.ended_seq = event.seq
+                turn.ended_at = datetime.now(UTC)
+                turn.progress = []
+                log_turn_event(
+                    "ended",
+                    conversation_id=conversation_id,
+                    turn_id=turn_id,
+                    status=status,
+                    ended_seq=event.seq,
+                    duration_s=(turn.ended_at - turn.started_at).total_seconds(),
+                    subscribers=len(state.subscribers),
+                )
 
             # Re-check delivered under the same lock: a subscriber may already
             # have acked past this seq before turn_ended was published.
@@ -796,6 +886,7 @@ class ConversationStreamHub:
                 reason="turn_ended",
                 timestamp=datetime.now(UTC),
             )
+        self.changes.notify()
 
         return event
 
@@ -942,6 +1033,14 @@ class ConversationStreamHub:
         for turn in state.turns.values():
             if turn.ended_seq is None or ack_seq < turn.ended_seq:
                 continue
+            if not turn.delivered and turn.ended_at is not None:
+                log_turn_event(
+                    "acked",
+                    conversation_id=state.conversation_id,
+                    turn_id=turn.turn_id,
+                    ack_seq=ack_seq,
+                    after_end_s=(datetime.now(UTC) - turn.ended_at).total_seconds(),
+                )
             turn.delivered = True
             turn.delivered_event.set()
 

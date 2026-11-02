@@ -20,6 +20,7 @@ from .me_api import me_router
 from .notes_api import notes_api_router
 from .oauth_integration import create_oauth_integration_router
 from .scripts_api import scripts_api_router
+from .sync_api import sync_api_router
 from .tasks_api import tasks_api_router
 from .threads_api import threads_api_router
 from .tools_api import tools_api_router
@@ -47,6 +48,7 @@ api_router.include_router(
     chat_api_router, tags=["Chat API"]
 )  # No prefix for /v1/chat/send_message
 api_router.include_router(threads_api_router, tags=["Chat API"])
+api_router.include_router(sync_api_router, tags=["Sync API"])
 api_router.include_router(turn_feedback_api_router, tags=["Chat API"])
 api_router.include_router(notes_api_router, prefix="/notes", tags=["Notes"])
 api_router.include_router(tasks_api_router, prefix="/tasks", tags=["Tasks"])

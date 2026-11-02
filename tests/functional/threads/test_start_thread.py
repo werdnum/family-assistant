@@ -42,6 +42,7 @@ from family_assistant.tools.policy import (
     ToolPolicyConfig,
     ToolPolicyDecision,
 )
+from tests.functional.threads.test_thread_close import RecordingPublisher
 from tests.helpers import wait_for_condition
 from tests.mocks.mock_llm import LLMOutput, MatcherArgs, RuleBasedMockLLMClient
 from tests.mocks.recording_chat_interface import RecordingChatInterface
@@ -285,6 +286,29 @@ async def world(
         now=datetime.now(UTC),
     )
     return world
+
+
+@pytest.mark.asyncio
+async def test_starting_a_thread_tells_clients_before_the_home_turn_ends(
+    world: ThreadWorld,
+) -> None:
+    publisher = RecordingPublisher()
+    world.home_service.home_activity_publisher = publisher
+    seen_when_the_turn_resumed: list[list[tuple[str, str]]] = []
+
+    def records_when_the_turn_resumes(kwargs: MatcherArgs) -> bool:
+        if _has_tool_result(kwargs.get("messages", [])):
+            seen_when_the_turn_resumed.append(list(publisher.activity))
+        return False
+
+    assert world.home_llm is not None
+    world.home_llm.rules.insert(
+        0, (records_when_the_turn_resumes, lambda _kwargs: LLMOutput(content="unused"))
+    )
+
+    await world.say_in(HOME, "please start a thread for the quotes")
+
+    assert seen_when_the_turn_resumed == [[(HOME, f"{USER}:thread_started")]]
 
 
 @pytest.mark.asyncio

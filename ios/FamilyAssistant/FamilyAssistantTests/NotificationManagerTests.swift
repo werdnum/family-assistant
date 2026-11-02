@@ -567,3 +567,109 @@ private extension Data {
         }
     }
 }
+
+@MainActor
+final class PushGapTrackerTests: XCTestCase {
+    private var clock = Date(timeIntervalSince1970: 1_000)
+    private var reports: [[String: String]] = []
+
+    private func makeTracker() -> PushGapTracker {
+        PushGapTracker(now: { [unowned self] in clock }) { [unowned self] extraData in
+            reports.append(extraData)
+        }
+    }
+
+    private func reply(turnID: String?, status: ChatMessageStatus = .complete, text: String = "Done") -> ChatMessage {
+        ChatMessage(
+            id: "msg_\(UUID().uuidString)",
+            role: .assistant,
+            text: text,
+            createdAt: clock,
+            toolCalls: [],
+            attachments: [],
+            isLoading: status == .running,
+            status: status,
+            turnID: turnID
+        )
+    }
+
+    override func setUp() {
+        super.setUp()
+        clock = Date(timeIntervalSince1970: 1_000)
+        reports = []
+    }
+
+    func testReplyVisibleAfterPushReportsPositiveGap() {
+        let tracker = makeTracker()
+
+        tracker.pushDelivered(turnID: "t1", deliveredAt: clock, delivery: .foreground)
+        clock.addTimeInterval(2.5)
+        tracker.replyVisible(turnID: "t1")
+
+        XCTAssertEqual(reports, [["turn_id": "t1", "delivery": "foreground", "gap_ms": "2500"]])
+    }
+
+    func testReplyVisibleBeforePushReportsNegativeGap() {
+        let tracker = makeTracker()
+        tracker.replyVisible(turnID: "t1")
+        clock.addTimeInterval(1)
+
+        tracker.pushDelivered(turnID: "t1", deliveredAt: clock, delivery: .foreground)
+
+        XCTAssertEqual(reports.first?["gap_ms"], "-1000")
+    }
+
+    func testTappedPushReportsTimeFromOpenToVisible() {
+        let tracker = makeTracker()
+        let delivered = clock
+        clock.addTimeInterval(60)
+
+        tracker.pushDelivered(turnID: "t1", deliveredAt: delivered, delivery: .tapped)
+        clock.addTimeInterval(4)
+        tracker.replyVisible(turnID: "t1")
+
+        XCTAssertEqual(
+            reports,
+            [["turn_id": "t1", "delivery": "tapped", "gap_ms": "64000", "open_to_visible_ms": "4000"]]
+        )
+    }
+
+    func testTurnIsReportedOnceWhenTappedAfterForegroundDelivery() {
+        let tracker = makeTracker()
+        tracker.pushDelivered(turnID: "t1", deliveredAt: clock, delivery: .foreground)
+        tracker.replyVisible(turnID: "t1")
+
+        tracker.pushDelivered(turnID: "t1", deliveredAt: clock, delivery: .tapped)
+
+        XCTAssertEqual(reports.count, 1)
+    }
+
+    func testOnlyCompletedAssistantRepliesWithTextCountAsVisible() {
+        let tracker = makeTracker()
+        tracker.pushDelivered(turnID: "running", deliveredAt: clock, delivery: .foreground)
+        tracker.pushDelivered(turnID: "empty", deliveredAt: clock, delivery: .foreground)
+        tracker.pushDelivered(turnID: "done", deliveredAt: clock, delivery: .foreground)
+
+        tracker.noteVisibleReplies(in: [
+            reply(turnID: "running", status: .running),
+            reply(turnID: "empty", text: ""),
+            reply(turnID: nil),
+            reply(turnID: "done"),
+        ])
+
+        XCTAssertEqual(reports.map { $0["turn_id"] }, ["done"])
+    }
+
+    func testForegroundPushWithTurnIDFeedsTheTracker() {
+        let tracker = makeTracker()
+        let manager = NotificationManager(pushGapTracker: tracker)
+
+        manager.handleForegroundPushPresentation(
+            userInfo: ["conversation_id": "c1", "turn_id": "t1"],
+            deliveredAt: clock
+        )
+        tracker.replyVisible(turnID: "t1")
+
+        XCTAssertEqual(reports.first?["turn_id"], "t1")
+    }
+}

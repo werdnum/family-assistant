@@ -81,6 +81,22 @@ unzip -p test-results/*/trace.zip resources/*.dat | head -50
 unzip -p test-results/*/trace.zip trace.trace | strings | grep -i "error\|warning\|exception"
 ```
 
+## Sync Benchmark Under Bad Networks
+
+`sync/` measures how long the web client takes to show a change: a reply committed by another
+client, the end of an outage, a hand-over that resets every connection. The browser reaches the
+server only through `tests/netem/proxy.py`, an impairment proxy with latency, jitter, bandwidth
+caps, resets, blackholes, idle cuts and event-stream buffering; the benchmark's own driver talks to
+the server directly, so changes commit at a known instant.
+
+Without `SYNC_BENCHMARK=1`, two scenarios run once on a good link as a regression check. With it,
+every scenario runs against every profile in `tests/netem/profiles.py` and a table is written to
+`test-results/`. Run it alone, with `-n 0`, because it measures wall-clock latency:
+
+```bash
+poe sync-benchmark
+```
+
 ## Web API Test Fixtures
 
 `mock_llm_client`, `app_fixture`, `web_test_fixture`, `take_screenshot`, `session_db_engine`, and

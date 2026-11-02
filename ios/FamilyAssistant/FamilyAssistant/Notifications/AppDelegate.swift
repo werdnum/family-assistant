@@ -74,7 +74,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     ) async -> UNNotificationPresentationOptions {
         let userInfo = notification.request.content.userInfo
         await MainActor.run {
-            notificationManager?.handleForegroundPushPresentation(userInfo: userInfo)
+            notificationManager?.handleForegroundPushPresentation(
+                userInfo: userInfo,
+                deliveredAt: notification.date
+            )
         }
         return [.banner, .list, .sound, .badge]
     }

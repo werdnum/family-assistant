@@ -2983,12 +2983,15 @@ class MessageHistoryRepository(BaseRepository):
         after: datetime | None = None,
         limit: int = 50,
         include_subconversations: bool = True,
+        before_id: int | None = None,
     ) -> tuple[list[MessageHistoryRow], bool, bool]:
         """
         Get messages for a conversation with timestamp-based pagination.
 
         Args:
             conversation_id: The conversation identifier
+            before_id: Get messages older than this message (for loading
+                earlier by id, which a client holding the message knows exactly)
             before: Get messages before this timestamp (for loading earlier)
             after: Get messages after this timestamp (for loading newer)
             limit: Maximum number of messages to return
@@ -3005,7 +3008,30 @@ class MessageHistoryRepository(BaseRepository):
             conditions.append(message_history_table.c.subconversation_id.is_(None))
 
         # Add timestamp conditions
-        if before:
+        if before_id is not None:
+            # Page in the same (timestamp, internal_id) order as the latest page,
+            # so a message whose timestamp is out of insertion order is neither
+            # skipped nor repeated.
+            anchor = await self._db.fetch_value(
+                select(message_history_table.c.timestamp).where(
+                    message_history_table.c.internal_id == before_id
+                )
+            )
+            if anchor is None:
+                conditions.append(message_history_table.c.internal_id < before_id)
+            else:
+                conditions.append(
+                    or_(
+                        message_history_table.c.timestamp < anchor,
+                        and_(
+                            message_history_table.c.timestamp == anchor,
+                            message_history_table.c.internal_id < before_id,
+                        ),
+                    )
+                )
+            timestamp_order = message_history_table.c.timestamp.desc()
+            internal_id_order = message_history_table.c.internal_id.desc()
+        elif before:
             conditions.append(message_history_table.c.timestamp < before)
             timestamp_order = message_history_table.c.timestamp.desc()
             internal_id_order = message_history_table.c.internal_id.desc()
@@ -3036,11 +3062,11 @@ class MessageHistoryRepository(BaseRepository):
             messages = messages[:limit]
 
         # If we fetched in DESC order (before or default), reverse for chronological display
-        if before or not after:
+        if before_id is not None or before or not after:
             messages.reverse()
 
         # Determine has_more_before and has_more_after flags
-        if before:
+        if before_id is not None or before:
             has_more_before = has_more
             # If we're loading "before", there are newer messages only if we found any messages
             has_more_after = len(messages) > 0
@@ -3671,6 +3697,82 @@ class MessageHistoryRepository(BaseRepository):
         )
         return ~disqualifying_owner
 
+    async def owned_conversation_ids(
+        self, conversation_ids: Collection[str], owner_user_ids: set[str]
+    ) -> set[str]:
+        """Which of ``conversation_ids`` are solely owned by ``owner_user_ids``.
+
+        The same predicate as the conversation list, so a conversation is
+        offered to exactly the callers who could list it. A conversation with
+        no rows at all is not returned.
+        """
+        if not conversation_ids:
+            return set()
+        conditions: list[ColumnElement[bool]] = [
+            message_history_table.c.conversation_id.in_(list(conversation_ids))
+        ]
+        ownership = self._sole_owner_condition(owner_user_ids)
+        if ownership is not None:
+            conditions.append(ownership)
+        rows = await self._db.fetch_all(
+            select(message_history_table.c.conversation_id)
+            .where(*conditions)
+            .distinct()
+        )
+        return {row["conversation_id"] for row in rows}
+
+    async def visible_rows_for_turns(
+        self, conversation_ids: Collection[str], turn_ids: Collection[str]
+    ) -> list[MessageHistoryRow]:
+        """Visible rows of ``turn_ids`` in ``conversation_ids``, oldest first."""
+        if not conversation_ids or not turn_ids:
+            return []
+        rows = await self._db.fetch_all(
+            select(message_history_table)
+            .where(
+                message_history_table.c.conversation_id.in_(list(conversation_ids)),
+                message_history_table.c.turn_id.in_(list(turn_ids)),
+                message_history_table.c.subconversation_id.is_(None),
+                _visible_message_condition(),
+            )
+            .order_by(message_history_table.c.internal_id)
+        )
+        return [self._process_message_row_as_dict(row) for row in rows]
+
+    async def rows_changed_between(
+        self,
+        conversation_ids: Collection[str],
+        *,
+        after_cursor: int,
+        through_cursor: int,
+        limit: int,
+    ) -> list[MessageHistoryRow]:
+        """Rows of ``conversation_ids`` written in a cursor range, oldest first.
+
+        Hidden rows are included, because a row that stopped being visible must
+        reach the client as a removal; the caller sorts them out with
+        ``is_internal``. Each row carries its ``sync_cursor``. Delegated
+        subconversation rows are left out, as the messages endpoint leaves them
+        out.
+        """
+        if not conversation_ids:
+            return []
+        rows = await self._db.fetch_all(
+            select(message_history_table)
+            .where(
+                message_history_table.c.conversation_id.in_(list(conversation_ids)),
+                message_history_table.c.subconversation_id.is_(None),
+                message_history_table.c.sync_cursor > after_cursor,
+                message_history_table.c.sync_cursor <= through_cursor,
+            )
+            .order_by(
+                message_history_table.c.sync_cursor,
+                message_history_table.c.internal_id,
+            )
+            .limit(limit)
+        )
+        return [self._process_message_row_as_dict(row) for row in rows]
+
     async def list_distinct_user_message_owner_ids(self) -> set[str]:
         """Return every distinct non-null ``user_id`` stored on a user message.
 
@@ -3730,6 +3832,7 @@ class MessageHistoryRepository(BaseRepository):
         owner_user_ids: set[str] | None = None,
         search_query: str | None = None,
         ordinary_only: bool = False,
+        conversation_ids: Collection[str] | None = None,
     ) -> tuple[list[ConversationSummaryRow], int]:
         """
         Get conversation summaries with pagination, optimized for performance.
@@ -3744,6 +3847,7 @@ class MessageHistoryRepository(BaseRepository):
             limit: Maximum number of conversations to return
             offset: Number of conversations to skip for pagination
             conversation_id: Filter by specific conversation ID
+            conversation_ids: Restrict to these conversations
             date_from: Filter conversations with messages after this date
             date_to: Filter conversations with messages before this date
             include_subconversations: Include delegated subconversation rows
@@ -3780,6 +3884,11 @@ class MessageHistoryRepository(BaseRepository):
         if conversation_id:
             base_conditions.append(
                 message_history_table.c.conversation_id == conversation_id
+            )
+
+        if conversation_ids is not None:
+            base_conditions.append(
+                message_history_table.c.conversation_id.in_(list(conversation_ids))
             )
 
         if date_from:

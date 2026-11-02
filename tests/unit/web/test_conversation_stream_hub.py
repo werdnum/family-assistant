@@ -798,3 +798,52 @@ async def test_latest_seq_tracks_the_stream_head() -> None:
     )
     assert published.seq > floor
     assert hub.latest_seq("conv") == published.seq
+
+
+async def test_turn_progress_merges_consecutive_text_deltas() -> None:
+    hub = ConversationStreamHub()
+    turn = await hub.start_turn(
+        "conv", turn_id="t1", user_id="alice", started_at=_now()
+    )
+
+    await hub.publish("conv", "text", turn_id="t1", payload={"content": "Hel"})
+    await hub.publish("conv", "text", turn_id="t1", payload={"content": "lo"})
+    await hub.publish(
+        "conv", "tool_call", turn_id="t1", payload={"tool_call": {"id": "c"}}
+    )
+    await hub.publish("conv", "text", turn_id="t1", payload={"content": "!"})
+
+    assert turn.progress == [
+        {"type": "text", "content": "Hello"},
+        {"type": "tool_call", "tool_call": {"id": "c"}},
+        {"type": "text", "content": "!"},
+    ]
+
+
+async def test_turn_progress_is_dropped_when_the_turn_ends() -> None:
+    hub = ConversationStreamHub()
+    turn = await hub.start_turn(
+        "conv", turn_id="t1", user_id="alice", started_at=_now()
+    )
+    await hub.publish("conv", "text", turn_id="t1", payload={"content": "Hi"})
+
+    await hub.end_turn("conv", turn_id="t1", status="complete")
+
+    assert turn.progress == []
+
+
+async def test_running_conversations_are_filtered_by_turn_owner() -> None:
+    hub = ConversationStreamHub()
+    await hub.start_turn("mine", turn_id="t1", user_id="alice", started_at=_now())
+    await hub.start_turn("theirs", turn_id="t2", user_id="bob", started_at=_now())
+
+    assert hub.running_conversation_ids({"alice"}) == ["mine"]
+
+
+async def test_publishing_wakes_change_waiters() -> None:
+    hub = ConversationStreamHub()
+    generation = hub.changes.generation
+
+    await hub.publish("conv", "message", turn_id=None, payload={})
+
+    assert await hub.changes.wait_beyond(generation, timeout=1)

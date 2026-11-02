@@ -65,9 +65,15 @@ from family_assistant.services.user_identity import (
     UserIdentityResolver,
 )
 from family_assistant.storage.database import Database
+from family_assistant.storage.repositories.confirmation_requests import (
+    ConfirmationRequestRow,
+)
 from family_assistant.storage.repositories.conversation_shares import ConversationShare
 from family_assistant.storage.repositories.conversation_threads import (
     ConversationThread,
+)
+from family_assistant.storage.repositories.delegation_runs import (
+    PendingDelegationSummary,
 )
 from family_assistant.storage.repositories.turn_feedback import (
     TurnFeedback,
@@ -75,7 +81,11 @@ from family_assistant.storage.repositories.turn_feedback import (
 )
 from family_assistant.storage.types import MessageHistoryRow
 from family_assistant.threads.home import viewer_for
-from family_assistant.threads.listing import ThreadSummary, summarize_threads
+from family_assistant.threads.listing import (
+    ThreadSummary,
+    is_quiet,
+    summarize_threads,
+)
 from family_assistant.tools.confirmation import render_tool_confirmation
 from family_assistant.tools.infrastructure import (
     ToolDescriptorProvider,
@@ -88,6 +98,7 @@ from family_assistant.tools.outcomes import (
     classify_tool_outcome,
 )
 from family_assistant.tools.types import ConfirmationOutcome, ToolExecutionContext
+from family_assistant.web.chat_telemetry import log_turn_event, observed_stream
 from family_assistant.web.confirmation_manager import web_confirmation_manager
 from family_assistant.web.conversation_stream_hub import (
     ConversationStreamHub,
@@ -196,7 +207,7 @@ def _get_confirmation_result_waiters(
     return confirmation_result_waiters_for_state(request.app.state)
 
 
-async def _enrich_persisted_attachments(
+async def enrich_persisted_attachments(
     messages: list[MessageHistoryRow],
     *,
     db_context: Database,
@@ -624,6 +635,13 @@ class ThreadSummaryResponse(BaseModel):
             "the caller did not write"
         ),
     )
+    quiet: bool = Field(
+        default=False,
+        description=(
+            "A waiting thread the caller has read and that has been idle for "
+            "days: listed apart and not counted as waiting on them"
+        ),
+    )
     source_tool_call_id: str | None = Field(
         default=None, description="The Home tool call that started the thread, if any"
     )
@@ -659,6 +677,12 @@ def thread_summary_response(
         closed_at=summary.closed_at,
         echo_message_id=summary.echo_message_id,
         unread_count=summary.unread_count or 0,
+        quiet=is_quiet(
+            summary.state,
+            unread_count=summary.unread_count,
+            updated_at=summary.updated_at,
+            now=datetime.now(UTC),
+        ),
         source_tool_call_id=summary.source_tool_call_id,
         anchor_message_id=summary.anchor_message_id,
         seed_request=summary.seed_request,
@@ -1526,12 +1550,22 @@ async def start_chat_turn(
         request, current_user, conversation_id, allow_new=True
     )
 
+    log_turn_event(
+        "request_received", conversation_id=conversation_id, turn_id=payload.turn_id
+    )
+
     # Idempotency short-circuit: if we already have this turn registered,
     # return its identity instead of starting a second producer.
     existing = hub.get_turn(conversation_id, payload.turn_id)
     if existing is not None:
         if existing.user_id != user_id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+        log_turn_event(
+            "retry_matched",
+            conversation_id=conversation_id,
+            turn_id=payload.turn_id,
+            source="hub",
+        )
         return ChatTurnResponse(
             turn_id=existing.turn_id,
             conversation_id=conversation_id,
@@ -1568,6 +1602,13 @@ async def start_chat_turn(
             or existing_user_row.get("user_id") != user_id
         ):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+        log_turn_event(
+            "retry_matched",
+            conversation_id=conversation_id,
+            turn_id=payload.turn_id,
+            source="database",
+            has_reply=turn_has_terminal_reply,
+        )
         return ChatTurnResponse(
             turn_id=payload.turn_id,
             conversation_id=conversation_id,
@@ -1815,6 +1856,10 @@ async def start_chat_turn(
             error="An internal error occurred.",
         )
         raise
+
+    log_turn_event(
+        "user_message_saved", conversation_id=conversation_id, turn_id=payload.turn_id
+    )
 
     # Now that the user message is committed, ping the owner's activity stream so
     # the conversation surfaces (or bumps) in their list. Done here rather than in
@@ -2065,7 +2110,12 @@ async def api_chat_conversation_stream(
                 hub.unsubscribe(conversation_id, handle.queue)
 
     return StreamingResponse(
-        event_generator(),
+        observed_stream(
+            event_generator(),
+            kind="conversation",
+            conversation_id=conversation_id,
+            follow=follow,
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -2174,7 +2224,7 @@ async def api_chat_activity_stream(
                 hub.unsubscribe_activity(handle.queue)
 
     return StreamingResponse(
-        event_generator(),
+        observed_stream(event_generator(), kind="activity"),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -2970,6 +3020,29 @@ async def api_chat_send_message(
     )
 
 
+async def caller_owner_user_ids(
+    resolver: UserIdentityResolver | None, db_context: Database, raw_user_id: str
+) -> set[str]:
+    """Every stored owner id that canonicalizes to the caller's identity.
+
+    The configured aliases (own id plus Telegram/OIDC ids), widened by
+    canonicalizing every distinct stored owner id so historical un-normalized
+    forms (mixed case, padded ``Name <email>``) attribute exactly as the old
+    canonicalize-then-compare post-filter did.
+    """
+    if resolver is None:
+        return {raw_user_id}
+    owner_user_ids = resolver.owner_ids_canonicalizing_to(raw_user_id)
+    stored_owner_ids = (
+        await db_context.message_history.list_distinct_user_message_owner_ids()
+    )
+    return owner_user_ids | {
+        stored_id
+        for stored_id in stored_owner_ids
+        if resolver.canonicalize_owner_id(stored_id) == raw_user_id
+    }
+
+
 @chat_api_router.get("/v1/chat/conversations")
 async def get_conversations(
     request: Request,
@@ -3047,20 +3120,7 @@ async def get_conversations(
     # canonicalizing every distinct stored owner id so historical un-normalized
     # forms (mixed case, padded ``Name <email>``) attribute exactly as the old
     # canonicalize-then-compare post-filter did.
-    owner_user_ids = (
-        resolver.owner_ids_canonicalizing_to(raw_user_id)
-        if resolver is not None
-        else {raw_user_id}
-    )
-    if resolver is not None:
-        stored_owner_ids = (
-            await db_context.message_history.list_distinct_user_message_owner_ids()
-        )
-        owner_user_ids |= {
-            stored_id
-            for stored_id in stored_owner_ids
-            if resolver.canonicalize_owner_id(stored_id) == raw_user_id
-        }
+    owner_user_ids = await caller_owner_user_ids(resolver, db_context, raw_user_id)
 
     summaries, total = await db_context.message_history.get_conversation_summaries(
         interface_type=interface_type,
@@ -3153,7 +3213,7 @@ async def revoke_conversation_share(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-def _serialize_conversation_messages(
+def serialize_conversation_messages(
     messages: list[MessageHistoryRow],
     feedback_by_turn: Mapping[str, TurnFeedback] | None = None,
 ) -> list[ConversationMessage]:
@@ -3214,6 +3274,7 @@ async def get_conversation_messages(
     attachment_registry: Annotated[
         "AttachmentRegistry", Depends(get_attachment_registry)
     ],
+    before_id: int | None = None,
     before: str | None = None,  # ISO timestamp string
     after: str | None = None,  # ISO timestamp string
     limit: int = 50,
@@ -3224,6 +3285,8 @@ async def get_conversation_messages(
 
     Args:
         conversation_id: The conversation identifier
+        before_id: Get messages older than this message id, the cursor a
+            client paging back through history it holds should use
         before: Get messages before this timestamp (ISO format)
         after: Get messages after this timestamp (ISO format)
         limit: Maximum number of messages to return (default: 50, use 0 for all)
@@ -3294,12 +3357,13 @@ async def get_conversation_messages(
             after=after_dt,
             limit=actual_limit,
             include_subconversations=False,
+            before_id=before_id,
         )
 
     # Persisted attachment metadata is incomplete by design (see the helper), so
     # resolve it before serializing: clients decide from the mime type whether to
     # render an attachment inline as an image.
-    await _enrich_persisted_attachments(
+    await enrich_persisted_attachments(
         messages,
         db_context=db_context,
         attachment_registry=attachment_registry,
@@ -3310,7 +3374,7 @@ async def get_conversation_messages(
         turn_ids={turn_id for msg in messages if (turn_id := msg.get("turn_id"))},
         user_id=user_id,
     )
-    response_messages = _serialize_conversation_messages(messages, feedback_by_turn)
+    response_messages = serialize_conversation_messages(messages, feedback_by_turn)
 
     # Get total message count for the conversation
     total_message_count = (
@@ -3397,6 +3461,27 @@ def _as_utc(value: datetime) -> datetime:
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
+def pending_delegation_response(entry: PendingDelegationSummary) -> PendingDelegation:
+    """The API shape of a delegation the conversation is waiting on."""
+    run = entry["run"]
+    return PendingDelegation(
+        delegation_id=run["delegation_id"],
+        target_profile_id=run["target_service_id"],
+        status=run["status"],
+        request_preview=run["request_text"][:_REQUEST_PREVIEW_CHARS],
+        created_at=_as_utc(run["created_at"]),
+        started_at=(
+            _as_utc(run["started_at"]) if run["started_at"] is not None else None
+        ),
+        completed_at=(
+            _as_utc(run["completed_at"]) if run["completed_at"] is not None else None
+        ),
+        cancel_requested=run["cancel_requested_at"] is not None,
+        children_total=entry["children_total"],
+        children_finished=entry["children_finished"],
+    )
+
+
 @chat_api_router.get("/v1/chat/conversations/{conversation_id}/pending-delegations")
 async def get_pending_delegations(
     conversation_id: str,
@@ -3418,29 +3503,7 @@ async def get_pending_delegations(
     )
     return PendingDelegationsResponse(
         conversation_id=conversation_id,
-        delegations=[
-            PendingDelegation(
-                delegation_id=entry["run"]["delegation_id"],
-                target_profile_id=entry["run"]["target_service_id"],
-                status=entry["run"]["status"],
-                request_preview=entry["run"]["request_text"][:_REQUEST_PREVIEW_CHARS],
-                created_at=_as_utc(entry["run"]["created_at"]),
-                started_at=(
-                    _as_utc(entry["run"]["started_at"])
-                    if entry["run"]["started_at"] is not None
-                    else None
-                ),
-                completed_at=(
-                    _as_utc(entry["run"]["completed_at"])
-                    if entry["run"]["completed_at"] is not None
-                    else None
-                ),
-                cancel_requested=entry["run"]["cancel_requested_at"] is not None,
-                children_total=entry["children_total"],
-                children_finished=entry["children_finished"],
-            )
-            for entry in pending
-        ],
+        delegations=[pending_delegation_response(entry) for entry in pending],
     )
 
 
@@ -3479,7 +3542,7 @@ async def get_shared_conversation_messages(
     messages.sort(
         key=lambda message: message.get("timestamp", datetime.min.replace(tzinfo=UTC))
     )
-    await _enrich_persisted_attachments(
+    await enrich_persisted_attachments(
         messages,
         db_context=db_context,
         attachment_registry=attachment_registry,
@@ -3495,7 +3558,7 @@ async def get_shared_conversation_messages(
                 attachment["content_url"] = shared_url
                 attachment["url"] = shared_url
 
-    response_messages = _serialize_conversation_messages(messages)
+    response_messages = serialize_conversation_messages(messages)
     return ConversationMessagesResponse(
         conversation_id=share.conversation_id,
         messages=response_messages,
@@ -3865,6 +3928,25 @@ async def confirm_tool_execution(
     )
 
 
+def pending_confirmation_response(
+    row: ConfirmationRequestRow, now: datetime
+) -> PendingToolConfirmation:
+    """The API shape of a durable confirmation awaiting the user."""
+    return PendingToolConfirmation(
+        request_id=row["id"],
+        tool_name=row["tool_name"],
+        tool_call_id=row["tool_call_id"],
+        confirmation_prompt=row["confirmation_prompt"],
+        args=row["tool_args_json"],
+        created_at=row["created_at"],
+        expires_at=row["expires_at"],
+        timeout_seconds=(row["expires_at"] - row["created_at"]).total_seconds(),
+        time_remaining_seconds=max(0.0, (row["expires_at"] - now).total_seconds()),
+        origin_interface_type=row["origin_interface_type"],
+        conversation_id=row["origin_conversation_id"],
+    )
+
+
 @chat_api_router.get("/v1/chat/confirmations/pending")
 async def list_pending_tool_confirmations(
     request: Request,
@@ -3876,22 +3958,7 @@ async def list_pending_tool_confirmations(
     rows = await confirmation_service.list_pending_for_user(
         user_id=current_user["user_identifier"]
     )
-    confirmations = [
-        PendingToolConfirmation(
-            request_id=row["id"],
-            tool_name=row["tool_name"],
-            tool_call_id=row["tool_call_id"],
-            confirmation_prompt=row["confirmation_prompt"],
-            args=row["tool_args_json"],
-            created_at=row["created_at"],
-            expires_at=row["expires_at"],
-            timeout_seconds=(row["expires_at"] - row["created_at"]).total_seconds(),
-            time_remaining_seconds=max(0.0, (row["expires_at"] - now).total_seconds()),
-            origin_interface_type=row["origin_interface_type"],
-            conversation_id=row["origin_conversation_id"],
-        )
-        for row in rows
-    ]
+    confirmations = [pending_confirmation_response(row, now) for row in rows]
     return PendingToolConfirmationsResponse(confirmations=confirmations)
 
 

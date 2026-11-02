@@ -1,0 +1,1386 @@
+interactions:
+- request:
+    body:
+      template: '[{% for s in (states | sort(attribute="entity_id"))[0:500] %}{% if
+        not loop.first %},{% endif %}{"e":{{ s.entity_id | tojson }},"n":{{ s.name
+        | tojson }}{% set v = area_name(s.entity_id) %}{% if v %},"a":{{ v | tojson
+        }}{% endif %}{% set v = device_id(s.entity_id) %}{% if v %},"d":{{ v | tojson
+        }}{% endif %}{% set v = device_name(s.entity_id) %}{% if v %},"dn":{{ v |
+        tojson }}{% endif %}{% set v = s.attributes.device_class %}{% if v %},"c":{{
+        v | tojson }}{% endif %}}{% endfor %}]'
+    headers:
+      Content-Type:
+      - application/json
+    method: POST
+    uri: http://localhost:41475/api/template
+  response:
+    body:
+      string: '[{"e":"air_quality.demo_air_quality_home","n":"Demo Air Quality Home"},{"e":"air_quality.demo_air_quality_office","n":"Demo
+        Air Quality Office"},{"e":"alarm_control_panel.security","n":"Security"},{"e":"binary_sensor.basement_floor_wet","n":"Basement
+        Floor Wet","d":"b438b34581bea8ee81e135df0a95125c","dn":"Basement Floor Wet","c":"moisture"},{"e":"binary_sensor.movement_backyard","n":"Movement
+        Backyard","d":"c2e75491045d3225123393273b360764","dn":"Movement Backyard","c":"motion"},{"e":"button.push","n":"Push","d":"24f99335f2705f2e81f923ae3770efcc","dn":"Push"},{"e":"calendar.calendar_1","n":"Calendar
+        1"},{"e":"calendar.calendar_2","n":"Calendar 2"},{"e":"camera.demo_camera","n":"Demo
+        camera"},{"e":"camera.demo_camera_png","n":"Demo camera png"},{"e":"camera.demo_camera_without_stream","n":"Demo
+        camera without stream"},{"e":"climate.ecobee","n":"Ecobee","d":"f5a60658c763692157eec0283debe641","dn":"Ecobee"},{"e":"climate.heatpump","n":"HeatPump","d":"0c0db267759ef7597f617612b346d9b2","dn":"HeatPump"},{"e":"climate.hvac","n":"Hvac","d":"744843b65162643742dec29cc53c68fe","dn":"Hvac"},{"e":"conversation.home_assistant","n":"Home
+        Assistant"},{"e":"cover.garage_door","n":"Garage Door","d":"7329be198aeb6354d2c698adce6d5435","dn":"Garage
+        Door","c":"garage"},{"e":"cover.hall_window","n":"Hall Window","d":"137bb67207228ca9efa5197d1c2a5437","dn":"Hall
+        Window"},{"e":"cover.kitchen_window","n":"Kitchen Window","d":"f65960bf006f5121dac04fc4779e79c8","dn":"Kitchen
+        Window"},{"e":"cover.living_room_window","n":"Living Room Window","d":"22ea121c295756c23740726bb2dddef9","dn":"Living
+        Room Window"},{"e":"cover.pergola_roof","n":"Pergola Roof","d":"79736d235991dc43262950cdd2e9289b","dn":"Pergola
+        Roof"},{"e":"date.date","n":"Date","d":"8e9a32666eb7e6c1be77d065aa935169","dn":"Date"},{"e":"datetime.date_and_time","n":"Date
+        and Time","d":"8e7780b96d1528a702b6403d6b292b71","dn":"Date and Time"},{"e":"device_tracker.demo_anne_therese","n":"Anne
+        Therese"},{"e":"device_tracker.demo_home_boy","n":"Home Boy"},{"e":"device_tracker.demo_paulus","n":"Paulus"},{"e":"event.backup_automatic_backup","n":"Backup
+        Automatic backup","d":"5b3c7492dd433434e55d819622c36742","dn":"Backup"},{"e":"event.push_button_press","n":"Push
+        Button press","d":"24f99335f2705f2e81f923ae3770efcc","dn":"Push","c":"button"},{"e":"fan.ceiling_fan","n":"Ceiling
+        Fan"},{"e":"fan.living_room_fan","n":"Living Room Fan"},{"e":"fan.percentage_full_fan","n":"Percentage
+        Full Fan"},{"e":"fan.percentage_limited_fan","n":"Percentage Limited Fan"},{"e":"fan.preset_only_limited_fan","n":"Preset
+        Only Limited Fan"},{"e":"humidifier.dehumidifier","n":"Dehumidifier","c":"dehumidifier"},{"e":"humidifier.humidifier","n":"Humidifier","c":"humidifier"},{"e":"humidifier.hygrostat","n":"Hygrostat"},{"e":"image_processing.demo_face","n":"Demo
+        Face","c":"face"},{"e":"input_boolean.test_switch","n":"Test Switch"},{"e":"input_text.test_sensor","n":"Test
+        Sensor"},{"e":"light.bed_light","n":"Bed Light","d":"9db1c2277e3aa109616dc718feb62005","dn":"Bed
+        Light"},{"e":"light.ceiling_lights","n":"Ceiling Lights","d":"178704a63001e8a8fc27e1f621119840","dn":"Ceiling
+        Lights"},{"e":"light.entrance_color_white_lights","n":"Entrance Color + White
+        Lights","d":"f22d52b64ecc7b1b523b357f0c8ba99a","dn":"Entrance Color + White
+        Lights"},{"e":"light.kitchen_lights","n":"Kitchen Lights","d":"3f23dd7ed743e0df9808129930464861","dn":"Kitchen
+        Lights"},{"e":"light.living_room_rgbww_lights","n":"Living Room RGBWW Lights","d":"53178897b5d771c27a3fb482ad6ce150","dn":"Living
+        Room RGBWW Lights"},{"e":"light.office_rgbw_lights","n":"Office RGBW Lights","d":"dfbfd08bfeba51e432f1f566f5ad6973","dn":"Office
+        RGBW Lights"},{"e":"lock.front_door","n":"Front Door"},{"e":"lock.kitchen_door","n":"Kitchen
+        Door"},{"e":"lock.openable_lock","n":"Openable Lock"},{"e":"lock.poorly_installed_door","n":"Poorly
+        Installed Door"},{"e":"media_player.bedroom","n":"Bedroom"},{"e":"media_player.browse","n":"Browse"},{"e":"media_player.group","n":"Group"},{"e":"media_player.kitchen","n":"Kitchen"},{"e":"media_player.living_room","n":"Living
+        Room"},{"e":"media_player.lounge_room","n":"Lounge room","c":"tv"},{"e":"media_player.search","n":"Search"},{"e":"media_player.walkman","n":"Walkman"},{"e":"notify.notifier","n":"Notifier","d":"b75ed42ffa3792d751151b32352e4e34","dn":"Notifier"},{"e":"number.large_range","n":"Large
+        Range","d":"1f3bf4cf4339266334de1dc3d6424338","dn":"Large Range"},{"e":"number.pwm_1","n":"PWM
+        1","d":"646aacb2257e67306d204c492f2d96aa","dn":"PWM 1"},{"e":"number.small_range","n":"Small
+        Range","d":"fff377bb6e494010ae48afbf191aa493","dn":"Small Range"},{"e":"number.temperature_setting","n":"Temperature
+        setting","d":"50cd21b215608f35b0d883560c3ebb20","dn":"Temperature setting","c":"temperature"},{"e":"number.volume","n":"volume","d":"0f0cd71df99d6e26595bd27315050612","dn":"volume"},{"e":"person.test_user","n":"Test
+        User"},{"e":"select.speed","n":"Speed","d":"1b92b19f99c8be471a91f90be55853be","dn":"Speed"},{"e":"sensor.backup_backup_manager_state","n":"Backup
+        Backup Manager state","d":"5b3c7492dd433434e55d819622c36742","dn":"Backup","c":"enum"},{"e":"sensor.backup_last_attempted_automatic_backup","n":"Backup
+        Last attempted automatic backup","d":"5b3c7492dd433434e55d819622c36742","dn":"Backup","c":"timestamp"},{"e":"sensor.backup_last_successful_automatic_backup","n":"Backup
+        Last successful automatic backup","d":"5b3c7492dd433434e55d819622c36742","dn":"Backup","c":"timestamp"},{"e":"sensor.backup_next_scheduled_automatic_backup","n":"Backup
+        Next scheduled automatic backup","d":"5b3c7492dd433434e55d819622c36742","dn":"Backup","c":"timestamp"},{"e":"sensor.carbon_dioxide","n":"Carbon
+        dioxide","d":"bf1432b185d706301379458068a01f67","dn":"Carbon dioxide","c":"carbon_dioxide"},{"e":"sensor.carbon_monoxide","n":"Carbon
+        monoxide","d":"56f1cf7e22b2626f471b17e6fe13a30e","dn":"Carbon monoxide","c":"carbon_monoxide"},{"e":"sensor.fa_bulk_0000","n":"Upstairs
+        bedroom climate sensor number 0000 temperature"},{"e":"sensor.fa_bulk_0001","n":"Upstairs
+        bedroom climate sensor number 0001 temperature"},{"e":"sensor.fa_bulk_0002","n":"Upstairs
+        bedroom climate sensor number 0002 temperature"},{"e":"sensor.fa_bulk_0003","n":"Upstairs
+        bedroom climate sensor number 0003 temperature"},{"e":"sensor.fa_bulk_0004","n":"Upstairs
+        bedroom climate sensor number 0004 temperature"},{"e":"sensor.fa_bulk_0005","n":"Upstairs
+        bedroom climate sensor number 0005 temperature"},{"e":"sensor.fa_bulk_0006","n":"Upstairs
+        bedroom climate sensor number 0006 temperature"},{"e":"sensor.fa_bulk_0007","n":"Upstairs
+        bedroom climate sensor number 0007 temperature"},{"e":"sensor.fa_bulk_0008","n":"Upstairs
+        bedroom climate sensor number 0008 temperature"},{"e":"sensor.fa_bulk_0009","n":"Upstairs
+        bedroom climate sensor number 0009 temperature"},{"e":"sensor.fa_bulk_0010","n":"Upstairs
+        bedroom climate sensor number 0010 temperature"},{"e":"sensor.fa_bulk_0011","n":"Upstairs
+        bedroom climate sensor number 0011 temperature"},{"e":"sensor.fa_bulk_0012","n":"Upstairs
+        bedroom climate sensor number 0012 temperature"},{"e":"sensor.fa_bulk_0013","n":"Upstairs
+        bedroom climate sensor number 0013 temperature"},{"e":"sensor.fa_bulk_0014","n":"Upstairs
+        bedroom climate sensor number 0014 temperature"},{"e":"sensor.fa_bulk_0015","n":"Upstairs
+        bedroom climate sensor number 0015 temperature"},{"e":"sensor.fa_bulk_0016","n":"Upstairs
+        bedroom climate sensor number 0016 temperature"},{"e":"sensor.fa_bulk_0017","n":"Upstairs
+        bedroom climate sensor number 0017 temperature"},{"e":"sensor.fa_bulk_0018","n":"Upstairs
+        bedroom climate sensor number 0018 temperature"},{"e":"sensor.fa_bulk_0019","n":"Upstairs
+        bedroom climate sensor number 0019 temperature"},{"e":"sensor.fa_bulk_0020","n":"Upstairs
+        bedroom climate sensor number 0020 temperature"},{"e":"sensor.fa_bulk_0021","n":"Upstairs
+        bedroom climate sensor number 0021 temperature"},{"e":"sensor.fa_bulk_0022","n":"Upstairs
+        bedroom climate sensor number 0022 temperature"},{"e":"sensor.fa_bulk_0023","n":"Upstairs
+        bedroom climate sensor number 0023 temperature"},{"e":"sensor.fa_bulk_0024","n":"Upstairs
+        bedroom climate sensor number 0024 temperature"},{"e":"sensor.fa_bulk_0025","n":"Upstairs
+        bedroom climate sensor number 0025 temperature"},{"e":"sensor.fa_bulk_0026","n":"Upstairs
+        bedroom climate sensor number 0026 temperature"},{"e":"sensor.fa_bulk_0027","n":"Upstairs
+        bedroom climate sensor number 0027 temperature"},{"e":"sensor.fa_bulk_0028","n":"Upstairs
+        bedroom climate sensor number 0028 temperature"},{"e":"sensor.fa_bulk_0029","n":"Upstairs
+        bedroom climate sensor number 0029 temperature"},{"e":"sensor.fa_bulk_0030","n":"Upstairs
+        bedroom climate sensor number 0030 temperature"},{"e":"sensor.fa_bulk_0031","n":"Upstairs
+        bedroom climate sensor number 0031 temperature"},{"e":"sensor.fa_bulk_0032","n":"Upstairs
+        bedroom climate sensor number 0032 temperature"},{"e":"sensor.fa_bulk_0033","n":"Upstairs
+        bedroom climate sensor number 0033 temperature"},{"e":"sensor.fa_bulk_0034","n":"Upstairs
+        bedroom climate sensor number 0034 temperature"},{"e":"sensor.fa_bulk_0035","n":"Upstairs
+        bedroom climate sensor number 0035 temperature"},{"e":"sensor.fa_bulk_0036","n":"Upstairs
+        bedroom climate sensor number 0036 temperature"},{"e":"sensor.fa_bulk_0037","n":"Upstairs
+        bedroom climate sensor number 0037 temperature"},{"e":"sensor.fa_bulk_0038","n":"Upstairs
+        bedroom climate sensor number 0038 temperature"},{"e":"sensor.fa_bulk_0039","n":"Upstairs
+        bedroom climate sensor number 0039 temperature"},{"e":"sensor.fa_bulk_0040","n":"Upstairs
+        bedroom climate sensor number 0040 temperature"},{"e":"sensor.fa_bulk_0041","n":"Upstairs
+        bedroom climate sensor number 0041 temperature"},{"e":"sensor.fa_bulk_0042","n":"Upstairs
+        bedroom climate sensor number 0042 temperature"},{"e":"sensor.fa_bulk_0043","n":"Upstairs
+        bedroom climate sensor number 0043 temperature"},{"e":"sensor.fa_bulk_0044","n":"Upstairs
+        bedroom climate sensor number 0044 temperature"},{"e":"sensor.fa_bulk_0045","n":"Upstairs
+        bedroom climate sensor number 0045 temperature"},{"e":"sensor.fa_bulk_0046","n":"Upstairs
+        bedroom climate sensor number 0046 temperature"},{"e":"sensor.fa_bulk_0047","n":"Upstairs
+        bedroom climate sensor number 0047 temperature"},{"e":"sensor.fa_bulk_0048","n":"Upstairs
+        bedroom climate sensor number 0048 temperature"},{"e":"sensor.fa_bulk_0049","n":"Upstairs
+        bedroom climate sensor number 0049 temperature"},{"e":"sensor.fa_bulk_0050","n":"Upstairs
+        bedroom climate sensor number 0050 temperature"},{"e":"sensor.fa_bulk_0051","n":"Upstairs
+        bedroom climate sensor number 0051 temperature"},{"e":"sensor.fa_bulk_0052","n":"Upstairs
+        bedroom climate sensor number 0052 temperature"},{"e":"sensor.fa_bulk_0053","n":"Upstairs
+        bedroom climate sensor number 0053 temperature"},{"e":"sensor.fa_bulk_0054","n":"Upstairs
+        bedroom climate sensor number 0054 temperature"},{"e":"sensor.fa_bulk_0055","n":"Upstairs
+        bedroom climate sensor number 0055 temperature"},{"e":"sensor.fa_bulk_0056","n":"Upstairs
+        bedroom climate sensor number 0056 temperature"},{"e":"sensor.fa_bulk_0057","n":"Upstairs
+        bedroom climate sensor number 0057 temperature"},{"e":"sensor.fa_bulk_0058","n":"Upstairs
+        bedroom climate sensor number 0058 temperature"},{"e":"sensor.fa_bulk_0059","n":"Upstairs
+        bedroom climate sensor number 0059 temperature"},{"e":"sensor.fa_bulk_0060","n":"Upstairs
+        bedroom climate sensor number 0060 temperature"},{"e":"sensor.fa_bulk_0061","n":"Upstairs
+        bedroom climate sensor number 0061 temperature"},{"e":"sensor.fa_bulk_0062","n":"Upstairs
+        bedroom climate sensor number 0062 temperature"},{"e":"sensor.fa_bulk_0063","n":"Upstairs
+        bedroom climate sensor number 0063 temperature"},{"e":"sensor.fa_bulk_0064","n":"Upstairs
+        bedroom climate sensor number 0064 temperature"},{"e":"sensor.fa_bulk_0065","n":"Upstairs
+        bedroom climate sensor number 0065 temperature"},{"e":"sensor.fa_bulk_0066","n":"Upstairs
+        bedroom climate sensor number 0066 temperature"},{"e":"sensor.fa_bulk_0067","n":"Upstairs
+        bedroom climate sensor number 0067 temperature"},{"e":"sensor.fa_bulk_0068","n":"Upstairs
+        bedroom climate sensor number 0068 temperature"},{"e":"sensor.fa_bulk_0069","n":"Upstairs
+        bedroom climate sensor number 0069 temperature"},{"e":"sensor.fa_bulk_0070","n":"Upstairs
+        bedroom climate sensor number 0070 temperature"},{"e":"sensor.fa_bulk_0071","n":"Upstairs
+        bedroom climate sensor number 0071 temperature"},{"e":"sensor.fa_bulk_0072","n":"Upstairs
+        bedroom climate sensor number 0072 temperature"},{"e":"sensor.fa_bulk_0073","n":"Upstairs
+        bedroom climate sensor number 0073 temperature"},{"e":"sensor.fa_bulk_0074","n":"Upstairs
+        bedroom climate sensor number 0074 temperature"},{"e":"sensor.fa_bulk_0075","n":"Upstairs
+        bedroom climate sensor number 0075 temperature"},{"e":"sensor.fa_bulk_0076","n":"Upstairs
+        bedroom climate sensor number 0076 temperature"},{"e":"sensor.fa_bulk_0077","n":"Upstairs
+        bedroom climate sensor number 0077 temperature"},{"e":"sensor.fa_bulk_0078","n":"Upstairs
+        bedroom climate sensor number 0078 temperature"},{"e":"sensor.fa_bulk_0079","n":"Upstairs
+        bedroom climate sensor number 0079 temperature"},{"e":"sensor.fa_bulk_0080","n":"Upstairs
+        bedroom climate sensor number 0080 temperature"},{"e":"sensor.fa_bulk_0081","n":"Upstairs
+        bedroom climate sensor number 0081 temperature"},{"e":"sensor.fa_bulk_0082","n":"Upstairs
+        bedroom climate sensor number 0082 temperature"},{"e":"sensor.fa_bulk_0083","n":"Upstairs
+        bedroom climate sensor number 0083 temperature"},{"e":"sensor.fa_bulk_0084","n":"Upstairs
+        bedroom climate sensor number 0084 temperature"},{"e":"sensor.fa_bulk_0085","n":"Upstairs
+        bedroom climate sensor number 0085 temperature"},{"e":"sensor.fa_bulk_0086","n":"Upstairs
+        bedroom climate sensor number 0086 temperature"},{"e":"sensor.fa_bulk_0087","n":"Upstairs
+        bedroom climate sensor number 0087 temperature"},{"e":"sensor.fa_bulk_0088","n":"Upstairs
+        bedroom climate sensor number 0088 temperature"},{"e":"sensor.fa_bulk_0089","n":"Upstairs
+        bedroom climate sensor number 0089 temperature"},{"e":"sensor.fa_bulk_0090","n":"Upstairs
+        bedroom climate sensor number 0090 temperature"},{"e":"sensor.fa_bulk_0091","n":"Upstairs
+        bedroom climate sensor number 0091 temperature"},{"e":"sensor.fa_bulk_0092","n":"Upstairs
+        bedroom climate sensor number 0092 temperature"},{"e":"sensor.fa_bulk_0093","n":"Upstairs
+        bedroom climate sensor number 0093 temperature"},{"e":"sensor.fa_bulk_0094","n":"Upstairs
+        bedroom climate sensor number 0094 temperature"},{"e":"sensor.fa_bulk_0095","n":"Upstairs
+        bedroom climate sensor number 0095 temperature"},{"e":"sensor.fa_bulk_0096","n":"Upstairs
+        bedroom climate sensor number 0096 temperature"},{"e":"sensor.fa_bulk_0097","n":"Upstairs
+        bedroom climate sensor number 0097 temperature"},{"e":"sensor.fa_bulk_0098","n":"Upstairs
+        bedroom climate sensor number 0098 temperature"},{"e":"sensor.fa_bulk_0099","n":"Upstairs
+        bedroom climate sensor number 0099 temperature"},{"e":"sensor.fa_bulk_0100","n":"Upstairs
+        bedroom climate sensor number 0100 temperature"},{"e":"sensor.fa_bulk_0101","n":"Upstairs
+        bedroom climate sensor number 0101 temperature"},{"e":"sensor.fa_bulk_0102","n":"Upstairs
+        bedroom climate sensor number 0102 temperature"},{"e":"sensor.fa_bulk_0103","n":"Upstairs
+        bedroom climate sensor number 0103 temperature"},{"e":"sensor.fa_bulk_0104","n":"Upstairs
+        bedroom climate sensor number 0104 temperature"},{"e":"sensor.fa_bulk_0105","n":"Upstairs
+        bedroom climate sensor number 0105 temperature"},{"e":"sensor.fa_bulk_0106","n":"Upstairs
+        bedroom climate sensor number 0106 temperature"},{"e":"sensor.fa_bulk_0107","n":"Upstairs
+        bedroom climate sensor number 0107 temperature"},{"e":"sensor.fa_bulk_0108","n":"Upstairs
+        bedroom climate sensor number 0108 temperature"},{"e":"sensor.fa_bulk_0109","n":"Upstairs
+        bedroom climate sensor number 0109 temperature"},{"e":"sensor.fa_bulk_0110","n":"Upstairs
+        bedroom climate sensor number 0110 temperature"},{"e":"sensor.fa_bulk_0111","n":"Upstairs
+        bedroom climate sensor number 0111 temperature"},{"e":"sensor.fa_bulk_0112","n":"Upstairs
+        bedroom climate sensor number 0112 temperature"},{"e":"sensor.fa_bulk_0113","n":"Upstairs
+        bedroom climate sensor number 0113 temperature"},{"e":"sensor.fa_bulk_0114","n":"Upstairs
+        bedroom climate sensor number 0114 temperature"},{"e":"sensor.fa_bulk_0115","n":"Upstairs
+        bedroom climate sensor number 0115 temperature"},{"e":"sensor.fa_bulk_0116","n":"Upstairs
+        bedroom climate sensor number 0116 temperature"},{"e":"sensor.fa_bulk_0117","n":"Upstairs
+        bedroom climate sensor number 0117 temperature"},{"e":"sensor.fa_bulk_0118","n":"Upstairs
+        bedroom climate sensor number 0118 temperature"},{"e":"sensor.fa_bulk_0119","n":"Upstairs
+        bedroom climate sensor number 0119 temperature"},{"e":"sensor.fa_bulk_0120","n":"Upstairs
+        bedroom climate sensor number 0120 temperature"},{"e":"sensor.fa_bulk_0121","n":"Upstairs
+        bedroom climate sensor number 0121 temperature"},{"e":"sensor.fa_bulk_0122","n":"Upstairs
+        bedroom climate sensor number 0122 temperature"},{"e":"sensor.fa_bulk_0123","n":"Upstairs
+        bedroom climate sensor number 0123 temperature"},{"e":"sensor.fa_bulk_0124","n":"Upstairs
+        bedroom climate sensor number 0124 temperature"},{"e":"sensor.fa_bulk_0125","n":"Upstairs
+        bedroom climate sensor number 0125 temperature"},{"e":"sensor.fa_bulk_0126","n":"Upstairs
+        bedroom climate sensor number 0126 temperature"},{"e":"sensor.fa_bulk_0127","n":"Upstairs
+        bedroom climate sensor number 0127 temperature"},{"e":"sensor.fa_bulk_0128","n":"Upstairs
+        bedroom climate sensor number 0128 temperature"},{"e":"sensor.fa_bulk_0129","n":"Upstairs
+        bedroom climate sensor number 0129 temperature"},{"e":"sensor.fa_bulk_0130","n":"Upstairs
+        bedroom climate sensor number 0130 temperature"},{"e":"sensor.fa_bulk_0131","n":"Upstairs
+        bedroom climate sensor number 0131 temperature"},{"e":"sensor.fa_bulk_0132","n":"Upstairs
+        bedroom climate sensor number 0132 temperature"},{"e":"sensor.fa_bulk_0133","n":"Upstairs
+        bedroom climate sensor number 0133 temperature"},{"e":"sensor.fa_bulk_0134","n":"Upstairs
+        bedroom climate sensor number 0134 temperature"},{"e":"sensor.fa_bulk_0135","n":"Upstairs
+        bedroom climate sensor number 0135 temperature"},{"e":"sensor.fa_bulk_0136","n":"Upstairs
+        bedroom climate sensor number 0136 temperature"},{"e":"sensor.fa_bulk_0137","n":"Upstairs
+        bedroom climate sensor number 0137 temperature"},{"e":"sensor.fa_bulk_0138","n":"Upstairs
+        bedroom climate sensor number 0138 temperature"},{"e":"sensor.fa_bulk_0139","n":"Upstairs
+        bedroom climate sensor number 0139 temperature"},{"e":"sensor.fa_bulk_0140","n":"Upstairs
+        bedroom climate sensor number 0140 temperature"},{"e":"sensor.fa_bulk_0141","n":"Upstairs
+        bedroom climate sensor number 0141 temperature"},{"e":"sensor.fa_bulk_0142","n":"Upstairs
+        bedroom climate sensor number 0142 temperature"},{"e":"sensor.fa_bulk_0143","n":"Upstairs
+        bedroom climate sensor number 0143 temperature"},{"e":"sensor.fa_bulk_0144","n":"Upstairs
+        bedroom climate sensor number 0144 temperature"},{"e":"sensor.fa_bulk_0145","n":"Upstairs
+        bedroom climate sensor number 0145 temperature"},{"e":"sensor.fa_bulk_0146","n":"Upstairs
+        bedroom climate sensor number 0146 temperature"},{"e":"sensor.fa_bulk_0147","n":"Upstairs
+        bedroom climate sensor number 0147 temperature"},{"e":"sensor.fa_bulk_0148","n":"Upstairs
+        bedroom climate sensor number 0148 temperature"},{"e":"sensor.fa_bulk_0149","n":"Upstairs
+        bedroom climate sensor number 0149 temperature"},{"e":"sensor.fa_bulk_0150","n":"Upstairs
+        bedroom climate sensor number 0150 temperature"},{"e":"sensor.fa_bulk_0151","n":"Upstairs
+        bedroom climate sensor number 0151 temperature"},{"e":"sensor.fa_bulk_0152","n":"Upstairs
+        bedroom climate sensor number 0152 temperature"},{"e":"sensor.fa_bulk_0153","n":"Upstairs
+        bedroom climate sensor number 0153 temperature"},{"e":"sensor.fa_bulk_0154","n":"Upstairs
+        bedroom climate sensor number 0154 temperature"},{"e":"sensor.fa_bulk_0155","n":"Upstairs
+        bedroom climate sensor number 0155 temperature"},{"e":"sensor.fa_bulk_0156","n":"Upstairs
+        bedroom climate sensor number 0156 temperature"},{"e":"sensor.fa_bulk_0157","n":"Upstairs
+        bedroom climate sensor number 0157 temperature"},{"e":"sensor.fa_bulk_0158","n":"Upstairs
+        bedroom climate sensor number 0158 temperature"},{"e":"sensor.fa_bulk_0159","n":"Upstairs
+        bedroom climate sensor number 0159 temperature"},{"e":"sensor.fa_bulk_0160","n":"Upstairs
+        bedroom climate sensor number 0160 temperature"},{"e":"sensor.fa_bulk_0161","n":"Upstairs
+        bedroom climate sensor number 0161 temperature"},{"e":"sensor.fa_bulk_0162","n":"Upstairs
+        bedroom climate sensor number 0162 temperature"},{"e":"sensor.fa_bulk_0163","n":"Upstairs
+        bedroom climate sensor number 0163 temperature"},{"e":"sensor.fa_bulk_0164","n":"Upstairs
+        bedroom climate sensor number 0164 temperature"},{"e":"sensor.fa_bulk_0165","n":"Upstairs
+        bedroom climate sensor number 0165 temperature"},{"e":"sensor.fa_bulk_0166","n":"Upstairs
+        bedroom climate sensor number 0166 temperature"},{"e":"sensor.fa_bulk_0167","n":"Upstairs
+        bedroom climate sensor number 0167 temperature"},{"e":"sensor.fa_bulk_0168","n":"Upstairs
+        bedroom climate sensor number 0168 temperature"},{"e":"sensor.fa_bulk_0169","n":"Upstairs
+        bedroom climate sensor number 0169 temperature"},{"e":"sensor.fa_bulk_0170","n":"Upstairs
+        bedroom climate sensor number 0170 temperature"},{"e":"sensor.fa_bulk_0171","n":"Upstairs
+        bedroom climate sensor number 0171 temperature"},{"e":"sensor.fa_bulk_0172","n":"Upstairs
+        bedroom climate sensor number 0172 temperature"},{"e":"sensor.fa_bulk_0173","n":"Upstairs
+        bedroom climate sensor number 0173 temperature"},{"e":"sensor.fa_bulk_0174","n":"Upstairs
+        bedroom climate sensor number 0174 temperature"},{"e":"sensor.fa_bulk_0175","n":"Upstairs
+        bedroom climate sensor number 0175 temperature"},{"e":"sensor.fa_bulk_0176","n":"Upstairs
+        bedroom climate sensor number 0176 temperature"},{"e":"sensor.fa_bulk_0177","n":"Upstairs
+        bedroom climate sensor number 0177 temperature"},{"e":"sensor.fa_bulk_0178","n":"Upstairs
+        bedroom climate sensor number 0178 temperature"},{"e":"sensor.fa_bulk_0179","n":"Upstairs
+        bedroom climate sensor number 0179 temperature"},{"e":"sensor.fa_bulk_0180","n":"Upstairs
+        bedroom climate sensor number 0180 temperature"},{"e":"sensor.fa_bulk_0181","n":"Upstairs
+        bedroom climate sensor number 0181 temperature"},{"e":"sensor.fa_bulk_0182","n":"Upstairs
+        bedroom climate sensor number 0182 temperature"},{"e":"sensor.fa_bulk_0183","n":"Upstairs
+        bedroom climate sensor number 0183 temperature"},{"e":"sensor.fa_bulk_0184","n":"Upstairs
+        bedroom climate sensor number 0184 temperature"},{"e":"sensor.fa_bulk_0185","n":"Upstairs
+        bedroom climate sensor number 0185 temperature"},{"e":"sensor.fa_bulk_0186","n":"Upstairs
+        bedroom climate sensor number 0186 temperature"},{"e":"sensor.fa_bulk_0187","n":"Upstairs
+        bedroom climate sensor number 0187 temperature"},{"e":"sensor.fa_bulk_0188","n":"Upstairs
+        bedroom climate sensor number 0188 temperature"},{"e":"sensor.fa_bulk_0189","n":"Upstairs
+        bedroom climate sensor number 0189 temperature"},{"e":"sensor.fa_bulk_0190","n":"Upstairs
+        bedroom climate sensor number 0190 temperature"},{"e":"sensor.fa_bulk_0191","n":"Upstairs
+        bedroom climate sensor number 0191 temperature"},{"e":"sensor.fa_bulk_0192","n":"Upstairs
+        bedroom climate sensor number 0192 temperature"},{"e":"sensor.fa_bulk_0193","n":"Upstairs
+        bedroom climate sensor number 0193 temperature"},{"e":"sensor.fa_bulk_0194","n":"Upstairs
+        bedroom climate sensor number 0194 temperature"},{"e":"sensor.fa_bulk_0195","n":"Upstairs
+        bedroom climate sensor number 0195 temperature"},{"e":"sensor.fa_bulk_0196","n":"Upstairs
+        bedroom climate sensor number 0196 temperature"},{"e":"sensor.fa_bulk_0197","n":"Upstairs
+        bedroom climate sensor number 0197 temperature"},{"e":"sensor.fa_bulk_0198","n":"Upstairs
+        bedroom climate sensor number 0198 temperature"},{"e":"sensor.fa_bulk_0199","n":"Upstairs
+        bedroom climate sensor number 0199 temperature"},{"e":"sensor.fa_bulk_0200","n":"Upstairs
+        bedroom climate sensor number 0200 temperature"},{"e":"sensor.fa_bulk_0201","n":"Upstairs
+        bedroom climate sensor number 0201 temperature"},{"e":"sensor.fa_bulk_0202","n":"Upstairs
+        bedroom climate sensor number 0202 temperature"},{"e":"sensor.fa_bulk_0203","n":"Upstairs
+        bedroom climate sensor number 0203 temperature"},{"e":"sensor.fa_bulk_0204","n":"Upstairs
+        bedroom climate sensor number 0204 temperature"},{"e":"sensor.fa_bulk_0205","n":"Upstairs
+        bedroom climate sensor number 0205 temperature"},{"e":"sensor.fa_bulk_0206","n":"Upstairs
+        bedroom climate sensor number 0206 temperature"},{"e":"sensor.fa_bulk_0207","n":"Upstairs
+        bedroom climate sensor number 0207 temperature"},{"e":"sensor.fa_bulk_0208","n":"Upstairs
+        bedroom climate sensor number 0208 temperature"},{"e":"sensor.fa_bulk_0209","n":"Upstairs
+        bedroom climate sensor number 0209 temperature"},{"e":"sensor.fa_bulk_0210","n":"Upstairs
+        bedroom climate sensor number 0210 temperature"},{"e":"sensor.fa_bulk_0211","n":"Upstairs
+        bedroom climate sensor number 0211 temperature"},{"e":"sensor.fa_bulk_0212","n":"Upstairs
+        bedroom climate sensor number 0212 temperature"},{"e":"sensor.fa_bulk_0213","n":"Upstairs
+        bedroom climate sensor number 0213 temperature"},{"e":"sensor.fa_bulk_0214","n":"Upstairs
+        bedroom climate sensor number 0214 temperature"},{"e":"sensor.fa_bulk_0215","n":"Upstairs
+        bedroom climate sensor number 0215 temperature"},{"e":"sensor.fa_bulk_0216","n":"Upstairs
+        bedroom climate sensor number 0216 temperature"},{"e":"sensor.fa_bulk_0217","n":"Upstairs
+        bedroom climate sensor number 0217 temperature"},{"e":"sensor.fa_bulk_0218","n":"Upstairs
+        bedroom climate sensor number 0218 temperature"},{"e":"sensor.fa_bulk_0219","n":"Upstairs
+        bedroom climate sensor number 0219 temperature"},{"e":"sensor.fa_bulk_0220","n":"Upstairs
+        bedroom climate sensor number 0220 temperature"},{"e":"sensor.fa_bulk_0221","n":"Upstairs
+        bedroom climate sensor number 0221 temperature"},{"e":"sensor.fa_bulk_0222","n":"Upstairs
+        bedroom climate sensor number 0222 temperature"},{"e":"sensor.fa_bulk_0223","n":"Upstairs
+        bedroom climate sensor number 0223 temperature"},{"e":"sensor.fa_bulk_0224","n":"Upstairs
+        bedroom climate sensor number 0224 temperature"},{"e":"sensor.fa_bulk_0225","n":"Upstairs
+        bedroom climate sensor number 0225 temperature"},{"e":"sensor.fa_bulk_0226","n":"Upstairs
+        bedroom climate sensor number 0226 temperature"},{"e":"sensor.fa_bulk_0227","n":"Upstairs
+        bedroom climate sensor number 0227 temperature"},{"e":"sensor.fa_bulk_0228","n":"Upstairs
+        bedroom climate sensor number 0228 temperature"},{"e":"sensor.fa_bulk_0229","n":"Upstairs
+        bedroom climate sensor number 0229 temperature"},{"e":"sensor.fa_bulk_0230","n":"Upstairs
+        bedroom climate sensor number 0230 temperature"},{"e":"sensor.fa_bulk_0231","n":"Upstairs
+        bedroom climate sensor number 0231 temperature"},{"e":"sensor.fa_bulk_0232","n":"Upstairs
+        bedroom climate sensor number 0232 temperature"},{"e":"sensor.fa_bulk_0233","n":"Upstairs
+        bedroom climate sensor number 0233 temperature"},{"e":"sensor.fa_bulk_0234","n":"Upstairs
+        bedroom climate sensor number 0234 temperature"},{"e":"sensor.fa_bulk_0235","n":"Upstairs
+        bedroom climate sensor number 0235 temperature"},{"e":"sensor.fa_bulk_0236","n":"Upstairs
+        bedroom climate sensor number 0236 temperature"},{"e":"sensor.fa_bulk_0237","n":"Upstairs
+        bedroom climate sensor number 0237 temperature"},{"e":"sensor.fa_bulk_0238","n":"Upstairs
+        bedroom climate sensor number 0238 temperature"},{"e":"sensor.fa_bulk_0239","n":"Upstairs
+        bedroom climate sensor number 0239 temperature"},{"e":"sensor.fa_bulk_0240","n":"Upstairs
+        bedroom climate sensor number 0240 temperature"},{"e":"sensor.fa_bulk_0241","n":"Upstairs
+        bedroom climate sensor number 0241 temperature"},{"e":"sensor.fa_bulk_0242","n":"Upstairs
+        bedroom climate sensor number 0242 temperature"},{"e":"sensor.fa_bulk_0243","n":"Upstairs
+        bedroom climate sensor number 0243 temperature"},{"e":"sensor.fa_bulk_0244","n":"Upstairs
+        bedroom climate sensor number 0244 temperature"},{"e":"sensor.fa_bulk_0245","n":"Upstairs
+        bedroom climate sensor number 0245 temperature"},{"e":"sensor.fa_bulk_0246","n":"Upstairs
+        bedroom climate sensor number 0246 temperature"},{"e":"sensor.fa_bulk_0247","n":"Upstairs
+        bedroom climate sensor number 0247 temperature"},{"e":"sensor.fa_bulk_0248","n":"Upstairs
+        bedroom climate sensor number 0248 temperature"},{"e":"sensor.fa_bulk_0249","n":"Upstairs
+        bedroom climate sensor number 0249 temperature"},{"e":"sensor.fa_bulk_0250","n":"Upstairs
+        bedroom climate sensor number 0250 temperature"},{"e":"sensor.fa_bulk_0251","n":"Upstairs
+        bedroom climate sensor number 0251 temperature"},{"e":"sensor.fa_bulk_0252","n":"Upstairs
+        bedroom climate sensor number 0252 temperature"},{"e":"sensor.fa_bulk_0253","n":"Upstairs
+        bedroom climate sensor number 0253 temperature"},{"e":"sensor.fa_bulk_0254","n":"Upstairs
+        bedroom climate sensor number 0254 temperature"},{"e":"sensor.fa_bulk_0255","n":"Upstairs
+        bedroom climate sensor number 0255 temperature"},{"e":"sensor.fa_bulk_0256","n":"Upstairs
+        bedroom climate sensor number 0256 temperature"},{"e":"sensor.fa_bulk_0257","n":"Upstairs
+        bedroom climate sensor number 0257 temperature"},{"e":"sensor.fa_bulk_0258","n":"Upstairs
+        bedroom climate sensor number 0258 temperature"},{"e":"sensor.fa_bulk_0259","n":"Upstairs
+        bedroom climate sensor number 0259 temperature"},{"e":"sensor.fa_bulk_0260","n":"Upstairs
+        bedroom climate sensor number 0260 temperature"},{"e":"sensor.fa_bulk_0261","n":"Upstairs
+        bedroom climate sensor number 0261 temperature"},{"e":"sensor.fa_bulk_0262","n":"Upstairs
+        bedroom climate sensor number 0262 temperature"},{"e":"sensor.fa_bulk_0263","n":"Upstairs
+        bedroom climate sensor number 0263 temperature"},{"e":"sensor.fa_bulk_0264","n":"Upstairs
+        bedroom climate sensor number 0264 temperature"},{"e":"sensor.fa_bulk_0265","n":"Upstairs
+        bedroom climate sensor number 0265 temperature"},{"e":"sensor.fa_bulk_0266","n":"Upstairs
+        bedroom climate sensor number 0266 temperature"},{"e":"sensor.fa_bulk_0267","n":"Upstairs
+        bedroom climate sensor number 0267 temperature"},{"e":"sensor.fa_bulk_0268","n":"Upstairs
+        bedroom climate sensor number 0268 temperature"},{"e":"sensor.fa_bulk_0269","n":"Upstairs
+        bedroom climate sensor number 0269 temperature"},{"e":"sensor.fa_bulk_0270","n":"Upstairs
+        bedroom climate sensor number 0270 temperature"},{"e":"sensor.fa_bulk_0271","n":"Upstairs
+        bedroom climate sensor number 0271 temperature"},{"e":"sensor.fa_bulk_0272","n":"Upstairs
+        bedroom climate sensor number 0272 temperature"},{"e":"sensor.fa_bulk_0273","n":"Upstairs
+        bedroom climate sensor number 0273 temperature"},{"e":"sensor.fa_bulk_0274","n":"Upstairs
+        bedroom climate sensor number 0274 temperature"},{"e":"sensor.fa_bulk_0275","n":"Upstairs
+        bedroom climate sensor number 0275 temperature"},{"e":"sensor.fa_bulk_0276","n":"Upstairs
+        bedroom climate sensor number 0276 temperature"},{"e":"sensor.fa_bulk_0277","n":"Upstairs
+        bedroom climate sensor number 0277 temperature"},{"e":"sensor.fa_bulk_0278","n":"Upstairs
+        bedroom climate sensor number 0278 temperature"},{"e":"sensor.fa_bulk_0279","n":"Upstairs
+        bedroom climate sensor number 0279 temperature"},{"e":"sensor.fa_bulk_0280","n":"Upstairs
+        bedroom climate sensor number 0280 temperature"},{"e":"sensor.fa_bulk_0281","n":"Upstairs
+        bedroom climate sensor number 0281 temperature"},{"e":"sensor.fa_bulk_0282","n":"Upstairs
+        bedroom climate sensor number 0282 temperature"},{"e":"sensor.fa_bulk_0283","n":"Upstairs
+        bedroom climate sensor number 0283 temperature"},{"e":"sensor.fa_bulk_0284","n":"Upstairs
+        bedroom climate sensor number 0284 temperature"},{"e":"sensor.fa_bulk_0285","n":"Upstairs
+        bedroom climate sensor number 0285 temperature"},{"e":"sensor.fa_bulk_0286","n":"Upstairs
+        bedroom climate sensor number 0286 temperature"},{"e":"sensor.fa_bulk_0287","n":"Upstairs
+        bedroom climate sensor number 0287 temperature"},{"e":"sensor.fa_bulk_0288","n":"Upstairs
+        bedroom climate sensor number 0288 temperature"},{"e":"sensor.fa_bulk_0289","n":"Upstairs
+        bedroom climate sensor number 0289 temperature"},{"e":"sensor.fa_bulk_0290","n":"Upstairs
+        bedroom climate sensor number 0290 temperature"},{"e":"sensor.fa_bulk_0291","n":"Upstairs
+        bedroom climate sensor number 0291 temperature"},{"e":"sensor.fa_bulk_0292","n":"Upstairs
+        bedroom climate sensor number 0292 temperature"},{"e":"sensor.fa_bulk_0293","n":"Upstairs
+        bedroom climate sensor number 0293 temperature"},{"e":"sensor.fa_bulk_0294","n":"Upstairs
+        bedroom climate sensor number 0294 temperature"},{"e":"sensor.fa_bulk_0295","n":"Upstairs
+        bedroom climate sensor number 0295 temperature"},{"e":"sensor.fa_bulk_0296","n":"Upstairs
+        bedroom climate sensor number 0296 temperature"},{"e":"sensor.fa_bulk_0297","n":"Upstairs
+        bedroom climate sensor number 0297 temperature"},{"e":"sensor.fa_bulk_0298","n":"Upstairs
+        bedroom climate sensor number 0298 temperature"},{"e":"sensor.fa_bulk_0299","n":"Upstairs
+        bedroom climate sensor number 0299 temperature"},{"e":"sensor.fa_bulk_0300","n":"Upstairs
+        bedroom climate sensor number 0300 temperature"},{"e":"sensor.fa_bulk_0301","n":"Upstairs
+        bedroom climate sensor number 0301 temperature"},{"e":"sensor.fa_bulk_0302","n":"Upstairs
+        bedroom climate sensor number 0302 temperature"},{"e":"sensor.fa_bulk_0303","n":"Upstairs
+        bedroom climate sensor number 0303 temperature"},{"e":"sensor.fa_bulk_0304","n":"Upstairs
+        bedroom climate sensor number 0304 temperature"},{"e":"sensor.fa_bulk_0305","n":"Upstairs
+        bedroom climate sensor number 0305 temperature"},{"e":"sensor.fa_bulk_0306","n":"Upstairs
+        bedroom climate sensor number 0306 temperature"},{"e":"sensor.fa_bulk_0307","n":"Upstairs
+        bedroom climate sensor number 0307 temperature"},{"e":"sensor.fa_bulk_0308","n":"Upstairs
+        bedroom climate sensor number 0308 temperature"},{"e":"sensor.fa_bulk_0309","n":"Upstairs
+        bedroom climate sensor number 0309 temperature"},{"e":"sensor.fa_bulk_0310","n":"Upstairs
+        bedroom climate sensor number 0310 temperature"},{"e":"sensor.fa_bulk_0311","n":"Upstairs
+        bedroom climate sensor number 0311 temperature"},{"e":"sensor.fa_bulk_0312","n":"Upstairs
+        bedroom climate sensor number 0312 temperature"},{"e":"sensor.fa_bulk_0313","n":"Upstairs
+        bedroom climate sensor number 0313 temperature"},{"e":"sensor.fa_bulk_0314","n":"Upstairs
+        bedroom climate sensor number 0314 temperature"},{"e":"sensor.fa_bulk_0315","n":"Upstairs
+        bedroom climate sensor number 0315 temperature"},{"e":"sensor.fa_bulk_0316","n":"Upstairs
+        bedroom climate sensor number 0316 temperature"},{"e":"sensor.fa_bulk_0317","n":"Upstairs
+        bedroom climate sensor number 0317 temperature"},{"e":"sensor.fa_bulk_0318","n":"Upstairs
+        bedroom climate sensor number 0318 temperature"},{"e":"sensor.fa_bulk_0319","n":"Upstairs
+        bedroom climate sensor number 0319 temperature"},{"e":"sensor.fa_bulk_0320","n":"Upstairs
+        bedroom climate sensor number 0320 temperature"},{"e":"sensor.fa_bulk_0321","n":"Upstairs
+        bedroom climate sensor number 0321 temperature"},{"e":"sensor.fa_bulk_0322","n":"Upstairs
+        bedroom climate sensor number 0322 temperature"},{"e":"sensor.fa_bulk_0323","n":"Upstairs
+        bedroom climate sensor number 0323 temperature"},{"e":"sensor.fa_bulk_0324","n":"Upstairs
+        bedroom climate sensor number 0324 temperature"},{"e":"sensor.fa_bulk_0325","n":"Upstairs
+        bedroom climate sensor number 0325 temperature"},{"e":"sensor.fa_bulk_0326","n":"Upstairs
+        bedroom climate sensor number 0326 temperature"},{"e":"sensor.fa_bulk_0327","n":"Upstairs
+        bedroom climate sensor number 0327 temperature"},{"e":"sensor.fa_bulk_0328","n":"Upstairs
+        bedroom climate sensor number 0328 temperature"},{"e":"sensor.fa_bulk_0329","n":"Upstairs
+        bedroom climate sensor number 0329 temperature"},{"e":"sensor.fa_bulk_0330","n":"Upstairs
+        bedroom climate sensor number 0330 temperature"},{"e":"sensor.fa_bulk_0331","n":"Upstairs
+        bedroom climate sensor number 0331 temperature"},{"e":"sensor.fa_bulk_0332","n":"Upstairs
+        bedroom climate sensor number 0332 temperature"},{"e":"sensor.fa_bulk_0333","n":"Upstairs
+        bedroom climate sensor number 0333 temperature"},{"e":"sensor.fa_bulk_0334","n":"Upstairs
+        bedroom climate sensor number 0334 temperature"},{"e":"sensor.fa_bulk_0335","n":"Upstairs
+        bedroom climate sensor number 0335 temperature"},{"e":"sensor.fa_bulk_0336","n":"Upstairs
+        bedroom climate sensor number 0336 temperature"},{"e":"sensor.fa_bulk_0337","n":"Upstairs
+        bedroom climate sensor number 0337 temperature"},{"e":"sensor.fa_bulk_0338","n":"Upstairs
+        bedroom climate sensor number 0338 temperature"},{"e":"sensor.fa_bulk_0339","n":"Upstairs
+        bedroom climate sensor number 0339 temperature"},{"e":"sensor.fa_bulk_0340","n":"Upstairs
+        bedroom climate sensor number 0340 temperature"},{"e":"sensor.fa_bulk_0341","n":"Upstairs
+        bedroom climate sensor number 0341 temperature"},{"e":"sensor.fa_bulk_0342","n":"Upstairs
+        bedroom climate sensor number 0342 temperature"},{"e":"sensor.fa_bulk_0343","n":"Upstairs
+        bedroom climate sensor number 0343 temperature"},{"e":"sensor.fa_bulk_0344","n":"Upstairs
+        bedroom climate sensor number 0344 temperature"},{"e":"sensor.fa_bulk_0345","n":"Upstairs
+        bedroom climate sensor number 0345 temperature"},{"e":"sensor.fa_bulk_0346","n":"Upstairs
+        bedroom climate sensor number 0346 temperature"},{"e":"sensor.fa_bulk_0347","n":"Upstairs
+        bedroom climate sensor number 0347 temperature"},{"e":"sensor.fa_bulk_0348","n":"Upstairs
+        bedroom climate sensor number 0348 temperature"},{"e":"sensor.fa_bulk_0349","n":"Upstairs
+        bedroom climate sensor number 0349 temperature"},{"e":"sensor.fa_bulk_0350","n":"Upstairs
+        bedroom climate sensor number 0350 temperature"},{"e":"sensor.fa_bulk_0351","n":"Upstairs
+        bedroom climate sensor number 0351 temperature"},{"e":"sensor.fa_bulk_0352","n":"Upstairs
+        bedroom climate sensor number 0352 temperature"},{"e":"sensor.fa_bulk_0353","n":"Upstairs
+        bedroom climate sensor number 0353 temperature"},{"e":"sensor.fa_bulk_0354","n":"Upstairs
+        bedroom climate sensor number 0354 temperature"},{"e":"sensor.fa_bulk_0355","n":"Upstairs
+        bedroom climate sensor number 0355 temperature"},{"e":"sensor.fa_bulk_0356","n":"Upstairs
+        bedroom climate sensor number 0356 temperature"},{"e":"sensor.fa_bulk_0357","n":"Upstairs
+        bedroom climate sensor number 0357 temperature"},{"e":"sensor.fa_bulk_0358","n":"Upstairs
+        bedroom climate sensor number 0358 temperature"},{"e":"sensor.fa_bulk_0359","n":"Upstairs
+        bedroom climate sensor number 0359 temperature"},{"e":"sensor.fa_bulk_0360","n":"Upstairs
+        bedroom climate sensor number 0360 temperature"},{"e":"sensor.fa_bulk_0361","n":"Upstairs
+        bedroom climate sensor number 0361 temperature"},{"e":"sensor.fa_bulk_0362","n":"Upstairs
+        bedroom climate sensor number 0362 temperature"},{"e":"sensor.fa_bulk_0363","n":"Upstairs
+        bedroom climate sensor number 0363 temperature"},{"e":"sensor.fa_bulk_0364","n":"Upstairs
+        bedroom climate sensor number 0364 temperature"},{"e":"sensor.fa_bulk_0365","n":"Upstairs
+        bedroom climate sensor number 0365 temperature"},{"e":"sensor.fa_bulk_0366","n":"Upstairs
+        bedroom climate sensor number 0366 temperature"},{"e":"sensor.fa_bulk_0367","n":"Upstairs
+        bedroom climate sensor number 0367 temperature"},{"e":"sensor.fa_bulk_0368","n":"Upstairs
+        bedroom climate sensor number 0368 temperature"},{"e":"sensor.fa_bulk_0369","n":"Upstairs
+        bedroom climate sensor number 0369 temperature"},{"e":"sensor.fa_bulk_0370","n":"Upstairs
+        bedroom climate sensor number 0370 temperature"},{"e":"sensor.fa_bulk_0371","n":"Upstairs
+        bedroom climate sensor number 0371 temperature"},{"e":"sensor.fa_bulk_0372","n":"Upstairs
+        bedroom climate sensor number 0372 temperature"},{"e":"sensor.fa_bulk_0373","n":"Upstairs
+        bedroom climate sensor number 0373 temperature"},{"e":"sensor.fa_bulk_0374","n":"Upstairs
+        bedroom climate sensor number 0374 temperature"},{"e":"sensor.fa_bulk_0375","n":"Upstairs
+        bedroom climate sensor number 0375 temperature"},{"e":"sensor.fa_bulk_0376","n":"Upstairs
+        bedroom climate sensor number 0376 temperature"},{"e":"sensor.fa_bulk_0377","n":"Upstairs
+        bedroom climate sensor number 0377 temperature"},{"e":"sensor.fa_bulk_0378","n":"Upstairs
+        bedroom climate sensor number 0378 temperature"},{"e":"sensor.fa_bulk_0379","n":"Upstairs
+        bedroom climate sensor number 0379 temperature"},{"e":"sensor.fa_bulk_0380","n":"Upstairs
+        bedroom climate sensor number 0380 temperature"},{"e":"sensor.fa_bulk_0381","n":"Upstairs
+        bedroom climate sensor number 0381 temperature"},{"e":"sensor.fa_bulk_0382","n":"Upstairs
+        bedroom climate sensor number 0382 temperature"},{"e":"sensor.fa_bulk_0383","n":"Upstairs
+        bedroom climate sensor number 0383 temperature"},{"e":"sensor.fa_bulk_0384","n":"Upstairs
+        bedroom climate sensor number 0384 temperature"},{"e":"sensor.fa_bulk_0385","n":"Upstairs
+        bedroom climate sensor number 0385 temperature"},{"e":"sensor.fa_bulk_0386","n":"Upstairs
+        bedroom climate sensor number 0386 temperature"},{"e":"sensor.fa_bulk_0387","n":"Upstairs
+        bedroom climate sensor number 0387 temperature"},{"e":"sensor.fa_bulk_0388","n":"Upstairs
+        bedroom climate sensor number 0388 temperature"},{"e":"sensor.fa_bulk_0389","n":"Upstairs
+        bedroom climate sensor number 0389 temperature"},{"e":"sensor.fa_bulk_0390","n":"Upstairs
+        bedroom climate sensor number 0390 temperature"},{"e":"sensor.fa_bulk_0391","n":"Upstairs
+        bedroom climate sensor number 0391 temperature"},{"e":"sensor.fa_bulk_0392","n":"Upstairs
+        bedroom climate sensor number 0392 temperature"},{"e":"sensor.fa_bulk_0393","n":"Upstairs
+        bedroom climate sensor number 0393 temperature"},{"e":"sensor.fa_bulk_0394","n":"Upstairs
+        bedroom climate sensor number 0394 temperature"},{"e":"sensor.fa_bulk_0395","n":"Upstairs
+        bedroom climate sensor number 0395 temperature"},{"e":"sensor.fa_bulk_0396","n":"Upstairs
+        bedroom climate sensor number 0396 temperature"},{"e":"sensor.fa_bulk_0397","n":"Upstairs
+        bedroom climate sensor number 0397 temperature"},{"e":"sensor.fa_bulk_0398","n":"Upstairs
+        bedroom climate sensor number 0398 temperature"},{"e":"sensor.fa_bulk_0399","n":"Upstairs
+        bedroom climate sensor number 0399 temperature"},{"e":"sensor.fa_bulk_0400","n":"Upstairs
+        bedroom climate sensor number 0400 temperature"},{"e":"sensor.fa_bulk_0401","n":"Upstairs
+        bedroom climate sensor number 0401 temperature"},{"e":"sensor.fa_bulk_0402","n":"Upstairs
+        bedroom climate sensor number 0402 temperature"},{"e":"sensor.fa_bulk_0403","n":"Upstairs
+        bedroom climate sensor number 0403 temperature"},{"e":"sensor.fa_bulk_0404","n":"Upstairs
+        bedroom climate sensor number 0404 temperature"},{"e":"sensor.fa_bulk_0405","n":"Upstairs
+        bedroom climate sensor number 0405 temperature"},{"e":"sensor.fa_bulk_0406","n":"Upstairs
+        bedroom climate sensor number 0406 temperature"},{"e":"sensor.fa_bulk_0407","n":"Upstairs
+        bedroom climate sensor number 0407 temperature"},{"e":"sensor.fa_bulk_0408","n":"Upstairs
+        bedroom climate sensor number 0408 temperature"},{"e":"sensor.fa_bulk_0409","n":"Upstairs
+        bedroom climate sensor number 0409 temperature"},{"e":"sensor.fa_bulk_0410","n":"Upstairs
+        bedroom climate sensor number 0410 temperature"},{"e":"sensor.fa_bulk_0411","n":"Upstairs
+        bedroom climate sensor number 0411 temperature"},{"e":"sensor.fa_bulk_0412","n":"Upstairs
+        bedroom climate sensor number 0412 temperature"},{"e":"sensor.fa_bulk_0413","n":"Upstairs
+        bedroom climate sensor number 0413 temperature"},{"e":"sensor.fa_bulk_0414","n":"Upstairs
+        bedroom climate sensor number 0414 temperature"},{"e":"sensor.fa_bulk_0415","n":"Upstairs
+        bedroom climate sensor number 0415 temperature"},{"e":"sensor.fa_bulk_0416","n":"Upstairs
+        bedroom climate sensor number 0416 temperature"},{"e":"sensor.fa_bulk_0417","n":"Upstairs
+        bedroom climate sensor number 0417 temperature"},{"e":"sensor.fa_bulk_0418","n":"Upstairs
+        bedroom climate sensor number 0418 temperature"},{"e":"sensor.fa_bulk_0419","n":"Upstairs
+        bedroom climate sensor number 0419 temperature"},{"e":"sensor.fa_bulk_0420","n":"Upstairs
+        bedroom climate sensor number 0420 temperature"},{"e":"sensor.fa_bulk_0421","n":"Upstairs
+        bedroom climate sensor number 0421 temperature"},{"e":"sensor.fa_bulk_0422","n":"Upstairs
+        bedroom climate sensor number 0422 temperature"},{"e":"sensor.fa_bulk_0423","n":"Upstairs
+        bedroom climate sensor number 0423 temperature"},{"e":"sensor.fa_bulk_0424","n":"Upstairs
+        bedroom climate sensor number 0424 temperature"},{"e":"sensor.fa_bulk_0425","n":"Upstairs
+        bedroom climate sensor number 0425 temperature"},{"e":"sensor.fa_bulk_0426","n":"Upstairs
+        bedroom climate sensor number 0426 temperature"},{"e":"sensor.fa_bulk_0427","n":"Upstairs
+        bedroom climate sensor number 0427 temperature"},{"e":"sensor.fa_bulk_0428","n":"Upstairs
+        bedroom climate sensor number 0428 temperature"},{"e":"sensor.fa_bulk_0429","n":"Upstairs
+        bedroom climate sensor number 0429 temperature"}]'
+    headers:
+      Content-Length:
+      - '44577'
+      Content-Type:
+      - text/plain; charset=utf-8
+      Date:
+      - Sun, 01 Nov 2026 08:15:55 GMT
+      Referrer-Policy:
+      - no-referrer
+      Server:
+      - ''
+      X-Content-Type-Options:
+      - nosniff
+      X-Frame-Options:
+      - SAMEORIGIN
+    status:
+      code: 200
+      message: OK
+- request:
+    body:
+      template: '[{% for s in (states | sort(attribute="entity_id"))[500:1000] %}{%
+        if not loop.first %},{% endif %}{"e":{{ s.entity_id | tojson }},"n":{{ s.name
+        | tojson }}{% set v = area_name(s.entity_id) %}{% if v %},"a":{{ v | tojson
+        }}{% endif %}{% set v = device_id(s.entity_id) %}{% if v %},"d":{{ v | tojson
+        }}{% endif %}{% set v = device_name(s.entity_id) %}{% if v %},"dn":{{ v |
+        tojson }}{% endif %}{% set v = s.attributes.device_class %}{% if v %},"c":{{
+        v | tojson }}{% endif %}}{% endfor %}]'
+    headers:
+      Content-Type:
+      - application/json
+    method: POST
+    uri: http://localhost:41475/api/template
+  response:
+    body:
+      string: '[{"e":"sensor.fa_bulk_0430","n":"Upstairs bedroom climate sensor number
+        0430 temperature"},{"e":"sensor.fa_bulk_0431","n":"Upstairs bedroom climate
+        sensor number 0431 temperature"},{"e":"sensor.fa_bulk_0432","n":"Upstairs
+        bedroom climate sensor number 0432 temperature"},{"e":"sensor.fa_bulk_0433","n":"Upstairs
+        bedroom climate sensor number 0433 temperature"},{"e":"sensor.fa_bulk_0434","n":"Upstairs
+        bedroom climate sensor number 0434 temperature"},{"e":"sensor.fa_bulk_0435","n":"Upstairs
+        bedroom climate sensor number 0435 temperature"},{"e":"sensor.fa_bulk_0436","n":"Upstairs
+        bedroom climate sensor number 0436 temperature"},{"e":"sensor.fa_bulk_0437","n":"Upstairs
+        bedroom climate sensor number 0437 temperature"},{"e":"sensor.fa_bulk_0438","n":"Upstairs
+        bedroom climate sensor number 0438 temperature"},{"e":"sensor.fa_bulk_0439","n":"Upstairs
+        bedroom climate sensor number 0439 temperature"},{"e":"sensor.fa_bulk_0440","n":"Upstairs
+        bedroom climate sensor number 0440 temperature"},{"e":"sensor.fa_bulk_0441","n":"Upstairs
+        bedroom climate sensor number 0441 temperature"},{"e":"sensor.fa_bulk_0442","n":"Upstairs
+        bedroom climate sensor number 0442 temperature"},{"e":"sensor.fa_bulk_0443","n":"Upstairs
+        bedroom climate sensor number 0443 temperature"},{"e":"sensor.fa_bulk_0444","n":"Upstairs
+        bedroom climate sensor number 0444 temperature"},{"e":"sensor.fa_bulk_0445","n":"Upstairs
+        bedroom climate sensor number 0445 temperature"},{"e":"sensor.fa_bulk_0446","n":"Upstairs
+        bedroom climate sensor number 0446 temperature"},{"e":"sensor.fa_bulk_0447","n":"Upstairs
+        bedroom climate sensor number 0447 temperature"},{"e":"sensor.fa_bulk_0448","n":"Upstairs
+        bedroom climate sensor number 0448 temperature"},{"e":"sensor.fa_bulk_0449","n":"Upstairs
+        bedroom climate sensor number 0449 temperature"},{"e":"sensor.fa_bulk_0450","n":"Upstairs
+        bedroom climate sensor number 0450 temperature"},{"e":"sensor.fa_bulk_0451","n":"Upstairs
+        bedroom climate sensor number 0451 temperature"},{"e":"sensor.fa_bulk_0452","n":"Upstairs
+        bedroom climate sensor number 0452 temperature"},{"e":"sensor.fa_bulk_0453","n":"Upstairs
+        bedroom climate sensor number 0453 temperature"},{"e":"sensor.fa_bulk_0454","n":"Upstairs
+        bedroom climate sensor number 0454 temperature"},{"e":"sensor.fa_bulk_0455","n":"Upstairs
+        bedroom climate sensor number 0455 temperature"},{"e":"sensor.fa_bulk_0456","n":"Upstairs
+        bedroom climate sensor number 0456 temperature"},{"e":"sensor.fa_bulk_0457","n":"Upstairs
+        bedroom climate sensor number 0457 temperature"},{"e":"sensor.fa_bulk_0458","n":"Upstairs
+        bedroom climate sensor number 0458 temperature"},{"e":"sensor.fa_bulk_0459","n":"Upstairs
+        bedroom climate sensor number 0459 temperature"},{"e":"sensor.fa_bulk_0460","n":"Upstairs
+        bedroom climate sensor number 0460 temperature"},{"e":"sensor.fa_bulk_0461","n":"Upstairs
+        bedroom climate sensor number 0461 temperature"},{"e":"sensor.fa_bulk_0462","n":"Upstairs
+        bedroom climate sensor number 0462 temperature"},{"e":"sensor.fa_bulk_0463","n":"Upstairs
+        bedroom climate sensor number 0463 temperature"},{"e":"sensor.fa_bulk_0464","n":"Upstairs
+        bedroom climate sensor number 0464 temperature"},{"e":"sensor.fa_bulk_0465","n":"Upstairs
+        bedroom climate sensor number 0465 temperature"},{"e":"sensor.fa_bulk_0466","n":"Upstairs
+        bedroom climate sensor number 0466 temperature"},{"e":"sensor.fa_bulk_0467","n":"Upstairs
+        bedroom climate sensor number 0467 temperature"},{"e":"sensor.fa_bulk_0468","n":"Upstairs
+        bedroom climate sensor number 0468 temperature"},{"e":"sensor.fa_bulk_0469","n":"Upstairs
+        bedroom climate sensor number 0469 temperature"},{"e":"sensor.fa_bulk_0470","n":"Upstairs
+        bedroom climate sensor number 0470 temperature"},{"e":"sensor.fa_bulk_0471","n":"Upstairs
+        bedroom climate sensor number 0471 temperature"},{"e":"sensor.fa_bulk_0472","n":"Upstairs
+        bedroom climate sensor number 0472 temperature"},{"e":"sensor.fa_bulk_0473","n":"Upstairs
+        bedroom climate sensor number 0473 temperature"},{"e":"sensor.fa_bulk_0474","n":"Upstairs
+        bedroom climate sensor number 0474 temperature"},{"e":"sensor.fa_bulk_0475","n":"Upstairs
+        bedroom climate sensor number 0475 temperature"},{"e":"sensor.fa_bulk_0476","n":"Upstairs
+        bedroom climate sensor number 0476 temperature"},{"e":"sensor.fa_bulk_0477","n":"Upstairs
+        bedroom climate sensor number 0477 temperature"},{"e":"sensor.fa_bulk_0478","n":"Upstairs
+        bedroom climate sensor number 0478 temperature"},{"e":"sensor.fa_bulk_0479","n":"Upstairs
+        bedroom climate sensor number 0479 temperature"},{"e":"sensor.fa_bulk_0480","n":"Upstairs
+        bedroom climate sensor number 0480 temperature"},{"e":"sensor.fa_bulk_0481","n":"Upstairs
+        bedroom climate sensor number 0481 temperature"},{"e":"sensor.fa_bulk_0482","n":"Upstairs
+        bedroom climate sensor number 0482 temperature"},{"e":"sensor.fa_bulk_0483","n":"Upstairs
+        bedroom climate sensor number 0483 temperature"},{"e":"sensor.fa_bulk_0484","n":"Upstairs
+        bedroom climate sensor number 0484 temperature"},{"e":"sensor.fa_bulk_0485","n":"Upstairs
+        bedroom climate sensor number 0485 temperature"},{"e":"sensor.fa_bulk_0486","n":"Upstairs
+        bedroom climate sensor number 0486 temperature"},{"e":"sensor.fa_bulk_0487","n":"Upstairs
+        bedroom climate sensor number 0487 temperature"},{"e":"sensor.fa_bulk_0488","n":"Upstairs
+        bedroom climate sensor number 0488 temperature"},{"e":"sensor.fa_bulk_0489","n":"Upstairs
+        bedroom climate sensor number 0489 temperature"},{"e":"sensor.fa_bulk_0490","n":"Upstairs
+        bedroom climate sensor number 0490 temperature"},{"e":"sensor.fa_bulk_0491","n":"Upstairs
+        bedroom climate sensor number 0491 temperature"},{"e":"sensor.fa_bulk_0492","n":"Upstairs
+        bedroom climate sensor number 0492 temperature"},{"e":"sensor.fa_bulk_0493","n":"Upstairs
+        bedroom climate sensor number 0493 temperature"},{"e":"sensor.fa_bulk_0494","n":"Upstairs
+        bedroom climate sensor number 0494 temperature"},{"e":"sensor.fa_bulk_0495","n":"Upstairs
+        bedroom climate sensor number 0495 temperature"},{"e":"sensor.fa_bulk_0496","n":"Upstairs
+        bedroom climate sensor number 0496 temperature"},{"e":"sensor.fa_bulk_0497","n":"Upstairs
+        bedroom climate sensor number 0497 temperature"},{"e":"sensor.fa_bulk_0498","n":"Upstairs
+        bedroom climate sensor number 0498 temperature"},{"e":"sensor.fa_bulk_0499","n":"Upstairs
+        bedroom climate sensor number 0499 temperature"},{"e":"sensor.fa_bulk_0500","n":"Upstairs
+        bedroom climate sensor number 0500 temperature"},{"e":"sensor.fa_bulk_0501","n":"Upstairs
+        bedroom climate sensor number 0501 temperature"},{"e":"sensor.fa_bulk_0502","n":"Upstairs
+        bedroom climate sensor number 0502 temperature"},{"e":"sensor.fa_bulk_0503","n":"Upstairs
+        bedroom climate sensor number 0503 temperature"},{"e":"sensor.fa_bulk_0504","n":"Upstairs
+        bedroom climate sensor number 0504 temperature"},{"e":"sensor.fa_bulk_0505","n":"Upstairs
+        bedroom climate sensor number 0505 temperature"},{"e":"sensor.fa_bulk_0506","n":"Upstairs
+        bedroom climate sensor number 0506 temperature"},{"e":"sensor.fa_bulk_0507","n":"Upstairs
+        bedroom climate sensor number 0507 temperature"},{"e":"sensor.fa_bulk_0508","n":"Upstairs
+        bedroom climate sensor number 0508 temperature"},{"e":"sensor.fa_bulk_0509","n":"Upstairs
+        bedroom climate sensor number 0509 temperature"},{"e":"sensor.fa_bulk_0510","n":"Upstairs
+        bedroom climate sensor number 0510 temperature"},{"e":"sensor.fa_bulk_0511","n":"Upstairs
+        bedroom climate sensor number 0511 temperature"},{"e":"sensor.fa_bulk_0512","n":"Upstairs
+        bedroom climate sensor number 0512 temperature"},{"e":"sensor.fa_bulk_0513","n":"Upstairs
+        bedroom climate sensor number 0513 temperature"},{"e":"sensor.fa_bulk_0514","n":"Upstairs
+        bedroom climate sensor number 0514 temperature"},{"e":"sensor.fa_bulk_0515","n":"Upstairs
+        bedroom climate sensor number 0515 temperature"},{"e":"sensor.fa_bulk_0516","n":"Upstairs
+        bedroom climate sensor number 0516 temperature"},{"e":"sensor.fa_bulk_0517","n":"Upstairs
+        bedroom climate sensor number 0517 temperature"},{"e":"sensor.fa_bulk_0518","n":"Upstairs
+        bedroom climate sensor number 0518 temperature"},{"e":"sensor.fa_bulk_0519","n":"Upstairs
+        bedroom climate sensor number 0519 temperature"},{"e":"sensor.fa_bulk_0520","n":"Upstairs
+        bedroom climate sensor number 0520 temperature"},{"e":"sensor.fa_bulk_0521","n":"Upstairs
+        bedroom climate sensor number 0521 temperature"},{"e":"sensor.fa_bulk_0522","n":"Upstairs
+        bedroom climate sensor number 0522 temperature"},{"e":"sensor.fa_bulk_0523","n":"Upstairs
+        bedroom climate sensor number 0523 temperature"},{"e":"sensor.fa_bulk_0524","n":"Upstairs
+        bedroom climate sensor number 0524 temperature"},{"e":"sensor.fa_bulk_0525","n":"Upstairs
+        bedroom climate sensor number 0525 temperature"},{"e":"sensor.fa_bulk_0526","n":"Upstairs
+        bedroom climate sensor number 0526 temperature"},{"e":"sensor.fa_bulk_0527","n":"Upstairs
+        bedroom climate sensor number 0527 temperature"},{"e":"sensor.fa_bulk_0528","n":"Upstairs
+        bedroom climate sensor number 0528 temperature"},{"e":"sensor.fa_bulk_0529","n":"Upstairs
+        bedroom climate sensor number 0529 temperature"},{"e":"sensor.fa_bulk_0530","n":"Upstairs
+        bedroom climate sensor number 0530 temperature"},{"e":"sensor.fa_bulk_0531","n":"Upstairs
+        bedroom climate sensor number 0531 temperature"},{"e":"sensor.fa_bulk_0532","n":"Upstairs
+        bedroom climate sensor number 0532 temperature"},{"e":"sensor.fa_bulk_0533","n":"Upstairs
+        bedroom climate sensor number 0533 temperature"},{"e":"sensor.fa_bulk_0534","n":"Upstairs
+        bedroom climate sensor number 0534 temperature"},{"e":"sensor.fa_bulk_0535","n":"Upstairs
+        bedroom climate sensor number 0535 temperature"},{"e":"sensor.fa_bulk_0536","n":"Upstairs
+        bedroom climate sensor number 0536 temperature"},{"e":"sensor.fa_bulk_0537","n":"Upstairs
+        bedroom climate sensor number 0537 temperature"},{"e":"sensor.fa_bulk_0538","n":"Upstairs
+        bedroom climate sensor number 0538 temperature"},{"e":"sensor.fa_bulk_0539","n":"Upstairs
+        bedroom climate sensor number 0539 temperature"},{"e":"sensor.fa_bulk_0540","n":"Upstairs
+        bedroom climate sensor number 0540 temperature"},{"e":"sensor.fa_bulk_0541","n":"Upstairs
+        bedroom climate sensor number 0541 temperature"},{"e":"sensor.fa_bulk_0542","n":"Upstairs
+        bedroom climate sensor number 0542 temperature"},{"e":"sensor.fa_bulk_0543","n":"Upstairs
+        bedroom climate sensor number 0543 temperature"},{"e":"sensor.fa_bulk_0544","n":"Upstairs
+        bedroom climate sensor number 0544 temperature"},{"e":"sensor.fa_bulk_0545","n":"Upstairs
+        bedroom climate sensor number 0545 temperature"},{"e":"sensor.fa_bulk_0546","n":"Upstairs
+        bedroom climate sensor number 0546 temperature"},{"e":"sensor.fa_bulk_0547","n":"Upstairs
+        bedroom climate sensor number 0547 temperature"},{"e":"sensor.fa_bulk_0548","n":"Upstairs
+        bedroom climate sensor number 0548 temperature"},{"e":"sensor.fa_bulk_0549","n":"Upstairs
+        bedroom climate sensor number 0549 temperature"},{"e":"sensor.fa_bulk_0550","n":"Upstairs
+        bedroom climate sensor number 0550 temperature"},{"e":"sensor.fa_bulk_0551","n":"Upstairs
+        bedroom climate sensor number 0551 temperature"},{"e":"sensor.fa_bulk_0552","n":"Upstairs
+        bedroom climate sensor number 0552 temperature"},{"e":"sensor.fa_bulk_0553","n":"Upstairs
+        bedroom climate sensor number 0553 temperature"},{"e":"sensor.fa_bulk_0554","n":"Upstairs
+        bedroom climate sensor number 0554 temperature"},{"e":"sensor.fa_bulk_0555","n":"Upstairs
+        bedroom climate sensor number 0555 temperature"},{"e":"sensor.fa_bulk_0556","n":"Upstairs
+        bedroom climate sensor number 0556 temperature"},{"e":"sensor.fa_bulk_0557","n":"Upstairs
+        bedroom climate sensor number 0557 temperature"},{"e":"sensor.fa_bulk_0558","n":"Upstairs
+        bedroom climate sensor number 0558 temperature"},{"e":"sensor.fa_bulk_0559","n":"Upstairs
+        bedroom climate sensor number 0559 temperature"},{"e":"sensor.fa_bulk_0560","n":"Upstairs
+        bedroom climate sensor number 0560 temperature"},{"e":"sensor.fa_bulk_0561","n":"Upstairs
+        bedroom climate sensor number 0561 temperature"},{"e":"sensor.fa_bulk_0562","n":"Upstairs
+        bedroom climate sensor number 0562 temperature"},{"e":"sensor.fa_bulk_0563","n":"Upstairs
+        bedroom climate sensor number 0563 temperature"},{"e":"sensor.fa_bulk_0564","n":"Upstairs
+        bedroom climate sensor number 0564 temperature"},{"e":"sensor.fa_bulk_0565","n":"Upstairs
+        bedroom climate sensor number 0565 temperature"},{"e":"sensor.fa_bulk_0566","n":"Upstairs
+        bedroom climate sensor number 0566 temperature"},{"e":"sensor.fa_bulk_0567","n":"Upstairs
+        bedroom climate sensor number 0567 temperature"},{"e":"sensor.fa_bulk_0568","n":"Upstairs
+        bedroom climate sensor number 0568 temperature"},{"e":"sensor.fa_bulk_0569","n":"Upstairs
+        bedroom climate sensor number 0569 temperature"},{"e":"sensor.fa_bulk_0570","n":"Upstairs
+        bedroom climate sensor number 0570 temperature"},{"e":"sensor.fa_bulk_0571","n":"Upstairs
+        bedroom climate sensor number 0571 temperature"},{"e":"sensor.fa_bulk_0572","n":"Upstairs
+        bedroom climate sensor number 0572 temperature"},{"e":"sensor.fa_bulk_0573","n":"Upstairs
+        bedroom climate sensor number 0573 temperature"},{"e":"sensor.fa_bulk_0574","n":"Upstairs
+        bedroom climate sensor number 0574 temperature"},{"e":"sensor.fa_bulk_0575","n":"Upstairs
+        bedroom climate sensor number 0575 temperature"},{"e":"sensor.fa_bulk_0576","n":"Upstairs
+        bedroom climate sensor number 0576 temperature"},{"e":"sensor.fa_bulk_0577","n":"Upstairs
+        bedroom climate sensor number 0577 temperature"},{"e":"sensor.fa_bulk_0578","n":"Upstairs
+        bedroom climate sensor number 0578 temperature"},{"e":"sensor.fa_bulk_0579","n":"Upstairs
+        bedroom climate sensor number 0579 temperature"},{"e":"sensor.fa_bulk_0580","n":"Upstairs
+        bedroom climate sensor number 0580 temperature"},{"e":"sensor.fa_bulk_0581","n":"Upstairs
+        bedroom climate sensor number 0581 temperature"},{"e":"sensor.fa_bulk_0582","n":"Upstairs
+        bedroom climate sensor number 0582 temperature"},{"e":"sensor.fa_bulk_0583","n":"Upstairs
+        bedroom climate sensor number 0583 temperature"},{"e":"sensor.fa_bulk_0584","n":"Upstairs
+        bedroom climate sensor number 0584 temperature"},{"e":"sensor.fa_bulk_0585","n":"Upstairs
+        bedroom climate sensor number 0585 temperature"},{"e":"sensor.fa_bulk_0586","n":"Upstairs
+        bedroom climate sensor number 0586 temperature"},{"e":"sensor.fa_bulk_0587","n":"Upstairs
+        bedroom climate sensor number 0587 temperature"},{"e":"sensor.fa_bulk_0588","n":"Upstairs
+        bedroom climate sensor number 0588 temperature"},{"e":"sensor.fa_bulk_0589","n":"Upstairs
+        bedroom climate sensor number 0589 temperature"},{"e":"sensor.fa_bulk_0590","n":"Upstairs
+        bedroom climate sensor number 0590 temperature"},{"e":"sensor.fa_bulk_0591","n":"Upstairs
+        bedroom climate sensor number 0591 temperature"},{"e":"sensor.fa_bulk_0592","n":"Upstairs
+        bedroom climate sensor number 0592 temperature"},{"e":"sensor.fa_bulk_0593","n":"Upstairs
+        bedroom climate sensor number 0593 temperature"},{"e":"sensor.fa_bulk_0594","n":"Upstairs
+        bedroom climate sensor number 0594 temperature"},{"e":"sensor.fa_bulk_0595","n":"Upstairs
+        bedroom climate sensor number 0595 temperature"},{"e":"sensor.fa_bulk_0596","n":"Upstairs
+        bedroom climate sensor number 0596 temperature"},{"e":"sensor.fa_bulk_0597","n":"Upstairs
+        bedroom climate sensor number 0597 temperature"},{"e":"sensor.fa_bulk_0598","n":"Upstairs
+        bedroom climate sensor number 0598 temperature"},{"e":"sensor.fa_bulk_0599","n":"Upstairs
+        bedroom climate sensor number 0599 temperature"},{"e":"sensor.fa_bulk_0600","n":"Upstairs
+        bedroom climate sensor number 0600 temperature"},{"e":"sensor.fa_bulk_0601","n":"Upstairs
+        bedroom climate sensor number 0601 temperature"},{"e":"sensor.fa_bulk_0602","n":"Upstairs
+        bedroom climate sensor number 0602 temperature"},{"e":"sensor.fa_bulk_0603","n":"Upstairs
+        bedroom climate sensor number 0603 temperature"},{"e":"sensor.fa_bulk_0604","n":"Upstairs
+        bedroom climate sensor number 0604 temperature"},{"e":"sensor.fa_bulk_0605","n":"Upstairs
+        bedroom climate sensor number 0605 temperature"},{"e":"sensor.fa_bulk_0606","n":"Upstairs
+        bedroom climate sensor number 0606 temperature"},{"e":"sensor.fa_bulk_0607","n":"Upstairs
+        bedroom climate sensor number 0607 temperature"},{"e":"sensor.fa_bulk_0608","n":"Upstairs
+        bedroom climate sensor number 0608 temperature"},{"e":"sensor.fa_bulk_0609","n":"Upstairs
+        bedroom climate sensor number 0609 temperature"},{"e":"sensor.fa_bulk_0610","n":"Upstairs
+        bedroom climate sensor number 0610 temperature"},{"e":"sensor.fa_bulk_0611","n":"Upstairs
+        bedroom climate sensor number 0611 temperature"},{"e":"sensor.fa_bulk_0612","n":"Upstairs
+        bedroom climate sensor number 0612 temperature"},{"e":"sensor.fa_bulk_0613","n":"Upstairs
+        bedroom climate sensor number 0613 temperature"},{"e":"sensor.fa_bulk_0614","n":"Upstairs
+        bedroom climate sensor number 0614 temperature"},{"e":"sensor.fa_bulk_0615","n":"Upstairs
+        bedroom climate sensor number 0615 temperature"},{"e":"sensor.fa_bulk_0616","n":"Upstairs
+        bedroom climate sensor number 0616 temperature"},{"e":"sensor.fa_bulk_0617","n":"Upstairs
+        bedroom climate sensor number 0617 temperature"},{"e":"sensor.fa_bulk_0618","n":"Upstairs
+        bedroom climate sensor number 0618 temperature"},{"e":"sensor.fa_bulk_0619","n":"Upstairs
+        bedroom climate sensor number 0619 temperature"},{"e":"sensor.fa_bulk_0620","n":"Upstairs
+        bedroom climate sensor number 0620 temperature"},{"e":"sensor.fa_bulk_0621","n":"Upstairs
+        bedroom climate sensor number 0621 temperature"},{"e":"sensor.fa_bulk_0622","n":"Upstairs
+        bedroom climate sensor number 0622 temperature"},{"e":"sensor.fa_bulk_0623","n":"Upstairs
+        bedroom climate sensor number 0623 temperature"},{"e":"sensor.fa_bulk_0624","n":"Upstairs
+        bedroom climate sensor number 0624 temperature"},{"e":"sensor.fa_bulk_0625","n":"Upstairs
+        bedroom climate sensor number 0625 temperature"},{"e":"sensor.fa_bulk_0626","n":"Upstairs
+        bedroom climate sensor number 0626 temperature"},{"e":"sensor.fa_bulk_0627","n":"Upstairs
+        bedroom climate sensor number 0627 temperature"},{"e":"sensor.fa_bulk_0628","n":"Upstairs
+        bedroom climate sensor number 0628 temperature"},{"e":"sensor.fa_bulk_0629","n":"Upstairs
+        bedroom climate sensor number 0629 temperature"},{"e":"sensor.fa_bulk_0630","n":"Upstairs
+        bedroom climate sensor number 0630 temperature"},{"e":"sensor.fa_bulk_0631","n":"Upstairs
+        bedroom climate sensor number 0631 temperature"},{"e":"sensor.fa_bulk_0632","n":"Upstairs
+        bedroom climate sensor number 0632 temperature"},{"e":"sensor.fa_bulk_0633","n":"Upstairs
+        bedroom climate sensor number 0633 temperature"},{"e":"sensor.fa_bulk_0634","n":"Upstairs
+        bedroom climate sensor number 0634 temperature"},{"e":"sensor.fa_bulk_0635","n":"Upstairs
+        bedroom climate sensor number 0635 temperature"},{"e":"sensor.fa_bulk_0636","n":"Upstairs
+        bedroom climate sensor number 0636 temperature"},{"e":"sensor.fa_bulk_0637","n":"Upstairs
+        bedroom climate sensor number 0637 temperature"},{"e":"sensor.fa_bulk_0638","n":"Upstairs
+        bedroom climate sensor number 0638 temperature"},{"e":"sensor.fa_bulk_0639","n":"Upstairs
+        bedroom climate sensor number 0639 temperature"},{"e":"sensor.fa_bulk_0640","n":"Upstairs
+        bedroom climate sensor number 0640 temperature"},{"e":"sensor.fa_bulk_0641","n":"Upstairs
+        bedroom climate sensor number 0641 temperature"},{"e":"sensor.fa_bulk_0642","n":"Upstairs
+        bedroom climate sensor number 0642 temperature"},{"e":"sensor.fa_bulk_0643","n":"Upstairs
+        bedroom climate sensor number 0643 temperature"},{"e":"sensor.fa_bulk_0644","n":"Upstairs
+        bedroom climate sensor number 0644 temperature"},{"e":"sensor.fa_bulk_0645","n":"Upstairs
+        bedroom climate sensor number 0645 temperature"},{"e":"sensor.fa_bulk_0646","n":"Upstairs
+        bedroom climate sensor number 0646 temperature"},{"e":"sensor.fa_bulk_0647","n":"Upstairs
+        bedroom climate sensor number 0647 temperature"},{"e":"sensor.fa_bulk_0648","n":"Upstairs
+        bedroom climate sensor number 0648 temperature"},{"e":"sensor.fa_bulk_0649","n":"Upstairs
+        bedroom climate sensor number 0649 temperature"},{"e":"sensor.fa_bulk_0650","n":"Upstairs
+        bedroom climate sensor number 0650 temperature"},{"e":"sensor.fa_bulk_0651","n":"Upstairs
+        bedroom climate sensor number 0651 temperature"},{"e":"sensor.fa_bulk_0652","n":"Upstairs
+        bedroom climate sensor number 0652 temperature"},{"e":"sensor.fa_bulk_0653","n":"Upstairs
+        bedroom climate sensor number 0653 temperature"},{"e":"sensor.fa_bulk_0654","n":"Upstairs
+        bedroom climate sensor number 0654 temperature"},{"e":"sensor.fa_bulk_0655","n":"Upstairs
+        bedroom climate sensor number 0655 temperature"},{"e":"sensor.fa_bulk_0656","n":"Upstairs
+        bedroom climate sensor number 0656 temperature"},{"e":"sensor.fa_bulk_0657","n":"Upstairs
+        bedroom climate sensor number 0657 temperature"},{"e":"sensor.fa_bulk_0658","n":"Upstairs
+        bedroom climate sensor number 0658 temperature"},{"e":"sensor.fa_bulk_0659","n":"Upstairs
+        bedroom climate sensor number 0659 temperature"},{"e":"sensor.fa_bulk_0660","n":"Upstairs
+        bedroom climate sensor number 0660 temperature"},{"e":"sensor.fa_bulk_0661","n":"Upstairs
+        bedroom climate sensor number 0661 temperature"},{"e":"sensor.fa_bulk_0662","n":"Upstairs
+        bedroom climate sensor number 0662 temperature"},{"e":"sensor.fa_bulk_0663","n":"Upstairs
+        bedroom climate sensor number 0663 temperature"},{"e":"sensor.fa_bulk_0664","n":"Upstairs
+        bedroom climate sensor number 0664 temperature"},{"e":"sensor.fa_bulk_0665","n":"Upstairs
+        bedroom climate sensor number 0665 temperature"},{"e":"sensor.fa_bulk_0666","n":"Upstairs
+        bedroom climate sensor number 0666 temperature"},{"e":"sensor.fa_bulk_0667","n":"Upstairs
+        bedroom climate sensor number 0667 temperature"},{"e":"sensor.fa_bulk_0668","n":"Upstairs
+        bedroom climate sensor number 0668 temperature"},{"e":"sensor.fa_bulk_0669","n":"Upstairs
+        bedroom climate sensor number 0669 temperature"},{"e":"sensor.fa_bulk_0670","n":"Upstairs
+        bedroom climate sensor number 0670 temperature"},{"e":"sensor.fa_bulk_0671","n":"Upstairs
+        bedroom climate sensor number 0671 temperature"},{"e":"sensor.fa_bulk_0672","n":"Upstairs
+        bedroom climate sensor number 0672 temperature"},{"e":"sensor.fa_bulk_0673","n":"Upstairs
+        bedroom climate sensor number 0673 temperature"},{"e":"sensor.fa_bulk_0674","n":"Upstairs
+        bedroom climate sensor number 0674 temperature"},{"e":"sensor.fa_bulk_0675","n":"Upstairs
+        bedroom climate sensor number 0675 temperature"},{"e":"sensor.fa_bulk_0676","n":"Upstairs
+        bedroom climate sensor number 0676 temperature"},{"e":"sensor.fa_bulk_0677","n":"Upstairs
+        bedroom climate sensor number 0677 temperature"},{"e":"sensor.fa_bulk_0678","n":"Upstairs
+        bedroom climate sensor number 0678 temperature"},{"e":"sensor.fa_bulk_0679","n":"Upstairs
+        bedroom climate sensor number 0679 temperature"},{"e":"sensor.fa_bulk_0680","n":"Upstairs
+        bedroom climate sensor number 0680 temperature"},{"e":"sensor.fa_bulk_0681","n":"Upstairs
+        bedroom climate sensor number 0681 temperature"},{"e":"sensor.fa_bulk_0682","n":"Upstairs
+        bedroom climate sensor number 0682 temperature"},{"e":"sensor.fa_bulk_0683","n":"Upstairs
+        bedroom climate sensor number 0683 temperature"},{"e":"sensor.fa_bulk_0684","n":"Upstairs
+        bedroom climate sensor number 0684 temperature"},{"e":"sensor.fa_bulk_0685","n":"Upstairs
+        bedroom climate sensor number 0685 temperature"},{"e":"sensor.fa_bulk_0686","n":"Upstairs
+        bedroom climate sensor number 0686 temperature"},{"e":"sensor.fa_bulk_0687","n":"Upstairs
+        bedroom climate sensor number 0687 temperature"},{"e":"sensor.fa_bulk_0688","n":"Upstairs
+        bedroom climate sensor number 0688 temperature"},{"e":"sensor.fa_bulk_0689","n":"Upstairs
+        bedroom climate sensor number 0689 temperature"},{"e":"sensor.fa_bulk_0690","n":"Upstairs
+        bedroom climate sensor number 0690 temperature"},{"e":"sensor.fa_bulk_0691","n":"Upstairs
+        bedroom climate sensor number 0691 temperature"},{"e":"sensor.fa_bulk_0692","n":"Upstairs
+        bedroom climate sensor number 0692 temperature"},{"e":"sensor.fa_bulk_0693","n":"Upstairs
+        bedroom climate sensor number 0693 temperature"},{"e":"sensor.fa_bulk_0694","n":"Upstairs
+        bedroom climate sensor number 0694 temperature"},{"e":"sensor.fa_bulk_0695","n":"Upstairs
+        bedroom climate sensor number 0695 temperature"},{"e":"sensor.fa_bulk_0696","n":"Upstairs
+        bedroom climate sensor number 0696 temperature"},{"e":"sensor.fa_bulk_0697","n":"Upstairs
+        bedroom climate sensor number 0697 temperature"},{"e":"sensor.fa_bulk_0698","n":"Upstairs
+        bedroom climate sensor number 0698 temperature"},{"e":"sensor.fa_bulk_0699","n":"Upstairs
+        bedroom climate sensor number 0699 temperature"},{"e":"sensor.fa_bulk_0700","n":"Upstairs
+        bedroom climate sensor number 0700 temperature"},{"e":"sensor.fa_bulk_0701","n":"Upstairs
+        bedroom climate sensor number 0701 temperature"},{"e":"sensor.fa_bulk_0702","n":"Upstairs
+        bedroom climate sensor number 0702 temperature"},{"e":"sensor.fa_bulk_0703","n":"Upstairs
+        bedroom climate sensor number 0703 temperature"},{"e":"sensor.fa_bulk_0704","n":"Upstairs
+        bedroom climate sensor number 0704 temperature"},{"e":"sensor.fa_bulk_0705","n":"Upstairs
+        bedroom climate sensor number 0705 temperature"},{"e":"sensor.fa_bulk_0706","n":"Upstairs
+        bedroom climate sensor number 0706 temperature"},{"e":"sensor.fa_bulk_0707","n":"Upstairs
+        bedroom climate sensor number 0707 temperature"},{"e":"sensor.fa_bulk_0708","n":"Upstairs
+        bedroom climate sensor number 0708 temperature"},{"e":"sensor.fa_bulk_0709","n":"Upstairs
+        bedroom climate sensor number 0709 temperature"},{"e":"sensor.fa_bulk_0710","n":"Upstairs
+        bedroom climate sensor number 0710 temperature"},{"e":"sensor.fa_bulk_0711","n":"Upstairs
+        bedroom climate sensor number 0711 temperature"},{"e":"sensor.fa_bulk_0712","n":"Upstairs
+        bedroom climate sensor number 0712 temperature"},{"e":"sensor.fa_bulk_0713","n":"Upstairs
+        bedroom climate sensor number 0713 temperature"},{"e":"sensor.fa_bulk_0714","n":"Upstairs
+        bedroom climate sensor number 0714 temperature"},{"e":"sensor.fa_bulk_0715","n":"Upstairs
+        bedroom climate sensor number 0715 temperature"},{"e":"sensor.fa_bulk_0716","n":"Upstairs
+        bedroom climate sensor number 0716 temperature"},{"e":"sensor.fa_bulk_0717","n":"Upstairs
+        bedroom climate sensor number 0717 temperature"},{"e":"sensor.fa_bulk_0718","n":"Upstairs
+        bedroom climate sensor number 0718 temperature"},{"e":"sensor.fa_bulk_0719","n":"Upstairs
+        bedroom climate sensor number 0719 temperature"},{"e":"sensor.fa_bulk_0720","n":"Upstairs
+        bedroom climate sensor number 0720 temperature"},{"e":"sensor.fa_bulk_0721","n":"Upstairs
+        bedroom climate sensor number 0721 temperature"},{"e":"sensor.fa_bulk_0722","n":"Upstairs
+        bedroom climate sensor number 0722 temperature"},{"e":"sensor.fa_bulk_0723","n":"Upstairs
+        bedroom climate sensor number 0723 temperature"},{"e":"sensor.fa_bulk_0724","n":"Upstairs
+        bedroom climate sensor number 0724 temperature"},{"e":"sensor.fa_bulk_0725","n":"Upstairs
+        bedroom climate sensor number 0725 temperature"},{"e":"sensor.fa_bulk_0726","n":"Upstairs
+        bedroom climate sensor number 0726 temperature"},{"e":"sensor.fa_bulk_0727","n":"Upstairs
+        bedroom climate sensor number 0727 temperature"},{"e":"sensor.fa_bulk_0728","n":"Upstairs
+        bedroom climate sensor number 0728 temperature"},{"e":"sensor.fa_bulk_0729","n":"Upstairs
+        bedroom climate sensor number 0729 temperature"},{"e":"sensor.fa_bulk_0730","n":"Upstairs
+        bedroom climate sensor number 0730 temperature"},{"e":"sensor.fa_bulk_0731","n":"Upstairs
+        bedroom climate sensor number 0731 temperature"},{"e":"sensor.fa_bulk_0732","n":"Upstairs
+        bedroom climate sensor number 0732 temperature"},{"e":"sensor.fa_bulk_0733","n":"Upstairs
+        bedroom climate sensor number 0733 temperature"},{"e":"sensor.fa_bulk_0734","n":"Upstairs
+        bedroom climate sensor number 0734 temperature"},{"e":"sensor.fa_bulk_0735","n":"Upstairs
+        bedroom climate sensor number 0735 temperature"},{"e":"sensor.fa_bulk_0736","n":"Upstairs
+        bedroom climate sensor number 0736 temperature"},{"e":"sensor.fa_bulk_0737","n":"Upstairs
+        bedroom climate sensor number 0737 temperature"},{"e":"sensor.fa_bulk_0738","n":"Upstairs
+        bedroom climate sensor number 0738 temperature"},{"e":"sensor.fa_bulk_0739","n":"Upstairs
+        bedroom climate sensor number 0739 temperature"},{"e":"sensor.fa_bulk_0740","n":"Upstairs
+        bedroom climate sensor number 0740 temperature"},{"e":"sensor.fa_bulk_0741","n":"Upstairs
+        bedroom climate sensor number 0741 temperature"},{"e":"sensor.fa_bulk_0742","n":"Upstairs
+        bedroom climate sensor number 0742 temperature"},{"e":"sensor.fa_bulk_0743","n":"Upstairs
+        bedroom climate sensor number 0743 temperature"},{"e":"sensor.fa_bulk_0744","n":"Upstairs
+        bedroom climate sensor number 0744 temperature"},{"e":"sensor.fa_bulk_0745","n":"Upstairs
+        bedroom climate sensor number 0745 temperature"},{"e":"sensor.fa_bulk_0746","n":"Upstairs
+        bedroom climate sensor number 0746 temperature"},{"e":"sensor.fa_bulk_0747","n":"Upstairs
+        bedroom climate sensor number 0747 temperature"},{"e":"sensor.fa_bulk_0748","n":"Upstairs
+        bedroom climate sensor number 0748 temperature"},{"e":"sensor.fa_bulk_0749","n":"Upstairs
+        bedroom climate sensor number 0749 temperature"},{"e":"sensor.fa_bulk_0750","n":"Upstairs
+        bedroom climate sensor number 0750 temperature"},{"e":"sensor.fa_bulk_0751","n":"Upstairs
+        bedroom climate sensor number 0751 temperature"},{"e":"sensor.fa_bulk_0752","n":"Upstairs
+        bedroom climate sensor number 0752 temperature"},{"e":"sensor.fa_bulk_0753","n":"Upstairs
+        bedroom climate sensor number 0753 temperature"},{"e":"sensor.fa_bulk_0754","n":"Upstairs
+        bedroom climate sensor number 0754 temperature"},{"e":"sensor.fa_bulk_0755","n":"Upstairs
+        bedroom climate sensor number 0755 temperature"},{"e":"sensor.fa_bulk_0756","n":"Upstairs
+        bedroom climate sensor number 0756 temperature"},{"e":"sensor.fa_bulk_0757","n":"Upstairs
+        bedroom climate sensor number 0757 temperature"},{"e":"sensor.fa_bulk_0758","n":"Upstairs
+        bedroom climate sensor number 0758 temperature"},{"e":"sensor.fa_bulk_0759","n":"Upstairs
+        bedroom climate sensor number 0759 temperature"},{"e":"sensor.fa_bulk_0760","n":"Upstairs
+        bedroom climate sensor number 0760 temperature"},{"e":"sensor.fa_bulk_0761","n":"Upstairs
+        bedroom climate sensor number 0761 temperature"},{"e":"sensor.fa_bulk_0762","n":"Upstairs
+        bedroom climate sensor number 0762 temperature"},{"e":"sensor.fa_bulk_0763","n":"Upstairs
+        bedroom climate sensor number 0763 temperature"},{"e":"sensor.fa_bulk_0764","n":"Upstairs
+        bedroom climate sensor number 0764 temperature"},{"e":"sensor.fa_bulk_0765","n":"Upstairs
+        bedroom climate sensor number 0765 temperature"},{"e":"sensor.fa_bulk_0766","n":"Upstairs
+        bedroom climate sensor number 0766 temperature"},{"e":"sensor.fa_bulk_0767","n":"Upstairs
+        bedroom climate sensor number 0767 temperature"},{"e":"sensor.fa_bulk_0768","n":"Upstairs
+        bedroom climate sensor number 0768 temperature"},{"e":"sensor.fa_bulk_0769","n":"Upstairs
+        bedroom climate sensor number 0769 temperature"},{"e":"sensor.fa_bulk_0770","n":"Upstairs
+        bedroom climate sensor number 0770 temperature"},{"e":"sensor.fa_bulk_0771","n":"Upstairs
+        bedroom climate sensor number 0771 temperature"},{"e":"sensor.fa_bulk_0772","n":"Upstairs
+        bedroom climate sensor number 0772 temperature"},{"e":"sensor.fa_bulk_0773","n":"Upstairs
+        bedroom climate sensor number 0773 temperature"},{"e":"sensor.fa_bulk_0774","n":"Upstairs
+        bedroom climate sensor number 0774 temperature"},{"e":"sensor.fa_bulk_0775","n":"Upstairs
+        bedroom climate sensor number 0775 temperature"},{"e":"sensor.fa_bulk_0776","n":"Upstairs
+        bedroom climate sensor number 0776 temperature"},{"e":"sensor.fa_bulk_0777","n":"Upstairs
+        bedroom climate sensor number 0777 temperature"},{"e":"sensor.fa_bulk_0778","n":"Upstairs
+        bedroom climate sensor number 0778 temperature"},{"e":"sensor.fa_bulk_0779","n":"Upstairs
+        bedroom climate sensor number 0779 temperature"},{"e":"sensor.fa_bulk_0780","n":"Upstairs
+        bedroom climate sensor number 0780 temperature"},{"e":"sensor.fa_bulk_0781","n":"Upstairs
+        bedroom climate sensor number 0781 temperature"},{"e":"sensor.fa_bulk_0782","n":"Upstairs
+        bedroom climate sensor number 0782 temperature"},{"e":"sensor.fa_bulk_0783","n":"Upstairs
+        bedroom climate sensor number 0783 temperature"},{"e":"sensor.fa_bulk_0784","n":"Upstairs
+        bedroom climate sensor number 0784 temperature"},{"e":"sensor.fa_bulk_0785","n":"Upstairs
+        bedroom climate sensor number 0785 temperature"},{"e":"sensor.fa_bulk_0786","n":"Upstairs
+        bedroom climate sensor number 0786 temperature"},{"e":"sensor.fa_bulk_0787","n":"Upstairs
+        bedroom climate sensor number 0787 temperature"},{"e":"sensor.fa_bulk_0788","n":"Upstairs
+        bedroom climate sensor number 0788 temperature"},{"e":"sensor.fa_bulk_0789","n":"Upstairs
+        bedroom climate sensor number 0789 temperature"},{"e":"sensor.fa_bulk_0790","n":"Upstairs
+        bedroom climate sensor number 0790 temperature"},{"e":"sensor.fa_bulk_0791","n":"Upstairs
+        bedroom climate sensor number 0791 temperature"},{"e":"sensor.fa_bulk_0792","n":"Upstairs
+        bedroom climate sensor number 0792 temperature"},{"e":"sensor.fa_bulk_0793","n":"Upstairs
+        bedroom climate sensor number 0793 temperature"},{"e":"sensor.fa_bulk_0794","n":"Upstairs
+        bedroom climate sensor number 0794 temperature"},{"e":"sensor.fa_bulk_0795","n":"Upstairs
+        bedroom climate sensor number 0795 temperature"},{"e":"sensor.fa_bulk_0796","n":"Upstairs
+        bedroom climate sensor number 0796 temperature"},{"e":"sensor.fa_bulk_0797","n":"Upstairs
+        bedroom climate sensor number 0797 temperature"},{"e":"sensor.fa_bulk_0798","n":"Upstairs
+        bedroom climate sensor number 0798 temperature"},{"e":"sensor.fa_bulk_0799","n":"Upstairs
+        bedroom climate sensor number 0799 temperature"},{"e":"sensor.fa_bulk_0800","n":"Upstairs
+        bedroom climate sensor number 0800 temperature"},{"e":"sensor.fa_bulk_0801","n":"Upstairs
+        bedroom climate sensor number 0801 temperature"},{"e":"sensor.fa_bulk_0802","n":"Upstairs
+        bedroom climate sensor number 0802 temperature"},{"e":"sensor.fa_bulk_0803","n":"Upstairs
+        bedroom climate sensor number 0803 temperature"},{"e":"sensor.fa_bulk_0804","n":"Upstairs
+        bedroom climate sensor number 0804 temperature"},{"e":"sensor.fa_bulk_0805","n":"Upstairs
+        bedroom climate sensor number 0805 temperature"},{"e":"sensor.fa_bulk_0806","n":"Upstairs
+        bedroom climate sensor number 0806 temperature"},{"e":"sensor.fa_bulk_0807","n":"Upstairs
+        bedroom climate sensor number 0807 temperature"},{"e":"sensor.fa_bulk_0808","n":"Upstairs
+        bedroom climate sensor number 0808 temperature"},{"e":"sensor.fa_bulk_0809","n":"Upstairs
+        bedroom climate sensor number 0809 temperature"},{"e":"sensor.fa_bulk_0810","n":"Upstairs
+        bedroom climate sensor number 0810 temperature"},{"e":"sensor.fa_bulk_0811","n":"Upstairs
+        bedroom climate sensor number 0811 temperature"},{"e":"sensor.fa_bulk_0812","n":"Upstairs
+        bedroom climate sensor number 0812 temperature"},{"e":"sensor.fa_bulk_0813","n":"Upstairs
+        bedroom climate sensor number 0813 temperature"},{"e":"sensor.fa_bulk_0814","n":"Upstairs
+        bedroom climate sensor number 0814 temperature"},{"e":"sensor.fa_bulk_0815","n":"Upstairs
+        bedroom climate sensor number 0815 temperature"},{"e":"sensor.fa_bulk_0816","n":"Upstairs
+        bedroom climate sensor number 0816 temperature"},{"e":"sensor.fa_bulk_0817","n":"Upstairs
+        bedroom climate sensor number 0817 temperature"},{"e":"sensor.fa_bulk_0818","n":"Upstairs
+        bedroom climate sensor number 0818 temperature"},{"e":"sensor.fa_bulk_0819","n":"Upstairs
+        bedroom climate sensor number 0819 temperature"},{"e":"sensor.fa_bulk_0820","n":"Upstairs
+        bedroom climate sensor number 0820 temperature"},{"e":"sensor.fa_bulk_0821","n":"Upstairs
+        bedroom climate sensor number 0821 temperature"},{"e":"sensor.fa_bulk_0822","n":"Upstairs
+        bedroom climate sensor number 0822 temperature"},{"e":"sensor.fa_bulk_0823","n":"Upstairs
+        bedroom climate sensor number 0823 temperature"},{"e":"sensor.fa_bulk_0824","n":"Upstairs
+        bedroom climate sensor number 0824 temperature"},{"e":"sensor.fa_bulk_0825","n":"Upstairs
+        bedroom climate sensor number 0825 temperature"},{"e":"sensor.fa_bulk_0826","n":"Upstairs
+        bedroom climate sensor number 0826 temperature"},{"e":"sensor.fa_bulk_0827","n":"Upstairs
+        bedroom climate sensor number 0827 temperature"},{"e":"sensor.fa_bulk_0828","n":"Upstairs
+        bedroom climate sensor number 0828 temperature"},{"e":"sensor.fa_bulk_0829","n":"Upstairs
+        bedroom climate sensor number 0829 temperature"},{"e":"sensor.fa_bulk_0830","n":"Upstairs
+        bedroom climate sensor number 0830 temperature"},{"e":"sensor.fa_bulk_0831","n":"Upstairs
+        bedroom climate sensor number 0831 temperature"},{"e":"sensor.fa_bulk_0832","n":"Upstairs
+        bedroom climate sensor number 0832 temperature"},{"e":"sensor.fa_bulk_0833","n":"Upstairs
+        bedroom climate sensor number 0833 temperature"},{"e":"sensor.fa_bulk_0834","n":"Upstairs
+        bedroom climate sensor number 0834 temperature"},{"e":"sensor.fa_bulk_0835","n":"Upstairs
+        bedroom climate sensor number 0835 temperature"},{"e":"sensor.fa_bulk_0836","n":"Upstairs
+        bedroom climate sensor number 0836 temperature"},{"e":"sensor.fa_bulk_0837","n":"Upstairs
+        bedroom climate sensor number 0837 temperature"},{"e":"sensor.fa_bulk_0838","n":"Upstairs
+        bedroom climate sensor number 0838 temperature"},{"e":"sensor.fa_bulk_0839","n":"Upstairs
+        bedroom climate sensor number 0839 temperature"},{"e":"sensor.fa_bulk_0840","n":"Upstairs
+        bedroom climate sensor number 0840 temperature"},{"e":"sensor.fa_bulk_0841","n":"Upstairs
+        bedroom climate sensor number 0841 temperature"},{"e":"sensor.fa_bulk_0842","n":"Upstairs
+        bedroom climate sensor number 0842 temperature"},{"e":"sensor.fa_bulk_0843","n":"Upstairs
+        bedroom climate sensor number 0843 temperature"},{"e":"sensor.fa_bulk_0844","n":"Upstairs
+        bedroom climate sensor number 0844 temperature"},{"e":"sensor.fa_bulk_0845","n":"Upstairs
+        bedroom climate sensor number 0845 temperature"},{"e":"sensor.fa_bulk_0846","n":"Upstairs
+        bedroom climate sensor number 0846 temperature"},{"e":"sensor.fa_bulk_0847","n":"Upstairs
+        bedroom climate sensor number 0847 temperature"},{"e":"sensor.fa_bulk_0848","n":"Upstairs
+        bedroom climate sensor number 0848 temperature"},{"e":"sensor.fa_bulk_0849","n":"Upstairs
+        bedroom climate sensor number 0849 temperature"},{"e":"sensor.fa_bulk_0850","n":"Upstairs
+        bedroom climate sensor number 0850 temperature"},{"e":"sensor.fa_bulk_0851","n":"Upstairs
+        bedroom climate sensor number 0851 temperature"},{"e":"sensor.fa_bulk_0852","n":"Upstairs
+        bedroom climate sensor number 0852 temperature"},{"e":"sensor.fa_bulk_0853","n":"Upstairs
+        bedroom climate sensor number 0853 temperature"},{"e":"sensor.fa_bulk_0854","n":"Upstairs
+        bedroom climate sensor number 0854 temperature"},{"e":"sensor.fa_bulk_0855","n":"Upstairs
+        bedroom climate sensor number 0855 temperature"},{"e":"sensor.fa_bulk_0856","n":"Upstairs
+        bedroom climate sensor number 0856 temperature"},{"e":"sensor.fa_bulk_0857","n":"Upstairs
+        bedroom climate sensor number 0857 temperature"},{"e":"sensor.fa_bulk_0858","n":"Upstairs
+        bedroom climate sensor number 0858 temperature"},{"e":"sensor.fa_bulk_0859","n":"Upstairs
+        bedroom climate sensor number 0859 temperature"},{"e":"sensor.fa_bulk_0860","n":"Upstairs
+        bedroom climate sensor number 0860 temperature"},{"e":"sensor.fa_bulk_0861","n":"Upstairs
+        bedroom climate sensor number 0861 temperature"},{"e":"sensor.fa_bulk_0862","n":"Upstairs
+        bedroom climate sensor number 0862 temperature"},{"e":"sensor.fa_bulk_0863","n":"Upstairs
+        bedroom climate sensor number 0863 temperature"},{"e":"sensor.fa_bulk_0864","n":"Upstairs
+        bedroom climate sensor number 0864 temperature"},{"e":"sensor.fa_bulk_0865","n":"Upstairs
+        bedroom climate sensor number 0865 temperature"},{"e":"sensor.fa_bulk_0866","n":"Upstairs
+        bedroom climate sensor number 0866 temperature"},{"e":"sensor.fa_bulk_0867","n":"Upstairs
+        bedroom climate sensor number 0867 temperature"},{"e":"sensor.fa_bulk_0868","n":"Upstairs
+        bedroom climate sensor number 0868 temperature"},{"e":"sensor.fa_bulk_0869","n":"Upstairs
+        bedroom climate sensor number 0869 temperature"},{"e":"sensor.fa_bulk_0870","n":"Upstairs
+        bedroom climate sensor number 0870 temperature"},{"e":"sensor.fa_bulk_0871","n":"Upstairs
+        bedroom climate sensor number 0871 temperature"},{"e":"sensor.fa_bulk_0872","n":"Upstairs
+        bedroom climate sensor number 0872 temperature"},{"e":"sensor.fa_bulk_0873","n":"Upstairs
+        bedroom climate sensor number 0873 temperature"},{"e":"sensor.fa_bulk_0874","n":"Upstairs
+        bedroom climate sensor number 0874 temperature"},{"e":"sensor.fa_bulk_0875","n":"Upstairs
+        bedroom climate sensor number 0875 temperature"},{"e":"sensor.fa_bulk_0876","n":"Upstairs
+        bedroom climate sensor number 0876 temperature"},{"e":"sensor.fa_bulk_0877","n":"Upstairs
+        bedroom climate sensor number 0877 temperature"},{"e":"sensor.fa_bulk_0878","n":"Upstairs
+        bedroom climate sensor number 0878 temperature"},{"e":"sensor.fa_bulk_0879","n":"Upstairs
+        bedroom climate sensor number 0879 temperature"},{"e":"sensor.fa_bulk_0880","n":"Upstairs
+        bedroom climate sensor number 0880 temperature"},{"e":"sensor.fa_bulk_0881","n":"Upstairs
+        bedroom climate sensor number 0881 temperature"},{"e":"sensor.fa_bulk_0882","n":"Upstairs
+        bedroom climate sensor number 0882 temperature"},{"e":"sensor.fa_bulk_0883","n":"Upstairs
+        bedroom climate sensor number 0883 temperature"},{"e":"sensor.fa_bulk_0884","n":"Upstairs
+        bedroom climate sensor number 0884 temperature"},{"e":"sensor.fa_bulk_0885","n":"Upstairs
+        bedroom climate sensor number 0885 temperature"},{"e":"sensor.fa_bulk_0886","n":"Upstairs
+        bedroom climate sensor number 0886 temperature"},{"e":"sensor.fa_bulk_0887","n":"Upstairs
+        bedroom climate sensor number 0887 temperature"},{"e":"sensor.fa_bulk_0888","n":"Upstairs
+        bedroom climate sensor number 0888 temperature"},{"e":"sensor.fa_bulk_0889","n":"Upstairs
+        bedroom climate sensor number 0889 temperature"},{"e":"sensor.fa_bulk_0890","n":"Upstairs
+        bedroom climate sensor number 0890 temperature"},{"e":"sensor.fa_bulk_0891","n":"Upstairs
+        bedroom climate sensor number 0891 temperature"},{"e":"sensor.fa_bulk_0892","n":"Upstairs
+        bedroom climate sensor number 0892 temperature"},{"e":"sensor.fa_bulk_0893","n":"Upstairs
+        bedroom climate sensor number 0893 temperature"},{"e":"sensor.fa_bulk_0894","n":"Upstairs
+        bedroom climate sensor number 0894 temperature"},{"e":"sensor.fa_bulk_0895","n":"Upstairs
+        bedroom climate sensor number 0895 temperature"},{"e":"sensor.fa_bulk_0896","n":"Upstairs
+        bedroom climate sensor number 0896 temperature"},{"e":"sensor.fa_bulk_0897","n":"Upstairs
+        bedroom climate sensor number 0897 temperature"},{"e":"sensor.fa_bulk_0898","n":"Upstairs
+        bedroom climate sensor number 0898 temperature"},{"e":"sensor.fa_bulk_0899","n":"Upstairs
+        bedroom climate sensor number 0899 temperature"},{"e":"sensor.fa_bulk_0900","n":"Upstairs
+        bedroom climate sensor number 0900 temperature"},{"e":"sensor.fa_bulk_0901","n":"Upstairs
+        bedroom climate sensor number 0901 temperature"},{"e":"sensor.fa_bulk_0902","n":"Upstairs
+        bedroom climate sensor number 0902 temperature"},{"e":"sensor.fa_bulk_0903","n":"Upstairs
+        bedroom climate sensor number 0903 temperature"},{"e":"sensor.fa_bulk_0904","n":"Upstairs
+        bedroom climate sensor number 0904 temperature"},{"e":"sensor.fa_bulk_0905","n":"Upstairs
+        bedroom climate sensor number 0905 temperature"},{"e":"sensor.fa_bulk_0906","n":"Upstairs
+        bedroom climate sensor number 0906 temperature"},{"e":"sensor.fa_bulk_0907","n":"Upstairs
+        bedroom climate sensor number 0907 temperature"},{"e":"sensor.fa_bulk_0908","n":"Upstairs
+        bedroom climate sensor number 0908 temperature"},{"e":"sensor.fa_bulk_0909","n":"Upstairs
+        bedroom climate sensor number 0909 temperature"},{"e":"sensor.fa_bulk_0910","n":"Upstairs
+        bedroom climate sensor number 0910 temperature"},{"e":"sensor.fa_bulk_0911","n":"Upstairs
+        bedroom climate sensor number 0911 temperature"},{"e":"sensor.fa_bulk_0912","n":"Upstairs
+        bedroom climate sensor number 0912 temperature"},{"e":"sensor.fa_bulk_0913","n":"Upstairs
+        bedroom climate sensor number 0913 temperature"},{"e":"sensor.fa_bulk_0914","n":"Upstairs
+        bedroom climate sensor number 0914 temperature"},{"e":"sensor.fa_bulk_0915","n":"Upstairs
+        bedroom climate sensor number 0915 temperature"},{"e":"sensor.fa_bulk_0916","n":"Upstairs
+        bedroom climate sensor number 0916 temperature"},{"e":"sensor.fa_bulk_0917","n":"Upstairs
+        bedroom climate sensor number 0917 temperature"},{"e":"sensor.fa_bulk_0918","n":"Upstairs
+        bedroom climate sensor number 0918 temperature"},{"e":"sensor.fa_bulk_0919","n":"Upstairs
+        bedroom climate sensor number 0919 temperature"},{"e":"sensor.fa_bulk_0920","n":"Upstairs
+        bedroom climate sensor number 0920 temperature"},{"e":"sensor.fa_bulk_0921","n":"Upstairs
+        bedroom climate sensor number 0921 temperature"},{"e":"sensor.fa_bulk_0922","n":"Upstairs
+        bedroom climate sensor number 0922 temperature"},{"e":"sensor.fa_bulk_0923","n":"Upstairs
+        bedroom climate sensor number 0923 temperature"},{"e":"sensor.fa_bulk_0924","n":"Upstairs
+        bedroom climate sensor number 0924 temperature"},{"e":"sensor.fa_bulk_0925","n":"Upstairs
+        bedroom climate sensor number 0925 temperature"},{"e":"sensor.fa_bulk_0926","n":"Upstairs
+        bedroom climate sensor number 0926 temperature"},{"e":"sensor.fa_bulk_0927","n":"Upstairs
+        bedroom climate sensor number 0927 temperature"},{"e":"sensor.fa_bulk_0928","n":"Upstairs
+        bedroom climate sensor number 0928 temperature"},{"e":"sensor.fa_bulk_0929","n":"Upstairs
+        bedroom climate sensor number 0929 temperature"}]'
+    headers:
+      Content-Length:
+      - '45001'
+      Content-Type:
+      - text/plain; charset=utf-8
+      Date:
+      - Sun, 01 Nov 2026 08:15:55 GMT
+      Referrer-Policy:
+      - no-referrer
+      Server:
+      - ''
+      X-Content-Type-Options:
+      - nosniff
+      X-Frame-Options:
+      - SAMEORIGIN
+    status:
+      code: 200
+      message: OK
+- request:
+    body:
+      template: '[{% for s in (states | sort(attribute="entity_id"))[1000:1500] %}{%
+        if not loop.first %},{% endif %}{"e":{{ s.entity_id | tojson }},"n":{{ s.name
+        | tojson }}{% set v = area_name(s.entity_id) %}{% if v %},"a":{{ v | tojson
+        }}{% endif %}{% set v = device_id(s.entity_id) %}{% if v %},"d":{{ v | tojson
+        }}{% endif %}{% set v = device_name(s.entity_id) %}{% if v %},"dn":{{ v |
+        tojson }}{% endif %}{% set v = s.attributes.device_class %}{% if v %},"c":{{
+        v | tojson }}{% endif %}}{% endfor %}]'
+    headers:
+      Content-Type:
+      - application/json
+    method: POST
+    uri: http://localhost:41475/api/template
+  response:
+    body:
+      string: '[{"e":"sensor.fa_bulk_0930","n":"Upstairs bedroom climate sensor number
+        0930 temperature"},{"e":"sensor.fa_bulk_0931","n":"Upstairs bedroom climate
+        sensor number 0931 temperature"},{"e":"sensor.fa_bulk_0932","n":"Upstairs
+        bedroom climate sensor number 0932 temperature"},{"e":"sensor.fa_bulk_0933","n":"Upstairs
+        bedroom climate sensor number 0933 temperature"},{"e":"sensor.fa_bulk_0934","n":"Upstairs
+        bedroom climate sensor number 0934 temperature"},{"e":"sensor.fa_bulk_0935","n":"Upstairs
+        bedroom climate sensor number 0935 temperature"},{"e":"sensor.fa_bulk_0936","n":"Upstairs
+        bedroom climate sensor number 0936 temperature"},{"e":"sensor.fa_bulk_0937","n":"Upstairs
+        bedroom climate sensor number 0937 temperature"},{"e":"sensor.fa_bulk_0938","n":"Upstairs
+        bedroom climate sensor number 0938 temperature"},{"e":"sensor.fa_bulk_0939","n":"Upstairs
+        bedroom climate sensor number 0939 temperature"},{"e":"sensor.fa_bulk_0940","n":"Upstairs
+        bedroom climate sensor number 0940 temperature"},{"e":"sensor.fa_bulk_0941","n":"Upstairs
+        bedroom climate sensor number 0941 temperature"},{"e":"sensor.fa_bulk_0942","n":"Upstairs
+        bedroom climate sensor number 0942 temperature"},{"e":"sensor.fa_bulk_0943","n":"Upstairs
+        bedroom climate sensor number 0943 temperature"},{"e":"sensor.fa_bulk_0944","n":"Upstairs
+        bedroom climate sensor number 0944 temperature"},{"e":"sensor.fa_bulk_0945","n":"Upstairs
+        bedroom climate sensor number 0945 temperature"},{"e":"sensor.fa_bulk_0946","n":"Upstairs
+        bedroom climate sensor number 0946 temperature"},{"e":"sensor.fa_bulk_0947","n":"Upstairs
+        bedroom climate sensor number 0947 temperature"},{"e":"sensor.fa_bulk_0948","n":"Upstairs
+        bedroom climate sensor number 0948 temperature"},{"e":"sensor.fa_bulk_0949","n":"Upstairs
+        bedroom climate sensor number 0949 temperature"},{"e":"sensor.fa_bulk_0950","n":"Upstairs
+        bedroom climate sensor number 0950 temperature"},{"e":"sensor.fa_bulk_0951","n":"Upstairs
+        bedroom climate sensor number 0951 temperature"},{"e":"sensor.fa_bulk_0952","n":"Upstairs
+        bedroom climate sensor number 0952 temperature"},{"e":"sensor.fa_bulk_0953","n":"Upstairs
+        bedroom climate sensor number 0953 temperature"},{"e":"sensor.fa_bulk_0954","n":"Upstairs
+        bedroom climate sensor number 0954 temperature"},{"e":"sensor.fa_bulk_0955","n":"Upstairs
+        bedroom climate sensor number 0955 temperature"},{"e":"sensor.fa_bulk_0956","n":"Upstairs
+        bedroom climate sensor number 0956 temperature"},{"e":"sensor.fa_bulk_0957","n":"Upstairs
+        bedroom climate sensor number 0957 temperature"},{"e":"sensor.fa_bulk_0958","n":"Upstairs
+        bedroom climate sensor number 0958 temperature"},{"e":"sensor.fa_bulk_0959","n":"Upstairs
+        bedroom climate sensor number 0959 temperature"},{"e":"sensor.fa_bulk_0960","n":"Upstairs
+        bedroom climate sensor number 0960 temperature"},{"e":"sensor.fa_bulk_0961","n":"Upstairs
+        bedroom climate sensor number 0961 temperature"},{"e":"sensor.fa_bulk_0962","n":"Upstairs
+        bedroom climate sensor number 0962 temperature"},{"e":"sensor.fa_bulk_0963","n":"Upstairs
+        bedroom climate sensor number 0963 temperature"},{"e":"sensor.fa_bulk_0964","n":"Upstairs
+        bedroom climate sensor number 0964 temperature"},{"e":"sensor.fa_bulk_0965","n":"Upstairs
+        bedroom climate sensor number 0965 temperature"},{"e":"sensor.fa_bulk_0966","n":"Upstairs
+        bedroom climate sensor number 0966 temperature"},{"e":"sensor.fa_bulk_0967","n":"Upstairs
+        bedroom climate sensor number 0967 temperature"},{"e":"sensor.fa_bulk_0968","n":"Upstairs
+        bedroom climate sensor number 0968 temperature"},{"e":"sensor.fa_bulk_0969","n":"Upstairs
+        bedroom climate sensor number 0969 temperature"},{"e":"sensor.fa_bulk_0970","n":"Upstairs
+        bedroom climate sensor number 0970 temperature"},{"e":"sensor.fa_bulk_0971","n":"Upstairs
+        bedroom climate sensor number 0971 temperature"},{"e":"sensor.fa_bulk_0972","n":"Upstairs
+        bedroom climate sensor number 0972 temperature"},{"e":"sensor.fa_bulk_0973","n":"Upstairs
+        bedroom climate sensor number 0973 temperature"},{"e":"sensor.fa_bulk_0974","n":"Upstairs
+        bedroom climate sensor number 0974 temperature"},{"e":"sensor.fa_bulk_0975","n":"Upstairs
+        bedroom climate sensor number 0975 temperature"},{"e":"sensor.fa_bulk_0976","n":"Upstairs
+        bedroom climate sensor number 0976 temperature"},{"e":"sensor.fa_bulk_0977","n":"Upstairs
+        bedroom climate sensor number 0977 temperature"},{"e":"sensor.fa_bulk_0978","n":"Upstairs
+        bedroom climate sensor number 0978 temperature"},{"e":"sensor.fa_bulk_0979","n":"Upstairs
+        bedroom climate sensor number 0979 temperature"},{"e":"sensor.fa_bulk_0980","n":"Upstairs
+        bedroom climate sensor number 0980 temperature"},{"e":"sensor.fa_bulk_0981","n":"Upstairs
+        bedroom climate sensor number 0981 temperature"},{"e":"sensor.fa_bulk_0982","n":"Upstairs
+        bedroom climate sensor number 0982 temperature"},{"e":"sensor.fa_bulk_0983","n":"Upstairs
+        bedroom climate sensor number 0983 temperature"},{"e":"sensor.fa_bulk_0984","n":"Upstairs
+        bedroom climate sensor number 0984 temperature"},{"e":"sensor.fa_bulk_0985","n":"Upstairs
+        bedroom climate sensor number 0985 temperature"},{"e":"sensor.fa_bulk_0986","n":"Upstairs
+        bedroom climate sensor number 0986 temperature"},{"e":"sensor.fa_bulk_0987","n":"Upstairs
+        bedroom climate sensor number 0987 temperature"},{"e":"sensor.fa_bulk_0988","n":"Upstairs
+        bedroom climate sensor number 0988 temperature"},{"e":"sensor.fa_bulk_0989","n":"Upstairs
+        bedroom climate sensor number 0989 temperature"},{"e":"sensor.fa_bulk_0990","n":"Upstairs
+        bedroom climate sensor number 0990 temperature"},{"e":"sensor.fa_bulk_0991","n":"Upstairs
+        bedroom climate sensor number 0991 temperature"},{"e":"sensor.fa_bulk_0992","n":"Upstairs
+        bedroom climate sensor number 0992 temperature"},{"e":"sensor.fa_bulk_0993","n":"Upstairs
+        bedroom climate sensor number 0993 temperature"},{"e":"sensor.fa_bulk_0994","n":"Upstairs
+        bedroom climate sensor number 0994 temperature"},{"e":"sensor.fa_bulk_0995","n":"Upstairs
+        bedroom climate sensor number 0995 temperature"},{"e":"sensor.fa_bulk_0996","n":"Upstairs
+        bedroom climate sensor number 0996 temperature"},{"e":"sensor.fa_bulk_0997","n":"Upstairs
+        bedroom climate sensor number 0997 temperature"},{"e":"sensor.fa_bulk_0998","n":"Upstairs
+        bedroom climate sensor number 0998 temperature"},{"e":"sensor.fa_bulk_0999","n":"Upstairs
+        bedroom climate sensor number 0999 temperature"},{"e":"sensor.fa_bulk_1000","n":"Upstairs
+        bedroom climate sensor number 1000 temperature"},{"e":"sensor.fa_bulk_1001","n":"Upstairs
+        bedroom climate sensor number 1001 temperature"},{"e":"sensor.fa_bulk_1002","n":"Upstairs
+        bedroom climate sensor number 1002 temperature"},{"e":"sensor.fa_bulk_1003","n":"Upstairs
+        bedroom climate sensor number 1003 temperature"},{"e":"sensor.fa_bulk_1004","n":"Upstairs
+        bedroom climate sensor number 1004 temperature"},{"e":"sensor.fa_bulk_1005","n":"Upstairs
+        bedroom climate sensor number 1005 temperature"},{"e":"sensor.fa_bulk_1006","n":"Upstairs
+        bedroom climate sensor number 1006 temperature"},{"e":"sensor.fa_bulk_1007","n":"Upstairs
+        bedroom climate sensor number 1007 temperature"},{"e":"sensor.fa_bulk_1008","n":"Upstairs
+        bedroom climate sensor number 1008 temperature"},{"e":"sensor.fa_bulk_1009","n":"Upstairs
+        bedroom climate sensor number 1009 temperature"},{"e":"sensor.fa_bulk_1010","n":"Upstairs
+        bedroom climate sensor number 1010 temperature"},{"e":"sensor.fa_bulk_1011","n":"Upstairs
+        bedroom climate sensor number 1011 temperature"},{"e":"sensor.fa_bulk_1012","n":"Upstairs
+        bedroom climate sensor number 1012 temperature"},{"e":"sensor.fa_bulk_1013","n":"Upstairs
+        bedroom climate sensor number 1013 temperature"},{"e":"sensor.fa_bulk_1014","n":"Upstairs
+        bedroom climate sensor number 1014 temperature"},{"e":"sensor.fa_bulk_1015","n":"Upstairs
+        bedroom climate sensor number 1015 temperature"},{"e":"sensor.fa_bulk_1016","n":"Upstairs
+        bedroom climate sensor number 1016 temperature"},{"e":"sensor.fa_bulk_1017","n":"Upstairs
+        bedroom climate sensor number 1017 temperature"},{"e":"sensor.fa_bulk_1018","n":"Upstairs
+        bedroom climate sensor number 1018 temperature"},{"e":"sensor.fa_bulk_1019","n":"Upstairs
+        bedroom climate sensor number 1019 temperature"},{"e":"sensor.fa_bulk_1020","n":"Upstairs
+        bedroom climate sensor number 1020 temperature"},{"e":"sensor.fa_bulk_1021","n":"Upstairs
+        bedroom climate sensor number 1021 temperature"},{"e":"sensor.fa_bulk_1022","n":"Upstairs
+        bedroom climate sensor number 1022 temperature"},{"e":"sensor.fa_bulk_1023","n":"Upstairs
+        bedroom climate sensor number 1023 temperature"},{"e":"sensor.fa_bulk_1024","n":"Upstairs
+        bedroom climate sensor number 1024 temperature"},{"e":"sensor.fa_bulk_1025","n":"Upstairs
+        bedroom climate sensor number 1025 temperature"},{"e":"sensor.fa_bulk_1026","n":"Upstairs
+        bedroom climate sensor number 1026 temperature"},{"e":"sensor.fa_bulk_1027","n":"Upstairs
+        bedroom climate sensor number 1027 temperature"},{"e":"sensor.fa_bulk_1028","n":"Upstairs
+        bedroom climate sensor number 1028 temperature"},{"e":"sensor.fa_bulk_1029","n":"Upstairs
+        bedroom climate sensor number 1029 temperature"},{"e":"sensor.fa_bulk_1030","n":"Upstairs
+        bedroom climate sensor number 1030 temperature"},{"e":"sensor.fa_bulk_1031","n":"Upstairs
+        bedroom climate sensor number 1031 temperature"},{"e":"sensor.fa_bulk_1032","n":"Upstairs
+        bedroom climate sensor number 1032 temperature"},{"e":"sensor.fa_bulk_1033","n":"Upstairs
+        bedroom climate sensor number 1033 temperature"},{"e":"sensor.fa_bulk_1034","n":"Upstairs
+        bedroom climate sensor number 1034 temperature"},{"e":"sensor.fa_bulk_1035","n":"Upstairs
+        bedroom climate sensor number 1035 temperature"},{"e":"sensor.fa_bulk_1036","n":"Upstairs
+        bedroom climate sensor number 1036 temperature"},{"e":"sensor.fa_bulk_1037","n":"Upstairs
+        bedroom climate sensor number 1037 temperature"},{"e":"sensor.fa_bulk_1038","n":"Upstairs
+        bedroom climate sensor number 1038 temperature"},{"e":"sensor.fa_bulk_1039","n":"Upstairs
+        bedroom climate sensor number 1039 temperature"},{"e":"sensor.fa_bulk_1040","n":"Upstairs
+        bedroom climate sensor number 1040 temperature"},{"e":"sensor.fa_bulk_1041","n":"Upstairs
+        bedroom climate sensor number 1041 temperature"},{"e":"sensor.fa_bulk_1042","n":"Upstairs
+        bedroom climate sensor number 1042 temperature"},{"e":"sensor.fa_bulk_1043","n":"Upstairs
+        bedroom climate sensor number 1043 temperature"},{"e":"sensor.fa_bulk_1044","n":"Upstairs
+        bedroom climate sensor number 1044 temperature"},{"e":"sensor.fa_bulk_1045","n":"Upstairs
+        bedroom climate sensor number 1045 temperature"},{"e":"sensor.fa_bulk_1046","n":"Upstairs
+        bedroom climate sensor number 1046 temperature"},{"e":"sensor.fa_bulk_1047","n":"Upstairs
+        bedroom climate sensor number 1047 temperature"},{"e":"sensor.fa_bulk_1048","n":"Upstairs
+        bedroom climate sensor number 1048 temperature"},{"e":"sensor.fa_bulk_1049","n":"Upstairs
+        bedroom climate sensor number 1049 temperature"},{"e":"sensor.fa_bulk_1050","n":"Upstairs
+        bedroom climate sensor number 1050 temperature"},{"e":"sensor.fa_bulk_1051","n":"Upstairs
+        bedroom climate sensor number 1051 temperature"},{"e":"sensor.fa_bulk_1052","n":"Upstairs
+        bedroom climate sensor number 1052 temperature"},{"e":"sensor.fa_bulk_1053","n":"Upstairs
+        bedroom climate sensor number 1053 temperature"},{"e":"sensor.fa_bulk_1054","n":"Upstairs
+        bedroom climate sensor number 1054 temperature"},{"e":"sensor.fa_bulk_1055","n":"Upstairs
+        bedroom climate sensor number 1055 temperature"},{"e":"sensor.fa_bulk_1056","n":"Upstairs
+        bedroom climate sensor number 1056 temperature"},{"e":"sensor.fa_bulk_1057","n":"Upstairs
+        bedroom climate sensor number 1057 temperature"},{"e":"sensor.fa_bulk_1058","n":"Upstairs
+        bedroom climate sensor number 1058 temperature"},{"e":"sensor.fa_bulk_1059","n":"Upstairs
+        bedroom climate sensor number 1059 temperature"},{"e":"sensor.fa_bulk_1060","n":"Upstairs
+        bedroom climate sensor number 1060 temperature"},{"e":"sensor.fa_bulk_1061","n":"Upstairs
+        bedroom climate sensor number 1061 temperature"},{"e":"sensor.fa_bulk_1062","n":"Upstairs
+        bedroom climate sensor number 1062 temperature"},{"e":"sensor.fa_bulk_1063","n":"Upstairs
+        bedroom climate sensor number 1063 temperature"},{"e":"sensor.fa_bulk_1064","n":"Upstairs
+        bedroom climate sensor number 1064 temperature"},{"e":"sensor.fa_bulk_1065","n":"Upstairs
+        bedroom climate sensor number 1065 temperature"},{"e":"sensor.fa_bulk_1066","n":"Upstairs
+        bedroom climate sensor number 1066 temperature"},{"e":"sensor.fa_bulk_1067","n":"Upstairs
+        bedroom climate sensor number 1067 temperature"},{"e":"sensor.fa_bulk_1068","n":"Upstairs
+        bedroom climate sensor number 1068 temperature"},{"e":"sensor.fa_bulk_1069","n":"Upstairs
+        bedroom climate sensor number 1069 temperature"},{"e":"sensor.fa_bulk_1070","n":"Upstairs
+        bedroom climate sensor number 1070 temperature"},{"e":"sensor.fa_bulk_1071","n":"Upstairs
+        bedroom climate sensor number 1071 temperature"},{"e":"sensor.fa_bulk_1072","n":"Upstairs
+        bedroom climate sensor number 1072 temperature"},{"e":"sensor.fa_bulk_1073","n":"Upstairs
+        bedroom climate sensor number 1073 temperature"},{"e":"sensor.fa_bulk_1074","n":"Upstairs
+        bedroom climate sensor number 1074 temperature"},{"e":"sensor.fa_bulk_1075","n":"Upstairs
+        bedroom climate sensor number 1075 temperature"},{"e":"sensor.fa_bulk_1076","n":"Upstairs
+        bedroom climate sensor number 1076 temperature"},{"e":"sensor.fa_bulk_1077","n":"Upstairs
+        bedroom climate sensor number 1077 temperature"},{"e":"sensor.fa_bulk_1078","n":"Upstairs
+        bedroom climate sensor number 1078 temperature"},{"e":"sensor.fa_bulk_1079","n":"Upstairs
+        bedroom climate sensor number 1079 temperature"},{"e":"sensor.fa_bulk_1080","n":"Upstairs
+        bedroom climate sensor number 1080 temperature"},{"e":"sensor.fa_bulk_1081","n":"Upstairs
+        bedroom climate sensor number 1081 temperature"},{"e":"sensor.fa_bulk_1082","n":"Upstairs
+        bedroom climate sensor number 1082 temperature"},{"e":"sensor.fa_bulk_1083","n":"Upstairs
+        bedroom climate sensor number 1083 temperature"},{"e":"sensor.fa_bulk_1084","n":"Upstairs
+        bedroom climate sensor number 1084 temperature"},{"e":"sensor.fa_bulk_1085","n":"Upstairs
+        bedroom climate sensor number 1085 temperature"},{"e":"sensor.fa_bulk_1086","n":"Upstairs
+        bedroom climate sensor number 1086 temperature"},{"e":"sensor.fa_bulk_1087","n":"Upstairs
+        bedroom climate sensor number 1087 temperature"},{"e":"sensor.fa_bulk_1088","n":"Upstairs
+        bedroom climate sensor number 1088 temperature"},{"e":"sensor.fa_bulk_1089","n":"Upstairs
+        bedroom climate sensor number 1089 temperature"},{"e":"sensor.fa_bulk_1090","n":"Upstairs
+        bedroom climate sensor number 1090 temperature"},{"e":"sensor.fa_bulk_1091","n":"Upstairs
+        bedroom climate sensor number 1091 temperature"},{"e":"sensor.fa_bulk_1092","n":"Upstairs
+        bedroom climate sensor number 1092 temperature"},{"e":"sensor.fa_bulk_1093","n":"Upstairs
+        bedroom climate sensor number 1093 temperature"},{"e":"sensor.fa_bulk_1094","n":"Upstairs
+        bedroom climate sensor number 1094 temperature"},{"e":"sensor.fa_bulk_1095","n":"Upstairs
+        bedroom climate sensor number 1095 temperature"},{"e":"sensor.fa_bulk_1096","n":"Upstairs
+        bedroom climate sensor number 1096 temperature"},{"e":"sensor.fa_bulk_1097","n":"Upstairs
+        bedroom climate sensor number 1097 temperature"},{"e":"sensor.fa_bulk_1098","n":"Upstairs
+        bedroom climate sensor number 1098 temperature"},{"e":"sensor.fa_bulk_1099","n":"Upstairs
+        bedroom climate sensor number 1099 temperature"},{"e":"sensor.fa_bulk_1100","n":"Upstairs
+        bedroom climate sensor number 1100 temperature"},{"e":"sensor.fa_bulk_1101","n":"Upstairs
+        bedroom climate sensor number 1101 temperature"},{"e":"sensor.fa_bulk_1102","n":"Upstairs
+        bedroom climate sensor number 1102 temperature"},{"e":"sensor.fa_bulk_1103","n":"Upstairs
+        bedroom climate sensor number 1103 temperature"},{"e":"sensor.fa_bulk_1104","n":"Upstairs
+        bedroom climate sensor number 1104 temperature"},{"e":"sensor.fa_bulk_1105","n":"Upstairs
+        bedroom climate sensor number 1105 temperature"},{"e":"sensor.fa_bulk_1106","n":"Upstairs
+        bedroom climate sensor number 1106 temperature"},{"e":"sensor.fa_bulk_1107","n":"Upstairs
+        bedroom climate sensor number 1107 temperature"},{"e":"sensor.fa_bulk_1108","n":"Upstairs
+        bedroom climate sensor number 1108 temperature"},{"e":"sensor.fa_bulk_1109","n":"Upstairs
+        bedroom climate sensor number 1109 temperature"},{"e":"sensor.fa_bulk_1110","n":"Upstairs
+        bedroom climate sensor number 1110 temperature"},{"e":"sensor.fa_bulk_1111","n":"Upstairs
+        bedroom climate sensor number 1111 temperature"},{"e":"sensor.fa_bulk_1112","n":"Upstairs
+        bedroom climate sensor number 1112 temperature"},{"e":"sensor.fa_bulk_1113","n":"Upstairs
+        bedroom climate sensor number 1113 temperature"},{"e":"sensor.fa_bulk_1114","n":"Upstairs
+        bedroom climate sensor number 1114 temperature"},{"e":"sensor.fa_bulk_1115","n":"Upstairs
+        bedroom climate sensor number 1115 temperature"},{"e":"sensor.fa_bulk_1116","n":"Upstairs
+        bedroom climate sensor number 1116 temperature"},{"e":"sensor.fa_bulk_1117","n":"Upstairs
+        bedroom climate sensor number 1117 temperature"},{"e":"sensor.fa_bulk_1118","n":"Upstairs
+        bedroom climate sensor number 1118 temperature"},{"e":"sensor.fa_bulk_1119","n":"Upstairs
+        bedroom climate sensor number 1119 temperature"},{"e":"sensor.fa_bulk_1120","n":"Upstairs
+        bedroom climate sensor number 1120 temperature"},{"e":"sensor.fa_bulk_1121","n":"Upstairs
+        bedroom climate sensor number 1121 temperature"},{"e":"sensor.fa_bulk_1122","n":"Upstairs
+        bedroom climate sensor number 1122 temperature"},{"e":"sensor.fa_bulk_1123","n":"Upstairs
+        bedroom climate sensor number 1123 temperature"},{"e":"sensor.fa_bulk_1124","n":"Upstairs
+        bedroom climate sensor number 1124 temperature"},{"e":"sensor.fa_bulk_1125","n":"Upstairs
+        bedroom climate sensor number 1125 temperature"},{"e":"sensor.fa_bulk_1126","n":"Upstairs
+        bedroom climate sensor number 1126 temperature"},{"e":"sensor.fa_bulk_1127","n":"Upstairs
+        bedroom climate sensor number 1127 temperature"},{"e":"sensor.fa_bulk_1128","n":"Upstairs
+        bedroom climate sensor number 1128 temperature"},{"e":"sensor.fa_bulk_1129","n":"Upstairs
+        bedroom climate sensor number 1129 temperature"},{"e":"sensor.fa_bulk_1130","n":"Upstairs
+        bedroom climate sensor number 1130 temperature"},{"e":"sensor.fa_bulk_1131","n":"Upstairs
+        bedroom climate sensor number 1131 temperature"},{"e":"sensor.fa_bulk_1132","n":"Upstairs
+        bedroom climate sensor number 1132 temperature"},{"e":"sensor.fa_bulk_1133","n":"Upstairs
+        bedroom climate sensor number 1133 temperature"},{"e":"sensor.fa_bulk_1134","n":"Upstairs
+        bedroom climate sensor number 1134 temperature"},{"e":"sensor.fa_bulk_1135","n":"Upstairs
+        bedroom climate sensor number 1135 temperature"},{"e":"sensor.fa_bulk_1136","n":"Upstairs
+        bedroom climate sensor number 1136 temperature"},{"e":"sensor.fa_bulk_1137","n":"Upstairs
+        bedroom climate sensor number 1137 temperature"},{"e":"sensor.fa_bulk_1138","n":"Upstairs
+        bedroom climate sensor number 1138 temperature"},{"e":"sensor.fa_bulk_1139","n":"Upstairs
+        bedroom climate sensor number 1139 temperature"},{"e":"sensor.fa_bulk_1140","n":"Upstairs
+        bedroom climate sensor number 1140 temperature"},{"e":"sensor.fa_bulk_1141","n":"Upstairs
+        bedroom climate sensor number 1141 temperature"},{"e":"sensor.fa_bulk_1142","n":"Upstairs
+        bedroom climate sensor number 1142 temperature"},{"e":"sensor.fa_bulk_1143","n":"Upstairs
+        bedroom climate sensor number 1143 temperature"},{"e":"sensor.fa_bulk_1144","n":"Upstairs
+        bedroom climate sensor number 1144 temperature"},{"e":"sensor.fa_bulk_1145","n":"Upstairs
+        bedroom climate sensor number 1145 temperature"},{"e":"sensor.fa_bulk_1146","n":"Upstairs
+        bedroom climate sensor number 1146 temperature"},{"e":"sensor.fa_bulk_1147","n":"Upstairs
+        bedroom climate sensor number 1147 temperature"},{"e":"sensor.fa_bulk_1148","n":"Upstairs
+        bedroom climate sensor number 1148 temperature"},{"e":"sensor.fa_bulk_1149","n":"Upstairs
+        bedroom climate sensor number 1149 temperature"},{"e":"sensor.fa_bulk_1150","n":"Upstairs
+        bedroom climate sensor number 1150 temperature"},{"e":"sensor.fa_bulk_1151","n":"Upstairs
+        bedroom climate sensor number 1151 temperature"},{"e":"sensor.fa_bulk_1152","n":"Upstairs
+        bedroom climate sensor number 1152 temperature"},{"e":"sensor.fa_bulk_1153","n":"Upstairs
+        bedroom climate sensor number 1153 temperature"},{"e":"sensor.fa_bulk_1154","n":"Upstairs
+        bedroom climate sensor number 1154 temperature"},{"e":"sensor.fa_bulk_1155","n":"Upstairs
+        bedroom climate sensor number 1155 temperature"},{"e":"sensor.fa_bulk_1156","n":"Upstairs
+        bedroom climate sensor number 1156 temperature"},{"e":"sensor.fa_bulk_1157","n":"Upstairs
+        bedroom climate sensor number 1157 temperature"},{"e":"sensor.fa_bulk_1158","n":"Upstairs
+        bedroom climate sensor number 1158 temperature"},{"e":"sensor.fa_bulk_1159","n":"Upstairs
+        bedroom climate sensor number 1159 temperature"},{"e":"sensor.fa_bulk_1160","n":"Upstairs
+        bedroom climate sensor number 1160 temperature"},{"e":"sensor.fa_bulk_1161","n":"Upstairs
+        bedroom climate sensor number 1161 temperature"},{"e":"sensor.fa_bulk_1162","n":"Upstairs
+        bedroom climate sensor number 1162 temperature"},{"e":"sensor.fa_bulk_1163","n":"Upstairs
+        bedroom climate sensor number 1163 temperature"},{"e":"sensor.fa_bulk_1164","n":"Upstairs
+        bedroom climate sensor number 1164 temperature"},{"e":"sensor.fa_bulk_1165","n":"Upstairs
+        bedroom climate sensor number 1165 temperature"},{"e":"sensor.fa_bulk_1166","n":"Upstairs
+        bedroom climate sensor number 1166 temperature"},{"e":"sensor.fa_bulk_1167","n":"Upstairs
+        bedroom climate sensor number 1167 temperature"},{"e":"sensor.fa_bulk_1168","n":"Upstairs
+        bedroom climate sensor number 1168 temperature"},{"e":"sensor.fa_bulk_1169","n":"Upstairs
+        bedroom climate sensor number 1169 temperature"},{"e":"sensor.fa_bulk_1170","n":"Upstairs
+        bedroom climate sensor number 1170 temperature"},{"e":"sensor.fa_bulk_1171","n":"Upstairs
+        bedroom climate sensor number 1171 temperature"},{"e":"sensor.fa_bulk_1172","n":"Upstairs
+        bedroom climate sensor number 1172 temperature"},{"e":"sensor.fa_bulk_1173","n":"Upstairs
+        bedroom climate sensor number 1173 temperature"},{"e":"sensor.fa_bulk_1174","n":"Upstairs
+        bedroom climate sensor number 1174 temperature"},{"e":"sensor.fa_bulk_1175","n":"Upstairs
+        bedroom climate sensor number 1175 temperature"},{"e":"sensor.fa_bulk_1176","n":"Upstairs
+        bedroom climate sensor number 1176 temperature"},{"e":"sensor.fa_bulk_1177","n":"Upstairs
+        bedroom climate sensor number 1177 temperature"},{"e":"sensor.fa_bulk_1178","n":"Upstairs
+        bedroom climate sensor number 1178 temperature"},{"e":"sensor.fa_bulk_1179","n":"Upstairs
+        bedroom climate sensor number 1179 temperature"},{"e":"sensor.fa_bulk_1180","n":"Upstairs
+        bedroom climate sensor number 1180 temperature"},{"e":"sensor.fa_bulk_1181","n":"Upstairs
+        bedroom climate sensor number 1181 temperature"},{"e":"sensor.fa_bulk_1182","n":"Upstairs
+        bedroom climate sensor number 1182 temperature"},{"e":"sensor.fa_bulk_1183","n":"Upstairs
+        bedroom climate sensor number 1183 temperature"},{"e":"sensor.fa_bulk_1184","n":"Upstairs
+        bedroom climate sensor number 1184 temperature"},{"e":"sensor.fa_bulk_1185","n":"Upstairs
+        bedroom climate sensor number 1185 temperature"},{"e":"sensor.fa_bulk_1186","n":"Upstairs
+        bedroom climate sensor number 1186 temperature"},{"e":"sensor.fa_bulk_1187","n":"Upstairs
+        bedroom climate sensor number 1187 temperature"},{"e":"sensor.fa_bulk_1188","n":"Upstairs
+        bedroom climate sensor number 1188 temperature"},{"e":"sensor.fa_bulk_1189","n":"Upstairs
+        bedroom climate sensor number 1189 temperature"},{"e":"sensor.fa_bulk_1190","n":"Upstairs
+        bedroom climate sensor number 1190 temperature"},{"e":"sensor.fa_bulk_1191","n":"Upstairs
+        bedroom climate sensor number 1191 temperature"},{"e":"sensor.fa_bulk_1192","n":"Upstairs
+        bedroom climate sensor number 1192 temperature"},{"e":"sensor.fa_bulk_1193","n":"Upstairs
+        bedroom climate sensor number 1193 temperature"},{"e":"sensor.fa_bulk_1194","n":"Upstairs
+        bedroom climate sensor number 1194 temperature"},{"e":"sensor.fa_bulk_1195","n":"Upstairs
+        bedroom climate sensor number 1195 temperature"},{"e":"sensor.fa_bulk_1196","n":"Upstairs
+        bedroom climate sensor number 1196 temperature"},{"e":"sensor.fa_bulk_1197","n":"Upstairs
+        bedroom climate sensor number 1197 temperature"},{"e":"sensor.fa_bulk_1198","n":"Upstairs
+        bedroom climate sensor number 1198 temperature"},{"e":"sensor.fa_bulk_1199","n":"Upstairs
+        bedroom climate sensor number 1199 temperature"},{"e":"sensor.outside_humidity","n":"Outside
+        Humidity","d":"d56c4c0fcfcc7526fea01b538ec01140","dn":"Outside Humidity","c":"humidity"},{"e":"sensor.outside_temperature","n":"Outside
+        Temperature","d":"620871a21e3f6aa05f57eba8547a5933","dn":"Outside Temperature","c":"temperature"},{"e":"sensor.power_consumption","n":"Power
+        consumption","d":"bdc8df8246a0525e6d091be2bfb63781","dn":"Power consumption","c":"power"},{"e":"sensor.sun_next_dawn","n":"Sun
+        Next dawn","d":"ba52f56e37cb04aeaf48d1186e33ad1e","dn":"Sun","c":"timestamp"},{"e":"sensor.sun_next_dusk","n":"Sun
+        Next dusk","d":"ba52f56e37cb04aeaf48d1186e33ad1e","dn":"Sun","c":"timestamp"},{"e":"sensor.sun_next_midnight","n":"Sun
+        Next midnight","d":"ba52f56e37cb04aeaf48d1186e33ad1e","dn":"Sun","c":"timestamp"},{"e":"sensor.sun_next_noon","n":"Sun
+        Next noon","d":"ba52f56e37cb04aeaf48d1186e33ad1e","dn":"Sun","c":"timestamp"},{"e":"sensor.sun_next_rising","n":"Sun
+        Next rising","d":"ba52f56e37cb04aeaf48d1186e33ad1e","dn":"Sun","c":"timestamp"},{"e":"sensor.sun_next_setting","n":"Sun
+        Next setting","d":"ba52f56e37cb04aeaf48d1186e33ad1e","dn":"Sun","c":"timestamp"},{"e":"sensor.thermostat","n":"Thermostat","d":"0f8ea0fe99a03616c39daf9aec1348cf","dn":"Thermostat","c":"enum"},{"e":"sensor.total_energy_kwh","n":"total
+        energy kwh","d":"a3d529b203a497d6765ffad3477f62ea","dn":"Total energy 1","c":"energy"},{"e":"sensor.total_energy_mwh","n":"total
+        energy mwh","d":"04b9ce4e0f45fad867f2592f4823a64d","dn":"Total energy 2","c":"energy"},{"e":"sensor.total_gas_ft3","n":"total
+        gas ft3","d":"504ecae49e32a78a0fc8e61f2e64f61c","dn":"Total gas 2","c":"gas"},{"e":"sensor.total_gas_m3","n":"total
+        gas m3","d":"4d3ec66e679572a691c21566d9c0d38e","dn":"Total gas 1","c":"gas"},{"e":"siren.siren","n":"Siren"},{"e":"siren.siren_with_all_features","n":"Siren
+        with all features"},{"e":"stt.demo_stt","n":"Demo STT"},{"e":"sun.sun","n":"Sun"},{"e":"switch.ac","n":"AC","d":"d13c2721731cd4eb455684a4507f311f","dn":"AC","c":"outlet"},{"e":"switch.decorative_lights","n":"Decorative
+        Lights","d":"56e492de4edfee6d63036de93783c52a","dn":"Decorative Lights"},{"e":"text.password","n":"Password","d":"e3104b9770cc263fc2df9c6e4d9cb163","dn":"Password"},{"e":"text.text","n":"Text","d":"f15cc9c8313326d9b1416d7b9b3546af","dn":"Text"},{"e":"text.text_with_1_to_5_characters","n":"Text
+        with 1 to 5 characters","d":"1b4f031f1d5b6b894435da9a59bb3eca","dn":"Text
+        with 1 to 5 characters"},{"e":"text.text_with_only_lower_case_characters","n":"Text
+        with only lower case characters","d":"8e13f71748420558aa757a27231283a8","dn":"Text
+        with only lower case characters"},{"e":"time.time","n":"Time","d":"54c5ac839949c123627f65d9b5b23344","dn":"Time"},{"e":"update.demo_add_on","n":"Demo
+        add-on","d":"de83102dfa0afa951dfaaad264d3e1e2","dn":"Demo add-on"},{"e":"update.demo_living_room_bulb_update","n":"Demo
+        Living Room Bulb Update","d":"cc1fc94968a49519c93448092bd10e90","dn":"Demo
+        Living Room Bulb Update","c":"firmware"},{"e":"update.demo_no_update","n":"Demo
+        No Update","d":"57071c542b34c01973fad8d490d49986","dn":"Demo No Update"},{"e":"update.demo_update_no_install","n":"Demo
+        Update No Install","d":"aeeb2fe4ab9911bac9e01521bfcf5ce7","dn":"Demo Update
+        No Install"},{"e":"update.demo_update_with_decimal_progress","n":"Demo Update
+        with Decimal Progress","d":"044322248cf4da7e27b90728891d6fe5","dn":"Demo Update
+        with Decimal Progress","c":"firmware"},{"e":"update.demo_update_with_progress","n":"Demo
+        Update with Progress","d":"6efbe33920086d0ef15ea5c81946b47b","dn":"Demo Update
+        with Progress","c":"firmware"},{"e":"vacuum.demo_vacuum_0_ground_floor","n":"Demo
+        vacuum 0 ground floor"},{"e":"vacuum.demo_vacuum_1_first_floor","n":"Demo
+        vacuum 1 first floor"},{"e":"vacuum.demo_vacuum_2_second_floor","n":"Demo
+        vacuum 2 second floor"},{"e":"vacuum.demo_vacuum_3_third_floor","n":"Demo
+        vacuum 3 third floor"},{"e":"vacuum.demo_vacuum_4_fourth_floor","n":"Demo
+        vacuum 4 fourth floor"},{"e":"valve.front_garden","n":"Front Garden"},{"e":"valve.orchard","n":"Orchard"},{"e":"water_heater.demo_water_heater","n":"Demo
+        Water Heater"},{"e":"water_heater.demo_water_heater_celsius","n":"Demo Water
+        Heater Celsius"},{"e":"weather.demo_weather_north","n":"Demo Weather North"},{"e":"weather.demo_weather_south","n":"Demo
+        Weather South"},{"e":"zone.home","n":"Home"}]'
+    headers:
+      Content-Length:
+      - '28578'
+      Content-Type:
+      - text/plain; charset=utf-8
+      Date:
+      - Sun, 01 Nov 2026 08:15:55 GMT
+      Referrer-Policy:
+      - no-referrer
+      Server:
+      - ''
+      X-Content-Type-Options:
+      - nosniff
+      X-Frame-Options:
+      - SAMEORIGIN
+    status:
+      code: 200
+      message: OK
+version: 1

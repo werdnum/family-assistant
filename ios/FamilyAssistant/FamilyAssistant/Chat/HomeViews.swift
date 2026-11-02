@@ -155,6 +155,42 @@ private struct HeldRoutedPromptNote: View {
     }
 }
 
+/// Atop Home: what is running right now, however it was started. A thread the
+/// user started has no card in Home's transcript, and one with a card scrolls
+/// away. One thread opens directly; several open the chat list (nil).
+private struct WorkingThreadsBar: View {
+    let threads: [ChatThreadSummary]
+    let onSelect: (ChatThreadSummary?) -> Void
+
+    var body: some View {
+        if !threads.isEmpty {
+            Button {
+                onSelect(threads.count == 1 ? threads[0] : nil)
+            } label: {
+                HStack(spacing: 8) {
+                    ThreadStateDot(state: .working)
+                    Text(verbatim: threads.count == 1 ? threads[0].title : "\(threads.count) threads working")
+                        .font(.footnote.weight(.semibold))
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Image(systemName: "chevron.right")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(.bar)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(
+                threads.count == 1 ? "\(threads[0].title), Working" : "\(threads.count) threads working"
+            )
+            .accessibilityIdentifier("home-working-threads")
+        }
+    }
+}
+
 /// Shown when the load that describes Home or a conversation over it failed:
 /// sending stays closed until it loads, so the user needs a way to try again.
 private struct ConversationLoadRetryBanner: View {
@@ -207,12 +243,6 @@ private struct HomeLookupFailedBanner: View {
     }
 }
 
-/// Where a conversation opened over Home comes from.
-enum HomeDestination: Hashable {
-    case conversation(String)
-    case newConversation(requestID: String, initialPrompt: String?)
-}
-
 /// Home: the single landing stream, with threads and other conversations
 /// pushed over it. Home stays mounted underneath, so going back returns to it
 /// where the reader left it.
@@ -221,7 +251,8 @@ struct HomeRootView: View {
     @Environment(NotificationManager.self) private var notificationManager
     @State private var viewModel: ChatViewModel
     @State private var store: HomeThreadsStore
-    @State private var path: [HomeDestination]
+    /// The conversations open over Home.
+    @State private var path: [String]
     @State private var showsSwitcher = false
     let authManager: AuthManager
     let route: ChatRoute
@@ -249,10 +280,8 @@ struct HomeRootView: View {
         ))
         switch HomeRouteAction.resolve(route, homeConversationID: homeConversationID) {
         case let .open(conversationID):
-            _path = State(initialValue: [.conversation(conversationID)])
-        case let .newConversation(requestID, initialPrompt):
-            _path = State(initialValue: [.newConversation(requestID: requestID, initialPrompt: initialPrompt)])
-        case .showHome, .sendInHome:
+            _path = State(initialValue: [conversationID])
+        case .showHome, .composeInHome, .sendInHome:
             _path = State(initialValue: [])
         }
     }
@@ -264,14 +293,21 @@ struct HomeRootView: View {
                     VStack(spacing: 0) {
                         ConversationLoadRetryBanner(viewModel: viewModel)
                         HeldRoutedPromptNote(viewModel: viewModel)
+                        WorkingThreadsBar(threads: store.workingThreads) { thread in
+                            if let thread {
+                                open(thread.conversationID)
+                            } else {
+                                showsSwitcher = true
+                            }
+                        }
                     }
                 }
                 .navigationTitle("Home")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar { homeToolbar }
-                .navigationDestination(for: HomeDestination.self) { destination in
+                .navigationDestination(for: String.self) { conversationID in
                     PushedConversationView(
-                        destination: destination,
+                        conversationID: conversationID,
                         authManager: authManager,
                         store: store
                     )
@@ -298,10 +334,6 @@ struct HomeRootView: View {
                 onSelect: { conversationID in
                     showsSwitcher = false
                     open(conversationID)
-                },
-                onNewChat: {
-                    showsSwitcher = false
-                    path = [.newConversation(requestID: UUID().uuidString, initialPrompt: nil)]
                 }
             )
         }
@@ -358,21 +390,12 @@ struct HomeRootView: View {
     @ToolbarContentBuilder
     private var homeToolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .topBarLeading) {
-            Menu {
-                Button {
-                    path = [.newConversation(requestID: UUID().uuidString, initialPrompt: nil)]
-                } label: {
-                    Label("New Chat", systemImage: "square.and.pencil")
-                }
-                Button {
-                    showsSwitcher = true
-                } label: {
-                    Label("Chats", systemImage: "list.bullet.rectangle")
-                }
+            Button {
+                store.presentedSheet = .newThread
             } label: {
-                Label("Menu", systemImage: "line.3.horizontal")
+                Label("New Thread", systemImage: "square.and.pencil")
             }
-            .accessibilityIdentifier("home-menu")
+            .accessibilityIdentifier("home-new-thread")
             if viewModel.syncPresentation != .live {
                 LiveUpdatesIndicator(viewModel: viewModel)
             }
@@ -393,6 +416,11 @@ struct HomeRootView: View {
     @ViewBuilder
     private func threadSheet(_ sheet: HomeThreadSheet) -> some View {
         switch sheet {
+        case .newThread:
+            StartThreadSheet(mode: .newThread, homeModel: viewModel, store: store) { thread in
+                store.presentedSheet = nil
+                open(thread.conversationID)
+            }
         case .sendAsThread:
             StartThreadSheet(mode: .sendAsThread, homeModel: viewModel, store: store)
         case let .continueFrom(anchorMessageID, quote):
@@ -420,29 +448,28 @@ struct HomeRootView: View {
     private static func open(
         _ conversationID: String,
         homeConversationID: String,
-        path: Binding<[HomeDestination]>
+        path: Binding<[String]>
     ) {
         if conversationID == homeConversationID {
             path.wrappedValue = []
-        } else if path.wrappedValue.last != .conversation(conversationID) {
-            path.wrappedValue = [.conversation(conversationID)]
+        } else if path.wrappedValue.last != conversationID {
+            path.wrappedValue = [conversationID]
         }
     }
 
     private func apply(_ route: ChatRoute) {
         switch HomeRouteAction.resolve(route, homeConversationID: store.homeConversationID) {
-        case .showHome, .sendInHome:
+        case .showHome, .composeInHome, .sendInHome:
             path = []
             Task { await applyInHome(route) }
         case let .open(conversationID):
             open(conversationID)
-        case let .newConversation(requestID, initialPrompt):
-            path = [.newConversation(requestID: requestID, initialPrompt: initialPrompt)]
         }
     }
 
     /// The parts of a route that act on Home itself: a shared hand-off goes
-    /// into Home's composer, and a prompt is sent there. Safe while Home is
+    /// into Home's composer, a prompt is sent there, and a request for a new
+    /// chat brings the keyboard up there. Safe while Home is
     /// still bootstrapping: the model holds a routed prompt until Home has
     /// loaded and adopted its profile, then sends it once. The other route
     /// kinds only change the navigation path, which needs no loaded Home.
@@ -452,8 +479,13 @@ struct HomeRootView: View {
         {
             await viewModel.addSharedAttachments(batch)
         }
-        if case let .sendInHome(prompt) = HomeRouteAction.resolve(route, homeConversationID: store.homeConversationID) {
+        switch HomeRouteAction.resolve(route, homeConversationID: store.homeConversationID) {
+        case let .sendInHome(prompt):
             await viewModel.sendPromptInPlace(prompt)
+        case .composeInHome:
+            viewModel.requestComposerFocus()
+        case .showHome, .open:
+            break
         }
     }
 
@@ -517,32 +549,22 @@ private struct ThreadsButton: View {
     }
 }
 
-/// A conversation pushed over Home: a thread, or an ordinary conversation.
+/// A conversation pushed over Home: a thread, or an ordinary conversation from
+/// before threads. An ordinary one stays on its profile, since switching would
+/// start a new conversation outside Home and its threads.
 private struct PushedConversationView: View {
     @State private var viewModel: ChatViewModel
     let store: HomeThreadsStore
     let authManager: AuthManager
-    private let initialPrompt: String?
 
-    init(destination: HomeDestination, authManager: AuthManager, store: HomeThreadsStore) {
+    init(conversationID: String, authManager: AuthManager, store: HomeThreadsStore) {
         self.store = store
         self.authManager = authManager
-        switch destination {
-        case let .conversation(conversationID):
-            initialPrompt = nil
-            _viewModel = State(initialValue: ChatViewModel(
-                authManager: authManager,
-                conversationID: conversationID,
-                role: .pushed
-            ))
-        case let .newConversation(_, prompt):
-            initialPrompt = prompt
-            _viewModel = State(initialValue: ChatViewModel(
-                authManager: authManager,
-                startsNewConversation: true,
-                role: .pushed
-            ))
-        }
+        _viewModel = State(initialValue: ChatViewModel(
+            authManager: authManager,
+            conversationID: conversationID,
+            role: .pushed
+        ))
     }
 
     /// The store's copy first: it is the one activity refreshes and "Mark
@@ -571,18 +593,14 @@ private struct PushedConversationView: View {
                     }
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
-                    // Ordinary-chat controls appear only once the conversation is
-                    // known to be ordinary (or was started here): a thread opened
-                    // by a link is unconfirmed until its history loads.
-                    if viewModel.allowsProfileChange, thread == nil {
+                    if viewModel.isConfirmedOrdinaryConversation, thread == nil {
                         ConversationShareToolbar(
                             authManager: authManager,
                             conversationID: viewModel.shareableConversationID
                         )
-                        ProfilePickerView(viewModel: viewModel)
                     }
                     // Its tiers are the profile's, which is known only once the
-                    // conversation is described (or was started here).
+                    // conversation is described.
                     if viewModel.isConversationDescribed {
                         IntelligencePickerView(viewModel: viewModel)
                     }
@@ -596,8 +614,10 @@ private struct PushedConversationView: View {
                 viewModel.onMarkedRead = { [weak store] conversationID, unreadCount in
                     store?.applyUnreadCount(unreadCount, for: conversationID)
                 }
-                await viewModel.bootstrap(initialPrompt: initialPrompt)
+                await viewModel.bootstrap()
             }
+            .onAppear { viewModel.setScreenVisible(true) }
+            .onDisappear { viewModel.setScreenVisible(false) }
             .alert(
                 "Chat Error",
                 isPresented: Binding(
@@ -756,7 +776,7 @@ enum ThreadStateStyle {
         case .working: workingColor
         case .failed: .red
         case .done: .green
-        case nil: .secondary
+        case .quiet, nil: .secondary
         }
     }
 }
@@ -867,7 +887,6 @@ struct ThreadSwitcherView: View {
     var homeModel: ChatViewModel
     let homePreview: String?
     let onSelect: (String) -> Void
-    let onNewChat: () -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var startsThread = false
@@ -905,17 +924,13 @@ struct ThreadSwitcherView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
                 }
-                ToolbarItemGroup(placement: .primaryAction) {
+                ToolbarItem(placement: .primaryAction) {
                     Button {
                         startsThread = true
                     } label: {
-                        Label("New Thread", systemImage: "text.bubble")
+                        Label("New Thread", systemImage: "square.and.pencil")
                     }
                     .accessibilityIdentifier("thread-switcher-new-thread")
-                    Button(action: onNewChat) {
-                        Label("New Chat", systemImage: "square.and.pencil")
-                    }
-                    .accessibilityIdentifier("thread-switcher-new-chat")
                 }
             }
             .sheet(isPresented: $startsThread) {
@@ -979,6 +994,14 @@ struct ThreadSwitcherView: View {
                         ThreadSwitcherRow(thread: thread)
                     }
                     .buttonStyle(.plain)
+                    .swipeActions(edge: .trailing) {
+                        if thread.canMarkDone {
+                            Button("Mark Done") {
+                                Task { await store.markDone(thread.conversationID) }
+                            }
+                            .tint(.green)
+                        }
+                    }
                     .accessibilityIdentifier("thread-row-\(thread.conversationID)")
                 }
             }

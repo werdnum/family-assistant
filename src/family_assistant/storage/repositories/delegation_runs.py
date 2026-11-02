@@ -281,6 +281,19 @@ class DelegationRunsRepository(BaseRepository):
         rows = await self._db.fetch_all(stmt)
         return [self._row_to_dict(row) for row in rows]
 
+    async def conversation_ids_with_pending(self) -> set[str]:
+        """Conversations that ``list_pending_for_conversation`` lists anything for."""
+        runs_table = delegation_runs_table
+        rows = await self._db.fetch_all(
+            select(runs_table.c.conversation_id)
+            .where(runs_table.c.source_subconversation_id.is_(None))
+            .where(runs_table.c.handed_off_at.is_not(None))
+            .where(runs_table.c.notified_at.is_(None))
+            .where(runs_table.c.notify_stage != "gave_up")
+            .distinct()
+        )
+        return {row["conversation_id"] for row in rows}
+
     async def list_pending_for_conversation(
         self,
         *,
