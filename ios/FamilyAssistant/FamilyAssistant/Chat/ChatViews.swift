@@ -658,6 +658,9 @@ struct MessageBubble: View {
         if let threadID = message.movedToThread {
             // The turn itself is in the thread now; Home shows where it went.
             MovedTurnMarker(threadID: threadID, store: homeThreads)
+        } else if let threadID = message.startedThread, let homeThreads {
+            ThreadCardView(threadID: threadID, store: homeThreads)
+                .padding(.vertical, 4)
         } else {
             bubble
         }
@@ -1249,14 +1252,13 @@ private struct ChatComposerView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(viewModel.isSubmittingDraft || (!viewModel.isStreaming && !viewModel.canSendDraft))
-                // In Home, a long press sends the message as a new thread's
-                // opening turn instead, on a profile picked next.
+                // In Home, a long press picks another assistant for the message.
                 .contextMenu {
                     if let homeThreads, viewModel.canSendDraftAsThread {
                         Button {
                             homeThreads.presentedSheet = .sendAsThread
                         } label: {
-                            Label("Send as Thread…", systemImage: "text.bubble")
+                            Label("Send To…", systemImage: "person.2")
                         }
                     }
                 }

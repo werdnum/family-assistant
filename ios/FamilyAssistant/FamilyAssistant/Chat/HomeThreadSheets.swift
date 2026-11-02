@@ -231,7 +231,7 @@ struct StartThreadSheet: View {
     private var title: String {
         switch mode {
         case .newThread: "New Thread"
-        case .sendAsThread: "Send as Thread"
+        case .sendAsThread: "Send To"
         case .continueFrom: "Continue in Thread"
         }
     }

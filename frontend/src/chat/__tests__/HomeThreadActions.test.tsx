@@ -438,22 +438,6 @@ describe('Starting and moving threads from Home', () => {
     expect(home.starts[1].turn_id).not.toBe(home.starts[0].turn_id);
   });
 
-  it('continues from a reply streamed here, anchored on that reply', async () => {
-    const user = userEvent.setup({ pointerEventsCheck: 0 });
-    const home = serveHome();
-    await renderChatApp({ waitForReady: true });
-    const homePane = await findPane(HOME);
-    await homeReply(GUTTER_REPLY);
-
-    await user.type(within(homePane).getByTestId('chat-input'), 'What about box gutters?');
-    await user.keyboard('{Enter}');
-    const dialog = await openContinue(user, `Reply in ${HOME}`);
-    await user.click(within(dialog).getByTestId('start-thread-submit'));
-
-    await findPane(NEW_THREAD);
-    expect(home.starts[0].anchor_message_id).toBe(61);
-  });
-
   it('reads a retried start whose turn already finished from the record, not the stream', async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     const home = serveHome();
@@ -470,7 +454,7 @@ describe('Starting and moving threads from Home', () => {
     expect(home.streamUrls.filter((url) => url.includes(`/${NEW_THREAD}/stream`))).toEqual([]);
   });
 
-  it('starts afresh when the tier of a refused send-as-thread is changed', async () => {
+  it('starts afresh when the tier of a refused send is changed', async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     const home = serveHome();
     home.refuseNextStart = () => HttpResponse.error();
@@ -481,19 +465,16 @@ describe('Starting and moving threads from Home', () => {
       await user.click(within(homePane).getByRole('combobox', { name: 'Intelligence' }));
       await user.click(await screen.findByRole('option', { name: tier }));
     };
-    const sendAsThread = async () => {
-      await user.click(within(homePane).getByTestId('send-as-thread-button'));
-      await user.click(await screen.findByTestId('send-as-thread-default_assistant'));
-    };
+    const send = () => user.click(within(homePane).getByTestId('send-button'));
     await pickTier(/Deep/);
     await user.type(within(homePane).getByTestId('chat-input'), 'Compare solar quotes');
-    await sendAsThread();
+    await send();
     await within(homePane).findByTestId('send-as-thread-error');
     await waitFor(() =>
       expect(within(homePane).getByTestId('chat-input')).toHaveValue('Compare solar quotes')
     );
     await pickTier(/Standard/);
-    await sendAsThread();
+    await send();
 
     await findPane(NEW_THREAD);
     expect(home.starts).toHaveLength(2);
@@ -503,7 +484,7 @@ describe('Starting and moving threads from Home', () => {
     expect(home.starts[1].turn_id).not.toBe(home.starts[0].turn_id);
   });
 
-  it('sends the composed message as a thread, with its attachment and tier', async () => {
+  it('starts a thread on the default assistant from a Home send, with attachment and tier', async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     const home = serveHome();
     await renderChatApp({ waitForReady: true });
@@ -518,8 +499,7 @@ describe('Starting and moving threads from Home', () => {
       within(homePane).getByTestId('file-input'),
       new File(['quote'], 'quote.pdf', { type: 'application/pdf' })
     );
-    await user.click(within(homePane).getByTestId('send-as-thread-button'));
-    await user.click(await screen.findByTestId('send-as-thread-default_assistant'));
+    await user.click(within(homePane).getByTestId('send-button'));
 
     const panel = await findPane(NEW_THREAD);
     expect(await within(panel).findByText(`Reply in ${NEW_THREAD}`)).toBeInTheDocument();
@@ -537,6 +517,45 @@ describe('Starting and moving threads from Home', () => {
     // It went to the thread, not into Home.
     expect(within(homePane).queryByText('Compare solar quotes')).not.toBeInTheDocument();
     expect(within(homePane).getByTestId('chat-input')).toHaveValue('');
+    // A tier chosen in Home is for one send.
+    expect(intelligence).toHaveTextContent('Standard');
+  });
+
+  it("offers every assistant but Home's own for one message", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    serveHome();
+    await renderChatApp({ waitForReady: true });
+    const homePane = await findPane(HOME);
+
+    await user.type(within(homePane).getByTestId('chat-input'), 'Research heat pumps');
+    await user.click(within(homePane).getByTestId('send-as-thread-button'));
+
+    expect(await screen.findByTestId('send-as-thread-research')).toBeInTheDocument();
+    expect(screen.queryByTestId('send-as-thread-default_assistant')).not.toBeInTheDocument();
+  });
+
+  it('shows a thread the user started as its card, where it was started', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const home = serveHome();
+    home.homeRows = [
+      ...home.homeRows,
+      {
+        internal_id: 5,
+        role: 'assistant',
+        content: '(The user started a thread from here.)',
+        timestamp: '2026-10-18T09:30:00Z',
+        started_thread: QUOTES.conversation_id,
+      },
+    ];
+    await renderChatApp({ waitForReady: true });
+    const homePane = await findPane(HOME);
+
+    const marker = await within(homePane).findByTestId('started-thread-marker');
+    expect(within(marker).getByTestId('thread-card-title')).toHaveTextContent(QUOTES.title);
+    expect(within(homePane).queryByText('(The user started a thread from here.)')).toBeNull();
+
+    await user.click(within(marker).getByTestId('thread-card'));
+    expect(await findPane(QUOTES.conversation_id)).toBeInTheDocument();
   });
 
   it('leaves out a tier the thread profile does not offer', async () => {
@@ -581,35 +600,6 @@ describe('Starting and moving threads from Home', () => {
     expect(within(homePane).queryByTestId('user-message')).toHaveTextContent(
       'Is gutter guard worth it?'
     );
-  });
-
-  it('gives up on a failed send-as-thread when the message is sent to Home instead', async () => {
-    const user = userEvent.setup({ pointerEventsCheck: 0 });
-    const home = serveHome();
-    // The start's answer is lost, so it may have reached the server.
-    home.refuseNextStart = () => HttpResponse.error();
-    await renderChatApp({ waitForReady: true });
-    const homePane = await findPane(HOME);
-    const sendAsThread = async () => {
-      await user.click(within(homePane).getByTestId('send-as-thread-button'));
-      await user.click(await screen.findByTestId('send-as-thread-default_assistant'));
-    };
-
-    await user.type(within(homePane).getByTestId('chat-input'), 'Book the plumber');
-    await sendAsThread();
-    await within(homePane).findByTestId('send-as-thread-error');
-    await waitFor(() =>
-      expect(within(homePane).getByTestId('chat-input')).toHaveValue('Book the plumber')
-    );
-    await user.click(within(homePane).getByTestId('send-button'));
-    expect(await within(homePane).findByText(`Reply in ${HOME}`)).toBeInTheDocument();
-
-    expect(within(homePane).queryByTestId('send-as-thread-error')).not.toBeInTheDocument();
-    await user.type(within(homePane).getByTestId('chat-input'), 'Book the plumber');
-    await sendAsThread();
-    await findPane(NEW_THREAD);
-    expect(home.starts).toHaveLength(2);
-    expect(home.starts[1].turn_id).not.toBe(home.starts[0].turn_id);
   });
 
   it('continues a Home reply in a thread with its context, quoting where it started', async () => {

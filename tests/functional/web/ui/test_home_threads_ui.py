@@ -245,9 +245,9 @@ async def test_a_card_opens_its_thread_beside_home_and_each_pane_answers_for_its
     )
     await expect(home_input).to_have_value("Is the bin out?")
     await home_input.press("Enter")
-    await expect(home_pane.get_by_text("Yes, it went out at seven.")).to_be_visible(
-        timeout=20000
-    )
+    # Sending in Home starts a thread, which takes the panel and leaves its card.
+    card = home_pane.get_by_test_id("started-thread-marker")
+    await expect(card).to_contain_text("Yes, it went out at seven.", timeout=20000)
 
     # Each reply is only in its own transcript (Home's card previews the
     # thread's latest message, so look at the transcripts' text, not the card).

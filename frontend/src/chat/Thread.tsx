@@ -14,8 +14,8 @@ import {
   CalendarIcon,
   CheckCircle2Icon,
   CheckIcon,
-  ChevronDownIcon,
   ChevronRightIcon,
+  ChevronUpIcon,
   CopyIcon,
   EyeIcon,
   EyeOffIcon,
@@ -53,6 +53,7 @@ import { useHomeTurnActions } from './homeTurnActions';
 import { MarkdownText } from './MarkdownText';
 import { PendingDelegationsChip } from './PendingDelegationsChip';
 import { ThreadEchoHeader } from './ThreadEchoHeader';
+import { ThreadCard } from './StartThreadCard';
 import { useThreadsContext } from './threadsContext';
 import { useProfiles } from './profilesContext';
 import { ToolGroup } from './ToolGroup';
@@ -430,7 +431,7 @@ const Composer: React.FC = () => {
           />
         </div>
         <ComposerAction steering={steering} onSteer={submitSteer} />
-        {controls?.sendAsThread && (
+        {controls?.sendAsThread && controls.sendAsThread.profiles.length > 0 && (
           <ThreadPrimitive.If running={false}>
             <SendAsThreadMenu
               profiles={controls.sendAsThread.profiles}
@@ -446,10 +447,7 @@ const Composer: React.FC = () => {
   );
 };
 
-/**
- * Sends what the composer holds as a new thread's opening message, on the
- * profile picked here, instead of as a Home turn.
- */
+/** Sends what the composer holds to an assistant other than Home's own. */
 const SendAsThreadMenu: React.FC<{
   profiles: { id: string; label: string }[];
   onSend: (profileId: string) => void;
@@ -462,17 +460,16 @@ const SendAsThreadMenu: React.FC<{
           type="button"
           variant="outline"
           className="h-11 shrink-0 gap-1 rounded-full px-3"
-          disabled={!canSend || profiles.length === 0}
-          aria-label="Send as a new thread"
-          title="Send as a new thread"
+          disabled={!canSend}
+          aria-label="Send to another assistant"
+          title="Send to another assistant"
           data-testid="send-as-thread-button"
         >
-          <GitBranchPlusIcon size={16} aria-hidden="true" />
-          <ChevronDownIcon size={12} aria-hidden="true" />
+          <ChevronUpIcon size={16} aria-hidden="true" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" side="top">
-        <DropdownMenuLabel>Send as a new thread on</DropdownMenuLabel>
+        <DropdownMenuLabel>Send to</DropdownMenuLabel>
         {profiles.map((profile) => (
           <DropdownMenuItem
             key={profile.id}
@@ -651,6 +648,7 @@ const AssistantMessage: React.FC = () => {
     reasoning_info?: MessageReasoningInfo;
     echoed_from_thread?: string;
     moved_to_thread?: string;
+    started_thread?: string;
     internal_id?: number;
     turn_id?: string;
     feedback?: TurnRating;
@@ -658,6 +656,9 @@ const AssistantMessage: React.FC = () => {
   };
   if (custom.moved_to_thread) {
     return <MovedTurnMarker threadConversationId={custom.moved_to_thread} />;
+  }
+  if (custom.started_thread) {
+    return <StartedThreadMarker threadConversationId={custom.started_thread} />;
   }
   // An echo of a thread's outcome is attributed to the thread rather than to
   // the Home profile and turn its copy was stored under.
@@ -887,6 +888,23 @@ const ServedByDetails: React.FC<{ servedBy: ServedBy }> = ({ servedBy }) => {
         ))
       )}
     </dl>
+  );
+};
+
+/** A thread the user started from Home: its card, where it was started. */
+const StartedThreadMarker: React.FC<{ threadConversationId: string }> = ({
+  threadConversationId,
+}) => {
+  const thread = useThreadsContext()?.threadsByConversationId.get(threadConversationId);
+  if (!thread) {
+    return null;
+  }
+  return (
+    <MessagePrimitive.Root className="px-4 py-1 md:px-6" data-testid="started-thread-marker">
+      <div className="max-w-3xl mx-auto">
+        <ThreadCard thread={thread} />
+      </div>
+    </MessagePrimitive.Root>
   );
 };
 

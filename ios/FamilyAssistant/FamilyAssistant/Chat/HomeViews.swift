@@ -356,6 +356,9 @@ struct HomeRootView: View {
             viewModel.onListRefresh = { [weak store] in
                 await store?.refreshForActivity()
             }
+            viewModel.startHomeThread = { [weak store] start in
+                await store?.startThreadAndOpen(start) ?? false
+            }
             await HomeStartup.run(
                 bootstrap: { await viewModel.bootstrap() },
                 refreshThreads: { await store.refreshThreads() },
@@ -438,7 +441,8 @@ struct HomeRootView: View {
     }
 
     private var homePreview: String? {
-        viewModel.messages.last { !$0.text.isEmpty }.map { String($0.text.prefix(200)) }
+        viewModel.messages.last { !$0.text.isEmpty && $0.startedThread == nil }
+            .map { String($0.text.prefix(200)) }
     }
 
     private func open(_ conversationID: String) {
@@ -805,17 +809,35 @@ struct ThreadStateDot: View {
     }
 }
 
-/// A thread in Home's transcript, where the assistant started it: its state,
-/// title and latest line, updated in place. Tapping opens the thread.
+/// A thread in Home's transcript, where it was started: its state, title and
+/// latest line, updated in place. Tapping opens the thread.
 struct ThreadCardView: View {
-    let call: ChatToolCall
+    private let lookUp: () -> ChatThreadSummary?
+    private let requestedTitle: String?
+    private let cardID: String
     let store: HomeThreadsStore
 
     private static let previewLimit = 300
 
+    /// The card of a thread the assistant started.
+    init(call: ChatToolCall, store: HomeThreadsStore) {
+        lookUp = { store.thread(forSourceToolCallID: call.id) }
+        requestedTitle = ChatThreadTool.requestedTitle(from: call.argumentsText)
+        cardID = call.id
+        self.store = store
+    }
+
+    /// The card of a thread the user started.
+    init(threadID: String, store: HomeThreadsStore) {
+        lookUp = { store.thread(conversationID: threadID) }
+        requestedTitle = nil
+        cardID = threadID
+        self.store = store
+    }
+
     var body: some View {
-        let thread = store.thread(forSourceToolCallID: call.id)
-        let title = thread?.title ?? ChatThreadTool.requestedTitle(from: call.argumentsText) ?? "New thread"
+        let thread = lookUp()
+        let title = thread?.title ?? requestedTitle ?? "New thread"
         Button {
             if let thread {
                 store.open(thread.conversationID)
@@ -876,7 +898,7 @@ struct ThreadCardView: View {
             thread?.accessibilitySummary
                 ?? "\(title), \(ThreadPresentationState.label(for: nil))"
         )
-        .accessibilityIdentifier("thread-card-\(call.id)")
+        .accessibilityIdentifier("thread-card-\(cardID)")
     }
 }
 

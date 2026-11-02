@@ -62,13 +62,23 @@ logger = logging.getLogger(__name__)
 TOOL_NAME = "start_thread"
 FINISH_TOOL_NAME = "finish_thread"
 LIST_TOOL_NAME = "list_threads"
-THREAD_TOOL_NAMES = frozenset({TOOL_NAME, FINISH_TOOL_NAME, LIST_TOOL_NAME})
+READ_HOME_TOOL_NAME = "read_home_messages"
+THREAD_TOOL_NAMES = frozenset({
+    TOOL_NAME,
+    FINISH_TOOL_NAME,
+    LIST_TOOL_NAME,
+    READ_HOME_TOOL_NAME,
+})
 """Tools that only make sense in one kind of conversation, and are hidden elsewhere."""
 
 # Home's assistant reads the most recently active threads; older ones are in
 # the switcher, and a long tail of finished jobs is not what a status question
 # is about.
 LIST_THREADS_LIMIT = 20
+
+# Enough to reach the reminder or brief a reply is about, and not so much that
+# a thread takes on Home at large.
+READ_HOME_LIMIT = 10
 
 THREAD_TOOLS_DEFINITION: list[ToolDefinition] = [
     {
@@ -168,6 +178,21 @@ THREAD_TOOLS_DEFINITION: list[ToolDefinition] = [
             "parameters": {"type": "object", "properties": {}},
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": READ_HOME_TOOL_NAME,
+            "description": (
+                "Reads the latest messages in the user's Home, oldest first. "
+                "You are working in a thread, which starts without seeing Home, "
+                "where reminders, briefs and automation results arrive. Use this "
+                "when the user refers to something you can't see, such as "
+                "'snooze that' or 'about that reminder'. Don't use it otherwise: "
+                "most of what is in Home has nothing to do with this thread."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
 ]
 
 
@@ -260,6 +285,31 @@ async def thread_finish_refusal(
     return None
 
 
+async def read_home_refusal(
+    db: DatabaseExecutor,
+    *,
+    app_config: AppConfig | None,
+    receives_household_context: bool,
+    conversation_id: str,
+    subconversation_id: str | None,
+) -> str | None:
+    """Why a turn cannot read its thread's Home, or None if it can.
+
+    Only a thread's own top-level turn looks back at Home, and only on a profile
+    that receives household context: the same gate that keeps Home turns out of
+    any other profile when they are copied.
+    """
+    if app_config is None or not app_config.conversation_threads.enabled:
+        return "Threads are not enabled."
+    if subconversation_id is not None:
+        return "Only the thread's own assistant can read Home."
+    if await db.conversation_threads.get_thread(conversation_id) is None:
+        return "This conversation is not a thread."
+    if not receives_household_context:
+        return "This assistant does not see Home."
+    return None
+
+
 async def thread_tool_refusal(
     tool_name: str,
     db: DatabaseExecutor,
@@ -267,6 +317,7 @@ async def thread_tool_refusal(
     app_config: AppConfig | None,
     async_delegation_enabled: bool,
     in_script: bool,
+    receives_household_context: bool,
     interface_type: str,
     conversation_id: str,
     subconversation_id: str | None,
@@ -303,6 +354,14 @@ async def thread_tool_refusal(
             conversation_id=conversation_id,
             subconversation_id=subconversation_id,
             user_id=user_id,
+        )
+    if tool_name == READ_HOME_TOOL_NAME:
+        return await read_home_refusal(
+            db,
+            app_config=app_config,
+            receives_household_context=receives_household_context,
+            conversation_id=conversation_id,
+            subconversation_id=subconversation_id,
         )
     raise ValueError(f"{tool_name!r} is not a thread tool.")
 
@@ -428,6 +487,45 @@ async def list_threads_tool(exec_context: ToolExecutionContext) -> ToolResult:
         else "This Home has no threads."
     )
     return ToolResult(text=text, attachments=None, data={"threads": facts})
+
+
+async def read_home_messages_tool(exec_context: ToolExecutionContext) -> ToolResult:
+    """The latest messages of the thread's Home, each with its taint merged into the turn."""
+    service = exec_context.processing_service
+    refusal = await read_home_refusal(
+        exec_context.db_context,
+        app_config=_app_config(exec_context),
+        receives_household_context=(
+            service is not None and service.service_config.receives_household_context
+        ),
+        conversation_id=exec_context.conversation_id,
+        subconversation_id=exec_context.subconversation_id,
+    )
+    if refusal is not None:
+        return _error(refusal)
+    db = exec_context.db_context
+    thread = await db.conversation_threads.get_thread(exec_context.conversation_id)
+    assert thread is not None
+    rows = await db.message_history.recent_home_messages(
+        conversation_id=thread.home_conversation_id, limit=READ_HOME_LIMIT
+    )
+    messages: list[dict[str, object]] = []
+    lines: list[str] = []
+    for row in rows:
+        _merge_fact_taint(exec_context, row["taint_metadata_json"])
+        sent_at = row["timestamp"].isoformat()
+        messages.append({
+            "role": row["role"],
+            "sent_at": sent_at,
+            "content": row["content"],
+        })
+        lines.append(f"[{sent_at}] {row['role']}: {row['content']}")
+    text = (
+        "Latest messages in Home, oldest first:\n" + "\n\n".join(lines)
+        if lines
+        else "Home has no messages."
+    )
+    return ToolResult(text=text, attachments=None, data={"messages": messages})
 
 
 def _merge_fact_taint(

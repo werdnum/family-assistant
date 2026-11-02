@@ -1064,6 +1064,9 @@ default_profile_settings:
             # Home's read of its threads' titles and states; offered only in
             # Home, and withheld while conversation_threads is off.
             - "list_threads"
+            # A thread's read of recent Home messages; offered only in a thread
+            # on a profile that receives household context.
+            - "read_home_messages"
             - "query_recent_events"
             - "get_home_status"
             - "render_home_assistant_template"

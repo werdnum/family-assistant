@@ -2,7 +2,6 @@ import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event';
 import { HttpResponse, http } from 'msw';
 import { vi } from 'vitest';
-import { capturedTurnModelTiers } from '../../test/mocks/handlers';
 import { mockLocalStorage, resetLocalStorageMock } from '../../test/mocks/localStorageMock';
 import { server } from '../../test/setup.js';
 import { renderChatApp } from '../../test/utils/renderChatApp';
@@ -431,41 +430,6 @@ describe('Home and threads', () => {
     expect(screen.queryByText("On it. I've started a thread for it.")).not.toBeInTheDocument();
   });
 
-  it('sends a tier chosen in Home with that turn only, then shows the default again', async () => {
-    const proto = window.HTMLElement.prototype as unknown as Record<string, unknown>;
-    const stubbed = ['hasPointerCapture', 'releasePointerCapture', 'scrollIntoView'].filter(
-      (method) => !(method in proto)
-    );
-    for (const method of stubbed) {
-      proto[method] = vi.fn();
-    }
-    try {
-      const user = userEvent.setup({ pointerEventsCheck: 0 });
-      serveThreads();
-      capturedTurnModelTiers.length = 0;
-
-      await renderChatApp({ waitForReady: true });
-      await screen.findByText("On it. I've started a thread for it.");
-      const intelligence = await screen.findByRole('combobox', { name: 'Intelligence' });
-      await user.click(intelligence);
-      await user.click(await screen.findByRole('option', { name: /Deep/ }));
-      expect(intelligence).toHaveTextContent('Deep');
-
-      const input = screen.getByTestId('chat-input');
-      await user.type(input, 'A hard question');
-      await user.keyboard('{Enter}');
-
-      await waitFor(() => expect(capturedTurnModelTiers).toEqual(['deep']));
-      await waitFor(() =>
-        expect(screen.getByRole('combobox', { name: 'Intelligence' })).toHaveTextContent('Standard')
-      );
-    } finally {
-      for (const method of stubbed) {
-        delete proto[method];
-      }
-    }
-  });
-
   it('moves a thread between groups when a turn ends and the list is refetched', async () => {
     const user = userEvent.setup();
     const threads = serveThreads();
@@ -890,7 +854,7 @@ describe('The thread panel', () => {
     );
   });
 
-  it('sends from each pane into its own conversation, and shows each reply in its own pane', async () => {
+  it('sends from the panel into its thread, and shows the reply there alone', async () => {
     const user = userEvent.setup();
     serveThreads();
     const sends = serveTurnsNamingTheirConversation();
@@ -905,18 +869,9 @@ describe('The thread panel', () => {
     await user.type(within(panel).getByRole('textbox'), 'Heat pump, please{Enter}');
     expect(await within(panel).findByText('Reply for web_conv_quotes')).toBeInTheDocument();
     expect(within(home).queryByText('Reply for web_conv_quotes')).toBeNull();
-    await waitFor(() => expect(within(panel).getByTestId('send-button')).toBeInTheDocument());
-
-    await user.type(within(home).getByRole('textbox'), 'Is the bin out?{Enter}');
-    expect(await within(home).findByText('Reply for web_conv_home')).toBeInTheDocument();
-    expect(within(panel).queryByText('Reply for web_conv_home')).toBeNull();
-    expect(within(panel).queryByText('Is the bin out?')).toBeNull();
     expect(within(home).queryByText('Heat pump, please')).toBeNull();
 
-    expect(sends).toEqual([
-      { conversationId: 'web_conv_quotes', prompt: 'Heat pump, please' },
-      { conversationId: HOME, prompt: 'Is the bin out?' },
-    ]);
+    expect(sends).toEqual([{ conversationId: 'web_conv_quotes', prompt: 'Heat pump, please' }]);
   });
 
   it('expands the thread into the centre, collapses it back, and closes it', async () => {

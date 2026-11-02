@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 import { getProfileDisplayName } from './profileNames';
 import { ThreadStateDot, ThreadUnreadBadge, threadStatusText } from './ThreadStateDot';
 import { useThreadsContext } from './threadsContext';
+import type { ThreadSummary } from './types';
 
 interface StartThreadCardProps {
   toolCallId?: string;
@@ -13,18 +14,26 @@ interface StartThreadCardProps {
 }
 
 /**
- * The live card a `start_thread` call leaves in Home: the thread's state, title,
- * profile, unread count and latest message, opening the thread on click. A
- * finished thread reads as finished: its outcome when the assistant closed it,
- * or that the user did. A call whose thread is not (or not yet) in the threads
- * list, such as one the tool refused, renders as any other tool call.
+ * The card a `start_thread` call leaves in Home. A call whose thread is not (or
+ * not yet) in the threads list, such as one the tool refused, renders as any
+ * other tool call.
  */
 export const StartThreadCard: React.FC<StartThreadCardProps> = ({ toolCallId, fallback }) => {
   const threads = useThreadsContext();
   const thread = toolCallId ? threads?.threadsBySourceToolCallId.get(toolCallId) : undefined;
-  if (!threads || !thread) {
+  if (!thread) {
     return <>{fallback}</>;
   }
+  return <ThreadCard thread={thread} />;
+};
+
+/**
+ * A thread's live card in Home: its state, title, profile, unread count and
+ * latest message, opening the thread on click. A finished thread reads as
+ * finished: its outcome when the assistant closed it, or that the user did.
+ */
+export const ThreadCard: React.FC<{ thread: ThreadSummary }> = ({ thread }) => {
+  const threads = useThreadsContext();
   const detail = thread.preview || thread.seed_request;
   const status = threadStatusText(thread);
   const isDone = thread.state === 'done';
@@ -33,7 +42,7 @@ export const StartThreadCard: React.FC<StartThreadCardProps> = ({ toolCallId, fa
   return (
     <button
       type="button"
-      onClick={() => threads.openConversation(thread.conversation_id)}
+      onClick={() => threads?.openConversation(thread.conversation_id)}
       className={cn(
         'my-1 flex w-full min-w-0 flex-col gap-1 rounded-xl border px-4 py-3 text-left shadow-sm transition-colors hover:border-primary/40 hover:bg-muted/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring',
         isFailed

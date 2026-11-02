@@ -2207,6 +2207,17 @@ final class ChatViewModel {
         guard !isSubmittingDraft else {
             return
         }
+        if let startHomeThread {
+            guard canSendDraftAsThread else {
+                presentErrorAlert(
+                    "Add a message to send with your attachment.",
+                    reason: .sendAttachmentNeedsMessage
+                )
+                return
+            }
+            await sendDraftAsThread(profileID: defaultProfileID, using: startHomeThread)
+            return
+        }
         _ = await sendDraft(fallbackFromSteer: false)
     }
 
@@ -2328,6 +2339,10 @@ final class ChatViewModel {
             && !draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// How a send from Home starts a thread: every send there does. Set by
+    /// Home, which holds the thread store; nil in any other conversation.
+    @ObservationIgnored var startHomeThread: (@MainActor (HomeThreadStart) async -> Bool)?
+
     /// The start a send-as-thread of the composer's contents is retried under,
     /// so a retry of the same draft to the same profile reuses its turn id.
     @ObservationIgnored private var pendingThreadSend: (draft: ChatDraft, start: HomeThreadStart)?
@@ -2424,6 +2439,13 @@ final class ChatViewModel {
                   !isSubmittingDraft
             else {
                 return false
+            }
+            if let startHomeThread {
+                return await startHomeThread(HomeThreadStart(
+                    turnID: UUID().uuidString,
+                    profileID: defaultProfileID,
+                    prompt: prompt
+                ))
             }
         }
         guard isRouted || draftAttachments.allSatisfy({ $0.uploadState != .uploading }) else {
@@ -5070,6 +5092,7 @@ final class ChatViewModel {
         case profilesLoad = "profiles_load"
         case sendAttachmentsUploading = "send_attachments_uploading"
         case sendAttachmentFailed = "send_attachment_failed"
+        case sendAttachmentNeedsMessage = "send_attachment_needs_message"
         case attachmentImportFailed = "attachment_import_failed"
         case attachmentDownloadFailed = "attachment_download_failed"
         case pendingApprovalsPoll = "pending_approvals_poll"
@@ -6186,6 +6209,7 @@ final class ChatViewModel {
                 modelTierRequested: backend.reasoningInfo?.modelTierRequested,
                 echoedFromThread: backend.echoedFromThread,
                 movedToThread: backend.movedToThread,
+                startedThread: backend.startedThread,
                 feedback: backend.feedback
             )
         }

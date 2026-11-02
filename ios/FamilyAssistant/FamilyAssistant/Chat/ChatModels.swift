@@ -439,6 +439,9 @@ struct ChatMessage: Identifiable, Equatable {
     /// On a Home message marking a turn the user moved into a thread: that
     /// thread's conversation id. Shown as "Moved to …" in place of its text.
     var movedToThread: String? = nil
+    /// On a Home message marking a thread the user started: that thread's
+    /// conversation id. Shown as the thread's card in place of its text.
+    var startedThread: String? = nil
     /// The user's thumbs up or down on the turn this message belongs to.
     var feedback: ChatTurnRating? = nil
 }
@@ -1048,6 +1051,8 @@ struct ChatBackendMessage: Decodable, Equatable {
     let echoedFromThread: String?
     /// On a Home row marking a turn moved into a thread: that thread.
     let movedToThread: String?
+    /// On a Home row marking a thread the user started: that thread.
+    let startedThread: String?
     /// The caller's rating of the row's turn, on every row of a rated turn.
     let feedback: ChatTurnRating?
 
@@ -1067,6 +1072,7 @@ struct ChatBackendMessage: Decodable, Equatable {
         case metadata
         case echoedFromThread = "echoed_from_thread"
         case movedToThread = "moved_to_thread"
+        case startedThread = "started_thread"
         case feedback
     }
 
@@ -1092,6 +1098,7 @@ struct ChatBackendMessage: Decodable, Equatable {
         metadata = try container.decodeIfPresent([String: JSONValue].self, forKey: .metadata)
         echoedFromThread = try container.decodeIfPresent(String.self, forKey: .echoedFromThread)
         movedToThread = try container.decodeIfPresent(String.self, forKey: .movedToThread)
+        startedThread = try container.decodeIfPresent(String.self, forKey: .startedThread)
         feedback = try container.decodeIfPresent(ChatTurnRating.self, forKey: .feedback)
 
         if let content = try? container.decode(String.self, forKey: .content) {
