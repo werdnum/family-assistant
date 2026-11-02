@@ -86,6 +86,11 @@ export interface MessageReasoningInfo {
   model_tier?: string | null;
   model_tier_source?: 'user' | 'model' | 'auto' | 'experiment' | 'default' | null;
   model_tier_requested?: string | null;
+  /** The model the provider reported serving, when an alias resolved differently. */
+  resolved_model?: string | null;
+  provider?: string | null;
+  experiment_id?: string | null;
+  experiment_arm?: string | null;
 }
 
 export interface Message {

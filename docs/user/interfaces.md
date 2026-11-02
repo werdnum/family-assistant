@@ -89,6 +89,12 @@ wrong. Filling it in is optional, but a few words make the rating far more usefu
 different models do. Ratings are private to you and are only used to judge reply quality. In the iOS
 app the two thumbs sit under each finished reply, and a thumbs down asks the same optional question.
 
+**See which model answered.** **Which model answered** (the eye button, after the thumbs) opens a
+short summary under the reply: the profile, the intelligence level and who chose it, the exact model
+and provider, and the comparison it belongs to, if any. On a reply that is part of a model
+comparison, the button appears only once you have rated the reply, so knowing the model cannot sway
+the rating. Taking the rating back hides it again.
+
 A long conversation opens at its most recent messages. Scroll to the top and select **Load earlier
 messages** to bring in older ones, as many times as you need to reach the start.
 

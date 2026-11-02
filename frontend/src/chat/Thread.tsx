@@ -17,6 +17,8 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   CopyIcon,
+  EyeIcon,
+  EyeOffIcon,
   FileSearchIcon,
   FolderInputIcon,
   GitBranchPlusIcon,
@@ -129,7 +131,10 @@ const ThreadLoadOlderMessages: React.FC<{
   // Older messages arrive above the reader, which would push what they were
   // looking at down the page. Remember the distance from the bottom when they
   // ask, and restore it once the longer thread renders.
-  const pendingAnchorRef = useRef<{ messageCount: number; fromBottom: number } | null>(null);
+  const pendingAnchorRef = useRef<{
+    messageCount: number;
+    fromBottom: number;
+  } | null>(null);
   const status = controls?.olderMessagesStatus;
 
   useLayoutEffect(() => {
@@ -768,6 +773,15 @@ const AssistantMessage: React.FC = () => {
                 feedback={custom.feedback}
                 unrateable={Boolean(custom.unrateable)}
                 canCopy={hasCopyableContent}
+                servedBy={
+                  reasoningInfo
+                    ? {
+                        reasoningInfo,
+                        profileLabel: profile?.description ?? profileId,
+                        tierLabels,
+                      }
+                    : undefined
+                }
               />
             </div>
           </div>
@@ -815,6 +829,67 @@ const MovedTurnMarker: React.FC<{ threadConversationId: string }> = ({ threadCon
   );
 };
 
+interface ServedBy {
+  reasoningInfo: MessageReasoningInfo;
+  profileLabel?: string;
+  tierLabels: Record<string, string>;
+}
+
+const TIER_SOURCE_LABELS: Record<string, string> = {
+  user: 'chosen by you',
+  model: 'chosen by the assistant',
+  auto: 'chosen by Auto',
+  experiment: 'assigned by an experiment',
+  default: 'profile default',
+};
+
+/** What served a reply, spelled out: the profile, tier, model and any experiment arm. */
+const ServedByDetails: React.FC<{ servedBy: ServedBy }> = ({ servedBy }) => {
+  const { reasoningInfo: info, profileLabel, tierLabels } = servedBy;
+  const tierName = (tier: string) => tierLabels[tier] ?? tier;
+  const model = info.resolved_model ?? info.model;
+  const source = info.model_tier_source ? TIER_SOURCE_LABELS[info.model_tier_source] : undefined;
+  const rows: [string, string][] = [];
+  if (profileLabel) {
+    rows.push(['Profile', profileLabel]);
+  }
+  if (info.model_tier) {
+    rows.push([
+      'Intelligence',
+      source ? `${tierName(info.model_tier)} (${source})` : tierName(info.model_tier),
+    ]);
+  }
+  if (info.model_tier_requested && info.model_tier_requested !== info.model_tier) {
+    rows.push(['Requested', tierName(info.model_tier_requested)]);
+  }
+  if (model) {
+    rows.push(['Model', info.provider ? `${model} via ${info.provider}` : model]);
+  }
+  if (info.experiment_id) {
+    rows.push(['Experiment', info.experiment_id]);
+    if (info.experiment_arm) {
+      rows.push(['Arm', tierName(info.experiment_arm)]);
+    }
+  }
+  return (
+    <dl
+      className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs"
+      data-testid="served-by-details"
+    >
+      {rows.length === 0 ? (
+        <dd className="col-span-2 text-muted-foreground">No model details were recorded.</dd>
+      ) : (
+        rows.map(([label, value]) => (
+          <React.Fragment key={label}>
+            <dt className="text-muted-foreground">{label}</dt>
+            <dd className="min-w-0 break-words">{value}</dd>
+          </React.Fragment>
+        ))
+      )}
+    </dl>
+  );
+};
+
 const AssistantActionBar: React.FC<{
   internalId?: number;
   turnId?: string;
@@ -822,7 +897,8 @@ const AssistantActionBar: React.FC<{
   feedback?: TurnRating;
   unrateable: boolean;
   canCopy: boolean;
-}> = ({ internalId, turnId, isEcho, feedback, unrateable, canCopy }) => {
+  servedBy?: ServedBy;
+}> = ({ internalId, turnId, isEcho, feedback, unrateable, canCopy, servedBy }) => {
   const aui = useAui();
   const homeActions = useHomeTurnActions();
   const turnFeedback = useTurnFeedback();
@@ -831,6 +907,16 @@ const AssistantActionBar: React.FC<{
   const [askingWhy, setAskingWhy] = useState(false);
   const [feedbackComment, setFeedbackComment] = useState('');
   const [feedbackError, setFeedbackError] = useState(false);
+  const [showServedBy, setShowServedBy] = useState(false);
+  // An experiment reply stays blind until it is rated, so the reveal cannot
+  // bias the rating. A reply that cannot be rated has nothing to protect.
+  const canReveal =
+    servedBy !== undefined &&
+    !isEcho &&
+    (servedBy.reasoningInfo.model_tier_source !== 'experiment' ||
+      !canRate ||
+      feedback !== undefined);
+  const servedByShown = showServedBy && canReveal;
 
   // A slower earlier request must not reopen or close the form after a newer
   // press has settled what the user sees.
@@ -877,7 +963,11 @@ const AssistantActionBar: React.FC<{
   };
   // Only an exchange the user started moves; an echo stays in Home.
   const canMove = homeActions !== null && !isEcho && homeActions.turnHasUserMessage(turnId);
-  const target = () => ({ internalId, turnId, quote: aui.message().getCopyText() });
+  const target = () => ({
+    internalId,
+    turnId,
+    quote: aui.message().getCopyText(),
+  });
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
 
@@ -904,7 +994,7 @@ const AssistantActionBar: React.FC<{
 
   // A reply of only images or tool results has nothing to copy but can still
   // be rated.
-  if (!canCopy && !canRate) {
+  if (!canCopy && !canRate && !canReveal) {
     return null;
   }
 
@@ -952,6 +1042,7 @@ const AssistantActionBar: React.FC<{
           </Button>
         </form>
       )}
+      {servedByShown && servedBy && <ServedByDetails servedBy={servedBy} />}
       <span role="status" className="sr-only">
         {copied ? 'Response copied to clipboard.' : ''}
       </span>
@@ -1018,6 +1109,25 @@ const AssistantActionBar: React.FC<{
               />
             </TooltipIconButton>
           </>
+        )}
+        {canReveal && (
+          /* @ts-expect-error - TooltipIconButton JSX component */
+          <TooltipIconButton
+            tooltip={servedByShown ? 'Hide model details' : 'Which model answered?'}
+            aria-label="Which model answered"
+            aria-expanded={servedByShown}
+            size="icon"
+            variant="ghost"
+            className={`h-7 w-7 rounded-lg ${servedByShown ? 'text-primary' : ''}`}
+            onClick={() => setShowServedBy((shown) => !shown)}
+            data-testid="reveal-served-by"
+          >
+            {servedByShown ? (
+              <EyeOffIcon size={12} aria-hidden="true" />
+            ) : (
+              <EyeIcon size={12} aria-hidden="true" />
+            )}
+          </TooltipIconButton>
         )}
         {homeActions && (internalId !== undefined || turnId) && (
           <>
