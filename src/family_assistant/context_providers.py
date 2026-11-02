@@ -219,8 +219,12 @@ class NotesContextProvider(ContextProvider):
                 catalog_lines.append(
                     f"- **{skill.skill_name}**: {skill.skill_description}"
                 )
+            # get_note finds a database skill first, so one of the same name
+            # replaces the file skill rather than listing beside it.
+            database_skill_names = {skill.skill_name for skill in db_skills}
             for skill in file_skills:
-                catalog_lines.append(f"- **{skill.name}**: {skill.description}")
+                if skill.name not in database_skill_names:
+                    catalog_lines.append(f"- **{skill.name}**: {skill.description}")
             fragments.append("\n".join(catalog_lines))
 
         logger.debug(

@@ -1496,11 +1496,11 @@ half its budget, so the next one is many turns away:
 
 A stub is only left for a profile that can follow it: a profile without `get_message_history` (or,
 for images, `delegate_to_service`, the only way to have a model look at one again) keeps such turns
-verbatim or drops them whole. A compacted turn keeps the on-demand tools it activated and the taint
-of everything it read. Each event's decision is recorded in `history_compaction_events`, and later
-requests render from it, so nothing about a compacted turn is stored beyond the decision. If a
-provider still rejects a request as too long, the window is compacted once more to half its size and
-the request retried.
+verbatim or drops them whole. A compacted turn keeps the taint of everything it read, but not the
+on-demand tools it activated, which the model can activate again. Each event's decision is recorded
+in `history_compaction_events`, and later requests render from it, so nothing about a compacted turn
+is stored beyond the decision. If a provider still rejects a request as too long, the window is
+compacted once more to half its size and the request retried.
 
 An inlined image counts as 4,000 characters. Cached history is cheap on every current provider, so
 the budget is a setting for the model's attention rather than for cost; tune it from the prompt and
@@ -3066,7 +3066,8 @@ The two search tools judge each frame with [TypeSafe Jev](#typesafe-jev) where i
 with the turn's model otherwise. Each configured instance under `plugins.reolink` is one set of
 cameras, keyed by camera id; the instance named `default` serves every profile that doesn't choose
 another. Which profiles may call the tools is up to `tools_policy` — shipped `defaults.yaml` grants
-them only to `camera_analyst`.
+them in `default_profile_settings` as on-demand tools, revealed when the assistant loads the
+built-in Camera Integration skill.
 
 ```yaml
 plugins:
@@ -3367,7 +3368,9 @@ ______________________________________________________________________
 Whether the web and iOS profile pickers offer the profile. Opt-in: a profile without it is treated
 as internal (a delegation target, a background task's profile) and left out of the picker. It only
 controls listing; slash commands, delegation and explicit API requests still reach the profile. The
-default profile is always offered, and remote A2A profiles never are.
+default profile is always offered, and remote A2A profiles never are. The pickers list profiles in
+configuration order, so shipped `defaults.yaml` puts the most-used ones first; a profile an operator
+adds in `config.yaml` comes after the shipped ones.
 
 ```yaml
 service_profiles:
@@ -3647,10 +3650,10 @@ providers from a profile that has this flag on, and has no effect on a profile t
 Every profile's user messages carry the time they were sent regardless of this flag; it is not
 sensitive.
 
-Shipped `defaults.yaml` sets it on six profiles: `default_assistant`, `data_visualization`,
-`camera_analyst`, `event_handler`, `complex_tasks` and `engineer`. Every other profile — including
-`telephone_external`, which serves external callers, and `media_analyst`, which reads
-attacker-controlled media — gets no aggregated context.
+Shipped `defaults.yaml` sets it on four profiles: `default_assistant`, `event_handler`,
+`complex_tasks` and `engineer`. Every other profile — including `telephone_external`, which serves
+external callers, and `media_analyst`, which reads attacker-controlled media — gets no aggregated
+context.
 
 ```yaml
 service_profiles:
@@ -4516,6 +4519,9 @@ LLM prompts with template variables. A profile's `system_prompt` may reference:
 That is the complete list. Any other placeholder is an error, and every profile's prompt is rendered
 once at startup, so a template naming an unknown one fails the boot rather than the first
 conversation with that profile. Escape literal braces as `{{` and `}}`.
+
+A profile's `voice_system_prompt` replaces its `system_prompt` in browser, iOS and watch voice
+sessions, and takes the same placeholders. A profile without one uses its `system_prompt` there too.
 
 > **⚠️ BREAKING CHANGE for custom prompts**: `{current_time}` and `{aggregated_other_context}` are
 > no longer template variables. Each user message carries the time it was sent, and the context

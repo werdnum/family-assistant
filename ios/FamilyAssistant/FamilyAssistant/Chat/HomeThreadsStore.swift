@@ -39,6 +39,10 @@ final class HomeThreadsStore {
         ThreadSwitcherSections.waitingCount(in: threads)
     }
 
+    var workingThreads: [ChatThreadSummary] {
+        threads.filter { $0.presentationState == .working }
+    }
+
     var sections: ThreadSwitcherSections {
         ThreadSwitcherSections(
             threads: threads,

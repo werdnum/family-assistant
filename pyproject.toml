@@ -522,6 +522,12 @@ typeCheckingMode = "basic"
 
 
 [tool.uv]
+# Home Assistant (dev, for integration-test cassettes) pins regex via
+# hass-nabucasa, which recent transformers releases (local-embeddings) cannot
+# satisfy. No environment installs both extras, so resolve them separately.
+conflicts = [
+    [{ extra = "dev" }, { extra = "local-embeddings" }],
+]
 
 [[tool.uv.index]]
 name = "torch-cpu"

@@ -155,6 +155,42 @@ private struct HeldRoutedPromptNote: View {
     }
 }
 
+/// Atop Home: what is running right now, however it was started. A thread the
+/// user started has no card in Home's transcript, and one with a card scrolls
+/// away. One thread opens directly; several open the chat list (nil).
+private struct WorkingThreadsBar: View {
+    let threads: [ChatThreadSummary]
+    let onSelect: (ChatThreadSummary?) -> Void
+
+    var body: some View {
+        if !threads.isEmpty {
+            Button {
+                onSelect(threads.count == 1 ? threads[0] : nil)
+            } label: {
+                HStack(spacing: 8) {
+                    ThreadStateDot(state: .working)
+                    Text(verbatim: threads.count == 1 ? threads[0].title : "\(threads.count) threads working")
+                        .font(.footnote.weight(.semibold))
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Image(systemName: "chevron.right")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(.bar)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(
+                threads.count == 1 ? "\(threads[0].title), Working" : "\(threads.count) threads working"
+            )
+            .accessibilityIdentifier("home-working-threads")
+        }
+    }
+}
+
 /// Shown when the load that describes Home or a conversation over it failed:
 /// sending stays closed until it loads, so the user needs a way to try again.
 private struct ConversationLoadRetryBanner: View {
@@ -257,6 +293,13 @@ struct HomeRootView: View {
                     VStack(spacing: 0) {
                         ConversationLoadRetryBanner(viewModel: viewModel)
                         HeldRoutedPromptNote(viewModel: viewModel)
+                        WorkingThreadsBar(threads: store.workingThreads) { thread in
+                            if let thread {
+                                open(thread.conversationID)
+                            } else {
+                                showsSwitcher = true
+                            }
+                        }
                     }
                 }
                 .navigationTitle("Home")
@@ -573,6 +616,8 @@ private struct PushedConversationView: View {
                 }
                 await viewModel.bootstrap()
             }
+            .onAppear { viewModel.setScreenVisible(true) }
+            .onDisappear { viewModel.setScreenVisible(false) }
             .alert(
                 "Chat Error",
                 isPresented: Binding(
@@ -731,7 +776,7 @@ enum ThreadStateStyle {
         case .working: workingColor
         case .failed: .red
         case .done: .green
-        case nil: .secondary
+        case .quiet, nil: .secondary
         }
     }
 }
@@ -949,6 +994,14 @@ struct ThreadSwitcherView: View {
                         ThreadSwitcherRow(thread: thread)
                     }
                     .buttonStyle(.plain)
+                    .swipeActions(edge: .trailing) {
+                        if thread.canMarkDone {
+                            Button("Mark Done") {
+                                Task { await store.markDone(thread.conversationID) }
+                            }
+                            .tint(.green)
+                        }
+                    }
                     .accessibilityIdentifier("thread-row-\(thread.conversationID)")
                 }
             }

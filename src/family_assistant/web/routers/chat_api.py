@@ -81,7 +81,11 @@ from family_assistant.storage.repositories.turn_feedback import (
 )
 from family_assistant.storage.types import MessageHistoryRow
 from family_assistant.threads.home import viewer_for
-from family_assistant.threads.listing import ThreadSummary, summarize_threads
+from family_assistant.threads.listing import (
+    ThreadSummary,
+    is_quiet,
+    summarize_threads,
+)
 from family_assistant.tools.confirmation import render_tool_confirmation
 from family_assistant.tools.infrastructure import (
     ToolDescriptorProvider,
@@ -94,6 +98,7 @@ from family_assistant.tools.outcomes import (
     classify_tool_outcome,
 )
 from family_assistant.tools.types import ConfirmationOutcome, ToolExecutionContext
+from family_assistant.web.chat_telemetry import log_turn_event, observed_stream
 from family_assistant.web.confirmation_manager import web_confirmation_manager
 from family_assistant.web.conversation_stream_hub import (
     ConversationStreamHub,
@@ -630,6 +635,13 @@ class ThreadSummaryResponse(BaseModel):
             "the caller did not write"
         ),
     )
+    quiet: bool = Field(
+        default=False,
+        description=(
+            "A waiting thread the caller has read and that has been idle for "
+            "days: listed apart and not counted as waiting on them"
+        ),
+    )
     source_tool_call_id: str | None = Field(
         default=None, description="The Home tool call that started the thread, if any"
     )
@@ -665,6 +677,12 @@ def thread_summary_response(
         closed_at=summary.closed_at,
         echo_message_id=summary.echo_message_id,
         unread_count=summary.unread_count or 0,
+        quiet=is_quiet(
+            summary.state,
+            unread_count=summary.unread_count,
+            updated_at=summary.updated_at,
+            now=datetime.now(UTC),
+        ),
         source_tool_call_id=summary.source_tool_call_id,
         anchor_message_id=summary.anchor_message_id,
         seed_request=summary.seed_request,
@@ -1532,12 +1550,22 @@ async def start_chat_turn(
         request, current_user, conversation_id, allow_new=True
     )
 
+    log_turn_event(
+        "request_received", conversation_id=conversation_id, turn_id=payload.turn_id
+    )
+
     # Idempotency short-circuit: if we already have this turn registered,
     # return its identity instead of starting a second producer.
     existing = hub.get_turn(conversation_id, payload.turn_id)
     if existing is not None:
         if existing.user_id != user_id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+        log_turn_event(
+            "retry_matched",
+            conversation_id=conversation_id,
+            turn_id=payload.turn_id,
+            source="hub",
+        )
         return ChatTurnResponse(
             turn_id=existing.turn_id,
             conversation_id=conversation_id,
@@ -1574,6 +1602,13 @@ async def start_chat_turn(
             or existing_user_row.get("user_id") != user_id
         ):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+        log_turn_event(
+            "retry_matched",
+            conversation_id=conversation_id,
+            turn_id=payload.turn_id,
+            source="database",
+            has_reply=turn_has_terminal_reply,
+        )
         return ChatTurnResponse(
             turn_id=payload.turn_id,
             conversation_id=conversation_id,
@@ -1821,6 +1856,10 @@ async def start_chat_turn(
             error="An internal error occurred.",
         )
         raise
+
+    log_turn_event(
+        "user_message_saved", conversation_id=conversation_id, turn_id=payload.turn_id
+    )
 
     # Now that the user message is committed, ping the owner's activity stream so
     # the conversation surfaces (or bumps) in their list. Done here rather than in
@@ -2071,7 +2110,12 @@ async def api_chat_conversation_stream(
                 hub.unsubscribe(conversation_id, handle.queue)
 
     return StreamingResponse(
-        event_generator(),
+        observed_stream(
+            event_generator(),
+            kind="conversation",
+            conversation_id=conversation_id,
+            follow=follow,
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -2180,7 +2224,7 @@ async def api_chat_activity_stream(
                 hub.unsubscribe_activity(handle.queue)
 
     return StreamingResponse(
-        event_generator(),
+        observed_stream(event_generator(), kind="activity"),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

@@ -9,18 +9,22 @@ does not have. Configure SDK responses through ``api.<method>.return_value`` /
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 from unittest.mock import create_autospec
 
 import homeassistant_api
+from homeassistant_api.errors import BadTemplateError
 from homeassistant_api.models.domains import Domain
+from jinja2.sandbox import ImmutableSandboxedEnvironment
 
-from family_assistant.plugins.home_assistant.client import HomeAssistantClientWrapper
+from family_assistant.plugins.home_assistant.client import (
+    MAX_TEMPLATE_OUTPUT_CHARS,
+    HomeAssistantClientWrapper,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Callable, Iterator, Mapping, Sequence
     from unittest.mock import NonCallableMagicMock
 
     from homeassistant_api.utils import JSONType
@@ -59,29 +63,76 @@ def make_home_assistant_client(
     return SpeccedHomeAssistant(wrapper=wrapper, api=api)
 
 
+@dataclass(frozen=True)
+class _FakeState:
+    entity_id: str
+    name: str
+    attributes: Mapping[str, object]
+
+
+class _FakeStates:
+    """Home Assistant's ``states`` template global: iterable and callable."""
+
+    def __init__(
+        self,
+        entities: Sequence[Mapping[str, object]],
+        states: Mapping[str, tuple[str, str | None]],
+    ) -> None:
+        self._entities = entities
+        self._states = states
+
+    def __iter__(self) -> Iterator[_FakeState]:
+        return iter([
+            _FakeState(
+                entity_id=str(entity["entity_id"]),
+                name=str(entity["name"]),
+                attributes={"device_class": entity.get("device_class")},
+            )
+            for entity in self._entities
+        ])
+
+    def __call__(self, entity_id: str) -> str:
+        return self._states.get(entity_id, ("unknown", None))[0]
+
+
 def serve_entities(
     api: NonCallableMagicMock,
     entities: Sequence[Mapping[str, object]],
     states: Mapping[str, tuple[str, str | None]] | None = None,
 ) -> None:
-    """Answer the wrapper's entity-list and current-state templates from fixed data.
+    """Render the wrapper's templates with Jinja over fixed entity data.
 
-    The state template is the one that loops over a list of ids.
+    The globals mirror the Home Assistant template helpers the wrapper uses,
+    and output longer than Home Assistant's limit is rejected as it is there.
     An entity missing from ``states`` reports ``unknown``, as ``states()`` does.
     """
     known_states = states or {}
+    by_id = {str(entity["entity_id"]): entity for entity in entities}
+
+    def lookup(field: str) -> Callable[[str], object]:
+        return lambda entity_id: by_id.get(entity_id, {}).get(field)
+
+    def state_attr(entity_id: str, attribute: str) -> str | None:
+        if attribute != "unit_of_measurement":
+            return None
+        return known_states.get(entity_id, ("unknown", None))[1]
+
+    environment = ImmutableSandboxedEnvironment()
+    environment.filters["tojson"] = lambda value: json.dumps(
+        value, ensure_ascii=False, separators=(",", ":")
+    )
+    environment.globals.update(
+        states=_FakeStates(entities, known_states),
+        state_attr=state_attr,
+        area_name=lookup("area_name"),
+        device_id=lookup("device_id"),
+        device_name=lookup("device_name"),
+    )
 
     async def render(template: str) -> str:
-        requested = re.search(r"for id in (\[.*?\]) %", template)
-        if requested is None:
-            return json.dumps(list(entities))
-        return json.dumps([
-            {
-                "entity_id": entity_id,
-                "state": known_states.get(entity_id, ("unknown", None))[0],
-                "unit": known_states.get(entity_id, ("unknown", None))[1],
-            }
-            for entity_id in json.loads(requested.group(1))
-        ])
+        rendered = environment.from_string(template).render()
+        if len(rendered) > MAX_TEMPLATE_OUTPUT_CHARS:
+            raise BadTemplateError("Your template is invalid")
+        return rendered
 
     api.async_get_rendered_template.side_effect = render
