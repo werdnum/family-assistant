@@ -4654,10 +4654,26 @@ protocol revision 2026-07-28 (Tuit does). FA polls `events/poll` over the server
 cluster and no path is exempted from edge authentication. Servers that offer an event type only by
 webhook or stream cannot be used.
 
-There is nothing to configure per server. Each automation polls with its creator's credential for
-that server: their `user_auth` token (identity check included) when the server has one, otherwise
-the server's shared `token`. A person can only watch servers they have a credential for, and only
-ever hears what that server would show them. stdio servers are not polled.
+Each automation polls with its creator's credential for that server: their `user_auth` token
+(identity check included) when the server has one, otherwise the server's shared `token`. A person
+can only watch servers they have a credential for, and only ever hears what that server would show
+them. stdio servers are not polled.
+
+By default an event's payload is untrusted, like a Home Assistant or webhook event: a `wake_llm`
+automation on it runs under the restricted `event_handler` profile, and the payload taints the turn
+`unknown_external`. Set `trusted_events: true` on a server to say its event payloads are as
+trustworthy as its tool output (the operator's call, typically for a server whose tools are already
+tagged `output_trusted`). A `wake_llm` automation on that server then runs under the profile that
+created it, with that profile's tools, and the payload adds no taint. The automation's own
+instruction is still judged by how it was authored. An automation stored with no creating profile
+keeps running as `event_handler`, and so does a script action's `wake_llm()`.
+
+```yaml
+mcp_config:
+  mcpServers:
+    tuit:
+      trusted_events: true
+```
 
 ```yaml
 event_system:
