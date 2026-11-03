@@ -21,6 +21,16 @@ refuses every option, so pylint is configured in `.pylintrc` and nowhere else. `
 whole configuration: pylint reads only the first config file it finds, so `[tool.pylint]` settings
 in `pyproject.toml` are silently ignored.
 
+### `test-lock.sh`
+
+The lock `run-tests.sh` takes so two `poe test` runs never overlap, where `flock` is missing
+(macOS). `flock` releases itself when its holder dies; this lock is a directory, and a run killed
+with SIGKILL -- as an agent harness kills a timed-out background task -- runs no trap and leaves it
+behind. So the holder records its pid and start time, and a later run reclaims the lock once that
+process has gone, rather than waiting five minutes and failing. The start time stops a recycled pid
+from passing for the holder. Never delete `~/.poe-test.lock.dir` by hand: a live run's lock looks
+the same.
+
 ### `check_suppression_budget.py`
 
 Enforces the shrink-only lint suppression budgets in `.lint-budget.toml`. For each budgeted rule it
