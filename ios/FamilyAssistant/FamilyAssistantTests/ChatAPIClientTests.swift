@@ -282,16 +282,51 @@ final class ChatAPIClientTests: XCTestCase {
             errorReporter: ErrorReporter(spoolDirectory: nil)
         )
 
-        await viewModel.loadStatus(conversationID: "web_conv_share/encoded")
+        await viewModel.loadStatus(target: .conversation("web_conv_share/encoded"))
         XCTAssertEqual(viewModel.status, .inactive)
 
-        let url = await viewModel.createShare(conversationID: "web_conv_share/encoded")
+        let url = await viewModel.createShare(target: .conversation("web_conv_share/encoded"))
         XCTAssertEqual(url?.absoluteString, "https://assistant.example.test/shared/conversations/new-token")
         XCTAssertEqual(viewModel.status, .active)
 
-        await viewModel.revokeShare(conversationID: "web_conv_share/encoded")
+        await viewModel.revokeShare(target: .conversation("web_conv_share/encoded"))
         XCTAssertEqual(viewModel.status, .inactive)
         XCTAssertEqual(methods, ["GET", "POST", "DELETE"])
+    }
+
+    func testAMessageIsSharedThroughItsOwnResource() async throws {
+        var requests: [String] = []
+        ChatMockBackendURLProtocol.respond { request in
+            requests.append("\(request.httpMethod ?? "") \(request.url?.path ?? "")")
+            switch request.httpMethod {
+            case "GET":
+                return .json(#"{"active":false}"#)
+            case "POST":
+                return .json(#"{"share_url":"/shared/conversations/message-token"}"#)
+            default:
+                return .json("", statusCode: 204)
+            }
+        }
+        let viewModel = ConversationShareViewModel(
+            apiClient: makeClient(),
+            errorReporter: ErrorReporter(spoolDirectory: nil)
+        )
+        let target = ConversationShareTarget.message(conversationID: "web_conv_home", messageID: 42)
+        let resource = "/api/v1/chat/conversations/web_conv_home/messages/42/share"
+
+        await viewModel.loadStatus(target: target)
+        let url = await viewModel.createShare(target: target)
+        await viewModel.revokeShare(target: target)
+
+        XCTAssertEqual(url?.absoluteString, "https://assistant.example.test/shared/conversations/message-token")
+        XCTAssertEqual(requests, ["GET \(resource)", "POST \(resource)", "DELETE \(resource)"])
+    }
+
+    func testAThreadIsSharedThroughItsConversationsResource() {
+        XCTAssertEqual(
+            ConversationShareTarget.thread("web_conv_thread").path { $0 },
+            "/api/v1/chat/conversations/web_conv_thread/share"
+        )
     }
 
     func testConversationShareStatusFailureCanRetry() async {
@@ -308,10 +343,10 @@ final class ChatAPIClientTests: XCTestCase {
             errorReporter: ErrorReporter(spoolDirectory: nil)
         )
 
-        await viewModel.loadStatus(conversationID: "web_conv_share")
+        await viewModel.loadStatus(target: .conversation("web_conv_share"))
         XCTAssertEqual(viewModel.status, .failed)
 
-        await viewModel.loadStatus(conversationID: "web_conv_share")
+        await viewModel.loadStatus(target: .conversation("web_conv_share"))
         XCTAssertEqual(viewModel.status, .active)
     }
 
@@ -336,10 +371,10 @@ final class ChatAPIClientTests: XCTestCase {
             )
 
             if method == "POST" {
-                let url = await viewModel.createShare(conversationID: "web_conv_share")
+                let url = await viewModel.createShare(target: .conversation("web_conv_share"))
                 XCTAssertNil(url)
             } else {
-                await viewModel.revokeShare(conversationID: "web_conv_share")
+                await viewModel.revokeShare(target: .conversation("web_conv_share"))
             }
             XCTAssertEqual(requestCount.value, 1, "\(method) must not be replayed")
             XCTAssertTrue(authManager.authRequired)
@@ -360,7 +395,7 @@ final class ChatAPIClientTests: XCTestCase {
 
         do {
             _ = try await ChatAPIClient(authManager: authManager)
-                .createConversationShare(conversationID: "web_conv_share")
+                .createShare(target: .conversation("web_conv_share"))
             XCTFail("Expected the edge auth wall to fail the mutation")
         } catch ChatAPIError.authWall {
             XCTAssertFalse(authManager.authRequired)
@@ -381,7 +416,7 @@ final class ChatAPIClientTests: XCTestCase {
 
         do {
             _ = try await ChatAPIClient(authManager: authManager)
-                .createConversationShare(conversationID: "web_conv_share")
+                .createShare(target: .conversation("web_conv_share"))
             XCTFail("Expected the stale mutation to fail")
         } catch let ChatAPIError.server(statusCode, _, _) {
             XCTAssertEqual(statusCode, 401)
@@ -1482,6 +1517,24 @@ final class ChatAPIClientTests: XCTestCase {
         return Dictionary(uniqueKeysWithValues: items.compactMap { item in
             item.value.map { (item.name, $0) }
         })
+    }
+}
+
+final class ChatNetworkSessionsTests: XCTestCase {
+    func testStreamsHaveRoomForEveryStreamTheAppCanOpen() {
+        // Two streams per chat model plus overlapping reconnects. The shared
+        // session's per-host limit is the stall this split exists to prevent.
+        XCTAssertGreaterThan(
+            ChatNetworkSessions.streamConfiguration().httpMaximumConnectionsPerHost,
+            URLSessionConfiguration.default.httpMaximumConnectionsPerHost
+        )
+    }
+
+    func testTelemetryStaysOutOfTheStreamPool() {
+        XCTAssertLessThan(
+            ChatNetworkSessions.telemetryConfiguration().httpMaximumConnectionsPerHost,
+            ChatNetworkSessions.streamConfiguration().httpMaximumConnectionsPerHost
+        )
     }
 }
 

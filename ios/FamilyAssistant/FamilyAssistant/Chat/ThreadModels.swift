@@ -39,19 +39,22 @@ enum ChatThreadState: Equatable, Decodable {
 /// How a thread's state is presented: the one mapping the card, the switcher's
 /// grouping and the threads button's badge all use, so they cannot disagree.
 /// A state this client does not know is presented as waiting, the server's own
-/// catch-all, so a thread that may need the user is never hidden.
+/// catch-all, so a thread that may need the user is never hidden. Quiet is a
+/// waiting thread the server says the reader has read and left alone.
 enum ThreadPresentationState: Equatable {
     case waiting
     case working
     case failed
     case done
+    case quiet
 
-    init(_ state: ChatThreadState) {
+    init(_ state: ChatThreadState, isQuiet: Bool = false) {
         switch state {
         case .working: self = .working
         case .failed: self = .failed
         case .done: self = .done
-        case .waiting, .unknown: self = .waiting
+        case .waiting: self = isQuiet ? .quiet : .waiting
+        case .unknown: self = .waiting
         }
     }
 
@@ -62,6 +65,7 @@ enum ThreadPresentationState: Equatable {
         case .working: "Working"
         case .failed: "Failed"
         case .done: "Done"
+        case .quiet: "Quiet"
         case nil: "Starting"
         }
     }
@@ -98,6 +102,8 @@ struct ChatThreadSummary: Equatable, Identifiable {
     var echoMessageID: Int? = nil
     /// The caller's own unread count: someone else reading it does not clear it.
     var unreadCount = 0
+    /// Waiting, but read and idle for days, so no longer asking for attention.
+    var isQuiet = false
     /// The Home message the user continued the thread from, for its "Started
     /// from" quote. Display only: the message may since have left Home.
     var anchorMessageID: Int? = nil
@@ -105,7 +111,7 @@ struct ChatThreadSummary: Equatable, Identifiable {
     var id: String { conversationID }
 
     var presentationState: ThreadPresentationState {
-        ThreadPresentationState(state)
+        ThreadPresentationState(state, isQuiet: isQuiet)
     }
 
     /// The line under the title: the thread's latest message, or what it was
@@ -136,7 +142,10 @@ struct ChatThreadSummary: Equatable, Identifiable {
     /// failed. Work in progress outranks a close, so a working thread marked
     /// done would still read as working and its turn's reply would reopen it.
     var canMarkDone: Bool {
-        presentationState == .waiting || presentationState == .failed
+        switch presentationState {
+        case .waiting, .quiet, .failed: true
+        case .working, .done: false
+        }
     }
 
     /// The card and row label for VoiceOver, which reads them as one element.
@@ -168,6 +177,7 @@ extension ChatThreadSummary: Decodable {
         case closedAt = "closed_at"
         case echoMessageID = "echo_message_id"
         case unreadCount = "unread_count"
+        case isQuiet = "quiet"
         case anchorMessageID = "anchor_message_id"
     }
 
@@ -188,6 +198,7 @@ extension ChatThreadSummary: Decodable {
         closedAt = try container.decodeIfPresent(Date.self, forKey: .closedAt)
         echoMessageID = try container.decodeIfPresent(Int.self, forKey: .echoMessageID)
         unreadCount = try container.decodeIfPresent(Int.self, forKey: .unreadCount) ?? 0
+        isQuiet = try container.decodeIfPresent(Bool.self, forKey: .isQuiet) ?? false
         anchorMessageID = try container.decodeIfPresent(Int.self, forKey: .anchorMessageID)
     }
 }
@@ -366,9 +377,11 @@ struct ThreadSwitcherSections: Equatable {
     static let workingTitle = ThreadPresentationState.label(for: .working)
     static let failedTitle = ThreadPresentationState.label(for: .failed)
     static let doneTitle = ThreadPresentationState.label(for: .done)
+    static let quietTitle = ThreadPresentationState.label(for: .quiet)
 
     /// Threads keep the server's order (newest first) within their group,
-    /// grouped by `ThreadPresentationState`. Earlier holds only conversations
+    /// grouped by `ThreadPresentationState`, with what is moving first and
+    /// what has settled last. Earlier holds only conversations
     /// that are neither Home nor one of its threads.
     init(
         threads: [ChatThreadSummary],
@@ -379,18 +392,21 @@ struct ThreadSwitcherSections: Equatable {
         var working: [ChatThreadSummary] = []
         var failed: [ChatThreadSummary] = []
         var done: [ChatThreadSummary] = []
+        var quiet: [ChatThreadSummary] = []
         for thread in threads {
             switch thread.presentationState {
             case .working: working.append(thread)
             case .failed: failed.append(thread)
             case .done: done.append(thread)
             case .waiting: waiting.append(thread)
+            case .quiet: quiet.append(thread)
             }
         }
         groups = [
-            Group(title: Self.waitingTitle, threads: waiting),
             Group(title: Self.workingTitle, threads: working),
+            Group(title: Self.waitingTitle, threads: waiting),
             Group(title: Self.failedTitle, threads: failed),
+            Group(title: Self.quietTitle, threads: quiet),
             Group(title: Self.doneTitle, threads: done),
         ].filter { !$0.threads.isEmpty }
         let excluded = Set(threads.map(\.conversationID)).union([homeConversationID].compactMap { $0 })

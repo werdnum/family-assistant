@@ -16,6 +16,7 @@ import pytest
 
 from family_assistant.tools.catalog import LOCAL_TOOL_REGISTRATIONS
 from family_assistant.tools.infrastructure import LocalToolsProvider
+from family_assistant.tools.live_meta import SKILL_TOOLS_KEY
 from family_assistant.tools.metadata import (
     ToolImplementation,
     ToolRegistration,
@@ -79,7 +80,12 @@ def _registration(name: str, implementation: ToolImplementation) -> ToolRegistra
     )
 
 
-def _install_provider(app: FastAPI, *, with_readers: bool = True) -> None:
+def _install_provider(
+    app: FastAPI,
+    *,
+    with_readers: bool = True,
+    extra: list[ToolRegistration] | None = None,
+) -> None:
     readers = {"jq_query", "read_text_attachment"} if with_readers else set()
     provider = LocalToolsProvider(
         registrations=[
@@ -87,6 +93,7 @@ def _install_provider(app: FastAPI, *, with_readers: bool = True) -> None:
             _registration("home_price", _home_price),
             _registration("home_entities", _home_entities),
             *(r for r in LOCAL_TOOL_REGISTRATIONS if r.name in readers),
+            *(extra or []),
         ]
     )
     service = app.state.processing_service
@@ -263,6 +270,30 @@ async def test_large_search_result_is_never_converted(
 
     assert response.status_code == 200, response.text
     assert response.json()["result"]["data"]["tools"]
+
+
+@pytest.mark.asyncio
+async def test_large_skill_with_tools_is_never_converted(
+    app_fixture: FastAPI,
+    api_test_client: AsyncClient,
+) -> None:
+    """A pointer would leave the model without the tools the skill brought."""
+
+    async def get_note() -> ToolResult:
+        return ToolResult(
+            data={"content": "x" * 4096, "activate_tools": ["home_price"]}
+        )
+
+    _install_provider(app_fixture, extra=[_registration("get_note", get_note)])
+    app_fixture.state.processing_service.app_config.gemini_live_config.large_tool_result_threshold_kb = 1
+
+    response = await api_test_client.post(
+        "/api/tools/execute/get_note",
+        json={"voice_conversation_id": f"web_conv_{uuid4()}", "arguments": {}},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["result"]["data"][SKILL_TOOLS_KEY][0]["name"] == "home_price"
 
 
 @pytest.mark.asyncio

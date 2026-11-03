@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
+from sqlalchemy import select
 
 from family_assistant.config_models import MCPEventSourceConfig, MCPServerConfig
 from family_assistant.events.mcp_client import (
@@ -21,6 +22,7 @@ from family_assistant.events.mcp_source import MCPEventSource
 from family_assistant.events.processor import EventProcessor
 from family_assistant.storage.database import Database
 from family_assistant.storage.events import EventActionType, EventSourceType
+from family_assistant.storage.tasks import tasks_table
 from family_assistant.tools.automations import (
     create_automation_tool,
     update_automation_tool,
@@ -178,11 +180,14 @@ def make_source(
     )
 
 
-async def make_processor(db_engine: AsyncEngine) -> EventProcessor:
+async def make_processor(
+    db_engine: AsyncEngine, *, trusted_event_server_ids: tuple[str, ...] = ()
+) -> EventProcessor:
     processor = EventProcessor(
         sources={},
         get_db_context_func=lambda: Database(db_engine),
         timezone=ZoneInfo("Australia/Sydney"),
+        trusted_event_server_ids=trusted_event_server_ids,
     )
     await processor.start()
     return processor
@@ -195,6 +200,7 @@ async def add_listener(
     extra: dict[str, str] | None = None,
     *,
     one_time: bool = False,
+    processing_profile_id: str | None = None,
 ) -> int:
     return await db.events.create_event_listener(
         name=name,
@@ -211,6 +217,7 @@ async def add_listener(
         action_config={"context": "Something landed in the inbox"},
         created_by_user_id=user_id,
         one_time=one_time,
+        processing_profile_id=processing_profile_id,
     )
 
 
@@ -260,6 +267,42 @@ async def test_poll_delivers_new_events_once_across_restarts(
     await poll_all(restarted)
     await poll_all(restarted)
     assert await executions(db, listener_id) == 2
+
+
+@pytest.mark.parametrize(
+    ("trusted_servers", "expected_profile", "expected_trusted"),
+    [((), "event_handler", None), (("tasks",), "default_assistant", True)],
+)
+@pytest.mark.asyncio
+async def test_a_trusted_events_server_wakes_as_the_creating_profile(
+    db_engine: AsyncEngine,
+    servers: dict[str, MCPServerConfig],
+    http_client: httpx.AsyncClient,
+    fake_server: FakeEventsServer,
+    trusted_servers: tuple[str, ...],
+    expected_profile: str,
+    expected_trusted: bool | None,
+) -> None:
+    db = Database(db_engine)
+    await add_listener(db, "inbox", ANDREW, processing_profile_id="default_assistant")
+    processor = await make_processor(
+        db_engine, trusted_event_server_ids=trusted_servers
+    )
+    source = make_source(db_engine, servers, http_client)
+    source.processor = processor
+    await source.reconcile(start_polling=False)
+    await poll_all(source)
+
+    fake_server.publish("andrew", "handoff", "Sort out the gutters")
+    await poll_all(source)
+
+    [task] = await db.fetch_all(
+        select(tasks_table.c.payload).where(tasks_table.c.task_type == "llm_callback")
+    )
+    payload = task["payload"]
+    assert payload["processing_profile_id"] == expected_profile
+    assert payload.get("tool_call_review_trigger_payload_trusted") == expected_trusted
+    assert payload["tool_call_review_trigger_payload_present"] is True
 
 
 @pytest.mark.asyncio

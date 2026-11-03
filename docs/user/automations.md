@@ -166,6 +166,12 @@ into your main assistant's context; you can read them in the web interface. If y
 event-driven result in a normally visible note, have a **script** automation write the note rather
 than the woken assistant.
 
+Some connected services are set up as trusted sources, because their events only carry your
+household's own data. Tuit, the household task tracker, is the usual example. An automation that
+wakes the assistant on one of their events runs with the same abilities as the conversation that
+created it. For example, "when a Tuit task is handed to you, work on it" can claim, update and
+complete the task like you could in chat.
+
 ## Scheduled health checks
 
 You can have the assistant watch its own error logs on a schedule and write up what it finds — ask

@@ -594,7 +594,8 @@ class LlmCallbackPayload(TypedDict, total=False):
     created_by_user_id: str
     # Profile the woken turn should run under. Event-triggered wakes (an event
     # listener's wake_llm, or wake_llm() from an event listener's script) carry
-    # the restricted "event_handler" profile (untrusted trigger); schedule,
+    # the restricted "event_handler" profile (untrusted trigger) unless the
+    # listener watches a trusted_events MCP server; schedule,
     # scheduled-script and future-callback wakes carry their originating profile. Absent for reminders
     # (which switch to the "reminder" profile) and legacy tasks (run as default).
     processing_profile_id: str
@@ -603,6 +604,9 @@ class LlmCallbackPayload(TypedDict, total=False):
     tool_call_review_trigger_type: str
     tool_call_review_trigger_definition: str | None
     tool_call_review_trigger_payload_present: bool
+    # Set when the payload comes from a source the operator declared trusted
+    # (an MCP server with trusted_events), so it adds no taint to the turn.
+    tool_call_review_trigger_payload_trusted: bool
     # A one-shot callback has no durable definition table, so its definition
     # record rides the payload beside the definition it describes. Absent for
     # legacy tasks queued before this field existed, which resolve fail-closed.
@@ -933,7 +937,10 @@ def _unattended_trigger_taint_sources(
         and is_externally_authored(definition_state.max_tier)
         else ()
     )
-    if definition_is_resolved and not trigger.payload_present:
+    payload_untrusted = trigger.payload_present and (
+        payload.get("tool_call_review_trigger_payload_trusted") is not True
+    )
+    if definition_is_resolved and not payload_untrusted:
         return definition_sources
 
     if definition_is_resolved:

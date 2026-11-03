@@ -6,7 +6,11 @@ import { server } from '../../test/setup.js';
 import { ShareConversationButton } from '../ShareConversationButton';
 import { useConversationShareLink } from '../useConversationShareLink';
 
-function ShareControl(props: { conversationId: string | null; hasPersistedMessages: boolean }) {
+function ShareControl(props: {
+  conversationId: string | null;
+  hasPersistedMessages: boolean;
+  kind?: 'home';
+}) {
   const shareLink = useConversationShareLink(props.conversationId);
   return <ShareConversationButton {...props} shareLink={shareLink} />;
 }
@@ -168,6 +172,29 @@ describe('ShareConversationButton', () => {
     expect(create).not.toHaveBeenCalled();
   });
 
+  it('asks for status only once it is opened', async () => {
+    const status = vi.fn(() => HttpResponse.json({ active: false }));
+    server.use(http.get(endpoint, status));
+    const user = userEvent.setup();
+    render(<ShareControl conversationId="conversation-1" hasPersistedMessages={true} />);
+    expect(status).not.toHaveBeenCalled();
+    await openDialog(user);
+    await screen.findByRole('button', { name: 'Create and copy link' });
+    expect(status).toHaveBeenCalledOnce();
+  });
+
+  it('says what sharing Home exposes, and how to share less', async () => {
+    server.use(http.get(endpoint, () => HttpResponse.json({ active: false })));
+    const user = userEvent.setup();
+    render(
+      <ShareControl conversationId="conversation-1" hasPersistedMessages={true} kind="home" />
+    );
+    await user.click(screen.getByRole('button', { name: 'Share all of Home' }));
+    expect(await screen.findByRole('dialog')).toHaveAccessibleDescription(
+      /everything in Home.*a message or a thread/
+    );
+  });
+
   it('does not request status before messages persist', async () => {
     const statusRequest = vi.fn(() => HttpResponse.json({ active: false }));
     server.use(http.get(endpoint, statusRequest));
@@ -177,6 +204,7 @@ describe('ShareConversationButton', () => {
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
     expect(statusRequest).not.toHaveBeenCalled();
     rerender(<ShareControl conversationId="conversation-1" hasPersistedMessages={true} />);
+    await openDialog(userEvent.setup());
     await waitFor(() => expect(statusRequest).toHaveBeenCalledOnce());
   });
 

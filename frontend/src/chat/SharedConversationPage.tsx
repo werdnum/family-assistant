@@ -196,7 +196,7 @@ const SharedToolGroup: React.FC<{ toolCalls: SharedToolCall[] }> = ({ toolCalls 
 
 function isConversationResponse(
   value: unknown
-): value is { messages: BackendConversationMessage[] } {
+): value is { messages: BackendConversationMessage[]; share_scope?: string } {
   return (
     typeof value === 'object' &&
     value !== null &&
@@ -307,6 +307,7 @@ const SharedMessage: React.FC<{
 const SharedConversationPage: React.FC = () => {
   const { token } = useParams<{ token: string }>();
   const [messages, setMessages] = useState<BackendConversationMessage[]>([]);
+  const [isSingleMessage, setIsSingleMessage] = useState(false);
   const [loadState, setLoadState] = useState<
     'loading' | 'ready' | 'not-found' | 'authentication-required' | 'error'
   >('loading');
@@ -361,6 +362,7 @@ const SharedConversationPage: React.FC = () => {
           throw new Error('Shared conversation response is malformed');
         }
         setMessages(data.messages);
+        setIsSingleMessage(data.share_scope === 'message');
         setLoadState('ready');
       })
       .catch((error: unknown) => {
@@ -382,7 +384,9 @@ const SharedConversationPage: React.FC = () => {
             </Link>
           </Button>
           <div>
-            <h1 className="font-semibold">Shared conversation</h1>
+            <h1 className="font-semibold">
+              {isSingleMessage ? 'Shared message' : 'Shared conversation'}
+            </h1>
             <p className="flex items-center gap-1 text-xs text-muted-foreground">
               <LockKeyhole className="h-3 w-3" /> Read only
             </p>

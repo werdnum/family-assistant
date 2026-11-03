@@ -261,7 +261,9 @@ async def test_ephemeral_token_builds_context_for_the_signed_in_user(
     assert context_provider.acting_user_ids == ["test_user"]
 
 
-def _voice_processing_service(profile_id: str) -> ProcessingService:
+def _voice_processing_service(
+    profile_id: str, voice_system_prompt: str | None = None
+) -> ProcessingService:
     """A minimal live-capable service, identified only by its profile id."""
     return ProcessingService(
         llm_client=RuleBasedMockLLMClient(
@@ -270,7 +272,14 @@ def _voice_processing_service(profile_id: str) -> ProcessingService:
         ),
         tools_provider=VoiceModeStubToolsProvider(),
         service_config=ProcessingServiceConfig(
-            prompts={"system_prompt": "You are a voice assistant."},
+            prompts={
+                "system_prompt": "You are a voice assistant.",
+                **(
+                    {"voice_system_prompt": voice_system_prompt}
+                    if voice_system_prompt
+                    else {}
+                ),
+            },
             timezone=ZoneInfo("UTC"),
             history_budget_chars=100_000,
             history_max_age_hours=1,
@@ -282,6 +291,39 @@ def _voice_processing_service(profile_id: str) -> ProcessingService:
         server_url="http://testserver",
         app_config=AppConfig(),
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_profile_with_a_voice_prompt_uses_it_and_others_keep_their_own(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GEMINI_API_KEY", "test-api-key")
+    fake_google = cast("Any", types.ModuleType("google"))
+    fake_google.genai = types.SimpleNamespace(Client=_FakeGenAIClient)
+    monkeypatch.setitem(sys.modules, "google", fake_google)
+
+    app = FastAPI()
+    app.include_router(gemini_live_router, prefix="/api")
+    app.state.processing_service = _voice_processing_service(
+        "default-profile", voice_system_prompt="On a call as {profile_id}."
+    )
+    app.state.processing_services = {
+        "other-profile": _voice_processing_service("other-profile")
+    }
+    app.state.config = AppConfig()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        default = await client.post("/api/gemini/ephemeral-token", json={})
+        other = await client.post(
+            "/api/gemini/ephemeral-token", json={"profile_id": "other-profile"}
+        )
+
+    default_instruction = default.json()["system_instruction"]
+    assert "On a call as default-profile." in default_instruction
+    assert "You are a voice assistant." not in default_instruction
+    assert "You are a voice assistant." in other.json()["system_instruction"]
 
 
 @pytest.mark.asyncio

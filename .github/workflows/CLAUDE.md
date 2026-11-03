@@ -13,6 +13,12 @@ This file provides guidance for working with GitHub Actions workflows.
   the API secret. Keep this on `pull_request`, without granting fork code a privileged token. The
   `all-tests` check includes setup and image builds so failed prerequisites cannot hide behind
   skipped test jobs.
+- **`alembic-heads.yml`**: reports the required `alembic-heads` commit status, which says whether
+  each open PR merged with `main` leaves exactly one alembic head
+  (`scripts/check_alembic_heads.py`). It runs on PR events and again on every push to `main`, so two
+  PRs that add migrations on the same parent cannot both merge. It runs from `pull_request_target`
+  and must never check out or run PR code: the script reads migrations as git objects and parses
+  them with `ast`. A manual dispatch backfills the status on every open PR.
 - **`build-containers.yml`**: builds and pushes the application and devcontainer images.
 - **`ios-tests.yml`**: iOS app tests (`workflow_call` / `workflow_dispatch`).
 - **`auto-request-review.yml`**: requests reviewers when a PR is opened or marked ready.

@@ -354,6 +354,34 @@ async def test_a_telegram_automation_fires_in_its_chat(
 
 
 @pytest.mark.asyncio
+async def test_an_automation_created_over_mcp_fires_in_home(
+    db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
+    mock_clock: MockClock,
+) -> None:
+    """An MCP conversation has no screen of its own, so its wakes go Home."""
+    db = Database(engine=db_engine)
+    service = _processing_service(threads=True)
+    chat_interface, new_task_event = await _start_worker(task_worker_manager, service)
+
+    await _create_daily_wake(
+        db,
+        service,
+        {"context": "Send the morning briefing"},
+        interface_type="mcp",
+        conversation_id="mcp-conversation",
+    )
+    [automation] = await db.schedule_automations.list_all("mcp-conversation")
+    assert automation["interface_type"] == "mcp"
+    assert automation["action_config"].get("conversation") == "home"
+    await _fire_pending(db_engine, mock_clock, new_task_event, "llm_callback")
+
+    home = await _home(db, service)
+    assert home is not None
+    assert _sent_conversation_ids(chat_interface) == [home]
+
+
+@pytest.mark.asyncio
 async def test_a_telegram_automation_cannot_ask_for_home(
     db_engine: AsyncEngine,
 ) -> None:

@@ -156,6 +156,14 @@ from the thread it names rather than from this text.
 """
 
 
+THREAD_START_MARKER = "(The user started a thread from here.)"
+"""What a thread the user started leaves in Home.
+
+Fixed text written by code, so it carries no taint; clients draw the thread's
+card from the thread it names rather than from this text.
+"""
+
+
 async def move_turn_across_boundary(
     db: DatabaseExecutor,
     *,

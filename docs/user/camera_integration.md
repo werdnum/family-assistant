@@ -67,16 +67,12 @@ No additional configuration is required beyond the standard Home Assistant integ
 
 ## Reolink Camera Investigation (Advanced)
 
-For Reolink cameras, a specialized investigation profile provides powerful features for reviewing
-historical footage and searching for events.
+For Reolink cameras, the assistant can review historical footage and search for events. Just ask
+about a camera in your own words:
 
-### Activating Camera Investigation Mode
-
-Use the `/camera` or `/investigate` slash command to activate the camera investigation profile:
-
-- `/camera What happened in the chicken coop this morning?`
-- `/investigate When did the package get delivered?`
-- `/camera Show me events from the driveway between 2pm and 4pm`
+- "What happened in the chicken coop this morning?"
+- "When did the package get delivered?"
+- "Show me events from the driveway between 2pm and 4pm"
 
 ### Available Features
 
@@ -161,7 +157,7 @@ Get real-time snapshots from Reolink cameras:
 
 ### Example Investigation
 
-> **You:** /camera When did the chickens get out of the coop today?
+> **You:** When did the chickens get out of the coop today?
 >
 > **Assistant:** _[searches the coop camera's recordings for when the coop door opened]_
 >
@@ -187,15 +183,15 @@ the [configuration reference](../operations/CONFIGURATION_REFERENCE.md#reolink-c
 
 ### Reolink Camera Investigation
 
-| What You Want                 | What to Say                                                             |
-| ----------------------------- | ----------------------------------------------------------------------- |
-| Find when something happened  | "/camera When did the package get delivered?"                           |
-| Search for people             | "/camera Any visitors at the front door today?"                         |
-| Check for vehicles            | "/camera Were there any cars in the driveway this morning?"             |
-| Review animal activity        | "/camera What time did the chickens come out of the coop?"              |
-| Get footage at specific time  | "/camera Show me the garage at 3:15 PM"                                 |
-| Verify recording availability | "/camera Do we have recordings from the backyard between 10am and 2pm?" |
-| Real-time view                | "/camera What does the chicken coop look like right now?"               |
+| What You Want                 | What to Say                                                     |
+| ----------------------------- | --------------------------------------------------------------- |
+| Find when something happened  | "When did the package get delivered?"                           |
+| Search for people             | "Any visitors at the front door today?"                         |
+| Check for vehicles            | "Were there any cars in the driveway this morning?"             |
+| Review animal activity        | "What time did the chickens come out of the coop?"              |
+| Get footage at specific time  | "Show me the garage at 3:15 PM"                                 |
+| Verify recording availability | "Do we have recordings from the backyard between 10am and 2pm?" |
+| Real-time view                | "What does the chicken coop look like right now?"               |
 
 ## Troubleshooting
 

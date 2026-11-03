@@ -21,6 +21,7 @@ from family_assistant.storage.repositories.conversation_threads import (
 )
 from family_assistant.storage.types import MessageHistoryRow
 from family_assistant.threads.boundary import (
+    THREAD_START_MARKER,
     BoundaryDestination,
     CopiedTurns,
     CrossBoundaryCopyRefusedError,
@@ -662,9 +663,17 @@ async def _create_user_thread(
     now = datetime.now(UTC)
 
     async def _create(txn: DatabaseTransaction) -> list[int]:
-        return await create_thread(
+        copied_ids = await create_thread(
             txn, thread=new_thread, seed=seed, turn_id=str(uuid.uuid4()), now=now
         )
+        await txn.message_history.add_thread_start_marker(
+            interface_type=new_thread.interface_type,
+            home_conversation_id=home,
+            thread_conversation_id=conversation_id,
+            content=THREAD_START_MARKER,
+            now=now,
+        )
+        return copied_ids
 
     try:
         return await db.atomic(_create)
