@@ -625,6 +625,14 @@ at the `/webhook/mail/mime` URL so Mailgun triggers raw-MIME forwarding. When
 `require_authenticated_sender` is true, requests without `body-mime` fail closed with `401`. DMARC
 failures always fail closed.
 
+DMARC authenticates the `From:` header, while `allowed_sender_addresses` and the user mapping read
+the SMTP envelope sender, which any client can set. So the policy also requires the message to have
+exactly one `From:` address and that address to equal the envelope sender. Otherwise a message from
+an attacker's own DMARC-passing domain, sent with a forged allowlisted envelope sender, would be
+accepted. Mail sent directly from a user's mailbox (including a forward) satisfies this. The sender's
+domain must publish a DMARC record: without one the result is `none`, not `pass`, even when DKIM and
+SPF pass.
+
 | Option                         | Default | Recommended |
 | ------------------------------ | ------- | ----------- |
 | `require_authenticated_sender` | `false` | `true`      |
