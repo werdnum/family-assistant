@@ -669,6 +669,63 @@ async def test_continue_in_a_thread_with_context_shows_the_copied_turn_and_where
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
+async def test_a_shared_home_reply_shows_that_reply_and_nothing_else(
+    web_test_fixture: WebTestFixture,
+    db_engine: AsyncEngine,
+) -> None:
+    db = Database(engine=db_engine)
+    home = await _home_conversation_id(web_test_fixture.base_url)
+    await _seed_home_exchange(db, home)
+    page = web_test_fixture.page
+    await page.set_viewport_size(WIDE_VIEWPORT)
+    chat = await _open_home(web_test_fixture, home)
+
+    reply = chat.reply_in(home, GUTTER_REPLY)
+    await expect(reply).to_be_visible(timeout=15000)
+    await chat.message_action(reply, "share-message")
+    dialog = page.get_by_role("dialog", name="Share message")
+    await dialog.get_by_role("button", name="Create and copy link").click()
+    link = dialog.get_by_role("textbox", name="Share link")
+    await expect(link).not_to_have_value("", timeout=15000)
+    share_url = await link.input_value()
+
+    await page.goto(share_url)
+
+    await expect(page.get_by_role("heading", name="Shared message")).to_be_visible(
+        timeout=15000
+    )
+    await expect(page.get_by_text(GUTTER_REPLY)).to_be_visible()
+    await expect(page.get_by_text(GUTTER_QUESTION)).to_have_count(0)
+
+
+@pytest.mark.playwright
+@pytest.mark.asyncio
+async def test_a_thread_is_shared_from_its_home_card_without_opening_it(
+    web_test_fixture: WebTestFixture,
+    db_engine: AsyncEngine,
+) -> None:
+    db = Database(engine=db_engine)
+    home = await _home_conversation_id(web_test_fixture.base_url)
+    seeded = await _seed_thread(db, home)
+    page = web_test_fixture.page
+    await page.set_viewport_size(WIDE_VIEWPORT)
+    await _open_home(web_test_fixture, home)
+
+    card = page.locator(
+        f'[data-testid="thread-card"][data-conversation-id="{seeded.thread}"]'
+    )
+    await expect(card).to_be_visible(timeout=15000)
+    await card.locator("xpath=..").get_by_test_id("thread-card-share").click()
+
+    dialog = page.get_by_role("dialog", name="Share thread")
+    await expect(
+        dialog.get_by_role("button", name="Create and copy link")
+    ).to_be_visible(timeout=15000)
+    await expect(page.locator('[data-presentation="side"]')).to_have_count(0)
+
+
+@pytest.mark.playwright
+@pytest.mark.asyncio
 async def test_a_home_turn_moves_into_a_thread_only_where_context_is_received(
     web_test_fixture: WebTestFixture, db_engine: AsyncEngine
 ) -> None:
