@@ -309,7 +309,7 @@ def test_get_routes_with_untracked_side_effects_are_exempt() -> None:
             continue
         try:
             source = inspect.getsource(endpoint)
-        except (OSError, TypeError):
+        except OSError, TypeError:
             continue
         mutates_session = (
             "request.session[" in source or "request.session.pop(" in source

@@ -238,7 +238,7 @@ class ImpairedNetworkProxy:
     ) -> None:
         try:
             await self._forward(connection, reader, writer, to_server=to_server)
-        except (ConnectionError, OSError):
+        except ConnectionError, OSError:
             connection.abort()
 
     async def _forward(
@@ -319,7 +319,7 @@ class ImpairedNetworkProxy:
                 arrival, chunk = item
                 await self._deliver(writer, chunk, arrival, to_server)
                 connection.last_activity = loop.time()
-        except (ConnectionError, OSError):
+        except ConnectionError, OSError:
             # The reader may be waiting on a peer that is still connected;
             # resetting both sides ends it the way a broken path would.
             connection.abort()

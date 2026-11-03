@@ -232,7 +232,7 @@ def build_frontend_assets() -> None:
                 ["npm", "--version"], capture_output=True, text=True, check=True
             )
             print(f"npm version: {result.stdout.strip()}")
-        except (subprocess.CalledProcessError, FileNotFoundError):
+        except subprocess.CalledProcessError, FileNotFoundError:
             pytest.fail("npm is not available - required for building frontend assets")
 
         # npm writes its hidden lockfile once an install completes, so a tree left

@@ -385,7 +385,7 @@ def _interaction_timestamp(value: str | datetime | None) -> datetime | None:
         return value
     try:
         return datetime.fromisoformat(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         logger.warning("Unparseable Interactions API timestamp: %r", value)
         return None
 

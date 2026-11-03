@@ -309,7 +309,7 @@ class MontyEngine:
         except pydantic_monty.MontyError as e:
             raise ScriptExecutionError(str(e)) from e
 
-        except (ScriptSyntaxError, ScriptExecutionError, ScriptTimeoutError):
+        except ScriptSyntaxError, ScriptExecutionError, ScriptTimeoutError:
             raise
 
         except Exception as e:

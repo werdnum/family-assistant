@@ -287,7 +287,7 @@ class DocumentIndexer:
                         # Example: "content_chunk_0", "content_chunk_12"
                         parsed_chunk_index = int(key.split("_")[-1])
                         metadata_for_item["chunk_index"] = parsed_chunk_index
-                    except (IndexError, ValueError):
+                    except IndexError, ValueError:
                         logger.warning(
                             f"Could not parse chunk index from key '{key}', not storing in metadata."
                         )

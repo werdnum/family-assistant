@@ -265,7 +265,7 @@ def sanitize_text_for_postgres(text: str | None) -> str | None:
         text = text.encode("utf-8", errors="surrogatepass").decode(
             "utf-8", errors="replace"
         )
-    except (UnicodeDecodeError, UnicodeEncodeError):
+    except UnicodeDecodeError, UnicodeEncodeError:
         # If encoding fails completely, replace all problematic chars
         text = text.encode("utf-8", errors="replace").decode("utf-8", errors="replace")
 

@@ -686,7 +686,7 @@ def _accumulate_text_part(
         return
     try:
         decoded = _decode_base64url(data).decode("utf-8", errors="replace")
-    except (binascii.Error, ValueError):
+    except binascii.Error, ValueError:
         return
     if mime_type == "text/plain":
         plain_parts.append(decoded)
@@ -839,7 +839,7 @@ def _decode_attachment_payload(payload: GoogleJson) -> bytes | None:
         return None
     try:
         return _decode_base64url(data)
-    except (binascii.Error, ValueError):
+    except binascii.Error, ValueError:
         return None
 
 
