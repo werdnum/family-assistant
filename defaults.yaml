@@ -1815,9 +1815,10 @@ service_profiles:
               - "ingest_document_from_url"
           # Reviewed against the sender's own words: an email from a household
           # member that passed DMARC carries what they typed as a trusted
-          # request, separate from the quoted and forwarded material. Without
-          # one (a bare forward, an unauthenticated sender) the reviewer has no
-          # request to approve against and escalates to durable confirmation.
+          # request (with the subject), separate from the quoted and forwarded
+          # material. Without one (an unauthenticated sender) the reviewer has
+          # no request to approve against and escalates to durable
+          # confirmation.
           decision: "review"
           priority: 50
           description: "Email-originated writes, known-user messages, and document ingestion fetches are checked by tool-call review, which can ask for durable confirmation."

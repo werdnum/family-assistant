@@ -126,17 +126,3 @@ def extract_authored_text(*, body_html: str | None, body_plain: str | None) -> s
     if body_plain:
         return _authored_from_plain(body_plain)
     return ""
-
-
-_REPLY_OR_FORWARD_SUBJECT_RE = re.compile(r"^\s*(re|fwd?|aw|wg)\s*:", re.IGNORECASE)
-
-
-def subject_is_authored(subject: str | None) -> bool:
-    """Whether a subject line is the sender's own rather than a thread's.
-
-    A reply or forward carries the subject someone else chose, behind its
-    ``Re:`` or ``Fwd:`` prefix.
-    """
-    return bool(subject and subject.strip()) and not _REPLY_OR_FORWARD_SUBJECT_RE.match(
-        subject or ""
-    )

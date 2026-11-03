@@ -23,13 +23,13 @@ the sender authentication your operator requires, the assistant reads the words 
 as your request. Everything else in the message is just material: the conversation you replied to,
 the message you forwarded, your signature, and attachments. Instructions inside that material are
 ignored. This follows Gmail's normal reply and forward layout, so type your request above the quoted
-or forwarded part. A subject line you wrote counts too, but a "Re:" or "Fwd:" subject doesn't.
+or forwarded part. The subject line counts as part of your request too.
 
 **Writes and messages are checked before they run.** Calendar events, notes, reminders, messages to
 other Family Assistant users, and fetching a linked document are checked automatically against what
 you asked for. When the check is satisfied it goes ahead. Otherwise it lands as a pending
 confirmation for you to approve in a trusted interface: Telegram, the web UI, or the iOS app. A
-forward with nothing typed above it has no request of yours to check against, so whatever it
+forward with nothing typed above it has only its subject line as your request, so most of what it
 proposes waits for your approval. If Telegram is your configured primary channel, you get inline
 approval buttons there. Approvals stay open for 24 hours, so you don't have to react the moment the
 reply lands.
@@ -37,6 +37,15 @@ reply lands.
 The assistant replies by email only when your forwarding sender address is mapped to your account by
 the operator. Mail arriving through a recipient-only alias without a mapped sender can still create
 confirmations, but won't get an email reply.
+
+## Who gets the reply
+
+When you email the assistant with other people on the To or Cc line, its reply goes to everyone on
+your email: to you, with the others copied. It never adds anyone you didn't include, and it writes
+knowing who will read it, so it leaves out private household details you didn't ask it to share.
+
+To keep the reply to yourself, Bcc the assistant instead. It then answers only you. Later messages
+about the same email, such as the result of an action you approved, also go only to you.
 
 ## Documents linked from an email
 

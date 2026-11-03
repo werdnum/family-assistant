@@ -9,11 +9,12 @@ from typing import TYPE_CHECKING, TypedDict, cast
 
 from sqlalchemy import select
 
-from family_assistant.email_intake.authored_text import (
-    extract_authored_text,
-    subject_is_authored,
+from family_assistant.email_intake.authored_text import extract_authored_text
+from family_assistant.email_intake.outbound import (
+    EmailChatInterface,
+    email_conversation_id,
+    reply_all_cc_addresses,
 )
-from family_assistant.email_intake.outbound import email_conversation_id
 from family_assistant.email_intake.taint import (
     email_initial_taint_source,
     email_sender_is_authenticated_household_member,
@@ -28,7 +29,6 @@ from family_assistant.storage.email import received_emails_table
 
 if TYPE_CHECKING:
     from family_assistant.config_models import AppConfig
-    from family_assistant.interfaces import ChatInterface
     from family_assistant.processing import ProcessingService
     from family_assistant.security.taint import TaintSource
     from family_assistant.tools.types import ToolExecutionContext
@@ -67,7 +67,10 @@ class EmailIntakeActionPayload(TypedDict, total=False):
 
 
 def build_email_action_prompt(
-    email_row: dict[str, object], *, sender_request_follows: bool = False
+    email_row: dict[str, object],
+    cc_addresses: tuple[str, ...] = (),
+    *,
+    sender_request_follows: bool = False,
 ) -> str:
     """Build the user message for an email-originated assistant turn.
 
@@ -146,6 +149,7 @@ def build_email_action_prompt(
         f"- User id: {email_row.get('target_user_id')}\n"
         f"- From: {email_row.get('sender_address')}\n"
         f"- To: {email_row.get('recipient_address')}\n"
+        f"{_reply_audience_note(email_row, cc_addresses)}"
         "\n"
         f"{UNTRUSTED_EMAIL_EVIDENCE_START_TAG}\n"
         f"Subject: {_untrusted_email_text(email_row.get('subject'))}\n"
@@ -162,9 +166,9 @@ def sender_authored_request(
 ) -> str | None:
     """The part of an email the authenticated household sender wrote themselves.
 
-    ``None`` when the sender is not an authenticated household member, or when
-    they added nothing of their own (a bare forward): the whole email is then
-    evidence, with no request of theirs to act on.
+    The subject counts as theirs. ``None`` when the sender is not an
+    authenticated household member, or when they added nothing of their own:
+    the whole email is then evidence, with no request of theirs to act on.
     """
     if not email_sender_is_authenticated_household_member(email_row, app_config):
         return None
@@ -176,7 +180,7 @@ def sender_authored_request(
     )
     subject = email_row.get("subject")
     parts: list[str] = []
-    if isinstance(subject, str) and subject_is_authored(subject):
+    if isinstance(subject, str) and subject.strip():
         parts.append(f"Subject: {subject.strip()}")
     if authored_body:
         if len(authored_body) > MAX_EMAIL_EVIDENCE_CHARS:
@@ -186,6 +190,20 @@ def sender_authored_request(
             )
         parts.append(authored_body)
     return "\n\n".join(parts) or None
+
+
+def _reply_audience_note(
+    email_row: dict[str, object], cc_addresses: tuple[str, ...]
+) -> str:
+    if not cc_addresses:
+        return "\nYour reply goes only to the sender.\n"
+    return (
+        f"\nYour reply goes to {email_row.get('sender_address')} and is copied "
+        f"to {', '.join(cc_addresses)}, the other people on their email. Write "
+        "it for all of them. Anyone outside the household will read it too, so "
+        "leave out private household information (notes, calendar, details "
+        "about other people) unless the sender asked you to share it.\n"
+    )
 
 
 def _resolve_email_processing_service(
@@ -237,10 +255,19 @@ async def handle_email_intake_action(
 
     processing_service = _resolve_email_processing_service(exec_context)
     app_config = processing_service.app_config
+    cc_addresses = reply_all_cc_addresses(email_row, app_config.email_intake)
     conversation_id = email_conversation_id(email_db_id)
-    email_interface: ChatInterface | None = None
+    email_interface: EmailChatInterface | None = None
     if exec_context.chat_interfaces is not None:
-        email_interface = exec_context.chat_interfaces.get("email")
+        registered_interface = exec_context.chat_interfaces.get("email")
+        if registered_interface is not None and not isinstance(
+            registered_interface, EmailChatInterface
+        ):
+            raise TypeError(
+                "The email chat interface must be an EmailChatInterface, got "
+                f"{type(registered_interface).__name__}"
+            )
+        email_interface = registered_interface
 
     # The sender's own words become the turn's trusted request, so tool-call
     # review can judge calls against them. The whole email goes in a row before
@@ -249,7 +276,7 @@ async def handle_email_intake_action(
     turn_id = str(uuid.uuid4())
     initial_taint_sources: tuple[TaintSource, ...] | None = None
     if authored_request is None:
-        trigger_text = build_email_action_prompt(email_row)
+        trigger_text = build_email_action_prompt(email_row, cc_addresses)
         initial_taint_sources = (
             email_initial_taint_source(
                 email_db_id=email_db_id,
@@ -267,7 +294,7 @@ async def handle_email_intake_action(
         await exec_context.db_context.message_history.add_message(
             UserMessage(
                 content=build_email_action_prompt(
-                    email_row, sender_request_follows=True
+                    email_row, cc_addresses, sender_request_follows=True
                 ),
                 taint_metadata=evidence_taint,
                 authorship_taint_metadata=evidence_taint,
@@ -314,10 +341,8 @@ async def handle_email_intake_action(
                 "not support attachments yet. The text response was sent without them.]"
             )
         try:
-            await email_interface.send_message(
-                conversation_id=conversation_id,
-                text=text_reply,
-                attachment_ids=None,
+            await email_interface.send_reply_all(
+                conversation_id=conversation_id, text=text_reply
             )
         except ChatDeliveryError:
             logger.exception(

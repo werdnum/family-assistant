@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-from family_assistant.email_intake.authored_text import (
-    extract_authored_text,
-    subject_is_authored,
-)
+from family_assistant.email_intake.authored_text import extract_authored_text
 
 GMAIL_REPLY_HTML = (
     '<div dir="ltr">Please add this to the calendar.<div><br></div>'
@@ -104,12 +101,3 @@ def test_html_part_is_preferred_over_plain() -> None:
     )
 
     assert text == "Can you save the PDF link below?"
-
-
-def test_subject_with_reply_or_forward_prefix_is_not_authored() -> None:
-    assert subject_is_authored("Dentist on Friday")
-    assert not subject_is_authored("Re: Dentist on Friday")
-    assert not subject_is_authored("Fwd: Statement")
-    assert not subject_is_authored("FW: Statement")
-    assert not subject_is_authored("   ")
-    assert not subject_is_authored(None)

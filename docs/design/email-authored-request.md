@@ -22,15 +22,15 @@ untrusted material.
 - **What counts as authored.** Gmail's own markup decides: `div.gmail_quote` (reply quotes and
   forwarded messages) and `div.gmail_signature` are removed from the HTML part. Without an HTML
   part, the plain body is cut at the `On … wrote:` attribution, a `>` quote, the forwarded-message
-  banner, or the `-- ` signature separator. A subject counts unless it carries a reply or forward
-  prefix.
+  banner, or the `-- ` signature separator. The subject always counts: a subject line is a poor
+  carrier for an injection, even on a reply or forward.
 - **How the turn is shaped.** The whole email, framed exactly as before inside
   `<untrusted_email_evidence>`, is written first, as a row of the same turn stamped with the email's
   taint. The authored text then becomes the turn's trigger, stamped `trusted_user`. The turn still
   inherits the email's taint from its window, so every taint-policy decision is unchanged. What
   changes is that the reviewer sees the sender's request and gets a stub for the evidence row.
-- **Policy.** The email profile's write rules move from `confirm` to `review`. A bare forward has no
-  trusted request, so its calls escalate to confirmation as before.
+- **Policy.** The email profile's write rules move from `confirm` to `review`. A bare forward's
+  request is only its subject, so the reviewer escalates most of its calls to confirmation.
 
 ## Deliberate simplifications
 
