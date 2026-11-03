@@ -1584,7 +1584,7 @@ SERVICE_TOOLS_DEFINITION: list[ToolDefinition] = [
                     },
                     "model_tier": {
                         "type": "string",
-                        "description": "Optional. Run the target on a specific model tier or a specific model, as listed with the target profile in your system prompt. Only values listed there are accepted; omit to use the target's default. A specific model has no fallback: if it is unavailable the delegation fails rather than quietly answering with another model, so several delegations to the same profile at different specific models (for example, to compare independent answers) each come from the model named.",
+                        "description": "Optional. Run the target on a specific model tier or a specific model, as listed with the target profile in your system prompt. Only values listed there are accepted; omit to use the target's default. A specific model has no fallback: if it is unavailable the delegation fails rather than quietly answering with another model, so several delegations to the same profile at different specific models (for example, to compare independent answers) each come from the model named. A tier changes how carefully the target answers, never its tools, access or confirmations. Name a specific model only when the user asks for one, or for a side-by-side of models' answers (delegate the same request once per model, in parallel, and say which answer came from which).",
                     },
                 },
                 "required": ["target_service_id", "user_request"],

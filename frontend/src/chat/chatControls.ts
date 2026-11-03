@@ -37,14 +37,14 @@ export interface ChatControls {
   /** Ask again for the open conversation's history after a failed load. */
   retryConversationLoad: () => void;
   /**
-   * In Home: sending the composed message as a new thread's opening message
-   * instead. Null elsewhere.
+   * In Home, where every message starts a thread: picking another assistant
+   * for it, and why a start failed. Null elsewhere.
    */
   sendAsThread: SendAsThreadControls | null;
 }
 
 export interface SendAsThreadControls {
-  /** The profiles a thread can be started on. */
+  /** The profiles a thread can be started on, other than Home's own. */
   profiles: { id: string; label: string }[];
   /** Make the composer's next send start a thread on this profile. */
   prepare: (profileId: string) => void;

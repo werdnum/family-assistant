@@ -72,7 +72,7 @@ describe('ChatApp', () => {
     );
   }, 30000);
 
-  it('waits for a new conversation to persist before loading share status', async () => {
+  it('offers sharing a new conversation once it has persisted', async () => {
     const user = userEvent.setup();
     const statusRequest = vi.fn(() => HttpResponse.json({ active: false }));
     let conversationId = '';
@@ -120,9 +120,10 @@ describe('ChatApp', () => {
     await user.type(screen.getByPlaceholderText('Message Family Assistant...'), 'Hello');
     await user.keyboard('{Enter}');
     await waitFor(() => expect(finishStream).toBeDefined());
-    expect(statusRequest).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Share conversation' })).not.toBeInTheDocument();
 
     finishStream?.();
+    await user.click(await screen.findByRole('button', { name: 'Share conversation' }));
     await waitFor(() => expect(statusRequest).toHaveBeenCalledOnce());
   });
 

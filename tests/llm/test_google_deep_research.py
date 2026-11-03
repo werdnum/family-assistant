@@ -74,8 +74,11 @@ def _text_delta(text: str, event_id: str) -> dict[str, object]:
     }
 
 
-def _completed(event_id: str | None = None) -> dict[str, object]:
-    payload: dict[str, object] = {"event_type": "interaction.completed"}
+def _completed(interaction_id: str, event_id: str | None = None) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "event_type": "interaction.completed",
+        "interaction": {"id": interaction_id, "status": "completed"},
+    }
     if event_id is not None:
         payload["event_id"] = event_id
     return payload
@@ -89,9 +92,12 @@ def _error(code: str, message: str, event_id: str) -> dict[str, object]:
     }
 
 
-def _status_update(status: str, event_id: str) -> dict[str, object]:
+def _status_update(
+    interaction_id: str, status: str, event_id: str
+) -> dict[str, object]:
     return {
         "event_type": "interaction.status_update",
+        "interaction_id": interaction_id,
         "event_id": event_id,
         "status": status,
     }
@@ -149,7 +155,7 @@ async def test_deep_research_stream_initiation(sdk: _SdkInteractions) -> None:
     sdk.create.return_value = _sdk_stream(
         _created("inter_123"),
         _text_delta("Researching...", "evt_1"),
-        _completed("evt_2"),
+        _completed("inter_123", "evt_2"),
     )
 
     messages = [
@@ -260,7 +266,9 @@ async def test_deep_research_continuation(sdk: _SdkInteractions) -> None:
     """Test that deep research uses previous_interaction_id from history."""
     client = GoogleGenAIClient(api_key="test", model="deep-research-preview-04-2026")
 
-    sdk.create.return_value = _sdk_stream(_created("inter_456"), _completed())
+    sdk.create.return_value = _sdk_stream(
+        _created("inter_456"), _completed("inter_456")
+    )
 
     prev_metadata = GeminiProviderMetadata(interaction_id="inter_123")
     messages = [
@@ -353,7 +361,7 @@ async def test_deep_research_stream_error_event_post_content(
         _created("inter_abc", "evt_0"),
         _text_delta("Partial result", "evt_1"),
         _error("deadline_exceeded", "Request timed out", "evt_2"),
-        _completed("evt_3"),
+        _completed("inter_abc", "evt_3"),
     )
 
     messages = [UserMessage(content="Research something")]
@@ -381,7 +389,7 @@ async def test_deep_research_terminal_status_update_raises_before_content(
 
     sdk.create.return_value = _sdk_stream(
         _created("inter_fail", "evt_0"),
-        _status_update(status, "evt_1"),
+        _status_update("inter_fail", status, "evt_1"),
     )
 
     messages = [UserMessage(content="Research something")]
@@ -403,7 +411,7 @@ async def test_deep_research_terminal_status_update_yields_error_after_content(
     sdk.create.return_value = _sdk_stream(
         _created("inter_fail2", "evt_0"),
         _text_delta("Partial output", "evt_1"),
-        _status_update(status, "evt_2"),
+        _status_update("inter_fail2", status, "evt_2"),
     )
 
     messages = [UserMessage(content="Research something")]
@@ -476,7 +484,7 @@ async def test_deep_research_agent_config_includes_visualization(
     )
 
     sdk.create.return_value = _sdk_stream(
-        _created("inter_viz", "evt_0"), _completed("evt_1")
+        _created("inter_viz", "evt_0"), _completed("inter_viz", "evt_1")
     )
 
     async for _ in client.generate_response_stream([UserMessage(content="Test")]):

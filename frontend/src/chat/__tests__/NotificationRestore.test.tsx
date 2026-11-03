@@ -1,6 +1,6 @@
 import { screen, waitFor } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 import { mockLocalStorage, resetLocalStorageMock } from '../../test/mocks/localStorageMock';
 import { server } from '../../test/setup.js';
 import { renderChatApp } from '../../test/utils/renderChatApp';
@@ -55,7 +55,7 @@ function latestFollowStream(): MockEventSource {
 describe('In-app notification restore', () => {
   let originalEventSource: typeof EventSource;
   let originalBroadcastChannel: typeof BroadcastChannel;
-  let notificationCtor: ReturnType<typeof vi.fn>;
+  let notificationCtor: Mock<(title: string, options?: unknown) => void>;
   let assistantTurns: number;
 
   beforeEach(() => {

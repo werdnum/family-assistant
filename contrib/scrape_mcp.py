@@ -17,6 +17,7 @@ render JavaScript, and return the content as Markdown using MarkItDown.
 import argparse
 import asyncio
 import logging  # Changed
+import os
 import sys
 from collections.abc import Sequence  # Removed Dict, Any, Tuple, Optional
 
@@ -27,6 +28,10 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.shared.exceptions import McpError
 from mcp.types import ImageContent, TextContent, Tool
+
+# Stdout carries this server's JSON-RPC, so nothing may log to it. Importing
+# family_assistant would otherwise load logging.conf, which does.
+os.environ["LOGGING_CONFIG"] = ""
 
 # --- Local Project Imports ---
 # Assuming contrib is at the same level as src, or PYTHONPATH is set up
@@ -63,7 +68,9 @@ except ImportError:
 logger = logging.getLogger(__name__)
 # Basic configuration, can be enhanced (e.g., to match main app's logging)
 logging.basicConfig(
-    level=logging.INFO, format="MCP_SCRAPER: %(levelname)s: %(message)s"
+    level=logging.INFO,
+    format="MCP_SCRAPER: %(levelname)s: %(message)s",
+    stream=sys.stderr,
 )
 
 

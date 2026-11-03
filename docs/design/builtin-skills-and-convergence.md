@@ -1,5 +1,11 @@
 # Built-in Skills + include_system_docs Convergence
 
+> **Status:** Phase B landed in a different shape. Rather than an `auto_load_skills` setting, the
+> `data_visualization` profile (the only `include_system_docs` user) was removed and replaced by a
+> built-in Data Visualization skill that activates `create_vega_chart`, and `include_system_docs`
+> was deleted. The `artist` and `camera_analyst` profiles became the Image Tools and Camera
+> Integration skills the same way.
+
 ## Context
 
 There are currently **three parallel systems** for delivering documentation to the LLM:

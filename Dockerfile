@@ -1,5 +1,5 @@
 # Use the official UV image as the base
-FROM ghcr.io/astral-sh/uv:0.13.5-debian-slim@sha256:95611d89b7324e0517fe7257bb00979cf1f68461e5fb2b2d027d039da054bc07 AS base
+FROM ghcr.io/astral-sh/uv:0.13.6-debian-slim@sha256:caa9f629fcb575ba2ed6ee160ec51e82e8444f6bdc3fc05c855b2636a5511eb8 AS base
 
 # Create non-root user and group early in the build with specific UID/GID
 RUN groupadd -r -g 1001 appuser && useradd -r -u 1001 -g appuser -m -d /home/appuser -s /bin/bash appuser

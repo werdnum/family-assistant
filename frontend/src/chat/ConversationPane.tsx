@@ -6,6 +6,7 @@ import {
   useExternalStoreRuntime,
 } from '@assistant-ui/react';
 import { MessagesSquare } from 'lucide-react';
+import type { ErrorInfo, ReactNode } from 'react';
 import React, {
   Component,
   useCallback,
@@ -15,43 +16,42 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import type { ErrorInfo, ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { AppTopBar } from '../shared/AppShell';
 import { getDiagnosticsUrl } from '../utils/diagnosticsUrl';
 import { parseToolArguments } from '../utils/toolUtils';
 import { generateUUID } from '../utils/uuid';
 import { defaultAttachmentAdapter } from './attachmentAdapter';
-import { type ConversationDraft, useChatShell } from './chatShell';
-import { LOADING_MARKER } from './constants';
-import IntelligenceSelector from './IntelligenceSelector';
-import { getProfileDisplayName } from './profileNames';
-import ProfileSelector from './ProfileSelector';
-import { type ModelTier, useProfiles } from './profilesContext';
-import { ShareConversationButton } from './ShareConversationButton';
-import { useConversationShareLink } from './useConversationShareLink';
 import {
   ChatControlsContext,
   type ConversationLoadStatus,
   type OlderMessagesStatus,
   type SteerResult,
 } from './chatControls';
-import { interleaveTextAndToolCalls, isToolCallDisplay, toolCallParts } from './orderedParts';
-import { Thread } from './Thread';
+import { type ConversationDraft, useChatShell } from './chatShell';
+import { LOADING_MARKER } from './constants';
 import {
   type HomeTurnActions,
   HomeTurnActionsContext,
   type HomeTurnTarget,
 } from './homeTurnActions';
+import IntelligenceSelector from './IntelligenceSelector';
 import { MoveToThreadDialog } from './MoveToThreadDialog';
-import { submitTurnFeedback, TurnFeedbackContext, type TurnFeedbackActions } from './turnFeedback';
+import { interleaveTextAndToolCalls, isToolCallDisplay, toolCallParts } from './orderedParts';
+import ProfileSelector from './ProfileSelector';
+import { getProfileDisplayName } from './profileNames';
+import { type ModelTier, useProfiles } from './profilesContext';
+import { ShareConversationButton } from './ShareConversationButton';
+import { ShareMessageDialog, sharedReplyId } from './ShareMessageDialog';
 import { type ContinueAnchor, StartThreadDialog, threadProfiles } from './StartThreadDialog';
+import { Thread } from './Thread';
 import { ThreadBanner } from './ThreadBanner';
-import { ThreadsContext } from './threadsContext';
 import { ThreadStateDot } from './ThreadStateDot';
-import { markThreadDone, type ThreadAttachment } from './threadsApi';
 import { ToolConfirmationProvider } from './ToolConfirmationContext';
+import { markThreadDone, type ThreadAttachment } from './threadsApi';
+import { ThreadsContext } from './threadsContext';
 import { isTerminalToolOutcome, type TerminalToolOutcome } from './toolOutcome';
+import { submitTurnFeedback, type TurnFeedbackActions, TurnFeedbackContext } from './turnFeedback';
 import {
   BackendAttachment,
   BackendConversationMessage,
@@ -62,6 +62,7 @@ import {
   ThreadSummary,
   TurnRating,
 } from './types';
+import { useConversationShareLink } from './useConversationShareLink';
 import { useLiveMessageUpdates } from './useLiveMessageUpdates';
 import { useMarkRead } from './useMarkRead';
 import { usePendingDelegations } from './usePendingDelegations';
@@ -436,6 +437,7 @@ export function mergeConsecutiveToolOnlyAssistantMessages(messages: Message[]): 
         ...previousMessage,
         content: [...previousMessage.content, ...message.content],
         internalId: message.internalId ?? previousMessage.internalId,
+        hasOwnAttachments: message.hasOwnAttachments,
         status:
           previousMessage.status?.type === 'running' || message.status?.type === 'running'
             ? { type: 'running' }
@@ -684,6 +686,8 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
   // The profile the next send goes to as a new thread's opening message, set
   // by the composer's send-as-thread menu just before it sends.
   const sendAsThreadProfileRef = useRef<string | null>(null);
+  const homeProfileIdRef = useRef<string | null>(null);
+  homeProfileIdRef.current = isHome ? lockedProfileId : null;
   const sendAsThreadRef = useRef<
     (profileId: string, text: string, attachments: ThreadAttachment[]) => Promise<void>
   >(async () => {});
@@ -1777,8 +1781,10 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
               status: { type: 'complete' },
               reasoning_info: msg.reasoning_info ?? undefined,
               internalId: Number(msg.internal_id),
+              hasOwnAttachments: (msg.attachments?.length ?? 0) > 0,
               echoed_from_thread: msg.echoed_from_thread ?? undefined,
               moved_to_thread: msg.moved_to_thread ?? undefined,
+              started_thread: msg.started_thread ?? undefined,
               feedback: msg.feedback ?? undefined,
             });
             return;
@@ -1849,6 +1855,7 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
             internalId: Number(msg.internal_id),
             echoed_from_thread: msg.echoed_from_thread ?? undefined,
             moved_to_thread: msg.moved_to_thread ?? undefined,
+            started_thread: msg.started_thread ?? undefined,
             feedback: msg.feedback ?? undefined,
           });
         });
@@ -2322,7 +2329,9 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
       }>;
     }) => {
       // Taken first, so a send refused below can't leave it set for the next.
-      const threadProfileId = sendAsThreadProfileRef.current;
+      // Every send from Home starts a thread: on the assistant picked for this
+      // message, or else on Home's own.
+      const threadProfileId = sendAsThreadProfileRef.current ?? homeProfileIdRef.current;
       sendAsThreadProfileRef.current = null;
       // An attachment whose upload failed at send has no content to send. The
       // runtime puts a draft refused with MessageNotSentError back into the
@@ -2378,9 +2387,6 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
         );
         return;
       }
-      // Sending to Home instead gives up on a failed send-as-thread: its error
-      // no longer applies, and a later start of the same text is a new one.
-      abandonSendAsThreadRef.current();
 
       // Tag the optimistic bubbles with this turn's id so an interrupted-stream
       // give-up can identify THIS turn's stranded loading bubble (e.g. to replace
@@ -2527,10 +2533,10 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
     });
   };
 
-  // Send-as-thread: the composed message opens a new thread on the chosen
-  // profile instead of becoming a Home turn. A tier chosen here goes with it
-  // where that profile offers the tier. A retry of the same message reuses the
-  // start's id, so a start whose answer was lost isn't made twice.
+  // A message sent from Home opens a new thread instead of becoming a Home
+  // turn. A tier chosen here goes with it where the thread's profile offers the
+  // tier. A retry of the same message reuses the start's id, so a start whose
+  // answer was lost isn't made twice.
   const [sendAsThreadError, setSendAsThreadError] = useState<string | null>(null);
   const pendingThreadStartRef = useRef<{ key: string; turnId: string } | null>(null);
   sendAsThreadRef.current = async (
@@ -2582,11 +2588,13 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
 
   const sendAsThreadProfiles = useMemo(
     () =>
-      threadProfiles(Object.values(profilesById)).map((profile) => ({
-        id: profile.id,
-        label: getProfileDisplayName(profile.id),
-      })),
-    [profilesById]
+      threadProfiles(Object.values(profilesById))
+        .filter((profile) => profile.id !== lockedProfileId)
+        .map((profile) => ({
+          id: profile.id,
+          label: getProfileDisplayName(profile.id),
+        })),
+    [profilesById, lockedProfileId]
   );
 
   // Home's messages as text, by stored id, for the "Started from" quote a
@@ -2606,7 +2614,7 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
     const quotes = new Map<number, string>();
     for (const msg of messagesRef.current) {
       const text = messageText(msg);
-      if (msg.internalId !== undefined && !msg.moved_to_thread && text) {
+      if (msg.internalId !== undefined && !msg.moved_to_thread && !msg.started_thread && text) {
         quotes.set(msg.internalId, text);
       }
     }
@@ -2616,6 +2624,7 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
   // Home's actions on its messages, and the dialog each opens.
   const [continueTarget, setContinueTarget] = useState<HomeTurnTarget | null>(null);
   const [moveTarget, setMoveTarget] = useState<HomeTurnTarget | null>(null);
+  const [shareTarget, setShareTarget] = useState<HomeTurnTarget | null>(null);
   const userTurnIdsKey = messages
     .filter((msg) => msg.role === 'user' && msg.turnId)
     .map((msg) => msg.turnId)
@@ -2628,6 +2637,7 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
     return {
       continueInThread: setContinueTarget,
       moveToThread: setMoveTarget,
+      shareMessage: setShareTarget,
       turnHasUserMessage: (turnId) => turnId !== undefined && userTurnIds.has(turnId),
     };
   }, [isHome, userTurnIdsKey]);
@@ -2701,6 +2711,28 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
     }
     throw new Error("This message isn't saved yet. Try again in a moment.");
   }, []);
+  // A link shows exactly the row it names, so a streamed reply resolves to its
+  // own stored reply or to nothing: never to another row of the turn, such as
+  // the user's question.
+  const resolveSharedMessageId = useCallback(async (target: HomeTurnTarget): Promise<number> => {
+    if (target.internalId !== undefined) {
+      return target.internalId;
+    }
+    const convId = conversationIdRef.current;
+    if (target.turnId && convId) {
+      const response = await fetch(
+        `/api/v1/chat/conversations/${encodeURIComponent(convId)}/messages?limit=${HISTORY_PAGE_SIZE}`
+      );
+      if (response.ok) {
+        const data = (await response.json()) as ConversationMessagesResponse;
+        const reply = sharedReplyId(data.messages, target.turnId);
+        if (reply !== null) {
+          return reply;
+        }
+      }
+    }
+    throw new Error("This message isn't saved yet. Try again in a moment.");
+  }, []);
   const continueAnchor = useMemo<ContinueAnchor | null>(
     () =>
       continueTarget
@@ -2762,7 +2794,9 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
           reasoning_info: message.reasoning_info,
           echoed_from_thread: message.echoed_from_thread,
           moved_to_thread: message.moved_to_thread,
+          started_thread: message.started_thread,
           internal_id: message.internalId,
+          has_own_attachments: message.hasOwnAttachments,
           turn_id: message.turnId,
           feedback: message.feedback,
           unrateable: message.unrateable,
@@ -3156,6 +3190,7 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
     <ShareConversationButton
       shareLink={shareLink}
       conversationId={conversationId}
+      kind={isHome ? 'home' : currentThread ? 'thread' : 'conversation'}
       hasPersistedMessages={messages.length > 0 && persistedConversationId === conversationId}
     />
   );
@@ -3196,6 +3231,14 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
             }
             onMoved={handleTurnMoved}
           />
+          {shareTarget && conversationId && (
+            <ShareMessageDialog
+              conversationId={conversationId}
+              target={shareTarget}
+              resolveMessageId={resolveSharedMessageId}
+              onClose={() => setShareTarget(null)}
+            />
+          )}
         </>
       )}
     </div>

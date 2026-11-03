@@ -9,6 +9,7 @@ rather than a path of its own.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, cast
 
 import jsonschema
@@ -20,9 +21,12 @@ from family_assistant.tools.infrastructure import LocalToolsProvider
 from family_assistant.tools.live_meta import (
     CALL_TOOL_TOOL_NAME,
     SEARCH_TOOLS_TOOL_NAME,
+    SKILL_SCHEMA_BUDGET_CHARS,
+    SKILL_TOOLS_KEY,
     LiveMetaToolsProvider,
 )
 from family_assistant.tools.metadata import (
+    ToolDescriptor,
     ToolRegistration,
     ToolTag,
     make_local_tool_metadata,
@@ -31,6 +35,8 @@ from family_assistant.tools.on_demand import OnDemandToolsView
 from family_assistant.tools.types import ToolResult
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
 CALLS: list[tuple[str, dict[str, object]]] = []
@@ -48,6 +54,7 @@ def _registration(
     # ast-grep-ignore: no-dict-any - JSON Schema fragment for a test fixture
     properties: dict[str, Any] | None = None,
     required: list[str] | None = None,
+    implementation: Callable[..., Awaitable[object]] | None = None,
 ) -> ToolRegistration:
     # ast-grep-ignore: no-dict-any - JSON Schema fragment for a test fixture
     parameters: dict[str, Any] = {"type": "object", "properties": properties or {}}
@@ -65,7 +72,7 @@ def _registration(
                 },
             },
         ),
-        implementation=_record_call,
+        implementation=implementation or _record_call,
         metadata=make_local_tool_metadata([
             ToolTag.READ_ONLY,
             ToolTag.OUTPUT_TRUSTED,
@@ -583,3 +590,179 @@ async def test_voice_excluded_tools_rejected_on_call() -> None:
         call_result.text or ""
     )
     assert CALLS == []
+
+
+class _ProviderWithAnMcpServer(LocalToolsProvider):
+    """Reports every ``ha_`` tool as belonging to one MCP server."""
+
+    async def get_tool_descriptors(self) -> list[ToolDescriptor]:
+        return [
+            replace(descriptor, mcp_server_id="homeassistant")
+            if descriptor.name.startswith("ha_")
+            else descriptor
+            for descriptor in await super().get_tool_descriptors()
+        ]
+
+
+def _skill_provider(
+    # ast-grep-ignore: no-dict-any - get_note result data for a test fixture
+    note_data: dict[str, Any],
+    *,
+    long_tool_description: str = "Run a Home Assistant action on an entity.",
+) -> LiveMetaToolsProvider:
+    async def get_note() -> ToolResult:
+        return ToolResult(data=note_data)
+
+    local_provider = _ProviderWithAnMcpServer(
+        registrations=[
+            _registration(
+                "get_note", description="Read a note.", implementation=get_note
+            ),
+            _registration("list_notes", description="List the household's notes."),
+            _registration(
+                "call_home_assistant_action",
+                description=long_tool_description,
+                properties={
+                    "entity_id": {"type": "string", "description": "Entity to act on."}
+                },
+            ),
+            _registration(
+                "list_home_assistant_entities", description="Find entities by name."
+            ),
+            _registration("ha_call_read_tool", description="Raw Home Assistant read."),
+        ]
+    )
+    view = OnDemandToolsView(
+        wrapped_provider=local_provider,
+        on_demand_tool_names={
+            "call_home_assistant_action",
+            "list_home_assistant_entities",
+            "ha_call_read_tool",
+        },
+    )
+    return LiveMetaToolsProvider(view)
+
+
+# ast-grep-ignore: no-dict-any - get_note result data for assertions
+async def _load_skill(provider: LiveMetaToolsProvider) -> dict[str, Any]:
+    result = await provider.execute_tool("get_note", {}, _context())
+    assert isinstance(result, ToolResult)
+    assert isinstance(result.data, dict)
+    return result.data
+
+
+@pytest.mark.asyncio
+async def test_skill_hands_over_its_tools_instead_of_activating_them() -> None:
+    provider = _skill_provider({
+        "content": "Find the entity, then call the action.",
+        "activate_tools": ["call_home_assistant_action"],
+    })
+
+    data = await _load_skill(provider)
+
+    assert data["content"] == "Find the entity, then call the action."
+    assert "activate_tools" not in data
+    [entry] = data[SKILL_TOOLS_KEY]
+    assert entry["name"] == "call_home_assistant_action"
+    assert entry["already_declared"] is False
+    assert "entity_id" in entry["parameters"]["properties"]
+
+
+@pytest.mark.asyncio
+async def test_skill_tool_can_be_run_with_the_schema_it_handed_over() -> None:
+    provider = _skill_provider({
+        "content": "Skill body.",
+        "activate_tools": ["call_home_assistant_action"],
+    })
+    [entry] = (await _load_skill(provider))[SKILL_TOOLS_KEY]
+
+    await provider.execute_tool(
+        CALL_TOOL_TOOL_NAME,
+        {"name": entry["name"], "arguments_json": '{"entity_id": "vacuum.s8"}'},
+        _context(),
+    )
+
+    assert CALLS == [("called", {"entity_id": "vacuum.s8"})]
+
+
+@pytest.mark.asyncio
+async def test_skill_loaded_through_call_tool_also_hands_over_its_tools() -> None:
+    provider = _skill_provider({
+        "content": "Skill body.",
+        "activate_tools": ["call_home_assistant_action"],
+    })
+
+    result = await provider.execute_tool(
+        CALL_TOOL_TOOL_NAME, {"name": "get_note"}, _context()
+    )
+
+    assert isinstance(result, ToolResult)
+    assert isinstance(result.data, dict)
+    assert SKILL_TOOLS_KEY in result.data
+
+
+@pytest.mark.asyncio
+async def test_skill_marks_a_tool_that_is_already_declared() -> None:
+    provider = _skill_provider({
+        "content": "Skill body.",
+        "activate_tools": ["list_notes"],
+    })
+
+    [entry] = (await _load_skill(provider))[SKILL_TOOLS_KEY]
+
+    assert entry["already_declared"] is True
+    assert "parameters" not in entry
+
+
+@pytest.mark.asyncio
+async def test_skill_summarises_a_whole_mcp_server() -> None:
+    provider = _skill_provider({
+        "content": "Skill body.",
+        "activate_mcp_servers": ["homeassistant"],
+    })
+
+    data = await _load_skill(provider)
+
+    assert "activate_mcp_servers" not in data
+    [entry] = data[SKILL_TOOLS_KEY]
+    assert entry["name"] == "ha_call_read_tool"
+    assert "parameters" not in entry
+
+
+@pytest.mark.asyncio
+async def test_skill_past_the_schema_budget_summarises_the_rest() -> None:
+    provider = _skill_provider(
+        {
+            "content": "Skill body.",
+            "activate_tools": [
+                "list_home_assistant_entities",
+                "call_home_assistant_action",
+            ],
+        },
+        long_tool_description="x" * SKILL_SCHEMA_BUDGET_CHARS,
+    )
+
+    first, second = (await _load_skill(provider))[SKILL_TOOLS_KEY]
+
+    assert "parameters" in first
+    assert "parameters" not in second
+
+
+@pytest.mark.asyncio
+async def test_skill_omits_a_tool_the_session_may_not_run() -> None:
+    provider = _skill_provider({
+        "content": "Skill body.",
+        "activate_tools": ["no_such_tool"],
+    })
+
+    data = await _load_skill(provider)
+
+    assert "activate_tools" not in data
+    assert SKILL_TOOLS_KEY not in data
+
+
+@pytest.mark.asyncio
+async def test_ordinary_note_is_returned_unchanged() -> None:
+    note = {"title": "Pool", "content": "Chlorine on Sundays."}
+
+    assert await _load_skill(_skill_provider(note)) == note

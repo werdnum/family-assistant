@@ -23,7 +23,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import func
 
 from family_assistant.storage.base import metadata
-from family_assistant.storage.events import EventActionType, InterfaceType
+from family_assistant.storage.events import EventActionType
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ schedule_automations_table = Table(
     Column("conversation_id", String(255), nullable=False, index=True),
     Column(
         "interface_type",
-        SQLEnum(InterfaceType),
+        String(50),
         nullable=False,
         server_default="telegram",
     ),

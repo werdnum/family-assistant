@@ -128,6 +128,18 @@ def derive_state(
     return DerivedState("waiting")
 
 
+def is_quiet(state: ThreadState, *, unread_count: int | None) -> bool:
+    """Whether a waiting thread has stopped asking for the viewer's attention.
+
+    "Waiting" is the state a thread falls into whenever nothing else applies,
+    so it includes every thread nobody closed, and sending in Home starts one
+    per message. One the viewer has read has nothing new to ask of them: clients
+    list it apart, and do not count it as waiting on them. Anything new in the
+    thread brings it back.
+    """
+    return state == "waiting" and unread_count == 0
+
+
 @dataclass(frozen=True, slots=True)
 class Viewer:
     """Who is looking at a thread, for their unread count.

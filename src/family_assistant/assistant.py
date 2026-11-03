@@ -2225,6 +2225,11 @@ class Assistant:
                         profile.id: profile.processing_config.allow_wake_llm
                         for profile in self.config.service_profiles
                     },
+                    trusted_event_server_ids=[
+                        server_id
+                        for server_id, server in self.config.mcp_config.mcpServers.items()
+                        if server.trusted_events
+                    ],
                 )
                 logger.info(
                     f"Event processor initialized with {len(event_sources)} sources"

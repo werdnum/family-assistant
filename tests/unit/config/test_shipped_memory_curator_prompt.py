@@ -2,8 +2,8 @@
 
 Milestone 2 of docs/design/conversation-memory.md. `test_processing_fail_fast`
 already renders every shipped profile's prompt, which is what startup does; this
-suite is about the content of the two prompts memory depends on, and it renders
-them the same way rather than reading the YAML, so a placeholder or an escaping
+suite is about the content of the curator prompt memory depends on, and it renders
+it the same way rather than reading the YAML, so a placeholder or an escaping
 mistake fails here as well.
 
 The phrases pinned below describe the request and edit contract or the guidance
@@ -89,12 +89,6 @@ def curator_prompt_fixture(shipped_config: AppConfig) -> str:
     return _render(profile.processing_config.prompts, profile.id)
 
 
-@pytest.fixture(name="assistant_prompt")
-def assistant_prompt_fixture(shipped_config: AppConfig) -> str:
-    profile = shipped_profile(shipped_config, "default_assistant")
-    return _render(profile.processing_config.prompts, profile.id)
-
-
 def test_the_curator_is_told_the_shape_of_the_request_it_is_given(
     curator_prompt: str,
 ) -> None:
@@ -166,24 +160,3 @@ def test_the_curator_is_told_the_retry_budget_and_the_empty_reply(
 
 def test_the_curator_is_told_memory_is_household_wide(curator_prompt: str) -> None:
     assert "Memory is household-wide" in curator_prompt
-
-
-def test_the_assistant_is_told_how_to_reach_memory(assistant_prompt: str) -> None:
-    """Conditional on the tool, because shipped profiles do not hold it yet."""
-    assert "Household memory:" in assistant_prompt
-    assert "If `propose_memory_edits` is among your tools" in assistant_prompt
-    assert "rather than `add_or_update_note`" in " ".join(assistant_prompt.split())
-    assert "core memory note is in your context every turn" in assistant_prompt
-
-
-def test_the_assistant_is_told_how_to_honour_a_forget(assistant_prompt: str) -> None:
-    """Forgetting in v1 removes the entry, and nothing else."""
-    assert "is a `remove` edit" in assistant_prompt
-    assert "removed from memory but not from the" in assistant_prompt
-    assert "come back if somebody says it again" in assistant_prompt
-
-
-def test_the_assistant_is_told_memory_is_household_wide(
-    assistant_prompt: str,
-) -> None:
-    assert "Memory is household-wide" in assistant_prompt

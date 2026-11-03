@@ -72,6 +72,55 @@ class ActionCatalogEntry(TypedDict):
     supports_response: bool
 
 
+# Home Assistant's limit on a rendered template's length (MAX_TEMPLATE_OUTPUT in
+# homeassistant/helpers/template); longer output is rejected as invalid.
+MAX_TEMPLATE_OUTPUT_CHARS = 256 * 1024
+
+# Entities per entity-list render. A row is usually 100-300 characters, so a
+# chunk stays well inside MAX_TEMPLATE_OUTPUT_CHARS even with long names.
+ENTITY_LIST_CHUNK_SIZE = 500
+
+# Short wire keys for each EntityMetadata field and the expression that
+# produces it, keyed off the loop variable ``s``.
+_OPTIONAL_ENTITY_FIELDS: dict[str, tuple[str, str]] = {
+    "area_name": ("a", "area_name(s.entity_id)"),
+    "device_id": ("d", "device_id(s.entity_id)"),
+    "device_name": ("dn", "device_name(s.entity_id)"),
+    "device_class": ("c", "s.attributes.device_class"),
+}
+
+
+def _entity_list_template(start: int, stop: int) -> str:
+    """A template rendering entities ``start`` to ``stop`` as compact JSON.
+
+    No whitespace is emitted, and a field that is empty is left out rather
+    than rendered as ``null``.
+    """
+    optional = "".join(
+        f"{{% set v = {expression} %}}"
+        f'{{% if v %}},"{key}":{{{{ v | tojson }}}}{{% endif %}}'
+        for key, expression in _OPTIONAL_ENTITY_FIELDS.values()
+    )
+    return (
+        f'[{{% for s in (states | sort(attribute="entity_id"))[{start}:{stop}] %}}'
+        "{% if not loop.first %},{% endif %}"
+        '{"e":{{ s.entity_id | tojson }},"n":{{ s.name | tojson }}'
+        f"{optional}}}"
+        "{% endfor %}]"
+    )
+
+
+def _entity_from_row(row: dict[str, str]) -> EntityMetadata:
+    return EntityMetadata(
+        entity_id=row["e"],
+        name=row["n"],
+        area_name=row.get("a"),
+        device_id=row.get("d"),
+        device_name=row.get("dn"),
+        device_class=row.get("c"),
+    )
+
+
 class HomeAssistantClientWrapper:
     """
     Wrapper around homeassistant_api.Client that provides additional functionality.
@@ -216,23 +265,7 @@ class HomeAssistantClientWrapper:
                     )
                     return self._entity_cache  # type: ignore[return-value]
 
-            # Fetch entities via template rendering
-            template = """[
-{% for state in states %}
-  {
-    "entity_id": "{{ state.entity_id }}",
-    "name": {{ state.name | tojson }},
-    "area_name": {{ area_name(state.entity_id) | default(none, true) | tojson }},
-    "device_id": {{ device_id(state.entity_id) | default(none, true) | tojson }},
-    "device_name": {{ device_name(state.entity_id) | default(none, true) | tojson }},
-    "device_class": {{ state.attributes.device_class | default(none, true) | tojson }}
-  }{% if not loop.last %},{% endif %}
-{% endfor %}
-]"""
-
-            logger.debug("Fetching entity list via template rendering")
-            rendered_json = await self.async_get_rendered_template(template=template)
-            entities = json.loads(rendered_json)
+            entities = await self._fetch_entity_list()
 
             # Update cache
             self._entity_cache = entities
@@ -242,6 +275,29 @@ class HomeAssistantClientWrapper:
             )
 
             return entities
+
+    async def _fetch_entity_list(self) -> list[EntityMetadata]:
+        """Read every entity's metadata, ``ENTITY_LIST_CHUNK_SIZE`` at a time.
+
+        Home Assistant refuses to render a template whose output exceeds
+        ``MAX_TEMPLATE_OUTPUT_CHARS``, so one template over every entity fails
+        on a large installation. Chunks are slices of the states sorted by
+        entity id; an entity added between two renders can shift one into the
+        next slice, so rows are keyed by id to drop the repeat.
+        """
+        entities: dict[str, EntityMetadata] = {}
+        start = 0
+        while True:
+            rendered = await self.async_get_rendered_template(
+                template=_entity_list_template(start, start + ENTITY_LIST_CHUNK_SIZE)
+            )
+            rows = json.loads(rendered)
+            for row in rows:
+                entity = _entity_from_row(row)
+                entities[entity["entity_id"]] = entity
+            if len(rows) < ENTITY_LIST_CHUNK_SIZE:
+                return list(entities.values())
+            start += ENTITY_LIST_CHUNK_SIZE
 
     async def async_get_current_states(
         self, entity_ids: list[str]

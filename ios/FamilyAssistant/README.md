@@ -97,6 +97,8 @@ GET /api/v1/chat/conversations?interface_type=web
 GET /api/v1/chat/conversations/{conversation_id}/messages
 GET /api/v1/shared-conversations/{token}/messages
 GET /api/v1/shared-conversations/{token}/attachments/{attachment_id}
+GET, POST, DELETE /api/v1/chat/conversations/{conversation_id}/share
+GET, POST, DELETE /api/v1/chat/conversations/{conversation_id}/messages/{message_id}/share
 GET /api/v1/profiles
 POST /api/v1/chat/turns
 GET /api/v1/chat/conversations/{conversation_id}/stream?from_seq=<n>&follow=<bool>
@@ -268,7 +270,7 @@ to one name, so only `Call Family Assistant` and its variants belong here. See
 `Info.plist` registers static long-press app-icon shortcuts:
 
 - **New Chat** — queues `/chat?new=1` through `IntentNavigationCenter` and opens the native Chat tab
-  on a blank composer.
+  on a blank composer: Home's when threads are on, otherwise a new conversation's.
 - **Voice** — queues `/voice` through `IntentNavigationCenter` and opens the native Voice tab.
 
 Manual APNs configuration:

@@ -8,6 +8,12 @@ updates:
     # Each group's PR counts against this limit, so a limit of 1 lets only the
     # first group (python-dev-tools) open each month and starves the rest.
     open-pull-requests-limit: 5
+    # playwright is pinned to rebrowser-playwright's version so the two share
+    # the browser binaries baked into the dev and CI images; bump all three
+    # together by hand.
+    ignore:
+      - dependency-name: "playwright"
+      - dependency-name: "rebrowser-playwright"
     cooldown:
       default-days: 14
       semver-major-days: 30

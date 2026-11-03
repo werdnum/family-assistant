@@ -30,6 +30,11 @@ Detailed step-by-step instructions here...
 
 - `visibility_labels` — List of profile labels that can access this skill (omit for universal
   access)
+- `activate_tools` — On-demand tools the skill needs, available once it is loaded, with the most
+  used first
+- `activate_mcp_servers` — Whole MCP servers the skill needs
+
+Neither grants anything a profile's tool policy does not already allow.
 
 ## How Skills Work
 
@@ -83,11 +88,11 @@ Restrict a skill to specific processing profiles:
 name: Data Analysis Workflow
 description: Step-by-step guide for analyzing datasets with charts.
 visibility_labels:
-  - data_visualization
+  - research
 ---
 ```
 
-This skill would only appear in the catalog for sessions using the `data_visualization` profile.
+This skill would only appear in the catalog for sessions using the `research` profile.
 
 ## Built-in vs User Skills
 

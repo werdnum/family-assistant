@@ -3,7 +3,7 @@
 import logging
 from pathlib import Path
 
-from family_assistant.skills.frontmatter import parse_frontmatter
+from family_assistant.skills.frontmatter import parse_frontmatter, skill_activations
 from family_assistant.skills.types import ParsedSkill
 
 logger = logging.getLogger(__name__)
@@ -42,13 +42,7 @@ def load_skills_from_directory(directory: Path) -> list[ParsedSkill]:
             frozenset(raw_labels) if isinstance(raw_labels, list) else frozenset()
         )
 
-        raw_activate = frontmatter.get("activate_tools", [])
-        activate_tools = tuple(raw_activate) if isinstance(raw_activate, list) else ()
-
-        raw_activate_mcp = frontmatter.get("activate_mcp_servers", [])
-        activate_mcp_servers = (
-            tuple(raw_activate_mcp) if isinstance(raw_activate_mcp, list) else ()
-        )
+        activate_tools, activate_mcp_servers = skill_activations(frontmatter)
 
         skills.append(
             ParsedSkill(

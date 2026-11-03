@@ -24,11 +24,13 @@ describe('useNotifications', () => {
 
     // Mock BroadcastChannel
     // @ts-expect-error - simplified mock for testing
-    global.BroadcastChannel = vi.fn(() => ({
-      addEventListener: vi.fn(),
-      postMessage: vi.fn(),
-      close: vi.fn(),
-    }));
+    global.BroadcastChannel = vi.fn(function () {
+      return {
+        addEventListener: vi.fn(),
+        postMessage: vi.fn(),
+        close: vi.fn(),
+      };
+    });
   });
 
   afterEach(() => {

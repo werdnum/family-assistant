@@ -132,13 +132,12 @@ def verify_email_authentication(
     )
 
 
-def extract_from_domain(raw_mime: bytes) -> str | None:
-    """Return the domain portion of the RFC 5322 ``From:`` header, lowercased."""
+def extract_from_address(raw_mime: bytes) -> str | None:
+    """Return the single RFC 5322 ``From:`` address, or ``None`` unless exactly one."""
     from_addresses = _from_addresses(raw_mime)
-    if not from_addresses:
+    if len(from_addresses) != 1:
         return None
-    domain = _domain_of(from_addresses[0])
-    return domain.lower() if domain else None
+    return from_addresses[0]
 
 
 def extract_client_ip(raw_mime: bytes) -> str | None:

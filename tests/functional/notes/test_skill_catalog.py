@@ -211,6 +211,47 @@ async def test_mixed_db_and_file_skills_in_catalog(
 
 @pytest.mark.asyncio
 @pytest.mark.postgres
+async def test_database_skill_replaces_a_file_skill_of_the_same_name(
+    pg_vector_db_engine: AsyncEngine,
+) -> None:
+    """get_note finds the database skill first, so only it may be listed."""
+    await cleanup_notes(pg_vector_db_engine)
+    db = Database(engine=pg_vector_db_engine)
+    await db.notes.add_or_update(
+        title="Our emails",
+        content=SKILL_FRONTMATTER_CONTENT,
+        include_in_prompt=True,
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
+    )
+    registry = NoteRegistry([
+        ParsedSkill(
+            name="Email Drafting",
+            description="The generic built-in version.",
+            content="Generic steps.",
+            source_path=Path("/fake/email.md"),
+        ),
+    ])
+
+    def get_db_context_func() -> Database:
+        return db
+
+    provider = NotesContextProvider(
+        get_db_context_func=get_db_context_func,
+        prompts=TEST_PROMPTS,
+        note_registry=registry,
+        read_policy=NoteReadPolicy.UNRESTRICTED,
+    )
+
+    fragments = await provider.get_context_fragments(acting_user_id=None)
+
+    catalog = next(f for f in fragments if "Available Skills" in f)
+    assert catalog.count("**Email Drafting**") == 1
+    assert "The generic built-in version." not in catalog
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
 async def test_file_skill_visibility_filtering(
     pg_vector_db_engine: AsyncEngine,
 ) -> None:

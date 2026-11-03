@@ -60,6 +60,7 @@ private final class FakeAudioIO: VoiceAudioIO {
     var onCapturedAudio: (@Sendable (Data) -> Void)?
     var onInputLevel: (@Sendable (Double) -> Void)?
     var onEngineFailure: ((Error) -> Void)?
+    var onPlaybackFinished: (() -> Void)?
     var onDiagnostic: ((String, [String: String], Error?) -> Void)?
     var routeSnapshot = VoiceAudioRouteSnapshot.unavailable
     var startError: Error?
@@ -84,6 +85,12 @@ private final class FakeAudioIO: VoiceAudioIO {
 
     func enqueue(_ pcm24k: Data) {
         enqueued.append(pcm24k)
+        isDucked = !pcm24k.isEmpty
+    }
+
+    func finishPlayback() {
+        isDucked = false
+        onPlaybackFinished?()
     }
 
     func flushPlayback() {
@@ -452,8 +459,43 @@ final class VoiceSessionViewModelTests: XCTestCase {
         try await waitUntil { self.audio.enqueued == [chunk] }
         XCTAssertTrue(model.isAssistantSpeaking)
 
-        session.emit(.turnComplete)
+        audio.finishPlayback()
         try await waitUntil { model.isAssistantSpeaking == false }
+    }
+
+    func testAssistantStaysSpeakingUntilPlaybackFinishes() async throws {
+        let model = makeModel()
+        await model.start()
+        session.emit(.audio(Data([0x01, 0x02])))
+        session.emit(.generationComplete)
+        session.emit(.turnComplete)
+        session.emit(.outputTranscription("done"))
+        try await waitUntil { !model.transcript.entries.isEmpty }
+        XCTAssertTrue(model.isAssistantSpeaking)
+
+        audio.finishPlayback()
+        try await waitUntil { model.isAssistantSpeaking == false }
+    }
+
+    func testPlaybackFinishedDoesNotEndAReplyThatHasStarted() async throws {
+        let model = makeModel()
+        await model.start()
+        session.emit(.audio(Data([0x01, 0x02])))
+        try await waitUntil { model.isAssistantSpeaking }
+
+        // The finish was posted before the next reply reached the speaker.
+        audio.onPlaybackFinished?()
+        session.emit(.outputTranscription("marker"))
+        try await waitUntil { !model.transcript.entries.isEmpty }
+        XCTAssertTrue(model.isAssistantSpeaking)
+    }
+
+    func testAudioThatCannotPlayDoesNotCountAsSpeaking() async throws {
+        let model = makeModel()
+        await model.start()
+        session.emit(.audio(Data()))
+        try await waitUntil { self.audio.enqueued.count == 1 }
+        XCTAssertFalse(model.isAssistantSpeaking)
     }
 
     func testInterruptedFlushesPlayback() async throws {
@@ -528,6 +570,7 @@ final class VoiceSessionViewModelTests: XCTestCase {
         XCTAssertEqual(interrupted.1["interruption_index"], "1")
         XCTAssertEqual(interrupted.1["assistant_was_speaking"], "true")
         XCTAssertNotNil(interrupted.1["assistant_speech_ms"])
+        XCTAssertNotNil(interrupted.1["since_first_playback_ms"])
 
         model.end()
         XCTAssertEqual(recorder.records.last?.0, "ended")
