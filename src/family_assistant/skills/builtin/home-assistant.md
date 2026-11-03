@@ -1,147 +1,33 @@
 ---
 name: Home Assistant
-description: Talk to the user's Home Assistant — read state, render templates, list entities, see camera snapshots, query history, and execute actions (formerly "service calls"). Activates the full Home Assistant tool set.
+description: Check and control anything in the home — lights, vacuum, heating and AC, locks, blinds, pool, appliances, scenes, scripts, sensors, cameras and their history.
 activate_tools:
-  - render_home_assistant_template
   - list_home_assistant_entities
   - list_home_assistant_actions
   - call_home_assistant_action
+  - render_home_assistant_template
   - get_camera_snapshot
   - download_state_history
-activate_mcp_servers:
-  - homeassistant
 ---
 
 # Home Assistant
 
-Load this skill any time the user wants you to **read from or act on** their Home Assistant instance
-— query a sensor, check whether a door is closed, look up history, see a camera, flip a switch, set
-a thermostat, activate a scene, trigger a script, etc. Loading the skill activates six tools:
+Load this whenever the user wants to read from or act on a device in the home. Most of what they ask
+for is here even if you have not seen the device mentioned. `get_home_status` is a fixed overview of
+a few things, so a device missing from it tells you nothing: search for it.
 
-| Tool                             | Use it for                                                  |
-| -------------------------------- | ----------------------------------------------------------- |
-| `render_home_assistant_template` | Read current state via Jinja2 (`{{ states('...') }}`, etc.) |
-| `list_home_assistant_entities`   | Find entities by description, with their current state      |
-| `list_home_assistant_actions`    | Discover available actions and their field schemas          |
-| `call_home_assistant_action`     | Execute an action (a.k.a. service call)                     |
-| `get_camera_snapshot`            | Pull a still image from a HA camera entity                  |
-| `download_state_history`         | Fetch historical state changes for entities                 |
+Names and fields vary by installation, so look them up rather than guessing:
 
-`get_home_status`, when you have it, needs no skill: it returns the operator's curated overview of
-the house (who is home, energy prices, key devices). Start there for general questions about the
-state of the home, and for the entity IDs the household cares about.
+1. **Find it:** `list_home_assistant_entities(query="kitchen lamp")`. Results carry current state,
+   which often answers a "what is X?" question outright. Use `area_filter` for a room.
+2. **Check the action:** `list_home_assistant_actions(domain="light", action_filter="turn_on")`
+   shows the fields it accepts.
+3. **Call it:**
+   `call_home_assistant_action(domain="light", action="turn_on", service_data={"entity_id": "light.kitchen_main", "brightness_pct": 75})`.
+   The result reports the states that changed.
 
-For **schedules and event-driven automations**, use the automations framework (`create_automation`)
-— automations can themselves call HA actions, but the automation is the right primitive for "every
-day at 9pm" or "when X happens".
+For an attribute or a calculation, use `render_home_assistant_template`. When a catalog entry has
+`supports_response: true`, pass `return_response=true` and read the payload from the result.
 
-## Discover before you guess
-
-The set of entities, actions, and field schemas depends entirely on which integrations are installed
-on the user's HA, and HA itself is a moving target. **Do not guess names from training data** — they
-drift between versions and between installations. Instead, query the live catalog at runtime:
-
-1. **Find the entity** with `list_home_assistant_entities(query="kitchen lamp")`. The query is
-   matched against entity ID, name, area, device and sensor type, and each result carries its
-   current state and unit, so a plain "what is X?" is usually answered here.
-2. **For anything the state alone does not answer** (an attribute, a calculation), use
-   `render_home_assistant_template`:
-   `{{ state_attr('climate.living_room', 'current_temperature') }}`.
-3. **For actions**, look up the schema with `list_home_assistant_actions(domain="light")` to see
-   what fields the action accepts (`brightness_pct`, `color_temp_kelvin`, `transition`, …) and
-   whether it supports a response payload.
-4. **Call** with `call_home_assistant_action(domain=..., action=..., service_data={...})`. Put the
-   entity selection in `service_data` as either `entity_id` (string or list) or a `target` block
-   (`{"target": {"entity_id": ...}}` / `{"target": {"area_id": ...}}` /
-   `{"target": {"device_id": ...}}`).
-
-The action catalog is fetched live from HA's `GET /api/services` at call time, so it always matches
-the integrations actually installed — no offline list to keep in sync with the HA version.
-
-## Why discovery matters
-
-- **Action and field names vary by integration and HA version.** `light.turn_on` is built in, but
-  custom integrations register their own (`hue.activate_scene`, `xiaomi_miio.vacuum_clean_zone`, …).
-  The catalog is the only reliable way to find them.
-- **Field shapes vary too.** A `climate.set_temperature` call wants `temperature` for some
-  thermostats and `target_temp_low`/`target_temp_high` for others — the catalog tells you which.
-- **Some actions return data.** When the catalog entry has `supports_response: true` (e.g.
-  `calendar.get_events`, `weather.get_forecasts`), pass `return_response=true` and read the payload
-  off the result.
-
-## Examples
-
-### "Is the front door locked?"
-
-```text
-list_home_assistant_entities(query="front door lock")
-   → lock.front_door - Front Door (Area: Entry): locked
-```
-
-### "Turn on the kitchen light at 75%"
-
-```text
-list_home_assistant_entities(query="light", area_filter="kitchen")
-   → light.kitchen_main - Kitchen Main (Area: Kitchen): off
-list_home_assistant_actions(domain="light", action_filter="turn_on")
-   → confirms light.turn_on, fields include brightness_pct, transition
-call_home_assistant_action(
-    domain="light",
-    action="turn_on",
-    service_data={"entity_id": "light.kitchen_main", "brightness_pct": 75},
-)
-```
-
-### "Activate movie night"
-
-```text
-list_home_assistant_actions(domain="scene")
-   → confirms scene.turn_on
-call_home_assistant_action(
-    domain="scene",
-    action="turn_on",
-    service_data={"entity_id": "scene.movie_night"},
-)
-```
-
-### "What's on the family calendar tomorrow?"
-
-```text
-list_home_assistant_actions(domain="calendar", action_filter="get_events")
-   → calendar.get_events, supports_response=true
-call_home_assistant_action(
-    domain="calendar",
-    action="get_events",
-    service_data={"entity_id": "calendar.family", "duration": {"hours": 24}},
-    return_response=true,
-)
-   → read events out of the response payload
-```
-
-### "Show me the doorbell camera"
-
-```text
-list_home_assistant_entities(query="doorbell camera")
-   → camera.front_door - Doorbell (Area: Entry): idle
-get_camera_snapshot(camera_entity_id="camera.front_door")
-   → image attached to the reply
-```
-
-### "How has the bedroom temperature changed today?"
-
-```text
-download_state_history(entity_ids=["sensor.bedroom_temperature"])
-   → JSON attachment with state changes; pass to a chart tool to plot
-```
-
-## Verifying actions
-
-`call_home_assistant_action` already returns the changed states HA reported, but a follow-up
-`render_home_assistant_template` is the authoritative "what is it now" check.
-
-## What this skill is not for
-
-- Recurring or event-triggered behavior — use `create_automation` (the automation can itself call HA
-  actions).
-- Other camera backends (Reolink/Frigate) — those have their own dedicated tools (`list_cameras`,
-  `get_camera_frame`, …).
+Check the household's notes for specifics, such as room names, zones or a device's commands. For
+anything recurring or triggered by an event, use an automation instead.

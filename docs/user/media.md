@@ -16,7 +16,7 @@ about what it sees. See [attachments.md](attachments.md) for how files move arou
 
 ## Generating and editing images
 
-Use `/artist` for a mode dedicated to image and video work, or just ask.
+Just ask.
 
 - "Generate an image of a mountain sunset."
 - "Create a photorealistic image of a cozy cabin in the woods."
@@ -40,16 +40,15 @@ Short clips, in the aspect ratio you ask for, optionally guided by a reference i
 
 ## Charts and graphs
 
-Use the charting mode — `/visualize` or `/chart` in Telegram, or the corresponding profile in the
-web and iOS profile picker (see [slash-commands.md](slash-commands.md)) — and provide the data
-inline or as an attached CSV or JSON file:
+Ask for a chart and provide the data inline or as an attached CSV or JSON file, or point at data the
+assistant can fetch, such as a Home Assistant sensor's history:
 
-- `/visualize Create a bar chart showing sales by month from this CSV file`
-- `/chart Generate a line graph of temperature trends`
-- `/visualize the distribution of categories in this dataset`
+- "Create a bar chart showing sales by month from this CSV file"
+- "Graph the pool temperature over the last week"
+- "Show the distribution of categories in this dataset"
 
-This activates a mode built for charting, producing PNG images you can view, download, or share.
-Bar, line, scatter, pie, area, time series, and more complex layouts are all supported.
+Charts come back as PNG images you can view, download, or share. Bar, line, scatter, pie, area, time
+series, and more complex layouts are all supported.
 
 Data often needs cleaning first — Home Assistant sensor history, for instance, contains
 `unavailable` and `unknown` values that break a chart. The assistant can filter data before plotting

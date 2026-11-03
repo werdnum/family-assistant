@@ -235,6 +235,106 @@ final class GeminiLiveCodecTests: XCTestCase {
         XCTAssertFalse(ducking.isDucked)
     }
 
+    func testPlaybackRampFadesInAcrossChunksThenLeavesAudioAlone() {
+        var ramp = VoicePlaybackRamp()
+        ramp.restart()
+        let half = VoicePlaybackRamp.frameCount / 2
+        let quietest = rampedSamples(ramp: &ramp, count: half)
+        XCTAssertEqual(quietest.first, 0)
+        XCTAssertEqual(Double(quietest[half / 2]), 2500, accuracy: 1)
+
+        let continuing = rampedSamples(ramp: &ramp, count: half + 10)
+        XCTAssertEqual(Double(continuing[0]), 5000, accuracy: 1)
+        XCTAssertLessThan(continuing[half - 1], 10000)
+        XCTAssertEqual(Array(continuing[half...]), Array(repeating: 10000, count: 10))
+    }
+
+    func testPlaybackRampDoesNothingUntilRestarted() {
+        var ramp = VoicePlaybackRamp()
+        XCTAssertEqual(rampedSamples(ramp: &ramp, count: 4), Array(repeating: 10000, count: 4))
+    }
+
+    private func rampedSamples(ramp: inout VoicePlaybackRamp, count: Int) -> [Int16] {
+        var samples = [Int16](repeating: 10000, count: count)
+        samples.withUnsafeMutableBufferPointer { ramp.apply(to: $0) }
+        return samples
+    }
+
+    func testZeroGainSilencesCapturedAudioWithoutShorteningIt() {
+        var data = Data([0x10, 0x27, 0xF0, 0xD8])
+        VoiceMicDucking.apply(gain: 0, toPCM16: &data)
+        XCTAssertEqual(data, Data(count: 4))
+    }
+
+    func testDuckingReleaseReportsWhetherItEndedTheDucking() throws {
+        var ducking = VoiceMicDucking()
+        let generation = ducking.bufferScheduled()
+        let token = try XCTUnwrap(ducking.bufferFinished(generation: generation))
+        XCTAssertTrue(ducking.release(token: token))
+        XCTAssertFalse(ducking.release(token: token), "an already-released token ends nothing")
+    }
+
+    func testOnlyTheFirstReplySilencesTheMic() {
+        var echo = VoiceEchoConvergence()
+        let start = ContinuousClock.now
+        XCTAssertFalse(echo.silencesMic(at: start), "nothing has played yet")
+
+        echo.replyStarted(at: start)
+        XCTAssertTrue(echo.silencesMic(at: start + .milliseconds(499)))
+        XCTAssertFalse(echo.silencesMic(at: start + .milliseconds(500)))
+
+        _ = echo.replyFinished()
+        let second = start + .seconds(5)
+        echo.replyStarted(at: second)
+        XCTAssertFalse(echo.silencesMic(at: second))
+
+        echo.reset()
+        echo.replyStarted(at: second)
+        XCTAssertTrue(echo.silencesMic(at: second), "a new session has its own first reply")
+    }
+
+    func testMicReturnsWhenAShortFirstReplyEndsInsideTheWindow() {
+        var echo = VoiceEchoConvergence()
+        let start = ContinuousClock.now
+        echo.replyStarted(at: start)
+        XCTAssertTrue(echo.silencesMic(at: start + .milliseconds(300)))
+
+        _ = echo.replyFinished()
+        XCTAssertFalse(echo.silencesMic(at: start + .milliseconds(400)))
+    }
+
+    func testEchoLevelsAreSplitAtTheConvergenceWindow() {
+        var echo = VoiceEchoConvergence()
+        let start = ContinuousClock.now
+        echo.replyStarted(at: start)
+        echo.recordCaptured(rms: 0.1, frames: 100, at: start + .milliseconds(100))
+        echo.recordCaptured(rms: 0.1, frames: 100, at: start + .milliseconds(200))
+        echo.recordPlayed(rms: 0.5, frames: 100, at: start + .milliseconds(200))
+        echo.recordCaptured(rms: 0.01, frames: 100, at: start + .milliseconds(600))
+        echo.recordCaptured(rms: 0.001, frames: 100, at: start + .milliseconds(700))
+        echo.recordPlayed(rms: 1, frames: 100, at: start + .milliseconds(800))
+
+        let fields = echo.replyFinished()
+        XCTAssertEqual(fields["reply_index"], "1")
+        XCTAssertEqual(fields["mic_rms_dbfs_first_500ms"], "-20.0")
+        XCTAssertEqual(fields["mic_peak_dbfs_first_500ms"], "-20.0")
+        XCTAssertEqual(fields["played_rms_dbfs_first_500ms"], "-6.0")
+        XCTAssertEqual(fields["mic_rms_dbfs_after_500ms"], "-43.0")
+        XCTAssertEqual(fields["mic_peak_dbfs_after_500ms"], "-40.0")
+        XCTAssertEqual(fields["played_rms_dbfs_after_500ms"], "0.0")
+    }
+
+    func testEchoLevelsOmitWhatWasNotMeasured() {
+        var echo = VoiceEchoConvergence()
+        let start = ContinuousClock.now
+        echo.replyStarted(at: start)
+        XCTAssertEqual(echo.replyFinished(), ["reply_index": "1"])
+
+        echo.recordCaptured(rms: 0.1, frames: 100, at: start)
+        echo.replyStarted(at: start)
+        XCTAssertEqual(echo.replyFinished(), ["reply_index": "2"], "nothing outlives its reply")
+    }
+
     func testQualifiedModelNamePreservesExistingPrefix() {
         XCTAssertEqual(GeminiLiveCodec.qualifiedModelName("models/foo"), "models/foo")
         XCTAssertEqual(GeminiLiveCodec.qualifiedModelName("foo"), "models/foo")

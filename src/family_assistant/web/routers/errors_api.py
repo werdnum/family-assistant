@@ -348,8 +348,10 @@ async def report_frontend_error(
         return FrontendErrorReportResponse(status="reported")
 
     # Telemetry lane: ring buffer (the queryable surface) plus a stdout line
-    # below the error_logs threshold.
-    get_frontend_telemetry_buffer().add(
+    # below the error_logs threshold. The buffer goes with the process, so the
+    # line carries the whole clamped record: it is what survives a restart. JSON
+    # keeps a report's own newlines from forging log lines.
+    recorded = get_frontend_telemetry_buffer().add(
         FrontendTelemetryRecord(
             timestamp=datetime.now(UTC),
             severity=severity if reporter_authenticated else "info",
@@ -363,7 +365,8 @@ async def report_frontend_error(
     )
     telemetry_logger.log(
         telemetry_level,
-        error_report.message,
+        "%s",
+        json.dumps(recorded.to_dict(), default=str),
         extra={"extra_data": extra_data},
     )
     return FrontendErrorReportResponse(status="recorded")

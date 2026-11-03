@@ -229,7 +229,7 @@ class ConversationThreadsRepository(BaseRepository):
         )
 
     async def discard_thread(self, conversation_id: str) -> None:
-        """Remove a thread that never started: its record and whatever was copied in.
+        """Remove a thread that never started: its record, what was copied in, its marker.
 
         For a thread whose creation is abandoned before its first turn, so
         nothing the user wrote is lost.
@@ -238,7 +238,11 @@ class ConversationThreadsRepository(BaseRepository):
         async def _discard(txn: DatabaseTransaction) -> None:
             await txn.execute(
                 message_history_table.delete().where(
-                    message_history_table.c.conversation_id == conversation_id
+                    or_(
+                        message_history_table.c.conversation_id == conversation_id,
+                        message_history_table.c.started_thread_conversation_id
+                        == conversation_id,
+                    )
                 )
             )
             await txn.execute(
@@ -466,6 +470,8 @@ class ConversationThreadsRepository(BaseRepository):
                 history.c.role.in_(THREAD_VISIBLE_ROLES),
                 history.c.content.isnot(None),
                 history.c.subconversation_id.is_(None),
+                # The viewer's own doing, like a message they wrote.
+                history.c.started_thread_conversation_id.is_(None),
                 or_(
                     read_through.c.last_read.is_(None),
                     history.c.internal_id > read_through.c.last_read,

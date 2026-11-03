@@ -74,7 +74,8 @@ class OAuthNotConnectedError(OAuthCredentialError):
 
     def __init__(self, provider_display_name: str) -> None:
         super().__init__(
-            f"no {provider_display_name} account connected — connect from Settings"
+            f"no {provider_display_name} account connected — connect one in the web app "
+            "under Settings → Connected Accounts"
         )
 
 
@@ -84,7 +85,7 @@ class OAuthReauthRequiredError(OAuthCredentialError):
     def __init__(self, provider_display_name: str) -> None:
         super().__init__(
             f"your {provider_display_name} connection needs to be re-authorized — "
-            "reconnect from Settings"
+            "reconnect in the web app under Settings → Connected Accounts"
         )
 
 
@@ -95,7 +96,8 @@ class OAuthScopeNotGrantedError(OAuthCredentialError):
         self.scope = str(scope)
         super().__init__(
             f"your {provider_display_name} connection doesn't include "
-            f"{self.scope} access — reconnect from Settings and approve it"
+            f"{self.scope} access — reconnect in the web app under Settings → "
+            "Connected Accounts and approve it"
         )
 
 

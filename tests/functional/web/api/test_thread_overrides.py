@@ -319,6 +319,116 @@ async def test_a_start_whose_first_turn_is_refused_leaves_no_thread(
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("profiles")
+async def test_starting_a_thread_leaves_a_marker_in_home(
+    api_test_client: AsyncClient,
+) -> None:
+    home = await _home(api_test_client)
+    body = await _start(api_test_client, profile_id=CONTEXT_PROFILE, prompt="Plan")
+
+    messages = (
+        await api_test_client.get(f"/api/v1/chat/conversations/{home}/messages")
+    ).json()["messages"]
+
+    [marker] = messages
+    assert marker["started_thread"] == body["thread"]["conversation_id"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("profiles")
+async def test_retrying_a_start_leaves_one_marker(
+    api_test_client: AsyncClient, db_engine: AsyncEngine
+) -> None:
+    home = await _home(api_test_client)
+    turn_id = str(uuid.uuid4())
+    for _attempt in range(2):
+        body = await _start(
+            api_test_client, profile_id=CONTEXT_PROFILE, prompt="Plan", turn_id=turn_id
+        )
+        await api_test_client.get(
+            f"/api/v1/chat/conversations/{body['thread']['conversation_id']}/stream",
+            params={"from_seq": 0},
+        )
+
+    rows = await _rows(Database(engine=db_engine), home)
+
+    assert len(rows) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("profiles")
+async def test_a_refused_start_leaves_no_marker(
+    api_test_client: AsyncClient, db_engine: AsyncEngine
+) -> None:
+    home = await _home(api_test_client)
+
+    await api_test_client.post(
+        "/api/v1/chat/home/threads",
+        json={
+            "profile_id": CONTEXT_PROFILE,
+            "prompt": "See attached",
+            "attachments": [{"type": "image", "content": "", "mime_type": "image/png"}],
+        },
+    )
+
+    assert await _rows(Database(engine=db_engine), home) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("profiles")
+async def test_a_marker_is_not_unread_in_home(
+    api_test_client: AsyncClient, db_engine: AsyncEngine
+) -> None:
+    home = await _home(api_test_client)
+    await _start(api_test_client, profile_id=CONTEXT_PROFILE, prompt="Plan")
+
+    unread = await Database(engine=db_engine).conversation_threads.unread_counts(
+        [home], viewer_user_id=CALLER, viewer_keys=[CALLER]
+    )
+
+    assert unread == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("profiles")
+async def test_a_marker_stays_out_of_the_model_history_window(
+    api_test_client: AsyncClient,
+    db_engine: AsyncEngine,
+    api_test_processing_service: ProcessingService,
+) -> None:
+    home = await _home(api_test_client)
+    await _start(api_test_client, profile_id=CONTEXT_PROFILE, prompt="Plan")
+
+    window = await Database(engine=db_engine).message_history.get_recent(
+        interface_type="web",
+        conversation_id=home,
+        processing_profile_id=api_test_processing_service.service_config.id,
+    )
+
+    assert window == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("profiles")
+async def test_a_marker_is_not_what_a_conversation_last_said(
+    api_test_client: AsyncClient, db_engine: AsyncEngine
+) -> None:
+    db = Database(engine=db_engine)
+    home = await _home(api_test_client)
+    await _home_turn(db, home, words="the weather", at=NOW)
+    await _start(api_test_client, profile_id=CONTEXT_PROFILE, prompt="Plan")
+
+    listed = (await api_test_client.get("/api/v1/chat/conversations")).json()
+
+    [entry] = [
+        conversation
+        for conversation in listed["conversations"]
+        if conversation["conversation_id"] == home
+    ]
+    assert entry["last_message"] == "reply to the weather"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("profiles")
 async def test_a_new_thread_needs_an_opening_message(
     api_test_client: AsyncClient,
 ) -> None:
@@ -570,7 +680,9 @@ async def test_moving_a_turn_takes_the_whole_turn_out_of_home(
     assert [
         (message["role"], message["content"], message["moved_to_thread"])
         for message in home_messages
-        if message["role"] != "tool" and message["content"] is not None
+        if message["role"] != "tool"
+        and message["content"] is not None
+        and message["started_thread"] is None
     ] == [
         ("user", "the weather", None),
         ("assistant", "reply to the weather", None),
@@ -622,6 +734,44 @@ async def test_a_moved_turn_leaves_homes_model_and_reaches_the_threads(
     assert not profiles.saw(home_profile, "tool output for the quotes")
     assert profiles.saw(home_profile, "tool output for the weather")
     assert profiles.saw(CONTEXT_PROFILE, "tool output for the quotes")
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("profiles")
+async def test_moving_a_turn_stops_the_links_to_its_messages(
+    api_test_client: AsyncClient, db_engine: AsyncEngine
+) -> None:
+    db = Database(engine=db_engine)
+    home = await _home(api_test_client)
+    thread = await _thread_on(api_test_client, CONTEXT_PROFILE)
+    moved = await _home_turn(db, home, words="the quotes", at=NOW)
+    share = await api_test_client.post(
+        f"/api/v1/chat/conversations/{home}/messages/{moved['reply']}/share"
+    )
+    token = share.json()["share_url"].rsplit("/", 1)[-1]
+
+    await api_test_client.post(
+        f"/api/v1/chat/home/threads/{thread}/moved-turns",
+        json={"message_id": moved["user"]},
+    )
+
+    read = await api_test_client.get(f"/api/v1/shared-conversations/{token}/messages")
+    assert read.status_code == 404
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("profiles")
+async def test_a_thread_is_shared_like_a_conversation(
+    api_test_client: AsyncClient,
+) -> None:
+    thread = await _thread_on(api_test_client, CONTEXT_PROFILE)
+
+    share = await api_test_client.post(f"/api/v1/chat/conversations/{thread}/share")
+
+    token = share.json()["share_url"].rsplit("/", 1)[-1]
+    read = await api_test_client.get(f"/api/v1/shared-conversations/{token}/messages")
+    assert read.json()["conversation_id"] == thread
+    assert read.json()["share_scope"] == "conversation"
 
 
 @pytest.mark.asyncio

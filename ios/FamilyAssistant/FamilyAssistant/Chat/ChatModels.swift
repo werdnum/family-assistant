@@ -233,6 +233,14 @@ struct ChatProfile: Codable, Equatable, Identifiable {
     }
 }
 
+/// How far the client has got with the profile list.
+enum ProfileListState: Equatable {
+    case loading
+    case ready
+    /// The last load failed or found nothing, and none is running.
+    case unavailable
+}
+
 struct ChatProfilesResponse: Decodable {
     let profiles: [ChatProfile]
     let defaultProfileID: String
@@ -431,6 +439,9 @@ struct ChatMessage: Identifiable, Equatable {
     /// On a Home message marking a turn the user moved into a thread: that
     /// thread's conversation id. Shown as "Moved to …" in place of its text.
     var movedToThread: String? = nil
+    /// On a Home message marking a thread the user started: that thread's
+    /// conversation id. Shown as the thread's card in place of its text.
+    var startedThread: String? = nil
     /// The user's thumbs up or down on the turn this message belongs to.
     var feedback: ChatTurnRating? = nil
 }
@@ -976,6 +987,32 @@ struct ChatActiveTurnInfo: Decodable, Equatable {
     }
 }
 
+/// What a read-only link names. A thread is a conversation to the server; the
+/// difference is only in what the owner is told.
+enum ConversationShareTarget: Hashable {
+    case conversation(String)
+    case thread(String)
+    case message(conversationID: String, messageID: Int)
+
+    var noun: String {
+        switch self {
+        case .conversation: "conversation"
+        case .thread: "thread"
+        case .message: "message"
+        }
+    }
+
+    /// The share resource, relative to the server.
+    func path(encoding encode: (String) -> String) -> String {
+        switch self {
+        case let .conversation(id), let .thread(id):
+            "/api/v1/chat/conversations/\(encode(id))/share"
+        case let .message(conversationID, messageID):
+            "/api/v1/chat/conversations/\(encode(conversationID))/messages/\(messageID)/share"
+        }
+    }
+}
+
 struct ChatConversationMessagesResponse: Decodable {
     let conversationID: String
     let messages: [ChatBackendMessage]
@@ -990,12 +1027,16 @@ struct ChatConversationMessagesResponse: Decodable {
     let latestUserProfileID: String?
     let conversationKind: ChatConversationKind?
     let thread: ChatThreadSummary?
+    /// What a share link shows: `conversation` or `message`. Sent only by the
+    /// shared transcript endpoint.
+    let shareScope: String?
 
     enum CodingKeys: String, CodingKey {
         case conversationID = "conversation_id"
         case messages
         case count
         case totalMessages = "total_messages"
+        case shareScope = "share_scope"
         case hasMoreBefore = "has_more_before"
         case hasMoreAfter = "has_more_after"
         case activeTurns = "active_turns"
@@ -1018,6 +1059,7 @@ struct ChatConversationMessagesResponse: Decodable {
             rawValue: try container.decodeIfPresent(String.self, forKey: .conversationKind)
         )
         thread = try container.decodeIfPresent(ChatThreadSummary.self, forKey: .thread)
+        shareScope = try container.decodeIfPresent(String.self, forKey: .shareScope)
     }
 }
 
@@ -1040,6 +1082,8 @@ struct ChatBackendMessage: Decodable, Equatable {
     let echoedFromThread: String?
     /// On a Home row marking a turn moved into a thread: that thread.
     let movedToThread: String?
+    /// On a Home row marking a thread the user started: that thread.
+    let startedThread: String?
     /// The caller's rating of the row's turn, on every row of a rated turn.
     let feedback: ChatTurnRating?
 
@@ -1059,6 +1103,7 @@ struct ChatBackendMessage: Decodable, Equatable {
         case metadata
         case echoedFromThread = "echoed_from_thread"
         case movedToThread = "moved_to_thread"
+        case startedThread = "started_thread"
         case feedback
     }
 
@@ -1084,6 +1129,7 @@ struct ChatBackendMessage: Decodable, Equatable {
         metadata = try container.decodeIfPresent([String: JSONValue].self, forKey: .metadata)
         echoedFromThread = try container.decodeIfPresent(String.self, forKey: .echoedFromThread)
         movedToThread = try container.decodeIfPresent(String.self, forKey: .movedToThread)
+        startedThread = try container.decodeIfPresent(String.self, forKey: .startedThread)
         feedback = try container.decodeIfPresent(ChatTurnRating.self, forKey: .feedback)
 
         if let content = try? container.decode(String.self, forKey: .content) {

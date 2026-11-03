@@ -247,9 +247,10 @@ async def _format_system_prompt(
             await processing_service.context_preparer.aggregate_context(acting_user_id)
         )
 
+    # A profile with no prompt of its own for voice falls back to its chat one.
     system_prompt_template = service_config.prompts.get(
-        "system_prompt", "You are a helpful assistant."
-    )
+        "voice_system_prompt"
+    ) or service_config.prompts.get("system_prompt", "You are a helpful assistant.")
     user = get_user_from_request(request)
     user_name = user.get("name") if user else "User"
     format_args = {

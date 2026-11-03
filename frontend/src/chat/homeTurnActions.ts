@@ -9,10 +9,11 @@ export interface HomeTurnTarget {
   quote: string;
 }
 
-/** What Home offers on each of its messages: carrying the exchange into a thread. */
+/** What Home offers on each of its messages: a thread to carry it into, or a link to it. */
 export interface HomeTurnActions {
   continueInThread: (target: HomeTurnTarget) => void;
   moveToThread: (target: HomeTurnTarget) => void;
+  shareMessage: (target: HomeTurnTarget) => void;
   /**
    * Whether a turn holds a message the user wrote. Only such a turn moves: a
    * thread's echoed outcome or a reminder has nothing of the user's to carry.

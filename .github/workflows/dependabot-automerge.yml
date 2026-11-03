@@ -100,7 +100,7 @@ jobs:
       # comes from an App identity it does answer.
       - name: Mint agent token
         id: agent
-        uses: actions/create-github-app-token@v3.2.0
+        uses: actions/create-github-app-token@v3.3.0
         with:
           app-id: ${{ secrets.AUTOMERGE_REVIEW_APP_ID }}
           private-key: ${{ secrets.AUTOMERGE_REVIEW_PRIVATE_KEY }}
@@ -142,7 +142,7 @@ jobs:
 
       - name: Mint merge token
         id: merger
-        uses: actions/create-github-app-token@v3.2.0
+        uses: actions/create-github-app-token@v3.3.0
         with:
           app-id: ${{ secrets.AUTOMERGE_MERGE_APP_ID }}
           private-key: ${{ secrets.AUTOMERGE_MERGE_PRIVATE_KEY }}

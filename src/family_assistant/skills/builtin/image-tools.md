@@ -1,56 +1,61 @@
 ---
 name: Image Tools
-description: Guide for AI image generation, image transformation/editing, and image highlighting/annotation features.
+description: Generate images and video, edit or combine reference images, and annotate images with boxes or circles. Load before any image or video generation or editing request. Activates the image and video tools.
+activate_tools:
+  - generate_image
+  - transform_image
+  - highlight_image
+  - generate_video
 ---
 
 # Image Tools
 
-## Three Capabilities
+## Choosing a Tool
 
-### 1. Generate New Images
+- **`transform_image`** whenever the user provides a reference image, or wants a result that edits,
+  builds on or stays visually consistent with an existing one: object removal or addition,
+  background changes, retouching, recolouring, re-rendering in a new style, variations, combining
+  several images ("put the dog from the first image into the room from the second"), or keeping a
+  character consistent ("draw this same character doing X"). Pass the image ids via `images`,
+  primary image first, and describe the change in `instruction`.
+- **`generate_image`** only when there is no reference image and the user wants something created
+  entirely from a text description.
+- **`highlight_image`** for deterministic markup of a provided image: boxes, circles, arrows or
+  labels that point something out ("circle the bird", "highlight the error"). `transform_image`
+  makes generative edits and is the wrong tool for precise markup. Shapes are rectangle (default) or
+  circle; colours are red (default), green, blue, yellow, orange, purple, cyan and magenta.
+- **`generate_video`** for video.
 
-Create images from text descriptions using AI (`generate_image` tool).
+Reference images are listed by id in the `<attachment_metadata>` block after the request. If the
+request is about a specific image and you cannot find its id, or `transform_image` fails on it, do
+not fall back to `generate_image`: a text-to-image call cannot see the picture, so it invents a
+plausible substitute that looks like an answer and is not one. Say what went wrong instead.
 
-- "Generate an image of a sunset over mountains"
-- "Create a photorealistic image of a golden retriever puppy"
+## Writing Image Prompts
 
-**Styles**: photorealistic, artistic, or auto (default).
+Expand a vague request into a detailed prompt: subject, action or context, art style
+("photorealistic", "oil painting", "cinematic", "3D render", "anime"), lighting and mood, colour
+palette, and framing ("wide angle", "close-up", "macro", "drone shot"). Describe anything the user
+wants avoided. A useful order is subject, action or context, style, lighting, colour palette, then
+framing, so "make a cat" becomes "A fluffy Persian cat sitting on a velvet cushion in a sunlit
+Victorian room, photorealistic, 4k".
 
-**Tips for better results**:
+## Writing Video Prompts
 
-- Be descriptive (subject, setting, lighting, colors, mood)
-- Specify composition (close-up, wide-angle)
-- Mention art style if desired
+- Describe the motion: what moves and how ("pan", "zoom", "rotate", "track"). Static prompts give
+  static videos.
+- Name the visual style ("cinematic", "grainy 8mm film", "crisp 4k").
+- With `first_frame_image` or reference `images`, keep the prompt consistent with what they show.
+- The default model (Gemini Omni Flash) makes fast, low-cost short clips. `negative_prompt` or
+  `last_frame_image` switch to Veo automatically; pass a `veo-*` model id (for example
+  `model="veo-3.1-generate-preview"`) for higher-quality cinematic clips. Veo clips default to 8
+  seconds.
+- Generation can take a few minutes; say so when you start one.
 
-### 2. Transform Existing Images
+## After Generating
 
-Send or attach one or more images with transformation instructions. Use multiple reference images
-when the request combines subjects, transfers style, or uses one image as the primary scene and
-another as a reference:
+Results are displayed to the user automatically. An attachment message that appears after a
+generation is that display, not a new request. Generate one image per request unless the user asks
+for variations or more.
 
-- **Edit content**: "Remove the car from this photo", "Add clouds to the sky"
-- **Change style**: "Make this look like a watercolor painting", "Convert to black and white"
-- **Create variations**: "Show this scene at night", "Make the colors more vibrant"
-- **Combine references**: "Put the dog from the first image into the room from the second image",
-  "Use the second image's style for the portrait in the first image"
-
-### 3. Highlight and Annotate
-
-Draw shapes on images to mark areas of interest:
-
-- **Shapes**: Rectangle (default), Circle
-- **Colors**: red (default), green, blue, yellow, orange, purple, cyan, magenta
-
-Examples:
-
-- "Highlight the cat with a red rectangle"
-- "Circle all the faces in blue"
-
-## Artist Profile
-
-For complex creative work, use `/artist` or `/image` to activate the specialized artist profile with
-enhanced prompt refinement and video generation access.
-
-## Supported Formats
-
-JPEG, PNG, GIF, WebP, BMP, TIFF. Max 20MB for processing.
+Supported input formats are JPEG, PNG, GIF, WebP, BMP and TIFF, up to 20MB.

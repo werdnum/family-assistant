@@ -27,6 +27,27 @@ describe('SharedConversationPage', () => {
     expect(await screen.findByRole('heading', { name: 'No messages to show' })).toBeInTheDocument();
   });
 
+  it('names a link to one message as a shared message', async () => {
+    server.use(
+      http.get('/api/v1/shared-conversations/one-message/messages', () =>
+        HttpResponse.json({
+          share_scope: 'message',
+          messages: [
+            {
+              internal_id: '7',
+              role: 'assistant',
+              timestamp: '2026-08-10T12:00:00Z',
+              content: 'Here is the recipe.',
+            },
+          ],
+        })
+      )
+    );
+    renderSharedPage('one-message');
+    expect(await screen.findByRole('heading', { name: 'Shared message' })).toBeInTheDocument();
+    expect(screen.getByText('Here is the recipe.')).toBeInTheDocument();
+  });
+
   it('renders a read-only transcript from the share endpoint', async () => {
     server.use(
       http.get('/api/v1/shared-conversations/share-token/messages', () =>

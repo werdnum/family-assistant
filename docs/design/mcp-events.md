@@ -50,9 +50,12 @@ is still a draft.
   warning rather than notifying anyone.
 - **Arguments are scalars.** Match conditions hold scalar values, so subscription arguments are too.
   Every event type Tuit offers fits.
-- **Event payloads keep the event-trigger trust level.** A woken turn treats the payload as
-  untrusted, exactly like Home Assistant or webhook events, even when the server's tool output is
-  graded trusted. Grading payloads by server is a separate taint change.
+- **Event payloads are trusted only by operator declaration.** A woken turn treats the payload as
+  untrusted, exactly like Home Assistant or webhook events, and runs as `event_handler`, unless the
+  server is configured with `trusted_events`. Then a listener's `wake_llm` runs under its creating
+  profile and the payload adds no taint, matching how the server's `output_trusted` tool results are
+  graded. The flag is per server, not per event type or per payload author. A script action's
+  `wake_llm()` still runs as `event_handler` because nothing has needed it.
 - **Who may watch what is decided by credentials.** Any profile that can create automations may
   watch any server its user has a credential for; there is no per-profile server allowlist for
   events.
