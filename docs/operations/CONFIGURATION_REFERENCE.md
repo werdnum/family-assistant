@@ -2219,7 +2219,7 @@ tool_call_review:
       provider: "google"
       model: "gemini-3.8-flash"
   timeout_seconds: 30.0
-  max_reviews_per_turn: 25
+  max_reviews_per_turn: 60
   escalation:
     consecutive_denials: 3
     total_denials_per_turn: 20
@@ -2242,6 +2242,14 @@ a tail past 15 s, and the 30 s default leaves room for a fallback review rather 
 a fail-closed verdict. Lower it only with evidence from `taint_audit_events` that the configured
 model returns sooner, and read it alongside `max_reviews_per_turn`, which bounds how many such waits
 one turn can incur.
+
+`max_reviews_per_turn` is a runaway guard rather than a quota: once a turn has used it, every
+further reviewed call takes its caller's fallback, which is normally a confirmation, so one long
+task becomes a run of prompts. It counts reviews, not tool calls, and a script's calls inherit its
+single program review. The default of 60 sits above the longest ordinary turns measured in
+production (49 reviews for a `complex_tasks` turn running 42 sandbox commands one by one, 27 for a
+multi-step train search). Lower it only to cap reviewer cost or latency, knowing that the turns that
+hit it then prompt per call.
 
 The reviewer gets no tools. It receives only explicitly trusted-tier conversation rows, an
 audit-safe provenance digest, the matched policy context, and the complete proposed arguments fenced
