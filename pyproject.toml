@@ -26,7 +26,7 @@ dependencies = [
     "google-genai>=2.24.0",
     # Google Gemini SDK for direct API access
     "python-dotenv>=1.0.0",
-    "sqlalchemy[asyncio]>=2.0.0",
+    "sqlalchemy[asyncio]>=2.0.46,<2.1", # Earlier releases hang at exit on aiosqlite 0.22
     "aiosqlite>=0.19.0",
     # Async driver for SQLite (default)
     "asyncpg>=0.29.0",
@@ -200,7 +200,6 @@ dev = [
     "watchdog>=3.0.0",
     "pytest-playwright-asyncio>=0.8.0",
     "playwright==1.52.0", # Pin to match rebrowser-playwright version for shared browser binaries
-    "homeassistant>=2025.4.4",
     "pixeltable-pgserver>=0.4.0",
     "monkeytype>=23.3.0", # Runtime type inference from tests
     "browser-handoff-service",
