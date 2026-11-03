@@ -235,17 +235,17 @@ def build_frontend_assets() -> None:
         except (subprocess.CalledProcessError, FileNotFoundError):
             pytest.fail("npm is not available - required for building frontend assets")
 
-        # Check if node_modules exists
-        if not (frontend_dir / "node_modules").exists():
-            print("node_modules not found. Running npm install...")
-            # Don't capture output to avoid hanging on large output
-            result = subprocess.run(
-                ["npm", "install"],
-                cwd=str(frontend_dir),
-                check=True,
+        # npm writes its hidden lockfile once an install completes, so a tree left
+        # by an interrupted install does not pass for a working one. Installing is
+        # not done here: it takes minutes, longer than the per-test timeout that
+        # this fixture runs under, and a killed install is what leaves the tree
+        # half-built for the next worker.
+        if not (frontend_dir / "node_modules" / ".package-lock.json").exists():
+            pytest.fail(
+                "Frontend dependencies are missing or incomplete. Run "
+                "`npm ci --prefix frontend` (or `poe test`, which does it first), "
+                "then rerun the tests."
             )
-            if result.returncode != 0:
-                pytest.fail("npm install failed")
 
         # Check if we need to rebuild (comprehensive timestamp check)
         need_rebuild = True
