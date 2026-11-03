@@ -686,8 +686,13 @@ def _activation_turn() -> list[LLMMessage]:
 class TestDeferredTools:
     """On-demand tools are declared once and surfaced by appended messages."""
 
-    def test_deferred_tools_stay_declared_and_activation_is_appended(self) -> None:
-        client = AnthropicClient(api_key="test", model="claude-opus-5-5")
+    @pytest.mark.parametrize(
+        "model", ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]
+    )
+    def test_deferred_tools_stay_declared_and_activation_is_appended(
+        self, model: str
+    ) -> None:
+        client = AnthropicClient(api_key="test", model=model)
         tools = [_tool("weather"), _tool("lights", deferred=True)]
 
         params = client._assemble_request(
