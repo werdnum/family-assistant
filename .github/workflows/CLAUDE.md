@@ -12,7 +12,11 @@ This file provides guidance for working with GitHub Actions workflows.
   to GHCR or export registry caches; live Gemini tests are skipped because fork tokens cannot access
   the API secret. Keep this on `pull_request`, without granting fork code a privileged token. The
   `all-tests` check includes setup and image builds so failed prerequisites cannot hide behind
-  skipped test jobs.
+  skipped test jobs. `main` merges through a merge queue, and a `merge_group` run checks only that
+  the merged result starts: `alembic-single-head` and `smoke-test-main-image` run, while the CI
+  image builds (and so every job that needs the image) and the iOS tests are skipped. The full suite
+  has already passed on the PR and runs again on the push to `main`. `all-tests` is the one required
+  check for both events, so a job added to CI must be listed in its `needs`.
 - **`build-containers.yml`**: builds and pushes the application and devcontainer images.
 - **`ios-tests.yml`**: iOS app tests (`workflow_call` / `workflow_dispatch`).
 - **`auto-request-review.yml`**: requests reviewers when a PR is opened or marked ready.

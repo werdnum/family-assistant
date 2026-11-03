@@ -137,9 +137,16 @@ jobs:
               - 'ios/**'
               - '.github/workflows/ios-tests.yml'
               - '.github/workflows/ci-with-devcontainer.yml'
+  # A merge-queue run checks only that the merged result starts (alembic-single-head and
+  # smoke-test-main-image). The full suite already ran on the PR and runs again on the push to main,
+  # so the jobs that need the CI image are skipped here by skipping the build they depend on.
   build-ci-container:
     needs: [prepare, detect-changes]
-    if: needs.detect-changes.outputs.has_code_changes == 'true' || needs.detect-changes.outputs.ast_grep_changes == 'true'
+    if: |
+      github.event_name != 'merge_group' && (
+        needs.detect-changes.outputs.has_code_changes == 'true' ||
+        needs.detect-changes.outputs.ast_grep_changes == 'true'
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -190,7 +197,7 @@ jobs:
           compression-level: 1
   build-main-container:
     needs: [prepare, detect-changes]
-    if: needs.detect-changes.outputs.dockerfile_changes == 'true'
+    if: github.event_name != 'merge_group' && needs.detect-changes.outputs.dockerfile_changes == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -240,7 +247,7 @@ jobs:
           cache-to: ${{ github.event.pull_request.head.repo.fork != true && format('type=registry,ref={0}/{1}:buildcache-{2},mode=max', env.REGISTRY, env.IMAGE_PREFIX, matrix.arch) || '' }}
   build-devcontainer:
     needs: [prepare, detect-changes]
-    if: needs.detect-changes.outputs.dockerfile_changes == 'true'
+    if: github.event_name != 'merge_group' && needs.detect-changes.outputs.dockerfile_changes == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -850,6 +857,26 @@ jobs:
           retention-days: ${{ job.status == 'success' && 1 || 7 }}
           if-no-files-found: ignore
 
+  # Two PRs that each add a migration on the same parent pass CI separately and leave main with two
+  # alembic heads, which stops the app at startup. The merge queue runs this on the merged result.
+  alembic-single-head:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+      - name: Check alembic has exactly one head
+        run: |
+          python3 -m venv "$RUNNER_TEMP/alembic-venv"
+          "$RUNNER_TEMP/alembic-venv/bin/pip" install --quiet --disable-pip-version-check alembic pgvector
+          heads=$("$RUNNER_TEMP/alembic-venv/bin/alembic" heads)
+          echo "$heads"
+          count=$(grep -c . <<< "$heads")
+          if [[ "$count" -ne 1 ]]; then
+            echo "::error::Expected exactly one alembic head, found ${count}. Add a merge revision (alembic merge heads) or rebase the newer migration onto the other."
+            exit 1
+          fi
+
   smoke-test-main-image:
     needs: [prepare, detect-changes]
     if: needs.detect-changes.outputs.has_code_changes == 'true'
@@ -867,12 +894,12 @@ jobs:
 
   test-ios:
     needs: detect-changes
-    if: needs.detect-changes.outputs.ios == 'true'
+    if: github.event_name != 'merge_group' && needs.detect-changes.outputs.ios == 'true'
     uses: ./.github/workflows/ios-tests.yml
 
   # Require all test jobs to pass
   all-tests:
-    needs: [prepare, detect-changes, build-ci-container, build-main-container, build-devcontainer, lint, test-frontend-unit, test-backend-sqlite, test-backend-postgres, test-playwright-sqlite, test-playwright-postgres, test-gemini-live, test-llm-integration, smoke-test-main-image, test-ios]
+    needs: [prepare, detect-changes, build-ci-container, build-main-container, build-devcontainer, lint, test-frontend-unit, test-backend-sqlite, test-backend-postgres, test-playwright-sqlite, test-playwright-postgres, test-gemini-live, test-llm-integration, alembic-single-head, smoke-test-main-image, test-ios]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -917,6 +944,7 @@ jobs:
           check_job "test-playwright-postgres" "${{ needs.test-playwright-postgres.result }}" || FAILED=1
           check_job "test-gemini-live" "${{ needs.test-gemini-live.result }}" || FAILED=1
           check_job "test-llm-integration" "${{ needs.test-llm-integration.result }}" || FAILED=1
+          check_job "alembic-single-head" "${{ needs.alembic-single-head.result }}" || FAILED=1
           check_job "smoke-test-main-image" "${{ needs.smoke-test-main-image.result }}" || FAILED=1
           check_job "test-ios" "${{ needs.test-ios.result }}" || FAILED=1
 
