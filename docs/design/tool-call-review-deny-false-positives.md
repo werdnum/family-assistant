@@ -567,11 +567,27 @@ send data anywhere.
   - **What the profile holds.** The plain browser profile has no payment instrument and no stored
     login. Payment details, one-time codes and logins go to a human handoff or to the credential
     profile.
+
   - **What the judge does.** That property, not the judge, is what stops a "Buy now" click, so the
     buy-click case is a precursor on this profile.
-  - **The gap.** A session a person hands back after a handoff may be logged in. The structural rule
-    should cover that session too: it is treated as authenticated, or the handback ends the
-    unauthenticated session, rather than relying on the judge.
+
+  - **The gap is real.** A plain-profile handoff with `allow_resume` resumes `after_sanitize`
+    whatever its reason (`request_handoff` in `tools/browser_backend.py`). The profile's prompt asks
+    for exactly that when payment details are needed. The agent then continues in the same browser
+    context, with the cookies the person's login or checkout left behind, and nothing marks the
+    session as changed. That contradicts
+    [warm-browser-session-handoff.md](warm-browser-session-handoff.md): payment and checkout should
+    not resume, and the browser context should close.
+
+    The smallest structural fix:
+
+    - a `payment` handoff never resumes, whatever the model asks for;
+    - the prompt stops asking for resume after payment.
+
+    A login handoff that resumes so the agent can keep shopping is the design doc's intended case.
+    That session is effectively authenticated, so it should go through the authenticated-site review
+    rather than the plain profile's.
+
   - **Click targets.** Rendering a click's target in the review input, as in `button "Buy now"`, is
     still worth doing to cut friction on blind clicks, but it carries no security weight.
 
