@@ -20,6 +20,7 @@ from family_assistant.email_intake.outbound import (
     OutboundEmailClient,
     OutboundEmailDeliveryError,
     email_conversation_id,
+    reply_all_cc_addresses,
 )
 from family_assistant.interfaces import ChatDeliveryError
 from family_assistant.llm import LLMOutput, ToolCallFunction, ToolCallItem
@@ -54,6 +55,8 @@ from family_assistant.utils.clock import SystemClock
 from tests.mocks.mock_llm import MatcherArgs, RuleBasedMockLLMClient
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from sqlalchemy.ext.asyncio import AsyncEngine
 
     from family_assistant.interfaces import ChatInterface
@@ -70,6 +73,7 @@ class SentEmail:
     subject: str
     text: str
     in_reply_to: str | None
+    cc_addresses: tuple[str, ...] = ()
 
 
 @dataclass
@@ -84,6 +88,7 @@ class FakeOutboundEmailClient:
         subject: str,
         text: str,
         in_reply_to: str | None = None,
+        cc_addresses: Sequence[str] = (),
     ) -> str:
         self.sent.append(
             SentEmail(
@@ -92,6 +97,7 @@ class FakeOutboundEmailClient:
                 subject=subject,
                 text=text,
                 in_reply_to=in_reply_to,
+                cc_addresses=tuple(cc_addresses),
             )
         )
         return f"<sent-{len(self.sent)}@example.net>"
@@ -109,6 +115,7 @@ class FailingOutboundEmailClient:
         subject: str,
         text: str,
         in_reply_to: str | None = None,
+        cc_addresses: Sequence[str] = (),
     ) -> str:
         self.attempts.append(
             SentEmail(
@@ -117,6 +124,7 @@ class FailingOutboundEmailClient:
                 subject=subject,
                 text=text,
                 in_reply_to=in_reply_to,
+                cc_addresses=tuple(cc_addresses),
             )
         )
         raise OutboundEmailDeliveryError("delivery failed")
@@ -318,13 +326,14 @@ def _build_email_processing_service(
     return service
 
 
-async def _store_email(db_engine: AsyncEngine) -> int:
+async def _store_email(db_engine: AsyncEngine, *, cc: str | None = None) -> int:
     parsed = ParsedEmailData.model_validate({
         "Message-Id": "<order-123@example.com>",
         "sender": "buyer@example.com",
         "From": "Buyer <buyer@example.com>",
         "recipient": "orders@example.net",
         "To": "Orders <orders@example.net>",
+        "Cc": cc,
         "subject": "Soccer tickets",
         "body-plain": (
             "Your soccer tickets are confirmed for 2026-06-10 19:30.\n"
@@ -465,6 +474,91 @@ def test_email_action_prompt_keeps_sender_controlled_fields_untrusted() -> None:
     assert "Subject:" in evidence_body
     assert "Attachments:" in evidence_body
     assert "[escaped untrusted_email_evidence boundary tag]" in evidence_body
+
+
+def _reply_all_row(*, to: str, cc: str | None = None) -> dict[str, object]:
+    return {
+        "sender_address": "buyer@example.com",
+        "recipient_address": "orders@example.net",
+        "to_header": to,
+        "cc_header": cc,
+    }
+
+
+def test_reply_all_copies_other_recipients_but_not_sender_or_assistant() -> None:
+    config = AppConfig.model_validate({
+        "email_intake": {"outbound_from_address": "Assistant <assistant@example.net>"}
+    }).email_intake
+
+    cc_addresses = reply_all_cc_addresses(
+        _reply_all_row(
+            to='"Orders" <ORDERS@example.net>, Coach <coach@example.org>',
+            cc=(
+                "buyer@example.com, assistant@example.net, coach@example.org, "
+                '"Smith, Pat" <pat@example.org>, undisclosed-recipients:;'
+            ),
+        ),
+        config,
+    )
+
+    assert cc_addresses == ("coach@example.org", "pat@example.org")
+
+
+def test_reply_all_copies_nobody_when_assistant_was_bcc() -> None:
+    config = AppConfig.model_validate({
+        "email_intake": {"outbound_from_address": "assistant@example.net"}
+    }).email_intake
+
+    assert (
+        reply_all_cc_addresses(
+            _reply_all_row(to="Coach <coach@example.org>", cc="pat@example.org"),
+            config,
+        )
+        == ()
+    )
+
+
+def test_email_action_prompt_names_everyone_who_sees_the_reply() -> None:
+    row: dict[str, object] = {
+        "target_user_id": "buyer@example.com",
+        "sender_address": "buyer@example.com",
+        "recipient_address": "orders@example.net",
+        "message_id_header": "<order-123@example.com>",
+    }
+
+    group_prompt = build_email_action_prompt(row, ("coach@example.org",))
+    solo_prompt = build_email_action_prompt(row)
+
+    trusted_section = group_prompt.split("<untrusted_email_evidence>", maxsplit=1)[0]
+    assert "copied to coach@example.org" in trusted_section
+    assert "outside the household" in trusted_section
+    assert "Your reply goes only to the sender." in solo_prompt
+
+
+@pytest.mark.asyncio
+async def test_mailgun_outbound_sends_cc_addresses() -> None:
+    request_bodies: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        request_bodies.append(request.content.decode())
+        return httpx.Response(200, json={"id": "<sent@example.net>"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = MailgunOutboundEmailClient(
+            api_key="test-key",
+            domain="mg.example.net",
+            http_client=http,
+            timeout_seconds=10.0,
+        )
+        await client.send_email(
+            to_address="buyer@example.com",
+            from_address="assistant@example.net",
+            subject="Re: Tickets",
+            text="Done.",
+            cc_addresses=("coach@example.org", "pat@example.org"),
+        )
+
+    assert "cc=coach%40example.org%2C+pat%40example.org" in request_bodies[0]
 
 
 @pytest.mark.asyncio
@@ -1035,7 +1129,9 @@ async def test_approved_email_confirmation_executes_exact_tool_and_notifies_send
             ]
         ),
     )
-    email_db_id = await _store_email(db_engine)
+    email_db_id = await _store_email(
+        db_engine, cc="Coach <coach@example.org>, buyer@example.com"
+    )
 
     db = Database(engine=db_engine)
     await handle_email_intake_action(
@@ -1083,5 +1179,8 @@ async def test_approved_email_confirmation_executes_exact_tool_and_notifies_send
     assert "2026-06-10 19:30" in note.content
 
     assert len(outbound_client.sent) == 2
+    assert outbound_client.sent[0].to_address == "buyer@example.com"
+    assert outbound_client.sent[0].cc_addresses == ("coach@example.org",)
     assert outbound_client.sent[1].to_address == "buyer@example.com"
+    assert outbound_client.sent[1].cc_addresses == ()
     assert "Approved action completed" in outbound_client.sent[1].text

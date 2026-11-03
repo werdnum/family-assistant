@@ -8,7 +8,11 @@ from typing import TYPE_CHECKING, TypedDict, cast
 
 from sqlalchemy import select
 
-from family_assistant.email_intake.outbound import email_conversation_id
+from family_assistant.email_intake.outbound import (
+    EmailChatInterface,
+    email_conversation_id,
+    reply_all_cc_addresses,
+)
 from family_assistant.email_intake.taint import email_initial_taint_source
 from family_assistant.interfaces import ChatDeliveryError
 from family_assistant.llm.messages import text_content
@@ -18,7 +22,6 @@ from family_assistant.services.deferred_tool_confirmation import (
 from family_assistant.storage.email import received_emails_table
 
 if TYPE_CHECKING:
-    from family_assistant.interfaces import ChatInterface
     from family_assistant.processing import ProcessingService
     from family_assistant.tools.types import ToolExecutionContext
 
@@ -55,7 +58,9 @@ class EmailIntakeActionPayload(TypedDict, total=False):
     email_db_id: int
 
 
-def build_email_action_prompt(email_row: dict[str, object]) -> str:
+def build_email_action_prompt(
+    email_row: dict[str, object], cc_addresses: tuple[str, ...] = ()
+) -> str:
     """Build the user message for an email-originated assistant turn."""
     body = (
         str(email_row.get("stripped_text") or "")
@@ -110,6 +115,7 @@ def build_email_action_prompt(email_row: dict[str, object]) -> str:
         f"- User id: {email_row.get('target_user_id')}\n"
         f"- From: {email_row.get('sender_address')}\n"
         f"- To: {email_row.get('recipient_address')}\n"
+        f"{_reply_audience_note(email_row, cc_addresses)}"
         "\n"
         f"{UNTRUSTED_EMAIL_EVIDENCE_START_TAG}\n"
         f"Subject: {_untrusted_email_text(email_row.get('subject'))}\n"
@@ -118,6 +124,20 @@ def build_email_action_prompt(email_row: dict[str, object]) -> str:
         f"{attachment_text}\n\n"
         f"{body}\n"
         f"{UNTRUSTED_EMAIL_EVIDENCE_END_TAG}"
+    )
+
+
+def _reply_audience_note(
+    email_row: dict[str, object], cc_addresses: tuple[str, ...]
+) -> str:
+    if not cc_addresses:
+        return "\nYour reply goes only to the sender.\n"
+    return (
+        f"\nYour reply goes to {email_row.get('sender_address')} and is copied "
+        f"to {', '.join(cc_addresses)}, the other people on their email. Write "
+        "it for all of them. Anyone outside the household will read it too, so "
+        "leave out private household information (notes, calendar, details "
+        "about other people) unless the sender asked you to share it.\n"
     )
 
 
@@ -169,21 +189,34 @@ async def handle_email_intake_action(
         )
 
     processing_service = _resolve_email_processing_service(exec_context)
+    cc_addresses = reply_all_cc_addresses(
+        email_row, processing_service.app_config.email_intake
+    )
     conversation_id = email_conversation_id(email_db_id)
     initial_taint_source = email_initial_taint_source(
         email_db_id=email_db_id,
         email_row=email_row,
         app_config=processing_service.app_config,
     )
-    email_interface: ChatInterface | None = None
+    email_interface: EmailChatInterface | None = None
     if exec_context.chat_interfaces is not None:
-        email_interface = exec_context.chat_interfaces.get("email")
+        registered_interface = exec_context.chat_interfaces.get("email")
+        if registered_interface is not None and not isinstance(
+            registered_interface, EmailChatInterface
+        ):
+            raise TypeError(
+                "The email chat interface must be an EmailChatInterface, got "
+                f"{type(registered_interface).__name__}"
+            )
+        email_interface = registered_interface
 
     result = await processing_service.handle_chat_interaction(
         db_context=exec_context.db_context,
         interface_type="email",
         conversation_id=conversation_id,
-        trigger_content_parts=[text_content(build_email_action_prompt(email_row))],
+        trigger_content_parts=[
+            text_content(build_email_action_prompt(email_row, cc_addresses))
+        ],
         trigger_interface_message_id=str(email_row["message_id_header"]),
         user_name=target_user_id,
         user_id=target_user_id,
@@ -212,10 +245,8 @@ async def handle_email_intake_action(
                 "not support attachments yet. The text response was sent without them.]"
             )
         try:
-            await email_interface.send_message(
-                conversation_id=conversation_id,
-                text=text_reply,
-                attachment_ids=None,
+            await email_interface.send_reply_all(
+                conversation_id=conversation_id, text=text_reply
             )
         except ChatDeliveryError:
             logger.exception(
