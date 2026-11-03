@@ -18,14 +18,21 @@ email, like a normal chat.
 A sender address can be forged and email content can contain instructions aimed at the assistant, so
 mail is treated as untrusted input. Two rules follow from that:
 
-**The assistant ignores instructions embedded inside forwarded content.** Only your direct request
-controls what it does.
+**Only what you typed counts as your request.** When the mail comes from your own address and passes
+the sender authentication your operator requires, the assistant reads the words you wrote yourself
+as your request. Everything else in the message is just material: the conversation you replied to,
+the message you forwarded, your signature, and attachments. Instructions inside that material are
+ignored. This follows Gmail's normal reply and forward layout, so type your request above the quoted
+or forwarded part. A subject line you wrote counts too, but a "Re:" or "Fwd:" subject doesn't.
 
-**Anything that writes data or sends a message waits for your approval.** Calendar events, notes,
-reminders, messages to other Family Assistant users, and fetching a linked document all land as
-pending confirmations that you approve in a trusted interface — Telegram, the web UI, or the iOS app
-— before they run. If Telegram is your configured primary channel, you get inline approval buttons
-there. Approvals stay open for 24 hours, so you don't have to react the moment the reply lands.
+**Writes and messages are checked before they run.** Calendar events, notes, reminders, messages to
+other Family Assistant users, and fetching a linked document are checked automatically against what
+you asked for. When the check is satisfied it goes ahead. Otherwise it lands as a pending
+confirmation for you to approve in a trusted interface: Telegram, the web UI, or the iOS app. A
+forward with nothing typed above it has no request of yours to check against, so whatever it
+proposes waits for your approval. If Telegram is your configured primary channel, you get inline
+approval buttons there. Approvals stay open for 24 hours, so you don't have to react the moment the
+reply lands.
 
 The assistant replies by email only when your forwarding sender address is mapped to your account by
 the operator. Mail arriving through a recipient-only alias without a mapped sender can still create
@@ -34,10 +41,9 @@ confirmations, but won't get an email reply.
 ## Documents linked from an email
 
 If an email points to a document worth keeping — a shared PDF, a Drive or Dropbox or iCloud link, a
-long article — the assistant can propose fetching and indexing it. That fetch never happens
-immediately: it becomes a confirmation, and only after you approve does the assistant download the
-document and add it to your searchable knowledge base. This stops an untrusted sender from pointing
-the assistant at arbitrary URLs without your sign-off.
+long article — the assistant can fetch and index it. Say so in your own words ("save the PDF linked
+below") and the fetch is checked against that request; otherwise it waits for your approval. This
+stops an untrusted sender from pointing the assistant at arbitrary URLs without your sign-off.
 
 Real MIME attachments on the email are indexed automatically, so the confirmation flow is mainly for
 link-style attachments.

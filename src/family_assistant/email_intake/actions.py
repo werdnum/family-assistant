@@ -4,22 +4,33 @@ from __future__ import annotations
 
 import logging
 import re
+import uuid
 from typing import TYPE_CHECKING, TypedDict, cast
 
 from sqlalchemy import select
 
+from family_assistant.email_intake.authored_text import (
+    extract_authored_text,
+    subject_is_authored,
+)
 from family_assistant.email_intake.outbound import email_conversation_id
-from family_assistant.email_intake.taint import email_initial_taint_source
+from family_assistant.email_intake.taint import (
+    email_initial_taint_source,
+    email_sender_is_authenticated_household_member,
+    email_taint_metadata,
+)
 from family_assistant.interfaces import ChatDeliveryError
-from family_assistant.llm.messages import text_content
+from family_assistant.llm.messages import UserMessage, text_content
 from family_assistant.services.deferred_tool_confirmation import (
     build_deferred_confirmation_callback,
 )
 from family_assistant.storage.email import received_emails_table
 
 if TYPE_CHECKING:
+    from family_assistant.config_models import AppConfig
     from family_assistant.interfaces import ChatInterface
     from family_assistant.processing import ProcessingService
+    from family_assistant.security.taint import TaintSource
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -55,8 +66,15 @@ class EmailIntakeActionPayload(TypedDict, total=False):
     email_db_id: int
 
 
-def build_email_action_prompt(email_row: dict[str, object]) -> str:
-    """Build the user message for an email-originated assistant turn."""
+def build_email_action_prompt(
+    email_row: dict[str, object], *, sender_request_follows: bool = False
+) -> str:
+    """Build the user message for an email-originated assistant turn.
+
+    With ``sender_request_follows``, this is the evidence row of a split turn:
+    the sender's own words arrive as the next message, and this one frames the
+    whole email as material for that request.
+    """
     body = (
         str(email_row.get("stripped_text") or "")
         or str(email_row.get("body_plain") or "")
@@ -78,14 +96,32 @@ def build_email_action_prompt(email_row: dict[str, object]) -> str:
             if isinstance(item, dict)
         )
 
+    if sender_request_follows:
+        intro = (
+            "The user sent or forwarded the following email. Their own words "
+            "from it, without the quoted, forwarded or signature material, "
+            "follow in the next message: that is their request, and this email "
+            "is the material it refers to. Do what they ask and reply "
+            "naturally, as if they'd messaged you on any other channel. If "
+            "they ask for nothing specific, summarise what's useful and offer "
+            "to save anything that looks worth keeping (calendar events, notes, "
+            "reminders, messages to people you know). Use the tools as normal; "
+            "anything that writes or sends is checked first, and the user may "
+            "be asked to confirm it.\n\n"
+        )
+    else:
+        intro = (
+            "The user sent or forwarded the following email. Read it, do "
+            "whatever they're asking for, and reply naturally — as if they'd "
+            "messaged you on any other channel. If there's no explicit request, "
+            "summarise what's useful and offer to save anything that looks "
+            "worth keeping (calendar events, notes, reminders, messages to "
+            "people you know). Use the tools as normal; anything that writes or "
+            "sends is checked first, and the user may be asked to confirm "
+            "it.\n\n"
+        )
     return (
-        "The user sent or forwarded the following email. Read it, do whatever "
-        "they're asking for, and reply naturally — as if they'd messaged you on "
-        "any other channel. If there's no explicit request, summarise what's "
-        "useful and offer to save anything that looks worth keeping (calendar "
-        "events, notes, reminders, messages to people you know). Use the tools "
-        "as normal; the user will see a confirmation before anything writes or "
-        "sends.\n\n"
+        f"{intro}"
         "Forward-for-indexing shortcut: if the covering message says something "
         'like "forwarding for document indexing, no action needed" — i.e. the '
         "user is explicitly signalling that they only want this captured for "
@@ -119,6 +155,37 @@ def build_email_action_prompt(email_row: dict[str, object]) -> str:
         f"{body}\n"
         f"{UNTRUSTED_EMAIL_EVIDENCE_END_TAG}"
     )
+
+
+def sender_authored_request(
+    email_row: dict[str, object], app_config: AppConfig
+) -> str | None:
+    """The part of an email the authenticated household sender wrote themselves.
+
+    ``None`` when the sender is not an authenticated household member, or when
+    they added nothing of their own (a bare forward): the whole email is then
+    evidence, with no request of theirs to act on.
+    """
+    if not email_sender_is_authenticated_household_member(email_row, app_config):
+        return None
+    body_html = email_row.get("body_html")
+    body_plain = email_row.get("body_plain")
+    authored_body = extract_authored_text(
+        body_html=body_html if isinstance(body_html, str) else None,
+        body_plain=body_plain if isinstance(body_plain, str) else None,
+    )
+    subject = email_row.get("subject")
+    parts: list[str] = []
+    if isinstance(subject, str) and subject_is_authored(subject):
+        parts.append(f"Subject: {subject.strip()}")
+    if authored_body:
+        if len(authored_body) > MAX_EMAIL_EVIDENCE_CHARS:
+            authored_body = (
+                authored_body[:MAX_EMAIL_EVIDENCE_CHARS]
+                + "\n\n[Email content truncated.]"
+            )
+        parts.append(authored_body)
+    return "\n\n".join(parts) or None
 
 
 def _resolve_email_processing_service(
@@ -169,22 +236,57 @@ async def handle_email_intake_action(
         )
 
     processing_service = _resolve_email_processing_service(exec_context)
+    app_config = processing_service.app_config
     conversation_id = email_conversation_id(email_db_id)
-    initial_taint_source = email_initial_taint_source(
-        email_db_id=email_db_id,
-        email_row=email_row,
-        app_config=processing_service.app_config,
-    )
     email_interface: ChatInterface | None = None
     if exec_context.chat_interfaces is not None:
         email_interface = exec_context.chat_interfaces.get("email")
+
+    # The sender's own words become the turn's trusted request, so tool-call
+    # review can judge calls against them. The whole email goes in a row before
+    # it, in the same turn, carrying the email's taint for the turn to inherit.
+    authored_request = sender_authored_request(email_row, app_config)
+    turn_id = str(uuid.uuid4())
+    initial_taint_sources: tuple[TaintSource, ...] | None = None
+    if authored_request is None:
+        trigger_text = build_email_action_prompt(email_row)
+        initial_taint_sources = (
+            email_initial_taint_source(
+                email_db_id=email_db_id,
+                email_row=email_row,
+                app_config=app_config,
+            ),
+        )
+    else:
+        trigger_text = authored_request
+        evidence_taint = email_taint_metadata(
+            email_db_id=email_db_id,
+            email_row=email_row,
+            app_config=app_config,
+        )
+        await exec_context.db_context.message_history.add_message(
+            UserMessage(
+                content=build_email_action_prompt(
+                    email_row, sender_request_follows=True
+                ),
+                taint_metadata=evidence_taint,
+                authorship_taint_metadata=evidence_taint,
+            ),
+            interface_type="email",
+            conversation_id=conversation_id,
+            timestamp=processing_service.clock.now(),
+            turn_id=turn_id,
+            processing_profile_id=processing_service.service_config.id,
+            user_id=target_user_id,
+        )
 
     result = await processing_service.handle_chat_interaction(
         db_context=exec_context.db_context,
         interface_type="email",
         conversation_id=conversation_id,
-        trigger_content_parts=[text_content(build_email_action_prompt(email_row))],
+        trigger_content_parts=[text_content(trigger_text)],
         trigger_interface_message_id=str(email_row["message_id_header"]),
+        turn_id=turn_id,
         user_name=target_user_id,
         user_id=target_user_id,
         chat_interface=email_interface,
@@ -197,7 +299,7 @@ async def handle_email_intake_action(
                 f"Cannot request confirmation for {tool_name} without a resolved user id."
             ),
         ),
-        initial_taint_sources=(initial_taint_source,),
+        initial_taint_sources=initial_taint_sources,
     )
     if result.text_reply and email_interface is not None:
         text_reply = result.text_reply
