@@ -2,6 +2,7 @@ import json
 import logging
 import uuid
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -9,7 +10,7 @@ from zoneinfo import ZoneInfo
 import pytest
 import pytest_asyncio
 from fastapi import FastAPI
-from httpx import ASGITransport, AsyncClient
+from httpx import ASGITransport, AsyncClient, Response
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import AppConfig, ToolsConfig
@@ -534,6 +535,258 @@ async def test_conversation_share_is_authenticated_read_only_and_revocable(
     )
     assert revoked_read.status_code == 404
     app_fixture.dependency_overrides.pop(get_current_user)
+
+
+@dataclass(frozen=True)
+class SharedReply:
+    """A conversation with a user message, a reply and a later reply."""
+
+    conversation_id: str
+    reply_id: int
+    reply_attachment_id: str
+    elsewhere_attachment_id: str
+
+    @property
+    def share_path(self) -> str:
+        return (
+            f"/api/v1/chat/conversations/{self.conversation_id}"
+            f"/messages/{self.reply_id}/share"
+        )
+
+
+@pytest_asyncio.fixture
+async def shared_reply(
+    app_fixture: FastAPI, db_context: Database, tmp_path: Path
+) -> SharedReply:
+    conversation_id = str(uuid.uuid4())
+    now = datetime.now(UTC)
+    await db_context.message_history.add_message(
+        UserMessage.from_trusted_user(content="My private question"),
+        interface_type="web",
+        conversation_id=conversation_id,
+        timestamp=now,
+        user_id="test_user",
+    )
+    attachment_registry = AttachmentRegistry(str(tmp_path), db_context.engine)
+    app_fixture.state.attachment_registry = attachment_registry
+    shown = await attachment_registry.register_user_attachment(
+        db_context,
+        b"the recipe",
+        "recipe.txt",
+        "text/plain",
+        conversation_id=conversation_id,
+        user_id="test_user",
+    )
+    elsewhere = await attachment_registry.register_user_attachment(
+        db_context,
+        b"elsewhere in Home",
+        "private.txt",
+        "text/plain",
+        conversation_id=conversation_id,
+        user_id="test_user",
+    )
+    reply_id = await db_context.message_history.add_message(
+        AssistantMessage(
+            content="Here is the recipe.",
+            tool_calls=[
+                ToolCallItem(
+                    id="call_1",
+                    type="function",
+                    function=ToolCallFunction(
+                        name="search_notes", arguments='{"query": "private notes"}'
+                    ),
+                )
+            ],
+        ),
+        interface_type="web",
+        conversation_id=conversation_id,
+        timestamp=now + timedelta(seconds=1),
+        user_id="test_user",
+        attachments=[
+            MessageAttachmentMetadata(
+                type="attachment_reference", attachment_id=shown.attachment_id
+            )
+        ],
+    )
+    await db_context.message_history.add_message(
+        AssistantMessage(content="An unrelated later reply."),
+        interface_type="web",
+        conversation_id=conversation_id,
+        timestamp=now + timedelta(seconds=2),
+        user_id="test_user",
+    )
+    return SharedReply(
+        conversation_id=conversation_id,
+        reply_id=reply_id,
+        reply_attachment_id=shown.attachment_id,
+        elsewhere_attachment_id=elsewhere.attachment_id,
+    )
+
+
+def _share_token(response: Response) -> str:
+    return response.json()["share_url"].rsplit("/", 1)[-1]
+
+
+@pytest.mark.asyncio
+async def test_message_share_shows_only_that_message(
+    test_client: AsyncClient, shared_reply: SharedReply
+) -> None:
+    token = _share_token(await test_client.post(shared_reply.share_path))
+
+    payload = (
+        await test_client.get(f"/api/v1/shared-conversations/{token}/messages")
+    ).json()
+
+    assert payload["share_scope"] == "message"
+    assert [message["content"] for message in payload["messages"]] == [
+        "Here is the recipe."
+    ]
+    assert payload["messages"][0]["tool_calls"] is None
+    assert "private notes" not in json.dumps(payload)
+
+
+@pytest.mark.asyncio
+async def test_message_share_serves_only_that_messages_attachments(
+    test_client: AsyncClient, shared_reply: SharedReply
+) -> None:
+    token = _share_token(await test_client.post(shared_reply.share_path))
+    base = f"/api/v1/shared-conversations/{token}/attachments"
+
+    shown = await test_client.get(f"{base}/{shared_reply.reply_attachment_id}")
+    elsewhere = await test_client.get(f"{base}/{shared_reply.elsewhere_attachment_id}")
+
+    assert shown.content == b"the recipe"
+    assert elsewhere.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_message_share_is_independent_of_the_conversations_share(
+    test_client: AsyncClient, shared_reply: SharedReply
+) -> None:
+    await test_client.post(shared_reply.share_path)
+
+    conversation_status = await test_client.get(
+        f"/api/v1/chat/conversations/{shared_reply.conversation_id}/share"
+    )
+    message_status = await test_client.get(shared_reply.share_path)
+
+    assert conversation_status.json() == {"active": False}
+    assert message_status.json() == {"active": True}
+
+
+@pytest.mark.asyncio
+async def test_replacing_a_message_share_stops_the_old_link(
+    test_client: AsyncClient, shared_reply: SharedReply
+) -> None:
+    old = _share_token(await test_client.post(shared_reply.share_path))
+    new = _share_token(await test_client.post(shared_reply.share_path))
+
+    old_read = await test_client.get(f"/api/v1/shared-conversations/{old}/messages")
+    new_read = await test_client.get(f"/api/v1/shared-conversations/{new}/messages")
+
+    assert old_read.status_code == 404
+    assert new_read.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_revoking_a_message_share_stops_the_link(
+    test_client: AsyncClient, shared_reply: SharedReply
+) -> None:
+    token = _share_token(await test_client.post(shared_reply.share_path))
+
+    revoked = await test_client.delete(shared_reply.share_path)
+
+    assert revoked.status_code == 204
+    read = await test_client.get(f"/api/v1/shared-conversations/{token}/messages")
+    assert read.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_only_the_owner_manages_a_message_share(
+    test_client: AsyncClient, app_fixture: FastAPI, shared_reply: SharedReply
+) -> None:
+    token = _share_token(await test_client.post(shared_reply.share_path))
+
+    async def other_user() -> dict[str, str]:
+        return {"user_identifier": "wife"}
+
+    app_fixture.dependency_overrides[get_current_user] = other_user
+    try:
+        created = await test_client.post(shared_reply.share_path)
+        revoked = await test_client.delete(shared_reply.share_path)
+        read = await test_client.get(f"/api/v1/shared-conversations/{token}/messages")
+    finally:
+        app_fixture.dependency_overrides.pop(get_current_user)
+
+    assert created.status_code == 404
+    assert revoked.status_code == 404
+    assert read.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_only_a_message_of_the_conversation_can_be_shared(
+    test_client: AsyncClient,
+    db_context: Database,
+) -> None:
+    conversation_id = str(uuid.uuid4())
+    now = datetime.now(UTC)
+
+    async def add(
+        message: UserMessage | AssistantMessage | ToolMessage,
+        *,
+        into: str = conversation_id,
+        subconversation_id: str | None = None,
+        is_internal: bool = False,
+    ) -> int:
+        return await db_context.message_history.add_message(
+            message,
+            interface_type="web",
+            conversation_id=into,
+            timestamp=now,
+            user_id="test_user",
+            subconversation_id=subconversation_id,
+            is_internal=is_internal,
+        )
+
+    await add(UserMessage.from_trusted_user(content="Start"))
+    unshareable = {
+        "a tool row": await add(
+            ToolMessage(
+                tool_call_id="call_1", content="tool output", name="search_notes"
+            )
+        ),
+        "an empty row": await add(AssistantMessage(content="")),
+        "a delegate's row": await add(
+            AssistantMessage(content="Working"), subconversation_id="delegate"
+        ),
+        "an internal row": await add(
+            UserMessage.from_trusted_user(content="Wake"), is_internal=True
+        ),
+        "a thread marker": await db_context.message_history.add_thread_start_marker(
+            interface_type="web",
+            home_conversation_id=conversation_id,
+            thread_conversation_id=str(uuid.uuid4()),
+            content="Started a thread",
+            now=now,
+        ),
+        "another conversation's row": await add(
+            UserMessage.from_trusted_user(content="Elsewhere"),
+            into=str(uuid.uuid4()),
+        ),
+        "no row": 999_999,
+    }
+
+    statuses = {
+        name: (
+            await test_client.post(
+                f"/api/v1/chat/conversations/{conversation_id}"
+                f"/messages/{message_id}/share"
+            )
+        ).status_code
+        for name, message_id in unshareable.items()
+    }
+
+    assert statuses == dict.fromkeys(unshareable, 404)
 
 
 @pytest.mark.asyncio

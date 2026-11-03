@@ -738,6 +738,44 @@ async def test_a_moved_turn_leaves_homes_model_and_reaches_the_threads(
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("profiles")
+async def test_moving_a_turn_stops_the_links_to_its_messages(
+    api_test_client: AsyncClient, db_engine: AsyncEngine
+) -> None:
+    db = Database(engine=db_engine)
+    home = await _home(api_test_client)
+    thread = await _thread_on(api_test_client, CONTEXT_PROFILE)
+    moved = await _home_turn(db, home, words="the quotes", at=NOW)
+    share = await api_test_client.post(
+        f"/api/v1/chat/conversations/{home}/messages/{moved['reply']}/share"
+    )
+    token = share.json()["share_url"].rsplit("/", 1)[-1]
+
+    await api_test_client.post(
+        f"/api/v1/chat/home/threads/{thread}/moved-turns",
+        json={"message_id": moved["user"]},
+    )
+
+    read = await api_test_client.get(f"/api/v1/shared-conversations/{token}/messages")
+    assert read.status_code == 404
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("profiles")
+async def test_a_thread_is_shared_like_a_conversation(
+    api_test_client: AsyncClient,
+) -> None:
+    thread = await _thread_on(api_test_client, CONTEXT_PROFILE)
+
+    share = await api_test_client.post(f"/api/v1/chat/conversations/{thread}/share")
+
+    token = share.json()["share_url"].rsplit("/", 1)[-1]
+    read = await api_test_client.get(f"/api/v1/shared-conversations/{token}/messages")
+    assert read.json()["conversation_id"] == thread
+    assert read.json()["share_scope"] == "conversation"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("profiles")
 async def test_moving_into_a_sealed_thread_is_refused(
     api_test_client: AsyncClient, db_engine: AsyncEngine
 ) -> None:

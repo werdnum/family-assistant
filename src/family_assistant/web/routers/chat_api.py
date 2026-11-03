@@ -792,14 +792,22 @@ class PendingDelegationsResponse(BaseModel):
     delegations: list[PendingDelegation]
 
 
+class SharedConversationMessagesResponse(ConversationMessagesResponse):
+    """What a share link shows, and whether that is a conversation or a message."""
+
+    share_scope: Literal["conversation", "message"] = Field(
+        ..., description="Whether the link shares a whole conversation or one message"
+    )
+
+
 class ConversationShareResponse(BaseModel):
-    """New active share link for a conversation."""
+    """New active share link for a conversation or a message."""
 
     share_url: str
 
 
 class ConversationShareStatusResponse(BaseModel):
-    """Whether a conversation currently has an active share."""
+    """Whether a conversation or message currently has an active share."""
 
     active: bool
 
@@ -1488,6 +1496,47 @@ async def _get_active_conversation_share(
     ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     return share
+
+
+async def _shareable_message_row(
+    db_context: Database, conversation_id: str, message_id: int
+) -> MessageHistoryRow:
+    """A message that can be shared on its own, or 404.
+
+    Only what a reader takes for the message itself: a user or assistant row of
+    the conversation's main history with something to show. A tool row, a
+    delegate's working row, and the markers Home draws as thread cards are
+    not. Both ends of a link apply this, so a row that stops qualifying (a moved
+    turn's row is deleted) stops resolving.
+    """
+    row = await db_context.message_history.get_row_by_internal_id(message_id)
+    if (
+        row is None
+        or row["conversation_id"] != conversation_id
+        or row["subconversation_id"] is not None
+        or row["is_internal"]
+        or row["role"] not in {"user", "assistant"}
+        or row["moved_to_conversation_id"] is not None
+        or row["started_thread_conversation_id"] is not None
+        or not (row["content"] or row["attachments"])
+    ):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    return row
+
+
+def _message_only(row: MessageHistoryRow) -> MessageHistoryRow:
+    """A row without what its turn did to produce it.
+
+    Sharing a message shares what it says. Tool calls carry arguments read from
+    wherever the turn looked, reasoning is the model's working, and neither is
+    part of the message the owner picked.
+    """
+    return {
+        **row,
+        "tool_calls": None,
+        "reasoning_info": None,
+        "error_traceback": None,
+    }
 
 
 # ----------------------------------------------------------------------- #
@@ -3216,6 +3265,73 @@ async def revoke_conversation_share(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@chat_api_router.get(
+    "/v1/chat/conversations/{conversation_id}/messages/{message_id}/share",
+)
+async def get_message_share_status(
+    conversation_id: str,
+    message_id: int,
+    request: Request,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    db_context: Annotated[Database, Depends(get_db)],
+) -> ConversationShareStatusResponse:
+    """Return one message's share status to the conversation owner."""
+    await _ensure_user_owns_persisted_conversation(
+        request, current_user, conversation_id
+    )
+    await _shareable_message_row(db_context, conversation_id, message_id)
+    share = await db_context.conversation_shares.get_by_message(message_id)
+    return ConversationShareStatusResponse(active=share is not None)
+
+
+@chat_api_router.post(
+    "/v1/chat/conversations/{conversation_id}/messages/{message_id}/share",
+)
+async def create_message_share(
+    conversation_id: str,
+    message_id: int,
+    request: Request,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    db_context: Annotated[Database, Depends(get_db)],
+) -> ConversationShareResponse:
+    """Rotate and return a read-only link to one message for its owner."""
+    owner_user_id = await _ensure_user_owns_persisted_conversation(
+        request, current_user, conversation_id
+    )
+    await _shareable_message_row(db_context, conversation_id, message_id)
+    token = secrets.token_urlsafe(32)
+    await db_context.conversation_shares.rotate_message(
+        message_id, conversation_id, owner_user_id, _share_token_hash(token)
+    )
+    return ConversationShareResponse(share_url=f"/shared/conversations/{token}")
+
+
+@chat_api_router.delete(
+    "/v1/chat/conversations/{conversation_id}/messages/{message_id}/share",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+)
+async def revoke_message_share(
+    conversation_id: str,
+    message_id: int,
+    request: Request,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    db_context: Annotated[Database, Depends(get_db)],
+) -> Response:
+    """Revoke one message's read-only link as the conversation owner.
+
+    Not subject to the shareable check: a link is always the owner's to stop,
+    and the row it names may be gone.
+    """
+    await _ensure_user_owns_persisted_conversation(
+        request, current_user, conversation_id
+    )
+    share = await db_context.conversation_shares.get_by_message(message_id)
+    if share is not None and share.conversation_id == conversation_id:
+        await db_context.conversation_shares.revoke_message(message_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 def serialize_conversation_messages(
     messages: list[MessageHistoryRow],
     feedback_by_turn: Mapping[str, TurnFeedback] | None = None,
@@ -3522,30 +3638,41 @@ async def get_shared_conversation_messages(
     attachment_registry: Annotated[
         "AttachmentRegistry", Depends(get_attachment_registry)
     ],
-) -> ConversationMessagesResponse:
+) -> SharedConversationMessagesResponse:
     """Return a read-only transcript to an authenticated share-link holder.
 
     The diagnostics readonly token also authenticates here, so a coding agent
     given the link can read the conversation; see route_auth.DIAGNOSTICS_TOKEN_ROUTES.
     """
     share = await _get_active_conversation_share(request, db_context, token)
-    history_by_chat = await db_context.message_history.get_all_grouped(
-        interface_type=None,
-        conversation_id=share.conversation_id,
-        include_subconversations=False,
-    )
-    messages = [
-        message
-        for (
-            _interface_type,
-            conversation_id,
-        ), conversation_messages in history_by_chat.items()
-        if conversation_id == share.conversation_id
-        for message in conversation_messages
-    ]
-    messages.sort(
-        key=lambda message: message.get("timestamp", datetime.min.replace(tzinfo=UTC))
-    )
+    if share.message_id is not None:
+        messages = [
+            _message_only(
+                await _shareable_message_row(
+                    db_context, share.conversation_id, share.message_id
+                )
+            )
+        ]
+    else:
+        history_by_chat = await db_context.message_history.get_all_grouped(
+            interface_type=None,
+            conversation_id=share.conversation_id,
+            include_subconversations=False,
+        )
+        messages = [
+            message
+            for (
+                _interface_type,
+                conversation_id,
+            ), conversation_messages in history_by_chat.items()
+            if conversation_id == share.conversation_id
+            for message in conversation_messages
+        ]
+        messages.sort(
+            key=lambda message: message.get(
+                "timestamp", datetime.min.replace(tzinfo=UTC)
+            )
+        )
     await enrich_persisted_attachments(
         messages,
         db_context=db_context,
@@ -3563,7 +3690,7 @@ async def get_shared_conversation_messages(
                 attachment["url"] = shared_url
 
     response_messages = serialize_conversation_messages(messages)
-    return ConversationMessagesResponse(
+    return SharedConversationMessagesResponse(
         conversation_id=share.conversation_id,
         messages=response_messages,
         count=len(response_messages),
@@ -3572,6 +3699,7 @@ async def get_shared_conversation_messages(
         has_more_after=False,
         latest_user_profile_id=None,
         active_turns=[],
+        share_scope="conversation" if share.message_id is None else "message",
     )
 
 
@@ -3597,6 +3725,14 @@ async def serve_shared_conversation_attachment(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
 
     share = await _get_active_conversation_share(request, db_context, token)
+    if share.message_id is not None:
+        row = await _shareable_message_row(
+            db_context, share.conversation_id, share.message_id
+        )
+        if attachment_id not in {
+            attachment.get("attachment_id") for attachment in row["attachments"] or []
+        }:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     attachment = await attachment_registry.get_attachment(
         db_context,
         attachment_id,
