@@ -851,7 +851,8 @@ jobs:
           if-no-files-found: ignore
 
   # Two PRs that each add a migration on the same parent pass CI separately and leave main with two
-  # alembic heads, which stops the app at startup. This catches a PR whose merge with main has two.
+  # alembic heads, which stops the app at startup. This catches a PR whose merge with main has two
+  # when CI runs; alembic-heads.yml re-checks open PRs each time main moves.
   alembic-single-head:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -859,16 +860,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
       - name: Check alembic has exactly one head
-        run: |
-          python3 -m venv "$RUNNER_TEMP/alembic-venv"
-          "$RUNNER_TEMP/alembic-venv/bin/pip" install --quiet --disable-pip-version-check alembic pgvector
-          heads=$("$RUNNER_TEMP/alembic-venv/bin/alembic" heads)
-          echo "$heads"
-          count=$(grep -c . <<< "$heads")
-          if [[ "$count" -ne 1 ]]; then
-            echo "::error::Expected exactly one alembic head, found ${count}. Add a merge revision (alembic merge heads) or rebase the newer migration onto the other."
-            exit 1
-          fi
+        run: python3 scripts/check_alembic_heads.py tree HEAD
 
   smoke-test-main-image:
     needs: [prepare, detect-changes]
