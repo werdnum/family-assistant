@@ -23,6 +23,7 @@ import {
   FolderInputIcon,
   GitBranchPlusIcon,
   Loader2Icon,
+  Share2Icon,
   StickyNoteIcon,
   SquareIcon,
   ThumbsDownIcon,
@@ -1173,6 +1174,20 @@ const AssistantActionBar: React.FC<{
                 data-testid="move-to-thread"
               >
                 <FolderInputIcon size={12} aria-hidden="true" />
+              </TooltipIconButton>
+            )}
+            {canCopy && (
+              /* @ts-expect-error - TooltipIconButton JSX component */
+              <TooltipIconButton
+                tooltip="Share message"
+                aria-label="Share message"
+                size="icon"
+                variant="ghost"
+                className="h-7 w-7 rounded-lg"
+                onClick={() => homeActions.shareMessage(target())}
+                data-testid="share-message"
+              >
+                <Share2Icon size={12} aria-hidden="true" />
               </TooltipIconButton>
             )}
           </>

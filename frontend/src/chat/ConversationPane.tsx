@@ -29,6 +29,7 @@ import { getProfileDisplayName } from './profileNames';
 import ProfileSelector from './ProfileSelector';
 import { type ModelTier, useProfiles } from './profilesContext';
 import { ShareConversationButton } from './ShareConversationButton';
+import { ShareMessageDialog } from './ShareMessageDialog';
 import { useConversationShareLink } from './useConversationShareLink';
 import {
   ChatControlsContext,
@@ -2621,6 +2622,7 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
   // Home's actions on its messages, and the dialog each opens.
   const [continueTarget, setContinueTarget] = useState<HomeTurnTarget | null>(null);
   const [moveTarget, setMoveTarget] = useState<HomeTurnTarget | null>(null);
+  const [shareTarget, setShareTarget] = useState<HomeTurnTarget | null>(null);
   const userTurnIdsKey = messages
     .filter((msg) => msg.role === 'user' && msg.turnId)
     .map((msg) => msg.turnId)
@@ -2633,6 +2635,7 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
     return {
       continueInThread: setContinueTarget,
       moveToThread: setMoveTarget,
+      shareMessage: setShareTarget,
       turnHasUserMessage: (turnId) => turnId !== undefined && userTurnIds.has(turnId),
     };
   }, [isHome, userTurnIdsKey]);
@@ -3162,6 +3165,7 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
     <ShareConversationButton
       shareLink={shareLink}
       conversationId={conversationId}
+      kind={isHome ? 'home' : currentThread ? 'thread' : 'conversation'}
       hasPersistedMessages={messages.length > 0 && persistedConversationId === conversationId}
     />
   );
@@ -3202,6 +3206,14 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
             }
             onMoved={handleTurnMoved}
           />
+          {shareTarget && conversationId && (
+            <ShareMessageDialog
+              conversationId={conversationId}
+              target={shareTarget}
+              resolveMessageId={resolveHomeMessageId}
+              onClose={() => setShareTarget(null)}
+            />
+          )}
         </>
       )}
     </div>
