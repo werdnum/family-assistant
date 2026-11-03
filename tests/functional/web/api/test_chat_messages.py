@@ -660,6 +660,32 @@ async def test_message_share_serves_only_that_messages_attachments(
 
 
 @pytest.mark.asyncio
+async def test_a_reply_that_is_only_an_attachment_can_be_shared(
+    test_client: AsyncClient, db_context: Database, shared_reply: SharedReply
+) -> None:
+    picture_id = await db_context.message_history.add_message(
+        AssistantMessage(content=None),
+        interface_type="web",
+        conversation_id=shared_reply.conversation_id,
+        timestamp=datetime.now(UTC),
+        user_id="test_user",
+        attachments=[
+            MessageAttachmentMetadata(
+                type="attachment_reference",
+                attachment_id=shared_reply.reply_attachment_id,
+            )
+        ],
+    )
+
+    created = await test_client.post(
+        f"/api/v1/chat/conversations/{shared_reply.conversation_id}"
+        f"/messages/{picture_id}/share"
+    )
+
+    assert created.status_code == 200
+
+
+@pytest.mark.asyncio
 async def test_message_share_is_independent_of_the_conversations_share(
     test_client: AsyncClient, shared_reply: SharedReply
 ) -> None:

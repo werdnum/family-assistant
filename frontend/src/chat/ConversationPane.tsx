@@ -437,6 +437,7 @@ export function mergeConsecutiveToolOnlyAssistantMessages(messages: Message[]): 
         ...previousMessage,
         content: [...previousMessage.content, ...message.content],
         internalId: message.internalId ?? previousMessage.internalId,
+        hasOwnAttachments: message.hasOwnAttachments,
         status:
           previousMessage.status?.type === 'running' || message.status?.type === 'running'
             ? { type: 'running' }
@@ -1780,6 +1781,7 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
               status: { type: 'complete' },
               reasoning_info: msg.reasoning_info ?? undefined,
               internalId: Number(msg.internal_id),
+              hasOwnAttachments: (msg.attachments?.length ?? 0) > 0,
               echoed_from_thread: msg.echoed_from_thread ?? undefined,
               moved_to_thread: msg.moved_to_thread ?? undefined,
               started_thread: msg.started_thread ?? undefined,
@@ -2772,6 +2774,7 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
           moved_to_thread: message.moved_to_thread,
           started_thread: message.started_thread,
           internal_id: message.internalId,
+          has_own_attachments: message.hasOwnAttachments,
           turn_id: message.turnId,
           feedback: message.feedback,
           unrateable: message.unrateable,

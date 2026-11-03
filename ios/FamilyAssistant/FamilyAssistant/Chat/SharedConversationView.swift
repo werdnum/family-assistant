@@ -26,7 +26,7 @@ extension ConversationShareTarget {
               message.movedToThread == nil,
               message.startedThread == nil,
               message.status != .running, !message.isLoading,
-              !message.text.isEmpty,
+              !message.text.isEmpty || !message.attachments.isEmpty,
               let messageID = ReadMarkerGate.persistedID(of: message.id)
         else {
             return nil

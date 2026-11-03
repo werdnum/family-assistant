@@ -1960,6 +1960,28 @@ final class HomeThreadsTests: XCTestCase {
         )
     }
 
+    func testAReplyThatIsOnlyAnAttachmentCanBeShared() {
+        let home = makeViewModel(conversationID: "home", role: .home)
+        var picture = homeMessage(id: 2, role: .assistant, turnID: "a")
+        picture.text = ""
+        picture.attachments = [
+            ChatAttachment(
+                id: "picture",
+                attachmentID: "picture",
+                type: .image,
+                name: "picture.png",
+                contentURL: "/api/attachments/picture",
+                mimeType: "image/png",
+                size: nil,
+                localFileURL: nil,
+                uploadState: .uploaded,
+                errorMessage: nil
+            )
+        ]
+
+        XCTAssertEqual(home.shareTarget(for: picture), .message(conversationID: "home", messageID: 2))
+    }
+
     func testAMessageWithNothingOfItsOwnCannotBeShared() {
         let home = makeViewModel(conversationID: "home", role: .home)
         var moved = homeMessage(id: 3, role: .assistant, turnID: "a")

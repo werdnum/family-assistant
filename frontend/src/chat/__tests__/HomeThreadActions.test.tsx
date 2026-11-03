@@ -772,6 +772,37 @@ describe('Starting and moving threads from Home', () => {
     );
   });
 
+  it('offers to share a reply that is only an attachment', async () => {
+    const home = serveHome();
+    home.homeRows = [
+      ...home.homeRows,
+      {
+        internal_id: 5,
+        turn_id: 'turn-picture',
+        role: 'assistant',
+        content: '',
+        timestamp: '2026-10-18T09:30:00Z',
+        attachments: [
+          {
+            type: 'attachment_reference',
+            attachment_id: 'picture',
+            mime_type: 'image/png',
+            content_url: '/api/attachments/picture',
+          },
+        ],
+      },
+    ];
+    await renderChatApp({ waitForReady: true });
+
+    const homePane = await findPane(HOME);
+    await within(homePane).findByText(REMINDER);
+    await waitFor(() => {
+      const replies = within(homePane).getAllByTestId('assistant-message');
+      expect(replies).toHaveLength(HOME_ROWS.length);
+      expect(within(replies[replies.length - 1]).getByTestId('share-message')).toBeInTheDocument();
+    });
+  });
+
   it('shares a thread from its Home card without opening it', async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     const home = serveHome();
