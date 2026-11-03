@@ -58,14 +58,6 @@ class EventActionType(StrEnum):
     script = "script"
 
 
-class InterfaceType(StrEnum):
-    """Types of interfaces that can receive event notifications."""
-
-    telegram = "telegram"
-    web = "web"
-    email = "email"
-
-
 # Define the event listeners table
 event_listeners_table = Table(
     "event_listeners",
@@ -99,7 +91,7 @@ event_listeners_table = Table(
     Column("conversation_id", String(255), nullable=False, index=True),
     Column(
         "interface_type",
-        SQLEnum(InterfaceType),
+        String(50),
         nullable=False,
         server_default="telegram",
     ),
