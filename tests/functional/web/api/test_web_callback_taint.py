@@ -286,6 +286,53 @@ def test_callback_requires_explicit_trusted_payload_free_definition() -> None:
 
 
 @pytest.mark.parametrize(
+    ("payload_trusted", "expected_tiers"),
+    [(False, [SourceTrustTier.UNKNOWN_EXTERNAL]), (True, [])],
+)
+def test_a_trusted_event_payload_adds_no_taint(
+    payload_trusted: bool,
+    expected_tiers: list[SourceTrustTier],
+) -> None:
+    """A trusted_events server's payload is judged like its tool output."""
+    payload = _payload()
+    if payload_trusted:
+        payload["tool_call_review_trigger_payload_trusted"] = True
+
+    sources = _unattended_trigger_taint_sources(
+        payload,
+        TriggerReviewInput(
+            trigger_type="event_listener",
+            active_request_role="user",
+            started_by="stored_definition",
+            definition="Work on Tuit tasks handed to me",
+            definition_taint_metadata=TurnTaintState.empty().to_metadata(),
+            payload_present=True,
+        ),
+    )
+
+    assert [source.tier for source in sources] == expected_tiers
+
+
+def test_a_trusted_event_payload_does_not_cure_an_unresolved_definition() -> None:
+    payload = _payload()
+    payload["tool_call_review_trigger_payload_trusted"] = True
+
+    sources = _unattended_trigger_taint_sources(
+        payload,
+        TriggerReviewInput(
+            trigger_type="event_listener",
+            active_request_role="user",
+            started_by="stored_definition",
+            definition="Instruction with no provenance",
+            definition_taint_metadata=None,
+            payload_present=True,
+        ),
+    )
+
+    assert [source.tier for source in sources] == [SourceTrustTier.UNKNOWN_EXTERNAL]
+
+
+@pytest.mark.parametrize(
     ("trigger_type", "callback_context", "expected_source_type"),
     [
         (
