@@ -137,16 +137,9 @@ jobs:
               - 'ios/**'
               - '.github/workflows/ios-tests.yml'
               - '.github/workflows/ci-with-devcontainer.yml'
-  # A merge-queue run checks only that the merged result starts (alembic-single-head and
-  # smoke-test-main-image). The full suite already ran on the PR and runs again on the push to main,
-  # so the jobs that need the CI image are skipped here by skipping the build they depend on.
   build-ci-container:
     needs: [prepare, detect-changes]
-    if: |
-      github.event_name != 'merge_group' && (
-        needs.detect-changes.outputs.has_code_changes == 'true' ||
-        needs.detect-changes.outputs.ast_grep_changes == 'true'
-      )
+    if: needs.detect-changes.outputs.has_code_changes == 'true' || needs.detect-changes.outputs.ast_grep_changes == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -197,7 +190,7 @@ jobs:
           compression-level: 1
   build-main-container:
     needs: [prepare, detect-changes]
-    if: github.event_name != 'merge_group' && needs.detect-changes.outputs.dockerfile_changes == 'true'
+    if: needs.detect-changes.outputs.dockerfile_changes == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -247,7 +240,7 @@ jobs:
           cache-to: ${{ github.event.pull_request.head.repo.fork != true && format('type=registry,ref={0}/{1}:buildcache-{2},mode=max', env.REGISTRY, env.IMAGE_PREFIX, matrix.arch) || '' }}
   build-devcontainer:
     needs: [prepare, detect-changes]
-    if: github.event_name != 'merge_group' && needs.detect-changes.outputs.dockerfile_changes == 'true'
+    if: needs.detect-changes.outputs.dockerfile_changes == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -858,7 +851,7 @@ jobs:
           if-no-files-found: ignore
 
   # Two PRs that each add a migration on the same parent pass CI separately and leave main with two
-  # alembic heads, which stops the app at startup. The merge queue runs this on the merged result.
+  # alembic heads, which stops the app at startup. This catches a PR whose merge with main has two.
   alembic-single-head:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -894,7 +887,7 @@ jobs:
 
   test-ios:
     needs: detect-changes
-    if: github.event_name != 'merge_group' && needs.detect-changes.outputs.ios == 'true'
+    if: needs.detect-changes.outputs.ios == 'true'
     uses: ./.github/workflows/ios-tests.yml
 
   # Require all test jobs to pass
