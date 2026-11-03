@@ -8,6 +8,7 @@ import {
 } from '@/components/ui/dialog';
 import type { HomeTurnTarget } from './homeTurnActions';
 import { messageShareEndpoint, ShareDialog } from './ShareConversationButton';
+import type { BackendConversationMessage } from './types';
 import { useConversationShareLink } from './useConversationShareLink';
 
 interface ShareMessageDialogProps {
@@ -16,6 +17,22 @@ interface ShareMessageDialogProps {
   /** A reply streamed here has no stored id yet; the server names it by turn. */
   resolveMessageId: (target: HomeTurnTarget) => Promise<number>;
   onClose: () => void;
+}
+
+/**
+ * The stored reply of a turn: its last assistant row with something to show.
+ * Null when there is none yet, never another row of the turn, because a link
+ * shows exactly the row it names and the turn's first row is the question.
+ */
+export function sharedReplyId(rows: BackendConversationMessage[], turnId: string): number | null {
+  const replies = rows.filter(
+    (row) =>
+      row.turn_id === turnId &&
+      row.role === 'assistant' &&
+      (Boolean(row.content) || (row.attachments?.length ?? 0) > 0)
+  );
+  const reply = replies[replies.length - 1];
+  return reply ? Number(reply.internal_id) : null;
 }
 
 /** The share dialog for one message, once the message's stored id is known. */

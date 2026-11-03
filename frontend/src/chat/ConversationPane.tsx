@@ -6,6 +6,7 @@ import {
   useExternalStoreRuntime,
 } from '@assistant-ui/react';
 import { MessagesSquare } from 'lucide-react';
+import type { ErrorInfo, ReactNode } from 'react';
 import React, {
   Component,
   useCallback,
@@ -15,44 +16,42 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import type { ErrorInfo, ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { AppTopBar } from '../shared/AppShell';
 import { getDiagnosticsUrl } from '../utils/diagnosticsUrl';
 import { parseToolArguments } from '../utils/toolUtils';
 import { generateUUID } from '../utils/uuid';
 import { defaultAttachmentAdapter } from './attachmentAdapter';
-import { type ConversationDraft, useChatShell } from './chatShell';
-import { LOADING_MARKER } from './constants';
-import IntelligenceSelector from './IntelligenceSelector';
-import { getProfileDisplayName } from './profileNames';
-import ProfileSelector from './ProfileSelector';
-import { type ModelTier, useProfiles } from './profilesContext';
-import { ShareConversationButton } from './ShareConversationButton';
-import { ShareMessageDialog } from './ShareMessageDialog';
-import { useConversationShareLink } from './useConversationShareLink';
 import {
   ChatControlsContext,
   type ConversationLoadStatus,
   type OlderMessagesStatus,
   type SteerResult,
 } from './chatControls';
-import { interleaveTextAndToolCalls, isToolCallDisplay, toolCallParts } from './orderedParts';
-import { Thread } from './Thread';
+import { type ConversationDraft, useChatShell } from './chatShell';
+import { LOADING_MARKER } from './constants';
 import {
   type HomeTurnActions,
   HomeTurnActionsContext,
   type HomeTurnTarget,
 } from './homeTurnActions';
+import IntelligenceSelector from './IntelligenceSelector';
 import { MoveToThreadDialog } from './MoveToThreadDialog';
-import { submitTurnFeedback, TurnFeedbackContext, type TurnFeedbackActions } from './turnFeedback';
+import { interleaveTextAndToolCalls, isToolCallDisplay, toolCallParts } from './orderedParts';
+import ProfileSelector from './ProfileSelector';
+import { getProfileDisplayName } from './profileNames';
+import { type ModelTier, useProfiles } from './profilesContext';
+import { ShareConversationButton } from './ShareConversationButton';
+import { ShareMessageDialog, sharedReplyId } from './ShareMessageDialog';
 import { type ContinueAnchor, StartThreadDialog, threadProfiles } from './StartThreadDialog';
+import { Thread } from './Thread';
 import { ThreadBanner } from './ThreadBanner';
-import { ThreadsContext } from './threadsContext';
 import { ThreadStateDot } from './ThreadStateDot';
-import { markThreadDone, type ThreadAttachment } from './threadsApi';
 import { ToolConfirmationProvider } from './ToolConfirmationContext';
+import { markThreadDone, type ThreadAttachment } from './threadsApi';
+import { ThreadsContext } from './threadsContext';
 import { isTerminalToolOutcome, type TerminalToolOutcome } from './toolOutcome';
+import { submitTurnFeedback, type TurnFeedbackActions, TurnFeedbackContext } from './turnFeedback';
 import {
   BackendAttachment,
   BackendConversationMessage,
@@ -63,6 +62,7 @@ import {
   ThreadSummary,
   TurnRating,
 } from './types';
+import { useConversationShareLink } from './useConversationShareLink';
 import { useLiveMessageUpdates } from './useLiveMessageUpdates';
 import { useMarkRead } from './useMarkRead';
 import { usePendingDelegations } from './usePendingDelegations';
@@ -2711,6 +2711,28 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
     }
     throw new Error("This message isn't saved yet. Try again in a moment.");
   }, []);
+  // A link shows exactly the row it names, so a streamed reply resolves to its
+  // own stored reply or to nothing: never to another row of the turn, such as
+  // the user's question.
+  const resolveSharedMessageId = useCallback(async (target: HomeTurnTarget): Promise<number> => {
+    if (target.internalId !== undefined) {
+      return target.internalId;
+    }
+    const convId = conversationIdRef.current;
+    if (target.turnId && convId) {
+      const response = await fetch(
+        `/api/v1/chat/conversations/${encodeURIComponent(convId)}/messages?limit=${HISTORY_PAGE_SIZE}`
+      );
+      if (response.ok) {
+        const data = (await response.json()) as ConversationMessagesResponse;
+        const reply = sharedReplyId(data.messages, target.turnId);
+        if (reply !== null) {
+          return reply;
+        }
+      }
+    }
+    throw new Error("This message isn't saved yet. Try again in a moment.");
+  }, []);
   const continueAnchor = useMemo<ContinueAnchor | null>(
     () =>
       continueTarget
@@ -3213,7 +3235,7 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
             <ShareMessageDialog
               conversationId={conversationId}
               target={shareTarget}
-              resolveMessageId={resolveHomeMessageId}
+              resolveMessageId={resolveSharedMessageId}
               onClose={() => setShareTarget(null)}
             />
           )}
