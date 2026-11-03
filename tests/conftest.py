@@ -945,7 +945,7 @@ backtrace_on_debug = True
                     logger.info(f"Radicale server is up on port {port}.")
                     server_ready = True
                     break
-            except (TimeoutError, ConnectionRefusedError):
+            except TimeoutError, ConnectionRefusedError:
                 # ast-grep-ignore: no-time-sleep-in-tests - Retry delay for Radicale startup
                 time.sleep(0.5)
                 if process.poll() is not None:  # Check if process terminated

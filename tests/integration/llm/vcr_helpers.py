@@ -312,7 +312,7 @@ def sanitize_response(response: dict[str, Any]) -> dict[str, Any] | None:
                 # Add any response sanitization logic here if needed
                 pass
 
-        except (json.JSONDecodeError, KeyError):
+        except json.JSONDecodeError, KeyError:
             # Not JSON or parsing failed, leave as is
             pass
 

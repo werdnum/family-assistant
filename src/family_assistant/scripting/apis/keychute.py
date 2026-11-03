@@ -160,7 +160,7 @@ def _api_error(
     detail = ""
     try:
         decoded = json.loads(body)
-    except (UnicodeDecodeError, json.JSONDecodeError):
+    except UnicodeDecodeError, json.JSONDecodeError:
         decoded = None
     error = decoded.get("error") if isinstance(decoded, dict) else None
     if isinstance(error, dict):

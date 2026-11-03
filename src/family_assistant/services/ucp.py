@@ -436,7 +436,7 @@ def _profile_from_response(
         return None
     try:
         payload = response.json()
-    except (json.JSONDecodeError, UnicodeDecodeError):
+    except json.JSONDecodeError, UnicodeDecodeError:
         return None
     api_parent_base = _api_parent_base(fetched_url)
     endpoint_base = api_parent_base or merchant_origin(fetched_url) or origin

@@ -133,8 +133,8 @@ isn't being normalized, query parameter order or encoding, and (for LLM tests) a
 
 **HA connection refused / timeout waiting for entity** — HA didn't start or was too slow. The
 fixture dumps the last 50 log lines on timeout; the full log is at
-`/tmp/ha_test_*/config/home-assistant.log`. Check `hass --version` is on PATH, and raise the
-deadline in `conftest.py` on a slow machine.
+`/tmp/ha_test_*/config/home-assistant.log`. The fixture runs `hass` through `uvx` (`HASS_COMMAND`),
+so check that command starts on its own, and raise the deadline in `conftest.py` on a slow machine.
 
 **401 when recording** — the API key is missing or expired. Confirm `OPENAI_API_KEY` /
 `GEMINI_API_KEY` are exported, and narrow the recording to a single test rather than re-recording
