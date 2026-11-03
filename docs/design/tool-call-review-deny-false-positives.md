@@ -571,25 +571,22 @@ send data anywhere.
   - **What the judge does.** That property, not the judge, is what stops a "Buy now" click, so the
     buy-click case is a precursor on this profile.
 
-  - **The gap is real.** A plain-profile handoff with `allow_resume` resumes `after_sanitize`
-    whatever its reason (`request_handoff` in `tools/browser_backend.py`). The profile's prompt asks
-    for exactly that when payment details are needed. The agent then continues in the same browser
-    context, with the cookies the person's login or checkout left behind, and nothing marks the
-    session as changed. That contradicts
-    [warm-browser-session-handoff.md](warm-browser-session-handoff.md): payment and checkout should
-    not resume, and the browser context should close.
+  - **After a handback the boundary no longer holds, by choice.** When a person hands a session
+    back, the agent continues in the same browser context. Browser-server's handover keeps the
+    context, and `after_sanitize` closes only the page, so cookies and storage stay. Whatever the
+    person logged into or paid with is still there. This is intended. The person decides whether to
+    let an agent carry on after a payment or login handoff, and the system does not take that choice
+    away for their own good.
 
-    The smallest structural fix:
+    What remains is an injection steering a commitment, such as a page-planted "Place order", inside
+    a session the person chose to hand back. The defence there is the judge, not a block on resume.
+    So the click-target rendering below does carry security weight for handed-back sessions. The
+    judge should also be told that the session holds the person's login, so that it can confirm a
+    commitment the request does not cover.
 
-    - a `payment` handoff never resumes, whatever the model asks for;
-    - the prompt stops asking for resume after payment.
-
-    A login handoff that resumes so the agent can keep shopping is the design doc's intended case.
-    That session is effectively authenticated, so it should go through the authenticated-site review
-    rather than the plain profile's.
-
-  - **Click targets.** Rendering a click's target in the review input, as in `button "Buy now"`, is
-    still worth doing to cut friction on blind clicks, but it carries no security weight.
+  - **Click targets.** Rendering a click's target in the review input, as in `button "Buy now"`,
+    cuts friction on blind clicks everywhere. It is also the judge's only view of a commitment in a
+    handed-back session.
 
 - **Entering real passenger details into a fare search is low-stakes either way.** Allowing it is
   fine. Denying it costs little, because the agent can search with placeholder passengers. These
