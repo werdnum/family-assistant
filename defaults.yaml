@@ -770,7 +770,11 @@ tool_call_review:
       provider: "google"
       model: "gemini-3.8-flash"
   timeout_seconds: 30.0
-  max_reviews_per_turn: 25
+  # A runaway guard, not a quota: past it every reviewed call falls back to
+  # confirm. 25 was hit by ordinary long turns (42 direct sandbox commands in a
+  # complex_tasks fit check, a 27-step train search), turning one task into a
+  # run of prompts; a script's calls inherit its one review and do not count.
+  max_reviews_per_turn: 60
   escalation:
     consecutive_denials: 3
     total_denials_per_turn: 20
