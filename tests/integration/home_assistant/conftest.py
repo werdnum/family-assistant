@@ -30,15 +30,7 @@ logger = logging.getLogger(__name__)
 
 # Home Assistant pins SQLAlchemy exactly, so it runs from its own environment
 # rather than constraining ours.
-HASS_COMMAND = [
-    "uvx",
-    "--from",
-    "homeassistant==2025.10.4",
-    # Its aiodns references an attribute pycares 5 removed.
-    "--with",
-    "pycares<5",
-    "hass",
-]
+HASS_COMMAND = ["uvx", "--python", "3.14", "--from", "homeassistant==2026.10.4", "hass"]
 
 
 class OnboardingResponse(TypedDict, total=False):
