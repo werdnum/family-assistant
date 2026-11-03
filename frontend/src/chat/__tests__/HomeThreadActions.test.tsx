@@ -746,6 +746,90 @@ describe('Starting and moving threads from Home', () => {
     expect(within(dialog).getByTestId('move-to-thread-submit')).toBeDisabled();
   });
 
+  it('shares one Home reply through its own link', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const shareUrl = `/api/v1/chat/conversations/${HOME}/messages/2/share`;
+    const create = vi.fn(() => HttpResponse.json({ share_url: '/shared/conversations/token' }));
+    serveHome();
+    server.use(
+      http.get(shareUrl, () => HttpResponse.json({ active: false })),
+      http.post(shareUrl, create)
+    );
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: vi.fn().mockResolvedValue(undefined) },
+    });
+    await renderChatApp({ waitForReady: true });
+
+    await user.click(within(await homeReply(GUTTER_REPLY)).getByTestId('share-message'));
+    const dialog = await screen.findByRole('dialog', { name: 'Share message' });
+    expect(dialog).toHaveAccessibleDescription(/can read this message, without the rest/);
+    await user.click(await within(dialog).findByRole('button', { name: 'Create and copy link' }));
+
+    await waitFor(() => expect(create).toHaveBeenCalledOnce());
+    expect(await within(dialog).findByRole('textbox', { name: 'Share link' })).toHaveValue(
+      `${window.location.origin}/shared/conversations/token`
+    );
+  });
+
+  it('offers to share a reply that is only an attachment', async () => {
+    const home = serveHome();
+    home.homeRows = [
+      ...home.homeRows,
+      {
+        internal_id: 5,
+        turn_id: 'turn-picture',
+        role: 'assistant',
+        content: '',
+        timestamp: '2026-10-18T09:30:00Z',
+        attachments: [
+          {
+            type: 'attachment_reference',
+            attachment_id: 'picture',
+            mime_type: 'image/png',
+            content_url: '/api/attachments/picture',
+          },
+        ],
+      },
+    ];
+    await renderChatApp({ waitForReady: true });
+
+    const homePane = await findPane(HOME);
+    await within(homePane).findByText(REMINDER);
+    await waitFor(() => {
+      const replies = within(homePane).getAllByTestId('assistant-message');
+      expect(replies).toHaveLength(HOME_ROWS.length);
+      expect(within(replies[replies.length - 1]).getByTestId('share-message')).toBeInTheDocument();
+    });
+  });
+
+  it('shares a thread from its Home card without opening it', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const home = serveHome();
+    home.homeRows = [
+      ...home.homeRows,
+      {
+        internal_id: 5,
+        role: 'assistant',
+        content: '(The user started a thread from here.)',
+        timestamp: '2026-10-18T09:30:00Z',
+        started_thread: QUOTES.conversation_id,
+      },
+    ];
+    const status = vi.fn(() => HttpResponse.json({ active: false }));
+    server.use(http.get(`/api/v1/chat/conversations/${QUOTES.conversation_id}/share`, status));
+    await renderChatApp({ waitForReady: true });
+    const homePane = await findPane(HOME);
+    const marker = await within(homePane).findByTestId('started-thread-marker');
+    expect(status).not.toHaveBeenCalled();
+
+    await user.click(within(marker).getByTestId('thread-card-share'));
+
+    expect(await screen.findByRole('dialog', { name: 'Share thread' })).toBeInTheDocument();
+    await waitFor(() => expect(status).toHaveBeenCalledOnce());
+    expect(screen.queryByText(`Earlier in ${QUOTES.conversation_id}`)).not.toBeInTheDocument();
+  });
+
   it("offers no move for an echo or a message the user didn't start", async () => {
     serveHome();
     await renderChatApp({ waitForReady: true });

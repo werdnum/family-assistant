@@ -17,6 +17,24 @@ enum ConversationShareStatus: Equatable {
     case failed
 }
 
+extension ConversationShareTarget {
+    /// A Home message that can be linked to on its own: a saved, finished user
+    /// or assistant message with something to read. A marker Home draws as a
+    /// thread is not one.
+    static func homeMessage(_ message: ChatMessage, in conversationID: String) -> ConversationShareTarget? {
+        guard message.role == .user || message.role == .assistant,
+              message.movedToThread == nil,
+              message.startedThread == nil,
+              message.status != .running, !message.isLoading,
+              !message.text.isEmpty || !message.attachments.isEmpty,
+              let messageID = ReadMarkerGate.persistedID(of: message.id)
+        else {
+            return nil
+        }
+        return .message(conversationID: conversationID, messageID: messageID)
+    }
+}
+
 /// Owner-side sharing state. The server intentionally returns only whether an
 /// active link exists, never the active bearer token, so sharing an already-shared
 /// conversation rotates the link before presenting it.
@@ -29,7 +47,7 @@ final class ConversationShareViewModel {
 
     @ObservationIgnored private let apiClient: ChatAPIClient
     @ObservationIgnored private let errorReporter: ErrorReporter
-    @ObservationIgnored private var conversationID: String?
+    @ObservationIgnored private var target: ConversationShareTarget?
     @ObservationIgnored private var operationGeneration = 0
 
     init(apiClient: ChatAPIClient, errorReporter: ErrorReporter = .shared) {
@@ -37,77 +55,77 @@ final class ConversationShareViewModel {
         self.errorReporter = errorReporter
     }
 
-    func loadStatus(conversationID: String?) async {
+    func loadStatus(target: ConversationShareTarget?) async {
         operationGeneration += 1
         let generation = operationGeneration
-        self.conversationID = conversationID
+        self.target = target
         isUpdating = false
         actionErrorMessage = nil
-        guard let conversationID else {
+        guard let target else {
             status = .unavailable
             return
         }
         status = .loading
         do {
-            let active = try await apiClient.getConversationShareStatus(conversationID: conversationID)
-            guard generation == operationGeneration, self.conversationID == conversationID else { return }
+            let active = try await apiClient.getShareStatus(target: target)
+            guard generation == operationGeneration, self.target == target else { return }
             status = active ? .active : .inactive
         } catch {
-            guard generation == operationGeneration, self.conversationID == conversationID else { return }
+            guard generation == operationGeneration, self.target == target else { return }
             status = .failed
             errorReporter.report(error, component: "ConversationShare.status")
         }
     }
 
-    func createShare(conversationID: String) async -> URL? {
+    func createShare(target: ConversationShareTarget) async -> URL? {
         let previousStatus = status
-        let generation = beginMutation(conversationID: conversationID)
+        let generation = beginMutation(target: target)
         do {
-            let url = try await apiClient.createConversationShare(conversationID: conversationID)
-            guard finishMutation(generation: generation, conversationID: conversationID) else { return nil }
+            let url = try await apiClient.createShare(target: target)
+            guard finishMutation(generation: generation, target: target) else { return nil }
             status = .active
             return url
         } catch AuthError.authRejected, AuthError.noCredentials {
-            guard finishMutation(generation: generation, conversationID: conversationID) else { return nil }
+            guard finishMutation(generation: generation, target: target) else { return nil }
             status = previousStatus
             return nil
         } catch {
-            guard finishMutation(generation: generation, conversationID: conversationID) else { return nil }
+            guard finishMutation(generation: generation, target: target) else { return nil }
             status = previousStatus
-            actionErrorMessage = "Couldn’t share conversation. \(error.localizedDescription)"
+            actionErrorMessage = "Couldn’t share \(target.noun). \(error.localizedDescription)"
             errorReporter.report(error, component: "ConversationShare.create")
             return nil
         }
     }
 
-    func revokeShare(conversationID: String) async {
+    func revokeShare(target: ConversationShareTarget) async {
         let previousStatus = status
-        let generation = beginMutation(conversationID: conversationID)
+        let generation = beginMutation(target: target)
         do {
-            try await apiClient.revokeConversationShare(conversationID: conversationID)
-            guard finishMutation(generation: generation, conversationID: conversationID) else { return }
+            try await apiClient.revokeShare(target: target)
+            guard finishMutation(generation: generation, target: target) else { return }
             status = .inactive
         } catch AuthError.authRejected, AuthError.noCredentials {
-            guard finishMutation(generation: generation, conversationID: conversationID) else { return }
+            guard finishMutation(generation: generation, target: target) else { return }
             status = previousStatus
         } catch {
-            guard finishMutation(generation: generation, conversationID: conversationID) else { return }
+            guard finishMutation(generation: generation, target: target) else { return }
             status = previousStatus
             actionErrorMessage = "Couldn’t stop sharing. \(error.localizedDescription)"
             errorReporter.report(error, component: "ConversationShare.revoke")
         }
     }
 
-    private func beginMutation(conversationID: String) -> Int {
+    private func beginMutation(target: ConversationShareTarget) -> Int {
         operationGeneration += 1
-        self.conversationID = conversationID
+        self.target = target
         isUpdating = true
         actionErrorMessage = nil
         return operationGeneration
     }
 
-    private func finishMutation(generation: Int, conversationID: String) -> Bool {
-        guard generation == operationGeneration, self.conversationID == conversationID else {
+    private func finishMutation(generation: Int, target: ConversationShareTarget) -> Bool {
+        guard generation == operationGeneration, self.target == target else {
             return false
         }
         isUpdating = false
@@ -115,10 +133,124 @@ final class ConversationShareViewModel {
     }
 }
 
+/// Share, re-share or stop sharing one thread or message, from wherever Home
+/// offers it. The status is the server's, so this asks before showing a choice.
+struct ConversationShareSheet: View {
+    let target: ConversationShareTarget
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var shareViewModel: ConversationShareViewModel
+    @State private var shareURL: URL?
+
+    init(target: ConversationShareTarget, authManager: AuthManager) {
+        self.target = target
+        _shareViewModel = State(
+            initialValue: ConversationShareViewModel(
+                apiClient: ChatAPIClient(authManager: authManager)
+            )
+        )
+    }
+
+    private var title: String {
+        switch target {
+        case .conversation: "Share Conversation"
+        case .thread: "Share Thread"
+        case .message: "Share Message"
+        }
+    }
+
+    private var explanation: String {
+        let reader = "Anyone with the link who is signed in to Family Assistant can read this \(target.noun)"
+        switch target {
+        case .message:
+            return "\(reader), without the rest of the conversation or how the assistant worked it out."
+        case .conversation, .thread:
+            return "\(reader), including messages added later."
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Text(explanation)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                Section {
+                    actions
+                }
+            }
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            .task(id: target) {
+                await shareViewModel.loadStatus(target: target)
+            }
+            .sheet(
+                item: Binding(
+                    get: { shareURL.map(ShareURL.init(url:)) },
+                    set: { if $0 == nil { shareURL = nil } }
+                )
+            ) { item in
+                ShareSheet(activityItems: [item.url])
+            }
+            .alert(
+                "Sharing Error",
+                isPresented: Binding(
+                    get: { shareViewModel.actionErrorMessage != nil },
+                    set: { if !$0 { shareViewModel.actionErrorMessage = nil } }
+                )
+            ) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(verbatim: shareViewModel.actionErrorMessage ?? "")
+            }
+        }
+        .presentationDetents([.medium])
+    }
+
+    @ViewBuilder
+    private var actions: some View {
+        switch shareViewModel.status {
+        case .unavailable, .loading:
+            ProgressView()
+                .frame(maxWidth: .infinity)
+        case .inactive:
+            shareButton(label: "Create Link")
+        case .active:
+            shareButton(label: "Replace Link")
+            Button("Stop Sharing", role: .destructive) {
+                Task { await shareViewModel.revokeShare(target: target) }
+            }
+            .disabled(shareViewModel.isUpdating)
+            .accessibilityIdentifier("stop-sharing")
+        case .failed:
+            Button("Retry Loading Sharing Status") {
+                Task { await shareViewModel.loadStatus(target: target) }
+            }
+            .accessibilityIdentifier("retry-sharing-status")
+        }
+    }
+
+    private func shareButton(label: String) -> some View {
+        Button(label) {
+            Task { shareURL = await shareViewModel.createShare(target: target) }
+        }
+        .disabled(shareViewModel.isUpdating)
+        .accessibilityIdentifier("create-share-link")
+    }
+}
+
 @MainActor
 @Observable
 final class SharedConversationViewModel {
     private(set) var messages: [ChatMessage] = []
+    private(set) var isSingleMessage = false
     private(set) var loadState: SharedConversationLoadState = .loading
     var attachmentErrorMessage: String?
 
@@ -147,6 +279,7 @@ final class SharedConversationViewModel {
             messages = ChatViewModel.groupToolCallTurns(
                 ChatViewModel.renderMessages(from: response.messages)
             )
+            isSingleMessage = response.shareScope == "message"
             loadState = .ready
         } catch let ChatAPIError.server(statusCode, _, _) where statusCode == 404 {
             guard generation == loadGeneration else { return }
@@ -238,7 +371,7 @@ struct SharedConversationView: View {
                 failedView(message: message)
             }
         }
-        .navigationTitle("Shared conversation")
+        .navigationTitle(viewModel.isSingleMessage ? "Shared message" : "Shared conversation")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {

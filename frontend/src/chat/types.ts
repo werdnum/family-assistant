@@ -116,6 +116,8 @@ export interface Message {
   reasoning_info?: MessageReasoningInfo;
   /** The stored row this message was built from; absent until it is stored. */
   internalId?: number;
+  /** The stored row itself holds attachments, not just the tool rows of its turn. */
+  hasOwnAttachments?: boolean;
   /** On a Home message echoing a thread's outcome: that thread's conversation. */
   echoed_from_thread?: string;
   /** On the Home marker left by a turn moved into a thread: that thread's conversation. */

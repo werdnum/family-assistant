@@ -162,7 +162,7 @@ struct ConversationShareToolbar: View {
                 shareButton(label: "Replace Shared Conversation Link")
                 Button(role: .destructive) {
                     guard let conversationID else { return }
-                    Task { await shareViewModel.revokeShare(conversationID: conversationID) }
+                    Task { await shareViewModel.revokeShare(target: .conversation(conversationID)) }
                 } label: {
                     Label("Stop Sharing Conversation", systemImage: "link.badge.minus")
                 }
@@ -170,7 +170,7 @@ struct ConversationShareToolbar: View {
                 .accessibilityIdentifier("stop-sharing-conversation")
             case .failed:
                 Button {
-                    Task { await shareViewModel.loadStatus(conversationID: conversationID) }
+                    Task { await shareViewModel.loadStatus(target: conversationID.map { .conversation($0) }) }
                 } label: {
                     Label("Retry Loading Sharing Status", systemImage: "arrow.clockwise")
                 }
@@ -178,7 +178,7 @@ struct ConversationShareToolbar: View {
             }
         }
         .task(id: conversationID) {
-            await shareViewModel.loadStatus(conversationID: conversationID)
+            await shareViewModel.loadStatus(target: conversationID.map { .conversation($0) })
         }
         .sheet(
             item: Binding(
@@ -205,7 +205,7 @@ struct ConversationShareToolbar: View {
         Button {
             guard let conversationID else { return }
             Task {
-                shareURL = await shareViewModel.createShare(conversationID: conversationID)
+                shareURL = await shareViewModel.createShare(target: .conversation(conversationID))
             }
         } label: {
             Label(label, systemImage: "square.and.arrow.up")
@@ -691,6 +691,13 @@ struct MessageBubble: View {
                 } label: {
                     Label("Move to Thread…", systemImage: "arrow.right.square")
                 }
+            }
+        }
+        if let homeThreads, let target = retryViewModel?.shareTarget(for: message) {
+            Button {
+                homeThreads.presentedSheet = .share(target)
+            } label: {
+                Label("Share Message…", systemImage: "square.and.arrow.up")
             }
         }
     }
@@ -2805,12 +2812,12 @@ private struct LoadingDotsView: View {
     }
 }
 
-private struct ShareURL: Identifiable {
+struct ShareURL: Identifiable {
     let url: URL
     var id: URL { url }
 }
 
-private struct ShareSheet: UIViewControllerRepresentable {
+struct ShareSheet: UIViewControllerRepresentable {
     let activityItems: [Any]
 
     func makeUIViewController(context: Context) -> UIActivityViewController {

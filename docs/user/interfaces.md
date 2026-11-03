@@ -228,6 +228,19 @@ than an outcome. If the thread can't be marked done, the bar says so and the thr
   from your message alone. Either way the thread's bar says **Started from Home** and quotes the
   reply you continued from, and Home keeps the exchange too.
 
+**Sharing from Home.** Home holds everything, so share a piece of it rather than the whole thing:
+
+- **Share a thread**: select the share icon on its card in Home, or in the thread's own header.
+  Anyone with the link can read the whole thread, including messages added later.
+- **Share a message**: select **Share message** among the buttons that appear when you point at one
+  of Home's replies. The link shows that message and its attachments, and nothing else: not your
+  question, the rest of Home, or the tools the assistant used.
+
+Each message has its own link, and sharing one doesn't affect another. Open **Share message** on the
+same reply again to replace the link or stop sharing it. If the exchange is later moved to a thread,
+links to its messages stop working. The share icon in Home's own header shares all of Home,
+including what comes later, and says so before you create a link.
+
 **Moving an exchange into a thread.** **Move to thread…**, beside **Continue in a thread**, moves
 the whole exchange (your message, what the assistant did and its reply) into a thread you already
 have. Home keeps a **Moved to …** note in its place; click it to open the thread. Only threads whose
@@ -406,6 +419,12 @@ You can start and fill threads yourself:
   working.
 
 If the server refuses one of these, an alert says why, and nothing changes.
+
+To share from Home, long-press a message and choose **Share Message**, or long-press a thread's card
+and choose **Share Thread**. Inside a thread, **Share Thread** is in the **⋯** menu. Choose **Create
+Link** and pick where to send it; the same sheet replaces the link or stops sharing. A message link
+shows that message and its attachments and nothing else, and a thread link shows the whole thread,
+including messages added later.
 
 **Getting content in:** share a supported file from the iOS share sheet or Files "Open In" and it
 opens a new Chat draft with the file attached. A copied image can be pasted with the paste button

@@ -23,6 +23,7 @@ import {
   FolderInputIcon,
   GitBranchPlusIcon,
   Loader2Icon,
+  Share2Icon,
   StickyNoteIcon,
   SquareIcon,
   ThumbsDownIcon,
@@ -650,6 +651,7 @@ const AssistantMessage: React.FC = () => {
     moved_to_thread?: string;
     started_thread?: string;
     internal_id?: number;
+    has_own_attachments?: boolean;
     turn_id?: string;
     feedback?: TurnRating;
     unrateable?: boolean;
@@ -774,6 +776,7 @@ const AssistantMessage: React.FC = () => {
                 feedback={custom.feedback}
                 unrateable={Boolean(custom.unrateable)}
                 canCopy={hasCopyableContent}
+                canShare={hasCopyableContent || Boolean(custom.has_own_attachments)}
                 servedBy={
                   reasoningInfo
                     ? {
@@ -915,8 +918,10 @@ const AssistantActionBar: React.FC<{
   feedback?: TurnRating;
   unrateable: boolean;
   canCopy: boolean;
+  /** Text to read or an attachment of its own, unlike a turn's tool-only step. */
+  canShare: boolean;
   servedBy?: ServedBy;
-}> = ({ internalId, turnId, isEcho, feedback, unrateable, canCopy, servedBy }) => {
+}> = ({ internalId, turnId, isEcho, feedback, unrateable, canCopy, canShare, servedBy }) => {
   const aui = useAui();
   const homeActions = useHomeTurnActions();
   const turnFeedback = useTurnFeedback();
@@ -1012,7 +1017,7 @@ const AssistantActionBar: React.FC<{
 
   // A reply of only images or tool results has nothing to copy but can still
   // be rated.
-  if (!canCopy && !canRate && !canReveal) {
+  if (!canCopy && !canRate && !canReveal && !(homeActions && canShare)) {
     return null;
   }
 
@@ -1173,6 +1178,20 @@ const AssistantActionBar: React.FC<{
                 data-testid="move-to-thread"
               >
                 <FolderInputIcon size={12} aria-hidden="true" />
+              </TooltipIconButton>
+            )}
+            {canShare && (
+              /* @ts-expect-error - TooltipIconButton JSX component */
+              <TooltipIconButton
+                tooltip="Share message"
+                aria-label="Share message"
+                size="icon"
+                variant="ghost"
+                className="h-7 w-7 rounded-lg"
+                onClick={() => homeActions.shareMessage(target())}
+                data-testid="share-message"
+              >
+                <Share2Icon size={12} aria-hidden="true" />
               </TooltipIconButton>
             )}
           </>

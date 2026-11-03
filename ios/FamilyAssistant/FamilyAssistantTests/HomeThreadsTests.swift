@@ -1951,6 +1951,59 @@ final class HomeThreadsTests: XCTestCase {
         XCTAssertNil(actions(unsaved), "An unsaved bubble has no id the server knows.")
     }
 
+    func testAFinishedHomeMessageCanBeSharedAlone() {
+        let home = makeViewModel(conversationID: "home", role: .home)
+
+        XCTAssertEqual(
+            home.shareTarget(for: homeMessage(id: 2, role: .assistant, turnID: "a")),
+            .message(conversationID: "home", messageID: 2)
+        )
+    }
+
+    func testAReplyThatIsOnlyAnAttachmentCanBeShared() {
+        let home = makeViewModel(conversationID: "home", role: .home)
+        var picture = homeMessage(id: 2, role: .assistant, turnID: "a")
+        picture.text = ""
+        picture.attachments = [
+            ChatAttachment(
+                id: "picture",
+                attachmentID: "picture",
+                type: .image,
+                name: "picture.png",
+                contentURL: "/api/attachments/picture",
+                mimeType: "image/png",
+                size: nil,
+                localFileURL: nil,
+                uploadState: .uploaded,
+                errorMessage: nil
+            )
+        ]
+
+        XCTAssertEqual(home.shareTarget(for: picture), .message(conversationID: "home", messageID: 2))
+    }
+
+    func testAMessageWithNothingOfItsOwnCannotBeShared() {
+        let home = makeViewModel(conversationID: "home", role: .home)
+        var moved = homeMessage(id: 3, role: .assistant, turnID: "a")
+        moved.movedToThread = "t1"
+        var started = homeMessage(id: 4, role: .assistant, turnID: "b")
+        started.startedThread = "t1"
+        let unsaved = ChatMessage(
+            id: "local_assistant_x", role: .assistant, text: "…", createdAt: Date(), toolCalls: [], attachments: [],
+            isLoading: true, status: .running, processingProfileID: nil, errorTraceback: nil, turnID: "c"
+        )
+
+        XCTAssertNil(home.shareTarget(for: moved), "A marker is a pointer, not a message.")
+        XCTAssertNil(home.shareTarget(for: started), "A marker is a pointer, not a message.")
+        XCTAssertNil(home.shareTarget(for: unsaved), "An unsaved bubble has no id the server knows.")
+    }
+
+    func testOnlyHomeOffersMessageSharing() {
+        let pushed = makeViewModel(conversationID: "t1", role: .pushed)
+
+        XCTAssertNil(pushed.shareTarget(for: homeMessage(id: 1, role: .assistant, turnID: "a")))
+    }
+
     func testOnlyHomeOffersThreadActions() {
         let pushed = makeViewModel(conversationID: "t1", role: .pushed)
 

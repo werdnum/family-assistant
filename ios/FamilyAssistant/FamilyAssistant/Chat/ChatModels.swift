@@ -987,6 +987,32 @@ struct ChatActiveTurnInfo: Decodable, Equatable {
     }
 }
 
+/// What a read-only link names. A thread is a conversation to the server; the
+/// difference is only in what the owner is told.
+enum ConversationShareTarget: Hashable {
+    case conversation(String)
+    case thread(String)
+    case message(conversationID: String, messageID: Int)
+
+    var noun: String {
+        switch self {
+        case .conversation: "conversation"
+        case .thread: "thread"
+        case .message: "message"
+        }
+    }
+
+    /// The share resource, relative to the server.
+    func path(encoding encode: (String) -> String) -> String {
+        switch self {
+        case let .conversation(id), let .thread(id):
+            "/api/v1/chat/conversations/\(encode(id))/share"
+        case let .message(conversationID, messageID):
+            "/api/v1/chat/conversations/\(encode(conversationID))/messages/\(messageID)/share"
+        }
+    }
+}
+
 struct ChatConversationMessagesResponse: Decodable {
     let conversationID: String
     let messages: [ChatBackendMessage]
@@ -1001,12 +1027,16 @@ struct ChatConversationMessagesResponse: Decodable {
     let latestUserProfileID: String?
     let conversationKind: ChatConversationKind?
     let thread: ChatThreadSummary?
+    /// What a share link shows: `conversation` or `message`. Sent only by the
+    /// shared transcript endpoint.
+    let shareScope: String?
 
     enum CodingKeys: String, CodingKey {
         case conversationID = "conversation_id"
         case messages
         case count
         case totalMessages = "total_messages"
+        case shareScope = "share_scope"
         case hasMoreBefore = "has_more_before"
         case hasMoreAfter = "has_more_after"
         case activeTurns = "active_turns"
@@ -1029,6 +1059,7 @@ struct ChatConversationMessagesResponse: Decodable {
             rawValue: try container.decodeIfPresent(String.self, forKey: .conversationKind)
         )
         thread = try container.decodeIfPresent(ChatThreadSummary.self, forKey: .thread)
+        shareScope = try container.decodeIfPresent(String.self, forKey: .shareScope)
     }
 }
 
