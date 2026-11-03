@@ -2247,6 +2247,14 @@ final class ChatViewModel {
         )
     }
 
+    /// The link Home's context menu offers for `message`, if it can have one.
+    func shareTarget(for message: ChatMessage) -> ConversationShareTarget? {
+        guard role == .home, let conversationID else {
+            return nil
+        }
+        return ConversationShareTarget.homeMessage(message, in: conversationID)
+    }
+
     /// Whether `message` offers thumbs up and down: the last bubble of a
     /// finished turn, whether that is the reply's text or, for a turn that
     /// ended on a tool call, its tool group. An echoed thread outcome is rated

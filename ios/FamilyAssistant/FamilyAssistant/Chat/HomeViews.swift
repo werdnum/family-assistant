@@ -437,6 +437,8 @@ struct HomeRootView: View {
             }
         case let .move(messageID, quote):
             MoveToThreadSheet(messageID: messageID, quote: quote, homeModel: viewModel, store: store)
+        case let .share(target):
+            ConversationShareSheet(target: target, authManager: authManager)
         }
     }
 
@@ -608,7 +610,7 @@ private struct PushedConversationView: View {
                     if viewModel.isConversationDescribed {
                         IntelligencePickerView(viewModel: viewModel)
                     }
-                    if let thread, thread.canMarkDone {
+                    if let thread {
                         ThreadActionsMenu(thread: thread, store: store)
                     }
                 }
@@ -702,13 +704,21 @@ private struct ThreadActionsMenu: View {
 
     var body: some View {
         Menu {
-            Button {
-                Task { await store.markDone(thread.conversationID) }
-            } label: {
-                Label("Mark Done", systemImage: "checkmark.circle")
+            if thread.canMarkDone {
+                Button {
+                    Task { await store.markDone(thread.conversationID) }
+                } label: {
+                    Label("Mark Done", systemImage: "checkmark.circle")
+                }
+                .disabled(store.markingDone.contains(thread.conversationID))
+                .accessibilityIdentifier("thread-mark-done")
             }
-            .disabled(store.markingDone.contains(thread.conversationID))
-            .accessibilityIdentifier("thread-mark-done")
+            Button {
+                store.presentedSheet = .share(.thread(thread.conversationID))
+            } label: {
+                Label("Share Thread…", systemImage: "square.and.arrow.up")
+            }
+            .accessibilityIdentifier("thread-share")
         } label: {
             Label("Thread Actions", systemImage: "ellipsis.circle")
         }
@@ -885,11 +895,18 @@ struct ThreadCardView: View {
         .buttonStyle(.plain)
         .disabled(thread == nil)
         .contextMenu {
-            if let thread, thread.canMarkDone {
+            if let thread {
+                if thread.canMarkDone {
+                    Button {
+                        Task { await store.markDone(thread.conversationID) }
+                    } label: {
+                        Label("Mark Done", systemImage: "checkmark.circle")
+                    }
+                }
                 Button {
-                    Task { await store.markDone(thread.conversationID) }
+                    store.presentedSheet = .share(.thread(thread.conversationID))
                 } label: {
-                    Label("Mark Done", systemImage: "checkmark.circle")
+                    Label("Share Thread…", systemImage: "square.and.arrow.up")
                 }
             }
         }
