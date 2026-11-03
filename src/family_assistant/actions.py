@@ -106,9 +106,10 @@ WAKE_CONVERSATION_DESTINATIONS = (
 )
 
 # Surfaces whose owners have a web Home: voice sessions are saved as web
-# conversations, and the iOS app is a web client. A Telegram chat is already
-# its own Home, so its wakes stay in it.
-HOME_INTERFACE_TYPES = frozenset({"web", "voice"})
+# conversations, the iOS app is a web client, and an MCP conversation belongs
+# to a web user but has no screen of its own to deliver to. A Telegram chat is
+# already its own Home, so its wakes stay in it.
+HOME_INTERFACE_TYPES = frozenset({"web", "voice", "mcp"})
 
 
 class WakeDestinationError(ValueError):
@@ -177,8 +178,8 @@ def assert_home_allowed(
         )
     if interface_type not in HOME_INTERFACE_TYPES:
         raise WakeDestinationError(
-            "Delivering to Home is only supported for the web app, the iOS app "
-            f"and voice, not from {interface_type}, whose chat is already its "
+            "Delivering to Home is only supported for the web app, the iOS app, "
+            f"voice and MCP clients, not from {interface_type}, whose chat is already its "
             "Home; use 'source' instead."
         )
     if owner_user_id is None:

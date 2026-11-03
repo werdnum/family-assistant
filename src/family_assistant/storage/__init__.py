@@ -46,7 +46,6 @@ from family_assistant.storage.error_logs import error_logs_table
 from family_assistant.storage.events import (
     EventActionType,
     EventSourceType,
-    InterfaceType,
     event_listeners_table,
     recent_events_table,
 )
@@ -366,7 +365,6 @@ __all__ = [
     # Enums
     "EventActionType",
     "EventSourceType",
-    "InterfaceType",
     "calendar_event_provenance_table",
     "confirmation_requests_table",
     "conversation_homes_table",
