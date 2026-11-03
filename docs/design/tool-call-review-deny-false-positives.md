@@ -376,7 +376,9 @@ explicitly the request authorised that:
   running, installing, downloading into it, killing its processes and deleting its files. What gets
   judged is what crosses the walls: a request that carries household values out, and code driving a
   system outside, such as a service on the home network. A fetch whose URL carries household values
-  is a send under the fidelity rule.
+  is a send under the fidelity rule. The same goes for the agent's other resources, its workspace
+  and the workers it started. Within reason, the agent is allowed to hurt itself: cancelling its own
+  worker task or deleting its own scratch files is contained.
 
 - **When unsure, containment decides.** If the judge cannot tell whether a step serves the request,
   the effect settles it:
@@ -468,6 +470,20 @@ and in a session a person handed back it is the judge's only view of a commitmen
 
 The authenticated-site contract, which shows the whole page, stays where it is. There the verdict is
 bounded by the operator's damage envelope, and nothing bounds a plain session.
+
+`browser_exec` has no ref. It runs script, and the elements it touches are named by CSS selectors
+that only mean something against the live page, which a snapshot does not record. The proposed
+extension:
+
+- at review time, take the selector literals from the script's `querySelector` and
+  `querySelectorAll` calls;
+- ask the live page, read-only, what those elements are: role, accessible name, text;
+- render the answer the way the ref target is rendered;
+- for every browser call, also render the current page's URL and title;
+- report a selector computed at runtime as unknown.
+
+That needs the review step to call the browser backend, so it is separate work from the
+snapshot-based ref resolution.
 
 **Verified by:** unit tests for resolution, boundary neutralisation, unknown refs and hidden page
 text; the eval's click and fill cases now carry real snapshot text.
