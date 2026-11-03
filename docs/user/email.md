@@ -31,6 +31,15 @@ The assistant replies by email only when your forwarding sender address is mappe
 the operator. Mail arriving through a recipient-only alias without a mapped sender can still create
 confirmations, but won't get an email reply.
 
+## Who gets the reply
+
+When you email the assistant with other people on the To or Cc line, its reply goes to everyone on
+your email: to you, with the others copied. It never adds anyone you didn't include, and it writes
+knowing who will read it, so it leaves out private household details you didn't ask it to share.
+
+To keep the reply to yourself, Bcc the assistant instead. It then answers only you. Later messages
+about the same email, such as the result of an action you approved, also go only to you.
+
 ## Documents linked from an email
 
 If an email points to a document worth keeping — a shared PDF, a Drive or Dropbox or iCloud link, a

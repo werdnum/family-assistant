@@ -595,6 +595,16 @@ back to arbitrary external senders. This is intentional: the email intake profil
 read tools, so outbound replies require a per-user sender mapping to avoid data exfiltration. It is
 not a general-purpose arbitrary-recipient email tool.
 
+The assistant's answer to an inbound email is a reply-all: it goes to the mapped sender and copies
+every other address on that email's `To` and `Cc` lines, minus the sender and the assistant's own
+addresses (the envelope recipient, `outbound_from_address` and `allowed_recipient_addresses`). If
+none of the assistant's addresses is on those lines, the sender Bcc'd it, and nobody else is copied.
+The turn's prompt names everyone who will read the reply. Other messages on the conversation, such
+as confirmation results, go to the sender only. The copied people never receive anything the sender
+did not address to them, but they do read model output from a turn that can use the profile's read
+tools. That is an accepted residual: the authenticated sender chose them, and the prompt tells the
+model to leave out private household details nobody asked it to share.
+
 | Option                     | Default        | Environment variable             | Sensitive |
 | -------------------------- | -------------- | -------------------------------- | --------- |
 | `outbound_mailgun_api_key` | `null`         | `MAILGUN_OUTBOUND_API_KEY`       | Yes       |
