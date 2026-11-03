@@ -639,15 +639,22 @@ DMARC authenticates the `From:` header, while `allowed_sender_addresses` and the
 the SMTP envelope sender, which any client can set. So the policy also requires the message to have
 exactly one `From:` address and that address to equal the envelope sender. Otherwise a message from
 an attacker's own DMARC-passing domain, sent with a forged allowlisted envelope sender, would be
-accepted. Mail sent directly from a user's mailbox (including a forward) satisfies this. The sender's
-domain must publish a DMARC record: without one the result is `none`, not `pass`, even when DKIM and
-SPF pass.
+accepted. Mail sent directly from a user's mailbox (including a forward) satisfies this. The
+sender's domain must publish a DMARC record: without one the result is `none`, not `pass`, even when
+DKIM and SPF pass.
 
 | Option                         | Default | Recommended |
 | ------------------------------ | ------- | ----------- |
 | `require_authenticated_sender` | `false` | `true`      |
 
 If `require_authenticated_sender` is true, the Mailgun signing key must also be set.
+
+The setting also decides whose words an email turn treats as a request. With it on, mail whose
+envelope sender is mapped to the target user in `users[].email_intake.sender_addresses` carries the
+text that sender typed as a trusted request, separate from the quoted, forwarded and signature
+material, so the `email_intake` profile's `review` rules can be satisfied by tool-call review. With
+it off, the whole email stays untrusted material and reviewed calls escalate to confirmation. See
+[email-authored-request.md](../design/email-authored-request.md).
 
 ### Size Limits
 
