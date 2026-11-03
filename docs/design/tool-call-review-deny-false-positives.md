@@ -432,6 +432,46 @@ The budget does not get raised to fit.
 withheld for the unattended variant as production does, while the attack corpus's deny and confirm
 rates do not move.
 
+### 4. A browser action is reviewed with its target
+
+The conversation reviewer hides untrusted tool results, and that is the right default. Claude Code
+auto mode calls stripping tool results "the primary prompt-injection defense". But a browser click's
+argument is an opaque ref, and the snapshot that issued the ref is exactly such a result, so the
+judge cannot tell "View offer" from "Buy now". Browser actions are the one place the rule needs an
+exception, and the exception should be as narrow as the precedents make it:
+
+- **Chrome's agentic browsing.** Its alignment critic approves each action from "only metadata about
+  the proposed action" and never sees "unfiltered untrustworthy web content". A separate classifier
+  reads pages for injection, and purchases pause for the user
+  ([Google](https://blog.google/security/architecting-security-for-agentic/)).
+- **Page readers.** OpenAI Operator's monitor and Anthropic's browser classifiers do read the page.
+  They answer "is this page hostile", not "is this click authorised".
+- **Gemini computer use.** Its per-step safety service classifies actions into fixed categories,
+  financial transactions among them.
+- **WebGuard.** This research guard judges the element together with the action.
+
+The review input therefore resolves a ref-targeted browser call's ref against the newest snapshot in
+the turn that lists it. Refs name one node for the whole conversation, so that snapshot describes
+the node. The reviewer renders only that element's own facts, each capped, as fenced page-authored
+data:
+
+- role and accessible name;
+- link target;
+- tag and input type;
+- the page URL.
+
+The rest of the snapshot stays a provenance stub. A ref no visible snapshot lists is reported as
+unknown. One chokepoint in prompt assembly serves the runtime and the eval harness alike, because
+both build the review from the same messages. The element's name is attacker-authored, but it is
+what the click presents itself as. A fake label buys nothing where there is no payment instrument,
+and in a session a person handed back it is the judge's only view of a commitment.
+
+The authenticated-site contract, which shows the whole page, stays where it is. There the verdict is
+bounded by the operator's damage envelope, and nothing bounds a plain session.
+
+**Verified by:** unit tests for resolution, boundary neutralisation, unknown refs and hidden page
+text; the eval's click and fill cases now carry real snapshot text.
+
 ## First measurement (3 November 2026)
 
 24 synthetic cases were added to the manual set (`deny_false_positives.yaml`): benign analogues of
