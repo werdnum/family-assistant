@@ -167,6 +167,7 @@ _MID_CONVERSATION_TOOL_CHANGE_MODELS = (
     "claude-fable-5",
     "claude-mythos-5",
     "claude-sonnet-5-5",
+    "claude-haiku-5-5",
 )
 
 
