@@ -79,8 +79,8 @@ Activation becomes part of the conversation rather than turn-local state:
 - A tool message that activated tools (an `activate_tools` call, or a skill loaded with `get_note`
   that declares tools) records the names it activated, persisted with the row.
 - A request's active set is everything activated by the tool messages in its history, so an
-  activation lasts for the rest of the conversation (until the history window drops the message that
-  made it) instead of resetting each turn.
+  activation lasts until the history window compacts or drops the message that made it, instead of
+  resetting each turn.
 - The on-demand catalog in the system prompt always lists every on-demand tool, active or not, so
   activation never changes the system prompt.
 - The loop always passes the full tool list, with on-demand tools marked deferred. That is the one

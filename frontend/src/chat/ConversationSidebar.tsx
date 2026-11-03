@@ -9,12 +9,22 @@ import {
   ThreadUnreadBadge,
   threadStatusText,
 } from './ThreadStateDot';
-import { Conversation, ConversationSidebarProps, ThreadState } from './types';
+import { Conversation, ConversationSidebarProps, ThreadState, ThreadSummary } from './types';
 
 const SEARCH_DEBOUNCE_MS = 300;
 
 // Threads that need the user come first.
-const THREAD_GROUPS: ThreadState[] = ['waiting', 'working', 'failed', 'done'];
+type ThreadGroup = ThreadState | 'quiet';
+
+/** What is moving comes first, and what has settled last. */
+const THREAD_GROUPS: ThreadGroup[] = ['working', 'waiting', 'failed', 'quiet', 'done'];
+const THREAD_GROUP_LABELS: Record<ThreadGroup, string> = {
+  ...THREAD_STATE_LABELS,
+  quiet: 'Quiet',
+};
+
+const threadGroup = (thread: ThreadSummary): ThreadGroup =>
+  thread.state === 'waiting' && thread.quiet ? 'quiet' : thread.state;
 
 interface SearchResults {
   query: string;
@@ -166,7 +176,7 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
   };
 
   const waitingCount = home
-    ? home.threads.filter((thread) => thread.state === 'waiting').length
+    ? home.threads.filter((thread) => threadGroup(thread) === 'waiting').length
     : 0;
   const homeContent = home && (
     <div className="space-y-3" data-testid="home-sidebar">
@@ -212,15 +222,15 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
           </Button>
         </div>
       )}
-      {THREAD_GROUPS.map((state) => {
-        const threads = home.threads.filter((thread) => thread.state === state);
+      {THREAD_GROUPS.map((group) => {
+        const threads = home.threads.filter((thread) => threadGroup(thread) === group);
         if (threads.length === 0) {
           return null;
         }
         return (
-          <section key={state} data-testid={`thread-group-${state}`}>
+          <section key={group} data-testid={`thread-group-${group}`}>
             <h3 className="flex items-center justify-between px-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-              <span>{THREAD_STATE_LABELS[state]}</span>
+              <span>{THREAD_GROUP_LABELS[group]}</span>
               <span>{threads.length}</span>
             </h3>
             <div className="space-y-0.5">
@@ -242,7 +252,7 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
                     <ThreadStateDot state={thread.state} />
                     <span
                       className={`min-w-0 flex-1 truncate ${
-                        state === 'done' ? 'text-muted-foreground' : ''
+                        group === 'done' ? 'text-muted-foreground' : ''
                       }`}
                     >
                       {thread.title}
@@ -260,7 +270,7 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
                     thread.preview && (
                       <span
                         className={`mt-0.5 block truncate pl-4 text-xs ${
-                          state === 'failed' ? 'text-destructive/80' : 'text-muted-foreground'
+                          group === 'failed' ? 'text-destructive/80' : 'text-muted-foreground'
                         }`}
                       >
                         {thread.preview}

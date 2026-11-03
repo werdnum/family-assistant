@@ -1,5 +1,6 @@
 """Tests for the frontend error reporting API endpoint."""
 
+import json
 import logging
 import time
 from collections.abc import AsyncGenerator
@@ -83,6 +84,43 @@ async def test_report_frontend_error_minimal(web_only_assistant: Assistant) -> N
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "reported"
+
+
+@pytest.mark.asyncio
+async def test_a_breadcrumb_reaches_the_log_whole_on_one_line(
+    web_only_assistant: Assistant,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The ring buffer dies with the process, so the log line is the durable copy."""
+    assert web_only_assistant.fastapi_app is not None
+    transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as client:
+        with caplog.at_level(logging.INFO, logger="frontend.telemetry"):
+            response = await client.post(
+                "/api/errors/",
+                json={
+                    "message": "two\nlines",
+                    "url": "familyassistant://ios/Chat.sendStep",
+                    "component_name": "Chat.sendStep",
+                    "error_type": "component_error",
+                    "severity": "info",
+                    "extra_data": {"client_seq": "7"},
+                },
+            )
+    assert response.status_code == 200
+
+    line = next(
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "frontend.telemetry"
+    )
+    assert "\n" not in line
+    logged = json.loads(line)
+    assert logged["message"] == "two\nlines"
+    assert logged["component_name"] == "Chat.sendStep"
+    assert logged["extra_data"] == {"client_seq": "7"}
 
 
 @pytest.mark.asyncio

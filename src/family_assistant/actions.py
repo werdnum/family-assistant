@@ -34,7 +34,9 @@ logger = logging.getLogger(__name__)
 # Restricted profile that event-triggered wakes run under, whether the event
 # listener's action is wake_llm or a script that calls wake_llm(). Event content
 # is untrusted (attacker-influenced email/webhook data), and the woken LLM is the
-# injectable component, so it must not run under a full-trust profile.
+# injectable component, so it must not run under a full-trust profile. The one
+# exception is a listener's wake_llm on an MCP server the operator configured
+# with trusted_events, which runs under the listener's origin profile.
 EVENT_HANDLER_PROFILE_ID = "event_handler"
 
 
@@ -106,9 +108,10 @@ WAKE_CONVERSATION_DESTINATIONS = (
 )
 
 # Surfaces whose owners have a web Home: voice sessions are saved as web
-# conversations, and the iOS app is a web client. A Telegram chat is already
-# its own Home, so its wakes stay in it.
-HOME_INTERFACE_TYPES = frozenset({"web", "voice"})
+# conversations, the iOS app is a web client, and an MCP conversation belongs
+# to a web user but has no screen of its own to deliver to. A Telegram chat is
+# already its own Home, so its wakes stay in it.
+HOME_INTERFACE_TYPES = frozenset({"web", "voice", "mcp"})
 
 
 class WakeDestinationError(ValueError):
@@ -177,8 +180,8 @@ def assert_home_allowed(
         )
     if interface_type not in HOME_INTERFACE_TYPES:
         raise WakeDestinationError(
-            "Delivering to Home is only supported for the web app, the iOS app "
-            f"and voice, not from {interface_type}, whose chat is already its "
+            "Delivering to Home is only supported for the web app, the iOS app, "
+            f"voice and MCP clients, not from {interface_type}, whose chat is already its "
             "Home; use 'source' instead."
         )
     if owner_user_id is None:
@@ -359,6 +362,7 @@ async def execute_action(
     tool_call_review_trigger_type: str | None = None,
     tool_call_review_trigger_definition: str | None = None,
     tool_call_review_trigger_payload_present: bool | None = None,
+    tool_call_review_trigger_payload_trusted: bool = False,
     definition_taint_tracker: TurnTaintTracker | None = None,
     definition_gate: DefinitionGateOutcome | None = None,
 ) -> None:
@@ -380,7 +384,8 @@ async def execute_action(
             execution agree. wake_llm carries it too -- handle_llm_callback
             resolves it fail-loud -- except for event listeners, which the event
             processor stamps with the restricted event_handler profile instead,
-            because the triggering event is untrusted.
+            because the triggering event is untrusted (unless it comes from an
+            MCP server configured with trusted_events).
         created_by_user_id: Creating user for script actions; confirm-gated
             tool calls from the script are addressed to this user.
         definition_taint_tracker: The authoring turn's taint tracker, stamped
@@ -390,6 +395,9 @@ async def execute_action(
         definition_gate: How the gate that admitted the enqueuing call resolved,
             recorded on the enqueued definition record. Absent means no gate
             examined the write, which cures nothing.
+        tool_call_review_trigger_payload_trusted: Whether the trigger payload
+            comes from a source the operator declared trusted, so it adds no
+            taint to the woken turn. Only a trusted_events MCP server sets it.
         allow_wake_llm: Whether the acting profile may wake the LLM. When False,
             a wake_llm action is refused loudly (see assert_wake_llm_allowed)
             rather than being enqueued for a turn that would escape the profile's
@@ -441,6 +449,8 @@ async def execute_action(
                 else False
             ),
         }
+        if tool_call_review_trigger_payload_trusted:
+            payload["tool_call_review_trigger_payload_trusted"] = True
         payload["tool_call_review_definition_record"] = stamp_callback_definition(
             payload["tool_call_review_trigger_definition"],
             tracker=definition_taint_tracker,

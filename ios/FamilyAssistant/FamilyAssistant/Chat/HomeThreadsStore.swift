@@ -39,6 +39,10 @@ final class HomeThreadsStore {
         ThreadSwitcherSections.waitingCount(in: threads)
     }
 
+    var workingThreads: [ChatThreadSummary] {
+        threads.filter { $0.presentationState == .working }
+    }
+
     var sections: ThreadSwitcherSections {
         ThreadSwitcherSections(
             threads: threads,
@@ -246,18 +250,24 @@ struct ThreadActionFailure: Error, Equatable, Identifiable {
 
 /// A sheet Home shows for starting a thread or moving a turn into one.
 enum HomeThreadSheet: Identifiable, Equatable {
+    /// Start a thread from scratch.
+    case newThread
     /// Send-as-thread: pick the profile the composer's message opens a thread on.
     case sendAsThread
     /// Continue in a thread from the Home message `anchorMessageID`.
     case continueFrom(anchorMessageID: Int, quote: String)
     /// Move the Home turn holding `messageID` into a thread.
     case move(messageID: Int, quote: String)
+    /// Manage the read-only link to a thread or a Home message.
+    case share(ConversationShareTarget)
 
     var id: String {
         switch self {
+        case .newThread: "new-thread"
         case .sendAsThread: "send-as-thread"
         case let .continueFrom(anchor, _): "continue-\(anchor)"
         case let .move(messageID, _): "move-\(messageID)"
+        case let .share(target): "share-\(target.path { $0 })"
         }
     }
 }
@@ -411,8 +421,10 @@ enum HomeRouteAction: Equatable {
     case showHome
     /// Open a conversation over Home.
     case open(conversationID: String)
-    /// Open a new ordinary conversation over Home, sending `initialPrompt`.
-    case newConversation(requestID: String, initialPrompt: String?)
+    /// Show Home with the keyboard up, ready for a new message. "New chat"
+    /// from outside the app means this: a new conversation is Home's next
+    /// message, or a thread the user starts from there.
+    case composeInHome
     /// Send a prompt in Home, the way quick questions go.
     case sendInHome(prompt: String)
 
@@ -421,11 +433,11 @@ enum HomeRouteAction: Equatable {
         if route.sharedAttachmentBatchID != nil {
             return .showHome
         }
-        if let requestID = route.newConversationRequestID {
-            return .newConversation(requestID: requestID, initialPrompt: route.initialPrompt)
-        }
         if let prompt = route.initialPrompt, !prompt.isEmpty {
             return .sendInHome(prompt: prompt)
+        }
+        if route.newConversationRequestID != nil {
+            return .composeInHome
         }
         if let conversationID = route.conversationID, conversationID != homeConversationID {
             return .open(conversationID: conversationID)

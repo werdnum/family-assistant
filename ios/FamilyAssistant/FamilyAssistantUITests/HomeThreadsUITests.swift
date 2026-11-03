@@ -211,6 +211,57 @@ final class HomeThreadsUITests: XCTestCase {
         )
     }
 
+    func testHomeShowsTheWorkingThreadAndOpensIt() {
+        let bar = element("home-working-threads")
+        XCTAssertTrue(bar.waitForExistence(timeout: Self.readyTimeout))
+        XCTAssertTrue(bar.label.contains("Melbourne flights"), bar.label)
+        attachScreenshot(named: "home-working-bar")
+        bar.tap()
+
+        XCTAssertTrue(element("thread-title").waitForExistence(timeout: 20))
+    }
+
+    func testHomeStartsThreadsAndNeverAConversationBesideThem() {
+        let newThread = element("home-new-thread")
+        XCTAssertTrue(newThread.waitForExistence(timeout: Self.readyTimeout))
+        XCTAssertFalse(app.buttons["New Chat"].exists)
+        newThread.tap()
+
+        let prompt = element("start-thread-prompt")
+        XCTAssertTrue(prompt.waitForExistence(timeout: 10))
+        app.buttons["Cancel"].tap()
+
+        app.buttons["threads-button"].tap()
+        XCTAssertTrue(element("thread-switcher-new-thread").waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["New Chat"].exists, "The chat list starts threads, not conversations.")
+    }
+
+    func testSendAsThreadWorksAfterTheProfileListFailedAtLaunch() {
+        app.terminate()
+        app.launchEnvironment["FAMILY_ASSISTANT_UITEST_PROFILE_FAILURES"] = "1"
+        app.launch()
+
+        let composer = element("chat-composer")
+        XCTAssertTrue(composer.waitForExistence(timeout: Self.readyTimeout))
+        XCTAssertTrue(app.staticTexts["On it. I've started a thread for the quotes."].waitForExistence(timeout: 20))
+        composer.tap()
+        composer.typeText("Compare heat pumps")
+
+        let send = app.buttons["chat-send-button"]
+        XCTAssertTrue(waitForEnabled(send))
+        send.press(forDuration: 1.2)
+        let profile = element("start-thread-profile")
+        tapMenuItem(app.buttons["Send To…"], until: profile)
+        attachScreenshot(named: "send-as-thread-sheet")
+
+        let confirm = app.buttons["start-thread-confirm"]
+        XCTAssertTrue(waitForEnabled(confirm), "The sheet fetches the list the launch missed.")
+        confirm.tap()
+
+        XCTAssertTrue(element("thread-title").waitForExistence(timeout: 20))
+        XCTAssertTrue(app.staticTexts["Native reply to Compare heat pumps"].waitForExistence(timeout: 20))
+    }
+
     func testContinueInAThreadShowsWhereItStartedFrom() {
         let answer = app.staticTexts["Yes, bins go out Tuesday night."]
         XCTAssertTrue(answer.waitForExistence(timeout: Self.readyTimeout))

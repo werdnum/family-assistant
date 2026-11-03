@@ -99,11 +99,12 @@ class FrontendTelemetryBuffer:
         """Initialize the buffer with the correct max size."""
         self._buffer = deque(maxlen=self.max_size)
 
-    def add(self, record: FrontendTelemetryRecord) -> None:
+    def add(self, record: FrontendTelemetryRecord) -> FrontendTelemetryRecord:
         """Add a telemetry record. Thread-safe; evicts the oldest entry when full.
 
         Each field is clamped to a size cap first, so a single attacker-controlled
-        report cannot dominate the buffer's retained memory.
+        report cannot dominate the buffer's retained memory. Returns the clamped
+        record.
         """
         clamped = replace(
             record,
@@ -117,6 +118,7 @@ class FrontendTelemetryBuffer:
         )
         with self._lock:
             self._buffer.append(clamped)
+        return clamped
 
     def get_recent(
         self,

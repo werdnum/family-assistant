@@ -1,7 +1,7 @@
 """Every adapter renders a compacted turn from its messages alone.
 
 A compacted turn carries no provider replay state, so each adapter has to
-produce a well-formed request from the stub text and the activation pair.
+produce a well-formed request from the stub text alone.
 """
 
 from __future__ import annotations
@@ -165,42 +165,24 @@ class TestAnthropic:
         texts = [b["text"] for b in _anthropic_blocks(params, "assistant", "text")]
         assert any(STUB in text and text.endswith(ANSWER) for text in texts)
 
-    def test_the_activation_call_and_result_are_paired(
+    def test_no_tool_exchange_survives_compaction(
         self, client: AnthropicClient
     ) -> None:
         params = client._assemble_request(
             _compacted_history(), TOOLS, "auto", streaming=True
         )
 
-        uses = _anthropic_blocks(params, "assistant", "tool_use")
-        results = _anthropic_blocks(params, "user", "tool_result")
-        assert [(use["id"], use["name"]) for use in uses] == [("c1", "activate_tools")]
-        assert [result["tool_use_id"] for result in results] == ["c1"]
+        assert not _anthropic_blocks(params, "assistant", "tool_use")
+        assert not _anthropic_blocks(params, "user", "tool_result")
 
-    def test_the_activated_tool_is_added_after_its_result(
+    def test_the_activated_tool_is_no_longer_added(
         self, client: AnthropicClient
     ) -> None:
         params = client._assemble_request(
             _compacted_history(), TOOLS, "auto", streaming=True
         )
 
-        messages = params["messages"]
-        result_index = next(
-            i
-            for i, m in enumerate(messages)
-            if m["role"] == "user"
-            and isinstance(m["content"], list)
-            and any(b["type"] == "tool_result" for b in m["content"])
-        )
-        addition = messages[result_index + 1]
-        assert addition["role"] == "system"
-        assert addition["content"] == [
-            {
-                "type": "tool_addition",
-                "tool": {"type": "tool_reference", "name": "web_fetch"},
-            }
-        ]
-        assert [t["name"] for t in params["tools"]] == ["activate_tools", "web_fetch"]
+        assert not any(m["role"] == "system" for m in params["messages"])
 
     def test_roles_alternate_and_end_on_the_new_user_message(
         self, client: AnthropicClient
@@ -209,8 +191,8 @@ class TestAnthropic:
             _compacted_history(), TOOLS, "auto", streaming=True
         )
 
-        roles = [m["role"] for m in params["messages"] if m["role"] != "system"]
-        assert roles == ["user", "assistant", "user", "assistant", "user"]
+        roles = [m["role"] for m in params["messages"]]
+        assert roles == ["user", "assistant", "user"]
 
     def test_the_attachment_is_a_text_reference_not_an_image(
         self, client: AnthropicClient
@@ -225,7 +207,7 @@ class TestAnthropic:
             for block in _anthropic_blocks(params, "user", "text")
         )
 
-    def test_a_model_without_mid_conversation_changes_offers_the_activated_tool(
+    def test_a_model_without_mid_conversation_changes_withholds_the_tool(
         self,
     ) -> None:
         client = AnthropicClient(api_key="test-key", model="claude-sonnet-4-6")
@@ -234,8 +216,7 @@ class TestAnthropic:
             _compacted_history(), TOOLS, "auto", streaming=True
         )
 
-        assert [t["name"] for t in params["tools"]] == ["activate_tools", "web_fetch"]
-        assert all("defer_loading" not in t for t in params["tools"])
+        assert [t["name"] for t in params["tools"]] == ["activate_tools"]
 
 
 class TestOpenAIResponses:
@@ -262,16 +243,13 @@ class TestOpenAIResponses:
         assert not any(item.get("type") == "reasoning" for item in items)
         assert not any("status" in item for item in items)
 
-    def test_the_activation_call_and_output_are_paired(
-        self, client: OpenAIClient
-    ) -> None:
+    def test_no_tool_exchange_survives_compaction(self, client: OpenAIClient) -> None:
         items = client._messages_to_responses_input(_compacted_history())
 
-        calls = [i for i in items if i.get("type") == "function_call"]
-        outputs = [i for i in items if i.get("type") == "function_call_output"]
-        assert [(c["call_id"], c["name"]) for c in calls] == [("c1", "activate_tools")]
-        assert [o["call_id"] for o in outputs] == ["c1"]
-        assert items.index(calls[0]) < items.index(outputs[0])
+        assert not any(
+            item.get("type") in {"function_call", "function_call_output"}
+            for item in items
+        )
 
     def test_the_attachment_is_a_text_reference_not_an_image(
         self, client: OpenAIClient
@@ -287,12 +265,11 @@ class TestOpenAIResponses:
         assert not any(part["type"] == "input_image" for part in user_parts)
         assert any("att-1" in part.get("text", "") for part in user_parts)
 
-    def test_the_activated_tool_is_offered(self) -> None:
+    def test_the_activated_tool_is_withheld(self) -> None:
         offered = resolve_deferred_tools(TOOLS, _compacted_history())
 
         assert offered is not None
-        assert [tool_name(tool) for tool in offered] == ["activate_tools", "web_fetch"]
-        assert all("defer_loading" not in tool for tool in offered)
+        assert [tool_name(tool) for tool in offered] == ["activate_tools"]
 
 
 class TestGemini:
@@ -312,22 +289,15 @@ class TestGemini:
         contents = self._contents(client)
 
         roles = [content.role for content in contents]
-        assert roles == ["user", "model", "user", "model", "user"]
+        assert roles == ["user", "model", "user"]
 
-    def test_the_function_call_and_response_are_paired(
+    def test_no_tool_exchange_survives_compaction(
         self, client: GoogleGenAIClient
     ) -> None:
         contents = self._contents(client)
 
         parts = [part for content in contents for part in content.parts or []]
-        calls = [p.function_call for p in parts if p.function_call]
-        responses = [p.function_response for p in parts if p.function_response]
-        assert [c.name for c in calls] == ["activate_tools"]
-        assert [r.name for r in responses] == ["activate_tools"]
-        assert contents[1].parts is not None
-        assert contents[1].parts[0].function_call is not None
-        assert contents[2].parts is not None
-        assert contents[2].parts[0].function_response is not None
+        assert not any(p.function_call or p.function_response for p in parts)
 
     def test_the_stub_and_answer_are_a_model_text_part(
         self, client: GoogleGenAIClient
@@ -343,7 +313,7 @@ class TestGemini:
         ]
         assert any(STUB in text and text.endswith(ANSWER) for text in texts)
 
-    def test_the_activated_tool_is_offered(self, client: GoogleGenAIClient) -> None:
+    def test_the_activated_tool_is_withheld(self, client: GoogleGenAIClient) -> None:
         offered = resolve_deferred_tools(TOOLS, _compacted_history())
 
         declarations = [
@@ -351,4 +321,4 @@ class TestGemini:
             for tool in client._prepare_all_tools(offered)
             for declaration in getattr(tool, "function_declarations", None) or []
         ]
-        assert declarations == ["activate_tools", "web_fetch"]
+        assert declarations == ["activate_tools"]

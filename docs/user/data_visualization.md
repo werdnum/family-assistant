@@ -16,8 +16,8 @@ returning without a chart is not acceptable.
 
 Data can come from multiple sources:
 
-1. **Delegated attachments**: When the default assistant delegates to you, large datasets may appear
-   as JSON schema with an attachment ID rather than full content (for files >10KB)
+1. **Large tool results**: Large datasets may appear as JSON schema with an attachment ID rather
+   than full content (for files >10KB)
 2. **URLs**: Fetch data yourself if given a URL using available tools
 3. **Home Assistant**: Use `download_state_history` or other Home Assistant tools to fetch data
 4. **User-provided**: Small inline data from the user's message
@@ -296,7 +296,7 @@ When you receive a large JSON dataset (>10KB), it will appear as:
 
 ```python
 # User asks: "Chart pool temperature over last 5 days"
-# Default assistant calls download_state_history, gets 199KB JSON, delegates to you
+# download_state_history returns 199KB of JSON
 
 # You receive:
 # [System: Large data attachment (199KB)]

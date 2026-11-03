@@ -175,6 +175,7 @@ private final class UITestBackendURLProtocol: URLProtocol {
     private static var followConnectCount = 0
     private static var activityConnectCount = 0
     private static var burst503Count = 0
+    private static var failedProfileLoads = 0
     // Threads the user marked done, and threads they have read, this launch.
     private static var markedDoneThreadIDs: Set<String> = []
     private static var readThreadIDs: Set<String> = []
@@ -266,6 +267,20 @@ private final class UITestBackendURLProtocol: URLProtocol {
 
     /// Threads are on only when a test asks for them, so every other test sees
     /// the server it always has: no Home, and the conversation list.
+    /// Fails the first `FAMILY_ASSISTANT_UITEST_PROFILE_FAILURES` profile
+    /// loads, as a server that timed out at launch would.
+    private static func shouldFailProfileLoad() -> Bool {
+        let failures = ProcessInfo.processInfo.environment["FAMILY_ASSISTANT_UITEST_PROFILE_FAILURES"]
+            .flatMap(Int.init) ?? 0
+        return lock.withLock {
+            guard failedProfileLoads < failures else {
+                return false
+            }
+            failedProfileLoads += 1
+            return true
+        }
+    }
+
     private static var threadsEnabled: Bool {
         ProcessInfo.processInfo.environment["FAMILY_ASSISTANT_UITEST_THREADS"] == "1"
     }
@@ -562,6 +577,9 @@ private final class UITestBackendURLProtocol: URLProtocol {
         case ("POST", "/api/auth/logout"):
             return .json("{}")
         case ("GET", "/api/v1/profiles"):
+            if shouldFailProfileLoad() {
+                return .json(#"{"detail":"unavailable"}"#, statusCode: 500)
+            }
             return .json(
                 """
                 {

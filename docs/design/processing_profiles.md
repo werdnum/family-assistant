@@ -90,38 +90,23 @@ A top-level list `service_profiles` will define individual profiles. Each profil
   A profile's own instructions carry only a `[Active Processing Profile: <id>]` header ahead of that
   prompt.
 - `processing_config` (object, optional): Overrides for `ProcessingServiceConfig` settings. This
-  includes `delegation_security_level` and `include_system_docs`.
+  includes `delegation_security_level`.
 - `tools_config` (object, optional): Operational tool settings such as timeouts and on-demand
   catalog hints.
 - `tools_policy` (object, optional): Allow, deny, and confirmation rules for the profile's tools.
 
-### 3.2.0. `include_system_docs`
+### 3.2.0. Profile or skill?
 
-Each profile's `processing_config` can specify an `include_system_docs` list to automatically load
-user documentation files from `docs/user/` and append them to the system prompt:
+A specialist whose difference from the default assistant is instructions plus a few extra tools is a
+built-in skill (`src/family_assistant/skills/builtin/`) with `activate_tools`, not a profile: the
+default assistant loads it when the request calls for it and keeps the conversation's context. A
+profile earns its place with something a skill cannot express: a different model or backend, a
+narrower tool or data boundary (taint, confinement, untrusted input), a channel, or a delegation
+topology. Image generation, charts and camera investigation became skills on that basis.
 
-```yaml
-processing_config:
-  include_system_docs:
-    - "USER_GUIDE.md"
-    - "scripting.md"
-  prompts:
-    system_prompt: "You are a helpful assistant."
-```
-
-The specified documentation files will be loaded at profile initialization and appended to the
-system prompt with markdown headers separating each document. This is useful for providing
-context-specific documentation to profiles without having to manually copy content or use the
-`get_user_documentation_content` tool.
-
-The loaded text goes into `prompts.system_prompt_docs`. Those docs belong to the `system_prompt`
-they are written for: a profile that sets its own `system_prompt` (in `prompts.yaml` or in its
-profile definition) inherits no `system_prompt_docs`, and gets docs only by setting them itself or
-listing `include_system_docs`.
-
-**Security**: The same path validation and security checks from
-`get_user_documentation_content_tool` are applied. Files must be in `docs/user/` (or `DOCS_USER_DIR`
-env var), have `.md` or `.txt` extensions, and cannot use directory traversal (`..`).
+The text in `prompts.system_prompt_docs` belongs to the `system_prompt` it is written for: a profile
+that sets its own `system_prompt` (in `prompts.yaml` or in its profile definition) inherits no
+`system_prompt_docs` unless it sets them itself.
 
 ### 3.2.1. `delegation_security_level`
 

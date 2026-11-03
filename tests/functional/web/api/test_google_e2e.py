@@ -611,10 +611,10 @@ async def test_fail_closed_unconnected_no_user_and_after_disconnect(
     )
 
     db = Database(engine=db_engine)
-    # carol has no connection -> actionable "connect from Settings" error.
+    # carol has no connection -> actionable "connect ... Connected Accounts" error.
     carol_ctx = _exec_context(db, user_id="carol", resolver=resolver, backend=backend)
     carol_result = await gmail_search_tool(carol_ctx, query="anything")
-    assert "connect from settings" in carol_result.get_text().lower()
+    assert "connected accounts" in carol_result.get_text().lower()
 
     # No acting user (system/ambient) -> fail closed.
     ambient_ctx = _exec_context(db, user_id=None, resolver=resolver, backend=backend)
@@ -631,7 +631,7 @@ async def test_fail_closed_unconnected_no_user_and_after_disconnect(
     db = Database(engine=db_engine)
     alice_ctx = _exec_context(db, user_id="alice", resolver=resolver, backend=backend)
     after = await gmail_search_tool(alice_ctx, query="anything")
-    assert "connect from settings" in after.get_text().lower()
+    assert "connected accounts" in after.get_text().lower()
 
 
 # --------------------------------------------------------------------------- #

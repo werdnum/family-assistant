@@ -136,3 +136,48 @@ def test_complex_tasks_can_create_automations() -> None:
             ).decision
             == ToolPolicyDecision.ALLOW
         ), tool_name
+
+
+@pytest.mark.parametrize(
+    ("removed_profile", "skill_name", "expected_tools"),
+    [
+        pytest.param(
+            "artist",
+            "Image Tools",
+            {"generate_image", "transform_image", "highlight_image", "generate_video"},
+            id="artist",
+        ),
+        pytest.param(
+            "data_visualization",
+            "Data Visualization",
+            {"create_vega_chart"},
+            id="data-visualization",
+        ),
+        pytest.param(
+            "camera_analyst",
+            "Camera Integration",
+            {
+                "list_cameras",
+                "search_camera_events",
+                "get_camera_frame",
+                "get_camera_frames_batch",
+                "get_camera_recordings",
+                "get_live_camera_snapshot",
+                "scan_camera_frames",
+                "find_camera_change",
+            },
+            id="camera-analyst",
+        ),
+    ],
+)
+def test_specialist_profile_replaced_by_skill(
+    removed_profile: str, skill_name: str, expected_tools: set[str]
+) -> None:
+    """A specialist that was only a prompt and a tool list is now a skill."""
+    _, profiles = _load_resolved_profiles()
+    assert removed_profile not in {profile.id for profile in profiles}
+
+    skills_by_name = {skill.name: skill for skill in _builtin_skills()}
+    skill = skills_by_name.get(skill_name)
+    assert skill is not None, f"missing built-in skill {skill_name!r}"
+    assert expected_tools <= set(skill.activate_tools)

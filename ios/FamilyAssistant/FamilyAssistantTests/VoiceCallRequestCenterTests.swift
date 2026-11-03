@@ -62,6 +62,7 @@ private final class UnusedVoiceAudioIO: VoiceAudioIO {
     var onCapturedAudio: (@Sendable (Data) -> Void)?
     var onInputLevel: (@Sendable (Double) -> Void)?
     var onEngineFailure: ((Error) -> Void)?
+    var onPlaybackFinished: (() -> Void)?
     var onDiagnostic: ((String, [String: String], Error?) -> Void)?
     var routeSnapshot: VoiceAudioRouteSnapshot { .unavailable }
 

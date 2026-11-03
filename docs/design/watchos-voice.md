@@ -23,13 +23,34 @@ same `URLSession` WebSocket transport as the phone, through the existing injecta
 watchOS denies low-level Network framework connections unless the app qualifies for the
 streaming-audio exception, and it never carries them over the companion iPhone link, so a watch
 whose only route is the paired phone cannot open one at all. The watch UI shows actual microphone
-activity, connection failures, mute and end controls, and the latest transcript. Watch transcripts
-are live captions only; they are not saved to conversation history.
+activity, connection failures, mute and end controls, and the latest transcript. As on the phone,
+the transcript is saved to Chat as its own conversation when the session ends.
 
 The complication is a launcher. Tapping it opens the app and requests a voice session; microphone
 permission and sign-in still apply. Merely displaying the complication never starts recording. An
 ordinary app launch shows a Start button. Leaving the app ends the session; background calling and
 automatic reconnection are outside this change.
+
+## Self-interruption on the watch speaker
+
+Apple's echo canceller needs about 200 ms to converge once playback starts. Until then the
+assistant's voice reaches the microphone, Gemini's activity detection takes it for the user, and the
+reply cuts itself off. On 2026-11-01 the first reply of a call did this about a second in, with
+voice processing on and the mic ducked to 10%, and a later reply in the same call did not.
+
+Assistant audio therefore fades in over 250 ms whenever it starts after silence, as Apple suggests,
+and the microphone sends silence for the first 500 ms of the session's first reply, which is the one
+the canceller has never heard. It sends silence rather than nothing so Gemini's input stays
+continuous. Both live in the shared audio engine, so they apply on iPhone too.
+
+Each reply then records an `audio_echo_levels` breadcrumb: microphone RMS and peak and played RMS,
+in dBFS, for its first 500 ms (`*_first_500ms`) and for the rest (`*_after_500ms`), with the output
+volume and route. Microphone levels are taken after the canceller and before ducking or silencing,
+so the level Gemini received is 20 dB lower while ducked. The `interrupted` breadcrumb carries
+`since_first_playback_ms`.
+
+A gate on the microphone for all playback, manual speech detection and a second canceller are not
+part of this. They become options only if `audio_echo_levels` shows echo after convergence.
 
 ## Milestones and verification
 
@@ -56,9 +77,17 @@ automatic reconnection are outside this change.
   may outlive it, just as phone access tokens do. This is not a strict coupling of the two devices'
   access lifetimes. Changing that server-wide policy is outside the paired-setup feature.
 - No new Apple portal capabilities or shared Keychain/App Group entitlements are needed.
-- Watch voice provides live conversation and captions without transcript persistence. Reliable
-  history across watch suspension requires durable delivery, which is outside the requested voice
-  launcher feature. The watch therefore does not initiate best-effort transcript uploads.
+- The transcript upload is best-effort: it starts when the session ends, and leaving the app ends
+  the session, so the watch can suspend before the upload finishes and lose that transcript. A
+  reliable upload across suspension needs durable delivery, which is outside the voice launcher
+  feature.
+- Someone who talks over the first 500 ms of a session's first reply is not heard, and their words
+  are lost. That is a small window at the start of a single reply, and it is the one where their
+  voice and the echo cannot be told apart.
+- The 500 ms runs from scheduling the reply's first buffer, not from the sound leaving the speaker,
+  so it is shorter than 500 ms of audible playback by the route's output latency. A route change
+  mid-session does not restart it, even if the canceller has to converge again.
+- A reply still playing when the session ends records no `audio_echo_levels` breadcrumb.
 - Use the default voice profile. Profile selection and browsing conversation history remain in the
   phone and web apps.
 - Request a normal audio route; system routing and hardware determine speaker or Bluetooth output.

@@ -27,7 +27,6 @@ from family_assistant.llm.messages import (
     ToolMessage,
     UserMessage,
 )
-from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.processing.message_time import with_sent_at
 from family_assistant.security.taint import introduced_taint_metadata
 from family_assistant.storage.history_compaction import TurnDecision, TurnMode
@@ -39,6 +38,7 @@ if TYPE_CHECKING:
     from zoneinfo import ZoneInfo
 
     from family_assistant.llm.messages import ContentPart, MessageWithMetadata
+    from family_assistant.llm.tool_call import ToolCallItem
 
 # A compaction event brings the window down to this share of its budget, so the
 # next budget event is many turns away rather than one.
@@ -348,10 +348,10 @@ def render_compacted_turn(
     to one of ``consequential_tools`` keeps a line of its own with its call id,
     arguments and outcome, so a later turn can see the action already happened
     without looking it up. Attachments become references by id; errors are one
-    line. A tool call that activated on-demand tools keeps its call and a stub
-    result carrying the activation, so compacting a turn never changes the tool
-    set (``family_assistant.llm.deferred_tools``). No provider replay state
-    survives, so every adapter renders the turn from these messages.
+    line. Activations do not survive: a tool stays active only while the message
+    that activated it, and a skill's instructions with it, is still in history
+    (``family_assistant.llm.deferred_tools``). No provider replay state survives,
+    so every adapter renders the turn from these messages.
 
     The answer carries the taint every dropped row introduced, so a compacted
     turn taints the window exactly as long, and as much, as the verbatim turn.
@@ -359,7 +359,6 @@ def render_compacted_turn(
     rendered: list[LLMMessage] = []
     read_calls: dict[str, list[str]] = {}
     consequential_calls: list[ToolCallItem] = []
-    activating: list[tuple[ToolCallItem, ToolMessage]] = []
     calls_by_id: dict[str, ToolCallItem] = {}
     results_by_id: dict[str, ToolMessage] = {}
     answer: str | None = None
@@ -392,36 +391,8 @@ def render_compacted_turn(
                 answer = message.content
         elif isinstance(message, ToolMessage):
             results_by_id[message.tool_call_id] = message
-            call = calls_by_id.get(message.tool_call_id)
-            if message.activated_tools and call is not None:
-                activating.append((call, message))
         elif isinstance(message, ErrorMessage):
             errors.append(f"I encountered an error: {_one_line(message.content)}")
-
-    for call, result in activating:
-        rendered.extend((
-            AssistantMessage(
-                tool_calls=[
-                    ToolCallItem(
-                        id=call.id,
-                        type=call.type,
-                        function=ToolCallFunction(
-                            name=call.function.name,
-                            arguments=call.function.arguments,
-                        ),
-                    )
-                ],
-            ),
-            ToolMessage(
-                tool_call_id=result.tool_call_id,
-                name=result.name,
-                content=(
-                    "[Result not shown here; "
-                    f"{_lookup(None, [result.tool_call_id])} retrieves it]"
-                ),
-                activated_tools=result.activated_tools,
-            ),
-        ))
 
     lines: list[str] = []
     if calls_by_id:

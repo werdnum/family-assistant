@@ -15,6 +15,41 @@ The assistant provides several scheduling mechanisms:
 4. **Recurring Schedules** - Use the automations framework (`create_automation` with
    `automation_type="schedule"`) for anything that should repeat.
 
+## Choosing a Mechanism
+
+- "Remind me to call mom" → `schedule_reminder`
+- "Don't let me forget the meeting" → `schedule_reminder` with `follow_up=true` (use it for
+  important reminders too)
+- "Check if the download finished in an hour" → `schedule_future_callback`
+- "Schedule a script for tomorrow at 9am" → `schedule_action` with `action_type="script"`
+- "Send me a weather update every morning" → `create_automation` (`automation_type="schedule"`,
+  `action_type="wake_llm"`)
+- "Run a script to clean old notes every Sunday" → `create_automation`
+  (`automation_type="schedule"`, `action_type="script"`)
+- "Stop the daily weather updates" → `list_automations`, then `disable_automation` or
+  `delete_automation`
+
+Never build a recurring schedule out of a chain of one-off callbacks.
+
+## Waiting for Something to Happen
+
+To act once a condition holds ("when the download finishes...", "once the update is deployed..."),
+check once now. If it doesn't hold yet, `schedule_future_callback` to check again later, and put in
+its context the condition, how to check it, the follow-up action and how many checks remain. When
+the callback fires, act if the condition holds, otherwise schedule the next check, and give up with
+a report after a reasonable number of misses. If what you are waiting for arrives as an event (a
+Home Assistant state change, an incoming webhook), an event automation fits better.
+
+## Where Results Land
+
+In the web and iOS apps, when the user has a Home, reminders, callbacks and automations are
+delivered to their Home by default, whichever conversation created them. Pass
+`conversation="source"` (for automations and `schedule_action`, `"conversation": "source"` in
+`action_config`) when the result only makes sense next to the current conversation.
+`"conversation": "new"` (web only) starts afresh at every firing, with no history: a new thread of
+the user's Home when threads are in use, otherwise a new conversation. In Telegram, results always
+arrive in the chat they were created in.
+
 ## Tools
 
 ### schedule_reminder
@@ -73,8 +108,10 @@ Common patterns:
 - Use the user's local time when specifying BYHOUR/BYMINUTE — the system handles timezone conversion
 - Use descriptive names for automations
 - Use scripts for deterministic tasks, wake_llm for tasks requiring judgment
-- Manage one-time reminders/callbacks via `list_pending_callbacks`; manage recurring schedules via
-  `list_automations` or the Automations page in the web UI
+- Manage one-time reminders/callbacks with `list_pending_callbacks`, `modify_pending_callback` and
+  `cancel_pending_callback`; manage recurring schedules with `list_automations` or the Automations
+  page in the web UI, and stop one with `disable_automation` or `delete_automation` rather than
+  cancelling individual runs
 - One-shot automations that can no longer fire — a listener waiting on a worker that has finished or
   died, a schedule whose recurrence is exhausted — are deleted by a nightly cleanup, so a missing
   one-shot automation is expected rather than a fault
