@@ -595,6 +595,16 @@ back to arbitrary external senders. This is intentional: the email intake profil
 read tools, so outbound replies require a per-user sender mapping to avoid data exfiltration. It is
 not a general-purpose arbitrary-recipient email tool.
 
+The assistant's answer to an inbound email is a reply-all: it goes to the mapped sender and copies
+every other address on that email's `To` and `Cc` lines, minus the sender and the assistant's own
+addresses (the envelope recipient, `outbound_from_address` and `allowed_recipient_addresses`). If
+none of the assistant's addresses is on those lines, the sender Bcc'd it, and nobody else is copied.
+The turn's prompt names everyone who will read the reply. Other messages on the conversation, such
+as confirmation results, go to the sender only. The copied people never receive anything the sender
+did not address to them, but they do read model output from a turn that can use the profile's read
+tools. That is an accepted residual: the authenticated sender chose them, and the prompt tells the
+model to leave out private household details nobody asked it to share.
+
 | Option                     | Default        | Environment variable             | Sensitive |
 | -------------------------- | -------------- | -------------------------------- | --------- |
 | `outbound_mailgun_api_key` | `null`         | `MAILGUN_OUTBOUND_API_KEY`       | Yes       |
@@ -625,11 +635,26 @@ at the `/webhook/mail/mime` URL so Mailgun triggers raw-MIME forwarding. When
 `require_authenticated_sender` is true, requests without `body-mime` fail closed with `401`. DMARC
 failures always fail closed.
 
+DMARC authenticates the `From:` header, while `allowed_sender_addresses` and the user mapping read
+the SMTP envelope sender, which any client can set. So the policy also requires the message to have
+exactly one `From:` address and that address to equal the envelope sender. Otherwise a message from
+an attacker's own DMARC-passing domain, sent with a forged allowlisted envelope sender, would be
+accepted. Mail sent directly from a user's mailbox (including a forward) satisfies this. The
+sender's domain must publish a DMARC record: without one the result is `none`, not `pass`, even when
+DKIM and SPF pass.
+
 | Option                         | Default | Recommended |
 | ------------------------------ | ------- | ----------- |
 | `require_authenticated_sender` | `false` | `true`      |
 
 If `require_authenticated_sender` is true, the Mailgun signing key must also be set.
+
+The setting also decides whose words an email turn treats as a request. With it on, mail whose
+envelope sender is mapped to the target user in `users[].email_intake.sender_addresses` carries the
+text that sender typed as a trusted request, separate from the quoted, forwarded and signature
+material, so the `email_intake` profile's `review` rules can be satisfied by tool-call review. With
+it off, the whole email stays untrusted material and reviewed calls escalate to confirmation. See
+[email-authored-request.md](../design/email-authored-request.md).
 
 ### Size Limits
 
@@ -1049,8 +1074,8 @@ request *is* the authorization. A model choosing it is not, which is why the shi
 `default_assistant` allows `standard`, `deep` and `frontier` but admits only `standard` and `deep`
 automatically.
 
-The shipped presets — `gpt_6_astra`, `gpt_6_1_sol`, `claude_opus_5_5`, `claude_fable_5_1`, `kimi_k3`
-and `gemini_4_argon` — are listed once, in `default_profile_settings.delegation_model_tiers`, so a
+The shipped presets — `gpt_6_astra`, `gpt_6_1_sol`, `claude_opus_5_5`, `claude_sonnet_5_5`,
+`claude_haiku_5_5`, `claude_fable_5_1`, `kimi_k3` and `gemini_4_argon` — are listed once, in `default_profile_settings.delegation_model_tiers`, so a
 delegating model may pin any profile that has a tier to any of them without a confirmation ("run
 complex_tasks on Gemini 4 Argon"). A profile that names an inline model drops the inherited list,
 and a profile that declares its own replaces it, so `delegation_model_tiers: []` keeps a profile off
@@ -1496,11 +1521,11 @@ half its budget, so the next one is many turns away:
 
 A stub is only left for a profile that can follow it: a profile without `get_message_history` (or,
 for images, `delegate_to_service`, the only way to have a model look at one again) keeps such turns
-verbatim or drops them whole. A compacted turn keeps the on-demand tools it activated and the taint
-of everything it read. Each event's decision is recorded in `history_compaction_events`, and later
-requests render from it, so nothing about a compacted turn is stored beyond the decision. If a
-provider still rejects a request as too long, the window is compacted once more to half its size and
-the request retried.
+verbatim or drops them whole. A compacted turn keeps the taint of everything it read, but not the
+on-demand tools it activated, which the model can activate again. Each event's decision is recorded
+in `history_compaction_events`, and later requests render from it, so nothing about a compacted turn
+is stored beyond the decision. If a provider still rejects a request as too long, the window is
+compacted once more to half its size and the request retried.
 
 An inlined image counts as 4,000 characters. Cached history is cheap on every current provider, so
 the budget is a setting for the model's attention rather than for cost; tune it from the prompt and
@@ -2211,7 +2236,7 @@ tool_call_review:
       provider: "google"
       model: "gemini-3.8-flash"
   timeout_seconds: 30.0
-  max_reviews_per_turn: 25
+  max_reviews_per_turn: 60
   escalation:
     consecutive_denials: 3
     total_denials_per_turn: 20
@@ -2234,6 +2259,14 @@ a tail past 15 s, and the 30 s default leaves room for a fallback review rather 
 a fail-closed verdict. Lower it only with evidence from `taint_audit_events` that the configured
 model returns sooner, and read it alongside `max_reviews_per_turn`, which bounds how many such waits
 one turn can incur.
+
+`max_reviews_per_turn` is a runaway guard rather than a quota: once a turn has used it, every
+further reviewed call takes its caller's fallback, which is normally a confirmation, so one long
+task becomes a run of prompts. It counts reviews, not tool calls, and a script's calls inherit its
+single program review. The default of 60 sits above the longest ordinary turns measured in
+production (49 reviews for a `complex_tasks` turn running 42 sandbox commands one by one, 27 for a
+multi-step train search). Lower it only to cap reviewer cost or latency, knowing that the turns that
+hit it then prompt per call.
 
 The reviewer gets no tools. It receives only explicitly trusted-tier conversation rows, an
 audit-safe provenance digest, the matched policy context, and the complete proposed arguments fenced
@@ -3066,7 +3099,8 @@ The two search tools judge each frame with [TypeSafe Jev](#typesafe-jev) where i
 with the turn's model otherwise. Each configured instance under `plugins.reolink` is one set of
 cameras, keyed by camera id; the instance named `default` serves every profile that doesn't choose
 another. Which profiles may call the tools is up to `tools_policy` — shipped `defaults.yaml` grants
-them only to `camera_analyst`.
+them in `default_profile_settings` as on-demand tools, revealed when the assistant loads the
+built-in Camera Integration skill.
 
 ```yaml
 plugins:
@@ -3367,7 +3401,9 @@ ______________________________________________________________________
 Whether the web and iOS profile pickers offer the profile. Opt-in: a profile without it is treated
 as internal (a delegation target, a background task's profile) and left out of the picker. It only
 controls listing; slash commands, delegation and explicit API requests still reach the profile. The
-default profile is always offered, and remote A2A profiles never are.
+default profile is always offered, and remote A2A profiles never are. The pickers list profiles in
+configuration order, so shipped `defaults.yaml` puts the most-used ones first; a profile an operator
+adds in `config.yaml` comes after the shipped ones.
 
 ```yaml
 service_profiles:
@@ -3647,10 +3683,10 @@ providers from a profile that has this flag on, and has no effect on a profile t
 Every profile's user messages carry the time they were sent regardless of this flag; it is not
 sensitive.
 
-Shipped `defaults.yaml` sets it on six profiles: `default_assistant`, `data_visualization`,
-`camera_analyst`, `event_handler`, `complex_tasks` and `engineer`. Every other profile — including
-`telephone_external`, which serves external callers, and `media_analyst`, which reads
-attacker-controlled media — gets no aggregated context.
+Shipped `defaults.yaml` sets it on four profiles: `default_assistant`, `event_handler`,
+`complex_tasks` and `engineer`. Every other profile — including `telephone_external`, which serves
+external callers, and `media_analyst`, which reads attacker-controlled media — gets no aggregated
+context.
 
 ```yaml
 service_profiles:
@@ -4517,6 +4553,9 @@ That is the complete list. Any other placeholder is an error, and every profile'
 once at startup, so a template naming an unknown one fails the boot rather than the first
 conversation with that profile. Escape literal braces as `{{` and `}}`.
 
+A profile's `voice_system_prompt` replaces its `system_prompt` in browser, iOS and watch voice
+sessions, and takes the same placeholders. A profile without one uses its `system_prompt` there too.
+
 > **⚠️ BREAKING CHANGE for custom prompts**: `{current_time}` and `{aggregated_other_context}` are
 > no longer template variables. Each user message carries the time it was sent, and the context
 > providers' output is appended to the system prompt, so that the system prompt and conversation
@@ -4648,10 +4687,26 @@ protocol revision 2026-07-28 (Tuit does). FA polls `events/poll` over the server
 cluster and no path is exempted from edge authentication. Servers that offer an event type only by
 webhook or stream cannot be used.
 
-There is nothing to configure per server. Each automation polls with its creator's credential for
-that server: their `user_auth` token (identity check included) when the server has one, otherwise
-the server's shared `token`. A person can only watch servers they have a credential for, and only
-ever hears what that server would show them. stdio servers are not polled.
+Each automation polls with its creator's credential for that server: their `user_auth` token
+(identity check included) when the server has one, otherwise the server's shared `token`. A person
+can only watch servers they have a credential for, and only ever hears what that server would show
+them. stdio servers are not polled.
+
+By default an event's payload is untrusted, like a Home Assistant or webhook event: a `wake_llm`
+automation on it runs under the restricted `event_handler` profile, and the payload taints the turn
+`unknown_external`. Set `trusted_events: true` on a server to say its event payloads are as
+trustworthy as its tool output (the operator's call, typically for a server whose tools are already
+tagged `output_trusted`). A `wake_llm` automation on that server then runs under the profile that
+created it, with that profile's tools, and the payload adds no taint. The automation's own
+instruction is still judged by how it was authored. An automation stored with no creating profile
+keeps running as `event_handler`, and so does a script action's `wake_llm()`.
+
+```yaml
+mcp_config:
+  mcpServers:
+    tuit:
+      trusted_events: true
+```
 
 ```yaml
 event_system:

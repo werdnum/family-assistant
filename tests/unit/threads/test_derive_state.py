@@ -7,7 +7,11 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from family_assistant.storage.repositories.conversation_threads import ThreadClose
-from family_assistant.threads.listing import ThreadState, derive_state
+from family_assistant.threads.listing import (
+    ThreadState,
+    derive_state,
+    is_quiet,
+)
 
 pytestmark = pytest.mark.no_db
 
@@ -207,3 +211,20 @@ def test_a_run_failing_after_its_turn_closed_the_thread_is_failed() -> None:
     )
 
     assert (derived.state, derived.close) == ("failed", None)
+
+
+@pytest.mark.parametrize(
+    ("state", "unread_count", "expected"),
+    [
+        ("waiting", 0, True),
+        ("waiting", 1, False),
+        ("waiting", None, False),
+        ("working", 0, False),
+        ("done", 0, False),
+        ("failed", 0, False),
+    ],
+)
+def test_only_a_read_waiting_thread_is_quiet(
+    state: ThreadState, unread_count: int | None, expected: bool
+) -> None:
+    assert is_quiet(state, unread_count=unread_count) is expected

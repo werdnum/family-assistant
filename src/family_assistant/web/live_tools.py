@@ -23,6 +23,7 @@ from family_assistant.tools.infrastructure import (
 from family_assistant.tools.live_meta import (
     CALL_TOOL_TOOL_NAME,
     SEARCH_TOOLS_TOOL_NAME,
+    SKILL_TOOLS_KEY,
     LiveMetaToolsProvider,
 )
 from family_assistant.tools.types import ToolResult
@@ -74,7 +75,8 @@ async def execute_live_tool(
     reach neither reader gets the whole result: slow, but a pointer it cannot
     follow would leave it with nothing. A ``search_tools`` result is never
     converted: it is the schema the model needs to make its next call, so a
-    pointer to it would only cost a round trip to read it back.
+    pointer to it would only cost a round trip to read it back. A skill that
+    hands over its tools is kept whole for the same reason.
 
     A result carrying both ``text`` and ``data`` reaches the model as its text
     alone, which is what the chat loop shows a model too: ``data`` is the same
@@ -100,6 +102,7 @@ async def execute_live_tool(
     threshold_kb = live_config.large_tool_result_threshold_kb
     if (
         name == SEARCH_TOOLS_TOOL_NAME
+        or _hands_over_skill_tools(result)
         or len(content.encode("utf-8")) < threshold_kb * 1024
     ):
         return result
@@ -126,6 +129,14 @@ async def execute_live_tool(
         return result
     attachments = result.attachments if isinstance(result, ToolResult) else None
     return ToolResult(text=stub, attachments=attachments)
+
+
+def _hands_over_skill_tools(result: object) -> bool:
+    return (
+        isinstance(result, ToolResult)
+        and isinstance(result.data, dict)
+        and SKILL_TOOLS_KEY in result.data
+    )
 
 
 async def _can_read_attachments(service: ProcessingService) -> bool:

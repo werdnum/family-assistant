@@ -737,6 +737,34 @@ class NotesRepository(BaseRepository):
             self._logger.exception(f"Database error in get_by_title({title}): {e}")
             raise
 
+    async def get_skill_by_name(
+        self,
+        name: str,
+        *,
+        read_policy: NoteReadPolicy,
+    ) -> NoteModel | None:
+        """Retrieves a skill by the name the skill catalog lists it under.
+
+        Only skills the catalog would list: a note kept out of it must not be
+        able to answer for a name, least of all a built-in skill's.
+        """
+        try:
+            stmt = (
+                select(*_NOTE_COLUMNS)
+                .where(
+                    notes_table.c.is_skill.is_(True),
+                    notes_table.c.skill_name == name,
+                )
+                .order_by(notes_table.c.title)
+            )
+            stmt = self._apply_read_policy(stmt, read_policy)
+            rows = await self._db.fetch_all(stmt)
+        except SQLAlchemyError as e:
+            self._logger.exception(f"Database error in get_skill_by_name({name}): {e}")
+            raise
+        notes = (_row_to_note_model(row) for row in rows)
+        return next((note for note in notes if _is_eligible(note)), None)
+
     async def _record_tier_lowered(
         self,
         txn: DatabaseTransaction,
@@ -1476,7 +1504,7 @@ class NotesRepository(BaseRepository):
                 write_policy,
                 provenance,
             )
-        except (NoteNotFoundError, DuplicateNoteError, NoteWritePolicyError):
+        except NoteNotFoundError, DuplicateNoteError, NoteWritePolicyError:
             raise
         except SQLAlchemyError as e:
             self._logger.exception(

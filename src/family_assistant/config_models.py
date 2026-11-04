@@ -629,7 +629,6 @@ class ProcessingConfig(BaseModel):
     review_guidance: str = ""
     delegation_security_level: DelegationSecurityLevel = DelegationSecurityLevel.CONFIRM
     allowed_delegation_sources: list[str] | None = None
-    include_system_docs: list[str] | None = None
     # Context providers inject the household's own data -- always-loaded notes,
     # the skills catalog, known users -- into the system prompt. A profile
     # that exists to look at one attachment and answer in text has no use for
@@ -1778,6 +1777,12 @@ class MCPServerConfig(BaseModel):
     token: SecretStr | None = None
     user_auth: MCPUserAuthConfig | None = None
     tool_name_prefix: str = Field(default="", pattern=r"^[A-Za-z0-9_-]*$")
+    # Whether this server's events are as trustworthy as its tool output: the
+    # operator's statement that an event's payload carries nothing an outside
+    # party wrote. A wake_llm listener on such an event runs under the profile
+    # that created it, with the payload contributing no taint, instead of the
+    # restricted event_handler profile. Off by default, like every event source.
+    trusted_events: bool = False
 
     @model_validator(mode="after")
     def validate_user_auth(self) -> MCPServerConfig:

@@ -169,6 +169,7 @@ def _history_row(
         is_internal=False,
         echoed_from_conversation_id=None,
         moved_to_conversation_id=None,
+        started_thread_conversation_id=None,
     )
 
 

@@ -253,7 +253,7 @@ async def test_download_state_history_success(
                 and "start_time" in data
                 and "end_time" in data
             )
-        except (json.JSONDecodeError, AttributeError):
+        except json.JSONDecodeError, AttributeError:
             return False
 
     final_llm_response = MockLLMOutput(

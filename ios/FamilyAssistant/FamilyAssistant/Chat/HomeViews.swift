@@ -155,6 +155,42 @@ private struct HeldRoutedPromptNote: View {
     }
 }
 
+/// Atop Home: what is running right now, however it was started. A thread the
+/// user started has no card in Home's transcript, and one with a card scrolls
+/// away. One thread opens directly; several open the chat list (nil).
+private struct WorkingThreadsBar: View {
+    let threads: [ChatThreadSummary]
+    let onSelect: (ChatThreadSummary?) -> Void
+
+    var body: some View {
+        if !threads.isEmpty {
+            Button {
+                onSelect(threads.count == 1 ? threads[0] : nil)
+            } label: {
+                HStack(spacing: 8) {
+                    ThreadStateDot(state: .working)
+                    Text(verbatim: threads.count == 1 ? threads[0].title : "\(threads.count) threads working")
+                        .font(.footnote.weight(.semibold))
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Image(systemName: "chevron.right")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(.bar)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(
+                threads.count == 1 ? "\(threads[0].title), Working" : "\(threads.count) threads working"
+            )
+            .accessibilityIdentifier("home-working-threads")
+        }
+    }
+}
+
 /// Shown when the load that describes Home or a conversation over it failed:
 /// sending stays closed until it loads, so the user needs a way to try again.
 private struct ConversationLoadRetryBanner: View {
@@ -257,6 +293,13 @@ struct HomeRootView: View {
                     VStack(spacing: 0) {
                         ConversationLoadRetryBanner(viewModel: viewModel)
                         HeldRoutedPromptNote(viewModel: viewModel)
+                        WorkingThreadsBar(threads: store.workingThreads) { thread in
+                            if let thread {
+                                open(thread.conversationID)
+                            } else {
+                                showsSwitcher = true
+                            }
+                        }
                     }
                 }
                 .navigationTitle("Home")
@@ -312,6 +355,9 @@ struct HomeRootView: View {
             }
             viewModel.onListRefresh = { [weak store] in
                 await store?.refreshForActivity()
+            }
+            viewModel.startHomeThread = { [weak store] start in
+                await store?.startThreadAndOpen(start) ?? false
             }
             await HomeStartup.run(
                 bootstrap: { await viewModel.bootstrap() },
@@ -391,11 +437,14 @@ struct HomeRootView: View {
             }
         case let .move(messageID, quote):
             MoveToThreadSheet(messageID: messageID, quote: quote, homeModel: viewModel, store: store)
+        case let .share(target):
+            ConversationShareSheet(target: target, authManager: authManager)
         }
     }
 
     private var homePreview: String? {
-        viewModel.messages.last { !$0.text.isEmpty }.map { String($0.text.prefix(200)) }
+        viewModel.messages.last { !$0.text.isEmpty && $0.startedThread == nil }
+            .map { String($0.text.prefix(200)) }
     }
 
     private func open(_ conversationID: String) {
@@ -561,7 +610,7 @@ private struct PushedConversationView: View {
                     if viewModel.isConversationDescribed {
                         IntelligencePickerView(viewModel: viewModel)
                     }
-                    if let thread, thread.canMarkDone {
+                    if let thread {
                         ThreadActionsMenu(thread: thread, store: store)
                     }
                 }
@@ -655,13 +704,21 @@ private struct ThreadActionsMenu: View {
 
     var body: some View {
         Menu {
-            Button {
-                Task { await store.markDone(thread.conversationID) }
-            } label: {
-                Label("Mark Done", systemImage: "checkmark.circle")
+            if thread.canMarkDone {
+                Button {
+                    Task { await store.markDone(thread.conversationID) }
+                } label: {
+                    Label("Mark Done", systemImage: "checkmark.circle")
+                }
+                .disabled(store.markingDone.contains(thread.conversationID))
+                .accessibilityIdentifier("thread-mark-done")
             }
-            .disabled(store.markingDone.contains(thread.conversationID))
-            .accessibilityIdentifier("thread-mark-done")
+            Button {
+                store.presentedSheet = .share(.thread(thread.conversationID))
+            } label: {
+                Label("Share Thread…", systemImage: "square.and.arrow.up")
+            }
+            .accessibilityIdentifier("thread-share")
         } label: {
             Label("Thread Actions", systemImage: "ellipsis.circle")
         }
@@ -733,7 +790,7 @@ enum ThreadStateStyle {
         case .working: workingColor
         case .failed: .red
         case .done: .green
-        case nil: .secondary
+        case .quiet, nil: .secondary
         }
     }
 }
@@ -762,17 +819,35 @@ struct ThreadStateDot: View {
     }
 }
 
-/// A thread in Home's transcript, where the assistant started it: its state,
-/// title and latest line, updated in place. Tapping opens the thread.
+/// A thread in Home's transcript, where it was started: its state, title and
+/// latest line, updated in place. Tapping opens the thread.
 struct ThreadCardView: View {
-    let call: ChatToolCall
+    private let lookUp: () -> ChatThreadSummary?
+    private let requestedTitle: String?
+    private let cardID: String
     let store: HomeThreadsStore
 
     private static let previewLimit = 300
 
+    /// The card of a thread the assistant started.
+    init(call: ChatToolCall, store: HomeThreadsStore) {
+        lookUp = { store.thread(forSourceToolCallID: call.id) }
+        requestedTitle = ChatThreadTool.requestedTitle(from: call.argumentsText)
+        cardID = call.id
+        self.store = store
+    }
+
+    /// The card of a thread the user started.
+    init(threadID: String, store: HomeThreadsStore) {
+        lookUp = { store.thread(conversationID: threadID) }
+        requestedTitle = nil
+        cardID = threadID
+        self.store = store
+    }
+
     var body: some View {
-        let thread = store.thread(forSourceToolCallID: call.id)
-        let title = thread?.title ?? ChatThreadTool.requestedTitle(from: call.argumentsText) ?? "New thread"
+        let thread = lookUp()
+        let title = thread?.title ?? requestedTitle ?? "New thread"
         Button {
             if let thread {
                 store.open(thread.conversationID)
@@ -820,11 +895,18 @@ struct ThreadCardView: View {
         .buttonStyle(.plain)
         .disabled(thread == nil)
         .contextMenu {
-            if let thread, thread.canMarkDone {
+            if let thread {
+                if thread.canMarkDone {
+                    Button {
+                        Task { await store.markDone(thread.conversationID) }
+                    } label: {
+                        Label("Mark Done", systemImage: "checkmark.circle")
+                    }
+                }
                 Button {
-                    Task { await store.markDone(thread.conversationID) }
+                    store.presentedSheet = .share(.thread(thread.conversationID))
                 } label: {
-                    Label("Mark Done", systemImage: "checkmark.circle")
+                    Label("Share Thread…", systemImage: "square.and.arrow.up")
                 }
             }
         }
@@ -833,7 +915,7 @@ struct ThreadCardView: View {
             thread?.accessibilitySummary
                 ?? "\(title), \(ThreadPresentationState.label(for: nil))"
         )
-        .accessibilityIdentifier("thread-card-\(call.id)")
+        .accessibilityIdentifier("thread-card-\(cardID)")
     }
 }
 
@@ -951,6 +1033,14 @@ struct ThreadSwitcherView: View {
                         ThreadSwitcherRow(thread: thread)
                     }
                     .buttonStyle(.plain)
+                    .swipeActions(edge: .trailing) {
+                        if thread.canMarkDone {
+                            Button("Mark Done") {
+                                Task { await store.markDone(thread.conversationID) }
+                            }
+                            .tint(.green)
+                        }
+                    }
                     .accessibilityIdentifier("thread-row-\(thread.conversationID)")
                 }
             }

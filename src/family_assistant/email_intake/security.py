@@ -20,6 +20,7 @@ from family_assistant.email_intake.authentication import (
     DnsResolver,
     EmailAuthenticationResult,
     extract_client_ip,
+    extract_from_address,
     verify_email_authentication,
 )
 
@@ -160,6 +161,16 @@ def verify_sender_authorization(
             "Sender authentication failed DMARC policy "
             f"(dkim={authentication.dkim}, spf={authentication.spf}, "
             f"dmarc={authentication.dmarc})"
+        )
+        raise EmailIntakeSecurityError(msg)
+    # DMARC authenticates the From: header, while the allowlist and user mapping
+    # read the envelope sender, which any SMTP client can set. Binding the two is
+    # what makes a DMARC pass vouch for the allowlisted sender.
+    from_address = normalize_email_address(extract_from_address(raw_mime))
+    if from_address is None or from_address != sender:
+        msg = (
+            f"Authenticated From: address {from_address or '<missing>'} does not "
+            f"match envelope sender {sender or '<missing>'}"
         )
         raise EmailIntakeSecurityError(msg)
     return authentication

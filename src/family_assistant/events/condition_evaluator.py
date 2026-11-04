@@ -105,7 +105,7 @@ _evaluate()
 
             return result
 
-        except (ScriptSyntaxError, ScriptExecutionError):
+        except ScriptSyntaxError, ScriptExecutionError:
             # Re-raise script errors as-is
             raise
         except Exception as e:

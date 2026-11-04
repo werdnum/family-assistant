@@ -6,6 +6,7 @@ docs/design/db-commit-as-you-go.md.
 """
 
 import asyncio
+import pathlib
 import sqlite3
 from contextlib import closing
 from datetime import UTC, datetime
@@ -20,6 +21,7 @@ from family_assistant.storage.database import (
     AmbientTransactionError,
     Database,
     DatabaseTransaction,
+    dispose_engine,
     spawn_detached,
 )
 from family_assistant.storage.notes import notes_table
@@ -271,3 +273,39 @@ async def test_atomic_closure_joins_an_enclosing_transaction(
 
     assert seen == [True]
     assert "joined" not in await _note_titles(Database(engine=db_engine))
+
+
+@pytest.mark.asyncio
+async def test_disposing_an_sqlite_engine_waits_for_running_transactions(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Disposal must not close the StaticPool's one connection under a transaction.
+
+    A bare engine.dispose() here fails most attempts with KeyError: 'connection'
+    from StaticPool.dispose, which is the test-teardown flake that background
+    work outliving a test produced.
+    """
+    for attempt in range(20):
+        engine = create_engine_with_sqlite_optimizations(
+            f"sqlite+aiosqlite:///{tmp_path / f'dispose_{attempt}.sqlite'}"
+        )
+        db = Database(engine=engine)
+        stop = asyncio.Event()
+        ran = asyncio.Event()
+
+        async def keep_querying(
+            db: Database = db, stop: asyncio.Event = stop, ran: asyncio.Event = ran
+        ) -> None:
+            while not stop.is_set():
+                async with db.transaction() as txn:
+                    await txn.execute(select(1))
+                ran.set()
+
+        workers = [asyncio.create_task(keep_querying()) for _ in range(3)]
+        try:
+            await ran.wait()
+            await dispose_engine(engine)
+        finally:
+            stop.set()
+            await asyncio.gather(*workers)
+            await engine.dispose()

@@ -22,6 +22,7 @@ from family_assistant.security.ambient_admission import (
 from family_assistant.security.note_provenance import (
     NoteProvenanceStamp,
     NoteWriteOrigin,
+    is_ambient_eligible,
     note_read_taint,
     stored_note_state,
 )
@@ -34,12 +35,14 @@ from family_assistant.security.taint import (
     merge_taint_state_into_tracker,
     merge_taint_states,
 )
+from family_assistant.skills.frontmatter import parse_frontmatter, skill_activations
 from family_assistant.tools.taint_helpers import merge_artifact_taint_into_context
 from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.storage.database import Database
+    from family_assistant.storage.repositories.notes import NoteModel
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -670,6 +673,37 @@ NOTE_TOOLS_DEFINITION: list[ToolDefinition] = [
 # We need to create wrapper functions that match the tool signatures.
 
 
+def _database_skill_activations(note: NoteModel) -> dict[str, list[str]]:
+    """The activation keys a database skill adds to its ``get_note`` result.
+
+    These name tools the profile's policy already governs, so they widen
+    nothing, but a skill the ambient rule keeps out of the catalog gets no say
+    in what the turn has to hand either.
+    """
+    if not note.is_skill or not is_ambient_eligible(
+        note.provenance_metadata, title=note.title
+    ):
+        return {}
+    frontmatter, _ = parse_frontmatter(note.content)
+    if frontmatter is None:
+        return {}
+    tools, servers = skill_activations(frontmatter)
+    activations: dict[str, list[str]] = {}
+    if tools:
+        activations["activate_tools"] = list(tools)
+    if servers:
+        activations["activate_mcp_servers"] = list(servers)
+    return activations
+
+
+def _shadowed_note_message(title: str) -> str:
+    return (
+        f"A separate note is also titled '{title}', but that name belongs to a "
+        "skill in the catalog, so the skill was returned. Rename the note to "
+        "read it with get_note."
+    )
+
+
 async def get_note_tool(
     title: str,
     exec_context: ToolExecutionContext,
@@ -678,32 +712,45 @@ async def get_note_tool(
     db_context = exec_context.db_context
     attachment_registry = exec_context.attachment_registry
 
-    note = await db_context.notes.get_by_title(
-        title, read_policy=exec_context.note_read_policy()
+    read_policy = exec_context.note_read_policy()
+    # A name the skill catalog lists resolves to the entry it lists: a database
+    # skill, else the file skill it would otherwise show. Only then is the name
+    # read as a note title, so an ordinary note (such as an automatically
+    # created memory note) cannot hide an advertised skill.
+    titled_note = await db_context.notes.get_by_title(title, read_policy=read_policy)
+    note = await db_context.notes.get_skill_by_name(title, read_policy=read_policy)
+    file_skill = (
+        exec_context.note_registry.get_skill_by_name(title, read_policy)
+        if note is None and exec_context.note_registry
+        else None
     )
-    if not note:
-        # Fall back to file-based skills via NoteRegistry
-        if exec_context.note_registry:
-            skill = exec_context.note_registry.get_skill_by_name(
-                title, exec_context.note_read_policy()
-            )
-            if skill:
-                result_data = {
-                    "exists": True,
-                    "title": skill.name,
-                    "content": skill.content,
-                    "include_in_prompt": False,
-                    "attachment_count": 0,
-                    "source": "file",
-                }
-                if skill.activate_tools:
-                    result_data["activate_tools"] = list(skill.activate_tools)
-                if skill.activate_mcp_servers:
-                    result_data["activate_mcp_servers"] = list(
-                        skill.activate_mcp_servers
-                    )
-                return ToolResult(data=result_data)
+    skill_found = note is not None or file_skill is not None
+    shadowed_title = (
+        titled_note.title
+        if skill_found
+        and titled_note is not None
+        and (note is None or note.title != titled_note.title)
+        else None
+    )
+    if file_skill is not None:
+        file_result = {
+            "exists": True,
+            "title": file_skill.name,
+            "content": file_skill.content,
+            "include_in_prompt": False,
+            "attachment_count": 0,
+            "source": "file",
+        }
+        if file_skill.activate_tools:
+            file_result["activate_tools"] = list(file_skill.activate_tools)
+        if file_skill.activate_mcp_servers:
+            file_result["activate_mcp_servers"] = list(file_skill.activate_mcp_servers)
+        if shadowed_title is not None:
+            file_result["shadowed_note"] = _shadowed_note_message(shadowed_title)
+        return ToolResult(data=file_result)
 
+    note = note or titled_note
+    if not note:
         return ToolResult(
             data={
                 "exists": False,
@@ -753,6 +800,9 @@ async def get_note_tool(
             else []
         ),
     }
+    result_data.update(_database_skill_activations(note))
+    if shadowed_title is not None:
+        result_data["shadowed_note"] = _shadowed_note_message(shadowed_title)
 
     # Fetch attachment metadata and content
     attachments: list[ToolAttachment] = []

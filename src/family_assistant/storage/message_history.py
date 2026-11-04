@@ -121,6 +121,9 @@ message_history_table = Table(
     # On a Home row marking where a turn the user moved went: the thread it
     # was moved into. The turn itself is no longer in Home.
     Column("moved_to_conversation_id", String(255), nullable=True),
+    # On a Home row marking a thread the user started: that thread, so clients
+    # draw its card where it was started.
+    Column("started_thread_conversation_id", String(255), nullable=True),
     # Backs the sole-owner predicate behind the conversation list, which asks
     # "does this conversation carry a user message owned by anyone other than
     # the caller?" as a correlated NOT EXISTS. Without it PostgreSQL answers

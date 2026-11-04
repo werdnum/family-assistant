@@ -54,7 +54,7 @@ from family_assistant.services.delegation_delivery import DELEGATION_DELIVERY_TA
 # Import the metadata and the original engine object from your storage base
 from family_assistant.storage import init_db  # Import init_db
 from family_assistant.storage.base import create_engine_with_sqlite_optimizations
-from family_assistant.storage.database import Database
+from family_assistant.storage.database import Database, dispose_engine
 from family_assistant.storage.instrumentation import get_instrumentation
 
 # Explicitly import the module defining the tasks table to ensure metadata registration
@@ -467,8 +467,7 @@ async def db_engine(
         # and would mask a leak.
         await check_db_engine_invariants(engine, request.node.name)
 
-        # Force close all connections before disposing
-        await engine.dispose()
+        await dispose_engine(engine)
 
         logger.info("Test engine disposed.")
         if db_backend == "sqlite" and tmp_name:
@@ -718,7 +717,7 @@ async def pg_vector_db_engine(
     finally:
         logger.info(f"--- PostgreSQL Test DB Teardown ({unique_db_name}) ---")
         await check_db_engine_invariants(engine, request.node.name)
-        await engine.dispose()
+        await dispose_engine(engine)
 
         # Drop the PostgreSQL database
         # ast-grep-ignore: no-raw-create-async-engine - AUTOCOMMIT admin engine for CREATE/DROP DATABASE, never runs application queries
@@ -945,7 +944,7 @@ backtrace_on_debug = True
                     logger.info(f"Radicale server is up on port {port}.")
                     server_ready = True
                     break
-            except (TimeoutError, ConnectionRefusedError):
+            except TimeoutError, ConnectionRefusedError:
                 # ast-grep-ignore: no-time-sleep-in-tests - Retry delay for Radicale startup
                 time.sleep(0.5)
                 if process.poll() is not None:  # Check if process terminated
@@ -1337,67 +1336,6 @@ def llm_replay_config(
         # Other providers use VCR.py (configured via vcr_config fixture)
         # Return empty dict - VCR.py intercepts HTTP automatically
         return {}
-
-
-@pytest.fixture(scope="session")
-def built_frontend() -> Generator[None]:
-    """
-    Ensures the frontend is built before tests that require it.
-    This fixture runs npm install and npm run build if needed.
-    """
-    frontend_dir = pathlib.Path(__file__).parent.parent / "frontend"
-    dist_dir = (
-        pathlib.Path(__file__).parent.parent
-        / "src"
-        / "family_assistant"
-        / "static"
-        / "dist"
-    )
-
-    # Check if we need to build
-    needs_install = not (frontend_dir / "node_modules").exists()
-    needs_build = not (dist_dir / "chat.html").exists()
-
-    if needs_install or needs_build:
-        logger.info("Building frontend for tests...")
-
-        # Run npm install if needed
-        if needs_install:
-            logger.info("Running npm install...")
-            try:
-                subprocess.run(
-                    ["npm", "install"],
-                    cwd=frontend_dir,
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-            except subprocess.CalledProcessError as err:
-                pytest.fail(f"npm install failed: {err.stderr}")
-
-        # Run npm run build
-        if needs_build:
-            logger.info("Running npm run build...")
-            try:
-                subprocess.run(
-                    ["npm", "run", "build"],
-                    cwd=frontend_dir,
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-            except subprocess.CalledProcessError as err:
-                pytest.fail(f"npm run build failed: {err.stderr}")
-
-            logger.info(
-                f"Frontend built successfully. Files in dist: {list(dist_dir.glob('*.html'))}"
-            )
-    else:
-        logger.info("Frontend already built, skipping build step")
-
-    yield
-
-    # No cleanup needed - we want to keep the built files
 
 
 @pytest.fixture(scope="session", autouse=True)

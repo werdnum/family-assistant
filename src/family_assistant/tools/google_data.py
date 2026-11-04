@@ -686,7 +686,7 @@ def _accumulate_text_part(
         return
     try:
         decoded = _decode_base64url(data).decode("utf-8", errors="replace")
-    except (binascii.Error, ValueError):
+    except binascii.Error, ValueError:
         return
     if mime_type == "text/plain":
         plain_parts.append(decoded)
@@ -839,7 +839,7 @@ def _decode_attachment_payload(payload: GoogleJson) -> bytes | None:
         return None
     try:
         return _decode_base64url(data)
-    except (binascii.Error, ValueError):
+    except binascii.Error, ValueError:
         return None
 
 
@@ -997,7 +997,8 @@ async def gmail_create_draft_tool(
         )
         if connection is None:
             raise GoogleApiError(
-                "No Google account is connected — connect from Settings."
+                "No Google account is connected — connect one in the web app under "
+                "Settings → Connected Accounts."
             )
 
         if len(body.encode("utf-8")) > _GMAIL_DRAFT_ATTACHMENT_BYTES_LIMIT:

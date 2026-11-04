@@ -344,6 +344,6 @@ class APNsService:
         reason: str | None = None
         try:
             reason = response.json().get("reason")
-        except (json.JSONDecodeError, ValueError):
+        except json.JSONDecodeError, ValueError:
             reason = response.text or None
         return response.status_code, reason

@@ -219,7 +219,7 @@ def is_human_direct_metadata(metadata: object) -> bool:
         return False
     try:
         tier = SourceTrustTier.from_value(metadata.get("max_tier"))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return False
     return tier is SourceTrustTier.TRUSTED_USER
 
@@ -877,7 +877,7 @@ class TurnTaintState:
 
         try:
             max_tier = SourceTrustTier.from_value(metadata.get("max_tier"))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return cls.malformed_history_state()
         introduced_max_tier = max_tier
         if preserve_origin and "introduced_max_tier" in metadata:
@@ -886,7 +886,7 @@ class TurnTaintState:
                     SourceTrustTier.from_value(metadata.get("introduced_max_tier")),
                     max_tier,
                 )
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 introduced_max_tier = max_tier
 
         state = cls.empty()
@@ -1147,7 +1147,7 @@ def floor_machine_authored_metadata(
             continue
         try:
             tier = SourceTrustTier.from_value(metadata.get(key))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return metadata
         if tier < floor:
             floored[key] = floor.config_value
@@ -2572,7 +2572,7 @@ def _row_window_contribution(metadata: object) -> TurnTaintState:
     if version in _PRE_ORIGIN_TAINT_METADATA_VERSIONS:
         try:
             max_tier = SourceTrustTier.from_value(metadata.get("max_tier"))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return TurnTaintState.malformed_history_state()
         contribution = TurnTaintState.from_metadata(
             amnestied_history_taint_metadata(metadata)
@@ -2666,7 +2666,7 @@ def _parse_nonnegative_int(value: object) -> int | None:
         try:
             converted = int(value)
             return converted if converted >= 0 else None
-        except (OverflowError, ValueError):
+        except OverflowError, ValueError:
             return None
     return None
 
@@ -2691,7 +2691,7 @@ def _source_from_metadata(
         source_type = TaintSourceType.MANUAL
     try:
         tier = SourceTrustTier.from_value(raw_source.get("tier"))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         tier = fallback_tier
     raw_labels = raw_source.get("labels")
     labels = (

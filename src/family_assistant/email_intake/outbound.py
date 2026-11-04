@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from email.utils import getaddresses
 from typing import TYPE_CHECKING, Protocol
 
 import httpx
@@ -50,6 +51,7 @@ class OutboundEmailClient(Protocol):
         subject: str,
         text: str,
         in_reply_to: str | None = None,
+        cc_addresses: Sequence[str] = (),
     ) -> str:
         """Send a text email and return the provider message id."""
         ...
@@ -75,8 +77,50 @@ class EmailConversationTarget:
     email_db_id: int
     target_user_id: str
     to_address: str
+    cc_addresses: tuple[str, ...]
     subject: str
     message_id_header: str
+
+
+def reply_all_cc_addresses(
+    email_row: Mapping[str, object], config: EmailIntakeConfig
+) -> tuple[str, ...]:
+    """Return who besides the sender gets the reply to an inbound email.
+
+    That is everyone on the email's To and Cc lines except the sender and the
+    assistant's own addresses. When none of the assistant's addresses is on
+    those lines, the sender Bcc'd it to keep its part private, so nobody else
+    is copied.
+    """
+    sender = normalize_email_address(_optional_str(email_row.get("sender_address")))
+    own_addresses = {
+        normalized
+        for raw in (
+            _optional_str(email_row.get("recipient_address")),
+            config.outbound_from_address,
+            *config.allowed_recipient_addresses,
+        )
+        if (normalized := normalize_email_address(raw)) is not None
+    }
+    listed: list[str] = []
+    for _, raw_address in getaddresses([
+        _optional_str(email_row.get("to_header")) or "",
+        _optional_str(email_row.get("cc_header")) or "",
+    ]):
+        address = raw_address.strip().lower()
+        if "@" in address and address not in listed:
+            listed.append(address)
+    if own_addresses.isdisjoint(listed):
+        return ()
+    return tuple(
+        address
+        for address in listed
+        if address != sender and address not in own_addresses
+    )
+
+
+def _optional_str(value: object) -> str | None:
+    return value if isinstance(value, str) else None
 
 
 def email_conversation_id(email_db_id: int) -> str:
@@ -122,6 +166,7 @@ class MailgunOutboundEmailClient:
         subject: str,
         text: str,
         in_reply_to: str | None = None,
+        cc_addresses: Sequence[str] = (),
     ) -> str:
         """Send a text email through Mailgun."""
         data: dict[str, str] = {
@@ -130,6 +175,10 @@ class MailgunOutboundEmailClient:
             "subject": _single_line_email_field(subject),
             "text": text,
         }
+        if cc_addresses:
+            data["cc"] = ", ".join(
+                _single_line_email_field(address) for address in cc_addresses
+            )
         if in_reply_to:
             safe_in_reply_to = _safe_threading_header(in_reply_to)
             if safe_in_reply_to is not None:
@@ -173,7 +222,14 @@ class MailgunOutboundEmailClient:
 
 
 class EmailChatInterface:
-    """ChatInterface that sends recipient-locked replies to inbound email senders."""
+    """ChatInterface that sends recipient-locked replies to inbound email senders.
+
+    :meth:`send_message` reaches the sender only. The assistant's answer to the
+    inbound email itself goes out through :meth:`send_reply_all`, which also
+    copies the email's other recipients (see :func:`reply_all_cc_addresses`).
+    Later messages on the conversation, such as a confirmation result, stay
+    with the sender.
+    """
 
     def __init__(
         self,
@@ -215,20 +271,40 @@ class EmailChatInterface:
             raise ChatDeliveryError(
                 "Email replies with attachments are not supported", transient=False
             )
+        return await self._deliver(conversation_id, text, reply_all=False)
+
+    async def send_reply_all(self, conversation_id: str, text: str) -> str:
+        """Answer the inbound email, copying everyone else it was addressed to.
+
+        Raises:
+            ChatDeliveryError: As for :meth:`send_message`.
+        """
+        return await self._deliver(conversation_id, text, reply_all=True)
+
+    async def _deliver(
+        self, conversation_id: str, text: str, *, reply_all: bool
+    ) -> str:
         if self._outbound_client is None:
             raise ChatDeliveryError(
                 "Email outbound delivery is not configured", transient=False
             )
 
         try:
-            return await self._send_reply(self._outbound_client, conversation_id, text)
+            return await self._send_reply(
+                self._outbound_client, conversation_id, text, reply_all=reply_all
+            )
         except OutboundEmailDeliveryError as delivery_error:
             raise ChatDeliveryError(
                 str(delivery_error), transient=delivery_error.transient
             ) from delivery_error
 
     async def _send_reply(
-        self, outbound_client: OutboundEmailClient, conversation_id: str, text: str
+        self,
+        outbound_client: OutboundEmailClient,
+        conversation_id: str,
+        text: str,
+        *,
+        reply_all: bool,
     ) -> str:
         """Resolve the reply target and send, in the transport's own error terms."""
         target = await self._resolve_target(conversation_id)
@@ -248,6 +324,7 @@ class EmailChatInterface:
             subject=subject,
             text=text,
             in_reply_to=target.message_id_header,
+            cc_addresses=target.cc_addresses if reply_all else (),
         )
 
     async def _resolve_target(self, conversation_id: str) -> EmailConversationTarget:
@@ -282,6 +359,7 @@ class EmailChatInterface:
             email_db_id=email_db_id,
             target_user_id=target_user_id,
             to_address=sender,
+            cc_addresses=reply_all_cc_addresses(dict(row), self._config),
             subject=str(row["subject"] or "Family Assistant"),
             message_id_header=str(row["message_id_header"]),
         )

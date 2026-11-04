@@ -77,10 +77,11 @@ conversations light while making specialised knowledge available.
 
 ### Built-in skills
 
-Several skills ship with the assistant, covering browser automation, camera integration, image
-tools, scheduling, and shopping. The instructions themselves are built in and need no setup — but a
-skill only helps if the thing it drives is available. The camera skill needs cameras configured, and
-the shopping skill needs checkout signing keys set up before it can hand you a checkout link.
+Several skills ship with the assistant, covering browser automation, camera investigation, charts,
+image and video generation, Home Assistant, automations, scheduling, and shopping. The instructions
+themselves are built in and need no setup — but a skill only helps if the thing it drives is
+available. The camera skill needs cameras configured, and the shopping skill needs checkout signing
+keys set up before it can hand you a checkout link.
 
 ### Writing your own
 
@@ -103,7 +104,18 @@ A note with that frontmatter joins the skill catalog the assistant consults. It 
 ordinary notes list, so you edit or delete it there like any other note.
 
 Advanced users can also place `.md` files with the same frontmatter in a directory configured by the
-operator. Those load at startup, and a saved skill with the same name overrides the file.
+operator. Those load at startup.
+
+### Replacing a built-in skill
+
+A saved skill replaces a built-in or operator-supplied one when its frontmatter `name` is exactly
+the same as that skill's name. The note's title doesn't matter: an ordinary note that happens to
+share a skill's name, such as a memory note about the same topic, leaves the built-in skill in
+place.
+
+The replacement takes over completely, including the tools the original makes available when it is
+loaded. If you're adapting a built-in skill, ask the assistant to show you the original before you
+save yours, and keep its `activate_tools` and `activate_mcp_servers` lists in your version.
 
 ### Visibility
 

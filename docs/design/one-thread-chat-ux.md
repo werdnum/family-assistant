@@ -9,6 +9,10 @@ backend, the web and iOS implemented. Mockups:
 [one-thread-ux/mockups.html](one-thread-ux/mockups.html) (rendered: [iOS](one-thread-ux/ios.png),
 [web](one-thread-ux/web.png), [notes](one-thread-ux/notes.png)).
 
+[home-send-starts-thread.md](home-send-starts-thread.md) revises this: on web and iOS, sending in
+Home starts a thread, a thread the user starts has a card in Home, and a read waiting thread is
+Quiet at once. Where the two differ, that doc wins.
+
 ## Problem
 
 The web and iOS clients are organised as a list of separate conversations. That suits a chatbot. It
@@ -212,6 +216,11 @@ one chokepoint**, so a path added later can't skip a rule. It applies three rule
 - **Done:** the thread's assistant ends the job with a tool call, or the user marks it done.
 - **Waiting on you:** anything else. The thread is not working, failed or done, so the next move is
   the user's. Every thread is always in exactly one state.
+- **Quiet is how a waiting thread is listed once it has stopped asking.** Waiting is a catch-all: it
+  holds every thread nobody closed, including all those on profiles that cannot call
+  `finish_thread`. A waiting thread the viewer has read is listed apart under Quiet and leaves the
+  waiting count. It is still waiting, so the assistant sees no difference, and anything new in it
+  brings it back. The server decides, per viewer, so clients agree.
 - **A done thread reopens when something new arrives in it.** That could be a reminder or callback
   it scheduled, a late delegation result, or a user message. The day the plumber comes is the same
   thread, not a new one. The thread goes back to working or waiting, its card and switcher row

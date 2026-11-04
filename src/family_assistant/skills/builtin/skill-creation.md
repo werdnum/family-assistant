@@ -30,6 +30,11 @@ Detailed step-by-step instructions here...
 
 - `visibility_labels` — List of profile labels that can access this skill (omit for universal
   access)
+- `activate_tools` — On-demand tools the skill needs, available once it is loaded, with the most
+  used first
+- `activate_mcp_servers` — Whole MCP servers the skill needs
+
+Neither grants anything a profile's tool policy does not already allow.
 
 ## How Skills Work
 
@@ -83,14 +88,19 @@ Restrict a skill to specific processing profiles:
 name: Data Analysis Workflow
 description: Step-by-step guide for analyzing datasets with charts.
 visibility_labels:
-  - data_visualization
+  - research
 ---
 ```
 
-This skill would only appear in the catalog for sessions using the `data_visualization` profile.
+This skill would only appear in the catalog for sessions using the `research` profile.
 
 ## Built-in vs User Skills
 
 - **Built-in skills** ship with the assistant (browser automation, camera, image tools, scheduling)
 - **User skills** (DB-based) are created via `add_or_update_note` with frontmatter
-- User skills with the same name as a built-in skill override the built-in version
+- A user skill overrides a built-in one when its frontmatter `name` matches the built-in's name
+  exactly. The note's title does not count: an ordinary note titled like a built-in skill (a memory
+  note, say) does not replace it, and loading the skill by name still returns the built-in.
+- An override replaces the built-in completely, including its `activate_tools` and
+  `activate_mcp_servers`. Copy those lists from the built-in into the override, or the tools it
+  relied on are not made available when the override is loaded.

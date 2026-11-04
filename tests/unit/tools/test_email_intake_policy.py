@@ -33,10 +33,10 @@ def _descriptor_by_name() -> dict[str, ToolDescriptor]:
     return {descriptor.name: descriptor for descriptor in LOCAL_TOOL_DESCRIPTORS}
 
 
-def test_email_intake_policy_advertises_read_tools_and_confirmable_writes(
+def test_email_intake_policy_advertises_read_tools_and_reviewed_writes(
     tmp_path: Path,
 ) -> None:
-    """The email profile should expose bounded reads and only confirmable writes."""
+    """The email profile should expose bounded reads and only reviewed writes."""
     engine = _email_intake_policy_engine(tmp_path)
     descriptors = _descriptor_by_name()
 
@@ -49,7 +49,7 @@ def test_email_intake_policy_advertises_read_tools_and_confirmable_writes(
         "get_message_history",
         "list_pending_callbacks",
     }
-    confirmable_tools = {
+    reviewed_tools = {
         "add_calendar_event",
         "modify_calendar_event",
         "add_or_update_note",
@@ -69,21 +69,15 @@ def test_email_intake_policy_advertises_read_tools_and_confirmable_writes(
             == ToolPolicyDecision.ALLOW
         )
 
-    for tool_name in confirmable_tools:
-        assert (
-            engine.evaluate_for_advertisement(
-                descriptors[tool_name],
-                can_confirm=True,
-            ).decision
-            == ToolPolicyDecision.CONFIRM
-        )
-        assert (
-            engine.evaluate_for_advertisement(
-                descriptors[tool_name],
-                can_confirm=False,
-            ).decision
-            == ToolPolicyDecision.DENY
-        )
+    for tool_name in reviewed_tools:
+        for can_confirm in (True, False):
+            assert (
+                engine.evaluate_for_advertisement(
+                    descriptors[tool_name],
+                    can_confirm=can_confirm,
+                ).decision
+                == ToolPolicyDecision.REVIEW
+            )
 
 
 def test_email_intake_policy_blocks_high_risk_tool_classes(tmp_path: Path) -> None:

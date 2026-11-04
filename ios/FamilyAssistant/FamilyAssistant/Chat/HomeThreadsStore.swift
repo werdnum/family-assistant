@@ -39,6 +39,10 @@ final class HomeThreadsStore {
         ThreadSwitcherSections.waitingCount(in: threads)
     }
 
+    var workingThreads: [ChatThreadSummary] {
+        threads.filter { $0.presentationState == .working }
+    }
+
     var sections: ThreadSwitcherSections {
         ThreadSwitcherSections(
             threads: threads,
@@ -254,6 +258,8 @@ enum HomeThreadSheet: Identifiable, Equatable {
     case continueFrom(anchorMessageID: Int, quote: String)
     /// Move the Home turn holding `messageID` into a thread.
     case move(messageID: Int, quote: String)
+    /// Manage the read-only link to a thread or a Home message.
+    case share(ConversationShareTarget)
 
     var id: String {
         switch self {
@@ -261,6 +267,7 @@ enum HomeThreadSheet: Identifiable, Equatable {
         case .sendAsThread: "send-as-thread"
         case let .continueFrom(anchor, _): "continue-\(anchor)"
         case let .move(messageID, _): "move-\(messageID)"
+        case let .share(target): "share-\(target.path { $0 })"
         }
     }
 }

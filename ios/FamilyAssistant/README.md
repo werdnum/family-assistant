@@ -97,6 +97,8 @@ GET /api/v1/chat/conversations?interface_type=web
 GET /api/v1/chat/conversations/{conversation_id}/messages
 GET /api/v1/shared-conversations/{token}/messages
 GET /api/v1/shared-conversations/{token}/attachments/{attachment_id}
+GET, POST, DELETE /api/v1/chat/conversations/{conversation_id}/share
+GET, POST, DELETE /api/v1/chat/conversations/{conversation_id}/messages/{message_id}/share
 GET /api/v1/profiles
 POST /api/v1/chat/turns
 GET /api/v1/chat/conversations/{conversation_id}/stream?from_seq=<n>&follow=<bool>

@@ -9,12 +9,14 @@ from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.security.note_provenance import NoteProvenanceStamp
+from family_assistant.security.taint import SourceTrustTier
 from family_assistant.skills import NoteRegistry, ParsedSkill
 from family_assistant.storage.database import Database
 from family_assistant.storage.notes import notes_table
 from family_assistant.storage.repositories.notes import NoteWritePolicy
 from family_assistant.tools.notes import get_note_tool
 from family_assistant.tools.types import ToolExecutionContext, ToolResult
+from tests.functional.notes.ambient_helpers import state_at, write_note
 
 
 async def cleanup_notes(engine: AsyncEngine) -> None:
@@ -103,8 +105,8 @@ async def test_get_note_falls_back_to_file_skill(db_engine: AsyncEngine) -> None
 
 
 @pytest.mark.asyncio
-async def test_get_note_db_overrides_file_skill(db_engine: AsyncEngine) -> None:
-    """DB note should take priority over file-based skill with same name."""
+async def test_get_note_db_skill_overrides_file_skill(db_engine: AsyncEngine) -> None:
+    """A database skill with the file skill's name replaces it."""
     await cleanup_notes(db_engine)
 
     registry = NoteRegistry([
@@ -119,7 +121,10 @@ async def test_get_note_db_overrides_file_skill(db_engine: AsyncEngine) -> None:
     db = Database(engine=db_engine)
     await db.notes.add_or_update(
         title="Research Assistant",
-        content="DB version of research assistant.",
+        content=(
+            "---\nname: Research Assistant\ndescription: DB version.\n---\n"
+            "DB version of research assistant."
+        ),
         include_in_prompt=False,
         write_policy=NoteWritePolicy.UNCONSTRAINED,
         provenance=NoteProvenanceStamp.internal(),
@@ -130,8 +135,204 @@ async def test_get_note_db_overrides_file_skill(db_engine: AsyncEngine) -> None:
 
     data = _data(result)
     assert data["exists"] is True
-    assert data["content"] == "DB version of research assistant."
+    assert "DB version of research assistant." in data["content"]
     assert "source" not in data  # DB notes don't have source field
+    assert "shadowed_note" not in data
+
+
+@pytest.mark.asyncio
+async def test_ordinary_note_does_not_hide_a_file_skill(db_engine: AsyncEngine) -> None:
+    """A memory note titled like a built-in skill must not stand in for it.
+
+    The catalog still lists the built-in, so get_note has to load it, with its
+    tool activations, rather than the note.
+    """
+    await cleanup_notes(db_engine)
+    registry = NoteRegistry([
+        ParsedSkill(
+            name="Home Assistant",
+            description="The built-in skill.",
+            content="Built-in steps.",
+            source_path=Path("/fake/home-assistant.md"),
+            activate_tools=("call_home_assistant_action",),
+        ),
+    ])
+    db = Database(engine=db_engine)
+    await db.notes.add_or_update(
+        title="Home Assistant",
+        content="Facts the household mentioned about the home.",
+        include_in_prompt=False,
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
+    )
+
+    result = await get_note_tool(
+        title="Home Assistant",
+        exec_context=make_exec_context(db, note_registry=registry),
+    )
+
+    data = _data(result)
+    assert data["source"] == "file"
+    assert data["content"] == "Built-in steps."
+    assert data["activate_tools"] == ["call_home_assistant_action"]
+    assert "Home Assistant" in data["shadowed_note"]
+
+
+SKILL_WITH_TOOLS = (
+    "---\n"
+    "name: Home\n"
+    "description: Lights, vacuum and heating.\n"
+    "activate_tools:\n"
+    "  - call_home_assistant_action\n"
+    "activate_mcp_servers:\n"
+    "  - homeassistant\n"
+    "---\n"
+    "Find the entity, then call the action."
+)
+
+
+@pytest.mark.asyncio
+async def test_database_skill_declares_its_tools(db_engine: AsyncEngine) -> None:
+    await cleanup_notes(db_engine)
+    db = Database(engine=db_engine)
+    await db.notes.add_or_update(
+        title="Home",
+        content=SKILL_WITH_TOOLS,
+        include_in_prompt=False,
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
+    )
+
+    result = await get_note_tool(title="Home", exec_context=make_exec_context(db))
+
+    data = _data(result)
+    assert data["activate_tools"] == ["call_home_assistant_action"]
+    assert data["activate_mcp_servers"] == ["homeassistant"]
+
+
+@pytest.mark.asyncio
+async def test_activation_keys_in_an_ordinary_note_do_nothing(
+    db_engine: AsyncEngine,
+) -> None:
+    await cleanup_notes(db_engine)
+    db = Database(engine=db_engine)
+    await db.notes.add_or_update(
+        title="Not a skill",
+        content="---\nactivate_tools:\n  - call_home_assistant_action\n---\nBody.",
+        include_in_prompt=False,
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
+    )
+
+    result = await get_note_tool(
+        title="Not a skill", exec_context=make_exec_context(db)
+    )
+
+    assert "activate_tools" not in _data(result)
+
+
+@pytest.mark.asyncio
+async def test_skill_kept_out_of_the_catalog_declares_nothing(
+    db_engine: AsyncEngine,
+) -> None:
+    await cleanup_notes(db_engine)
+    db = Database(engine=db_engine)
+    await write_note(
+        db,
+        "Home",
+        SKILL_WITH_TOOLS,
+        provenance=NoteProvenanceStamp.machine(
+            state_at(SourceTrustTier.UNKNOWN_EXTERNAL)
+        ),
+        include_in_prompt=False,
+    )
+
+    result = await get_note_tool(title="Home", exec_context=make_exec_context(db))
+
+    data = _data(result)
+    assert data["exists"] is True
+    assert "activate_tools" not in data
+
+
+@pytest.mark.asyncio
+async def test_unreviewed_note_cannot_answer_for_a_skill_name(
+    db_engine: AsyncEngine,
+) -> None:
+    """The catalog lists the built-in, so get_note must not serve the note."""
+    await cleanup_notes(db_engine)
+    registry = NoteRegistry([
+        ParsedSkill(
+            name="Home",
+            description="The built-in skill.",
+            content="Built-in steps.",
+            source_path=Path("/fake/home.md"),
+        ),
+    ])
+    db = Database(engine=db_engine)
+    await write_note(
+        db,
+        "Web digest",
+        SKILL_WITH_TOOLS,
+        provenance=NoteProvenanceStamp.machine(
+            state_at(SourceTrustTier.UNKNOWN_EXTERNAL)
+        ),
+        include_in_prompt=False,
+    )
+
+    result = await get_note_tool(
+        title="Home", exec_context=make_exec_context(db, note_registry=registry)
+    )
+
+    assert _data(result)["content"] == "Built-in steps."
+
+
+@pytest.mark.asyncio
+async def test_get_note_finds_a_database_skill_by_its_catalog_name(
+    db_engine: AsyncEngine,
+) -> None:
+    """The catalog lists a skill's name, which need not be its note's title."""
+    await cleanup_notes(db_engine)
+    db = Database(engine=db_engine)
+    await db.notes.add_or_update(
+        title="Our house",
+        content=SKILL_WITH_TOOLS,
+        include_in_prompt=False,
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
+    )
+
+    result = await get_note_tool(title="Home", exec_context=make_exec_context(db))
+
+    assert _data(result)["title"] == "Our house"
+
+
+@pytest.mark.asyncio
+async def test_skill_name_wins_over_a_different_note_with_that_title(
+    db_engine: AsyncEngine,
+) -> None:
+    await cleanup_notes(db_engine)
+    db = Database(engine=db_engine)
+    await db.notes.add_or_update(
+        title="Our house",
+        content=SKILL_WITH_TOOLS,
+        include_in_prompt=False,
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
+    )
+    await db.notes.add_or_update(
+        title="Home",
+        content="Facts about the home.",
+        include_in_prompt=False,
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
+    )
+
+    result = await get_note_tool(title="Home", exec_context=make_exec_context(db))
+
+    data = _data(result)
+    assert data["title"] == "Our house"
+    assert data["activate_tools"] == ["call_home_assistant_action"]
+    assert "'Home'" in data["shadowed_note"]
 
 
 @pytest.mark.asyncio

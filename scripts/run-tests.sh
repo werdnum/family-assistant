@@ -12,8 +12,9 @@ SUMMARY_FILE=".poe-test-summary.txt"
 # Track all background processes for cleanup
 BACKGROUND_PIDS=()
 CLEANUP_RUNNING=0
-LOCK_DIR_ACQUIRED=0
 LOCK_DIR=""
+# shellcheck source=scripts/test-lock.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test-lock.sh"
 
 # Cleanup function - kills all background processes
 cleanup() {
@@ -242,9 +243,7 @@ else
     lock_acquired=0
     lock_wait_start=$(date +%s)
     while [ $(( $(date +%s) - lock_wait_start )) -lt 300 ]; do
-        if mkdir "$LOCK_DIR" 2>/dev/null; then
-            LOCK_DIR_ACQUIRED=1
-            printf '%s\n' "$$" > "$LOCK_DIR/pid"
+        if try_acquire_lock_dir "$LOCK_DIR"; then
             lock_acquired=1
             break
         fi
@@ -267,14 +266,14 @@ if [ "$lock_acquired" -ne 1 ]; then
     fi
 
     if [ -f "$LOCK_DIR/pid" ]; then
-        LOCK_HOLDER=$(cat "$LOCK_DIR/pid")
+        read -r LOCK_HOLDER < "$LOCK_DIR/pid"
         echo "${YELLOW}  Process holding fallback lock: PID $LOCK_HOLDER${NC}" >&2
         ps -p "$LOCK_HOLDER" -o pid,cmd 2>/dev/null | grep -v "PID CMD" | sed "s/^/${YELLOW}    /" | sed "s/$/${NC}/" >&2
     fi
 
     echo "" >&2
     echo "${YELLOW}Please wait for the other test run to complete.${NC}" >&2
-    echo "${YELLOW}Do NOT remove the lock file - it will be released automatically.${NC}" >&2
+    echo "${YELLOW}Do NOT remove the lock - it is released when that run ends, and reclaimed automatically if it was killed.${NC}" >&2
     exit 1
 fi
 echo "${GREEN}✓ Lock acquired${NC}"

@@ -87,7 +87,7 @@ class WebTurnResumer:
                 mid_turn_controller=mid_turn_controller,
                 reject_if_running=True,
             )
-        except (ConversationTurnRunningError, TurnAlreadyExistsError):
+        except ConversationTurnRunningError, TurnAlreadyExistsError:
             return False
 
         try:

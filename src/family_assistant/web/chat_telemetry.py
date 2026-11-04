@@ -89,7 +89,7 @@ async def observed_stream(
         async for frame in frames:
             tally.count(frame, clock())
             yield frame
-    except (asyncio.CancelledError, GeneratorExit):
+    except asyncio.CancelledError, GeneratorExit:
         tally.reason = "client_gone"
         raise
     except Exception:

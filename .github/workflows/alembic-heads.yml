@@ -1,0 +1,48 @@
+name: Alembic heads
+# Reports the `alembic-heads` commit status, which branch protection requires: whether each open PR,
+# merged with main, leaves exactly one alembic head. CI checks a PR's merge with main only when it
+# runs, so two PRs that each add a migration on the same parent both pass and break main once both
+# land. Re-checking on every push to main fails the second PR as soon as the first merges.
+#
+# pull_request_target runs this workflow from main with a token that can write statuses, including
+# for fork and Dependabot PRs. That is safe only because the script reads PR files as git objects
+# and parses them with `ast`; it never checks out, imports or runs PR code. Keep it that way.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: write
+jobs:
+  alembic-heads:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Report merged alembic heads
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [[ -n "$PR_NUMBER" ]]; then
+            python3 scripts/check_alembic_heads.py statuses --pr "$PR_NUMBER"
+          elif [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            # Backfills every open PR, e.g. those opened before this check was required.
+            python3 scripts/check_alembic_heads.py statuses --all
+          else
+            python3 scripts/check_alembic_heads.py statuses
+          fi

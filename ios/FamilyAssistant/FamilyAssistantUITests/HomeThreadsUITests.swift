@@ -211,6 +211,16 @@ final class HomeThreadsUITests: XCTestCase {
         )
     }
 
+    func testHomeShowsTheWorkingThreadAndOpensIt() {
+        let bar = element("home-working-threads")
+        XCTAssertTrue(bar.waitForExistence(timeout: Self.readyTimeout))
+        XCTAssertTrue(bar.label.contains("Melbourne flights"), bar.label)
+        attachScreenshot(named: "home-working-bar")
+        bar.tap()
+
+        XCTAssertTrue(element("thread-title").waitForExistence(timeout: 20))
+    }
+
     func testHomeStartsThreadsAndNeverAConversationBesideThem() {
         let newThread = element("home-new-thread")
         XCTAssertTrue(newThread.waitForExistence(timeout: Self.readyTimeout))
@@ -241,7 +251,7 @@ final class HomeThreadsUITests: XCTestCase {
         XCTAssertTrue(waitForEnabled(send))
         send.press(forDuration: 1.2)
         let profile = element("start-thread-profile")
-        tapMenuItem(app.buttons["Send as Thread…"], until: profile)
+        tapMenuItem(app.buttons["Send To…"], until: profile)
         attachScreenshot(named: "send-as-thread-sheet")
 
         let confirm = app.buttons["start-thread-confirm"]

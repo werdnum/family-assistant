@@ -75,12 +75,10 @@ The assistant retrieves information from your calendars, notes, and the web.
 
 For specialized tasks, use slash commands before your message:
 
-| Command      | Purpose                                      |
-| ------------ | -------------------------------------------- |
-| `/browse`    | Complex web interactions (forms, JavaScript) |
-| `/research`  | In-depth research on a topic                 |
-| `/visualize` | Create charts and graphs from data           |
-| `/artist`    | Generate or manipulate images and videos     |
+| Command     | Purpose                                      |
+| ----------- | -------------------------------------------- |
+| `/browse`   | Complex web interactions (forms, JavaScript) |
+| `/research` | In-depth research on a topic                 |
 
 Example: `/research Tell me about the history of Python programming`
 
