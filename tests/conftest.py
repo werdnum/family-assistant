@@ -17,10 +17,13 @@ from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any, Protocol
 from zoneinfo import ZoneInfo
 
+from caldav.davclient import DAVClient
+
+from family_assistant.caldav_sync import sync_result
+
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
-import caldav
 import pytest
 import pytest_asyncio  # Import the correct decorator
 import vcr
@@ -968,14 +971,14 @@ backtrace_on_debug = True
         # It only ensures the server is running and the user exists.
         try:
             # Verify user principal exists by making a client connection
-            client = caldav.DAVClient(
+            client = DAVClient(
                 url=base_url,
                 username=RADICALE_TEST_USER,
                 password=RADICALE_TEST_PASS,
                 timeout=30,
             )
             # This call will create the user's collection if it doesn't exist
-            client.principal()  # Direct synchronous call
+            client.get_principal()
             logger.info(
                 f"Radicale server session ready. User '{RADICALE_TEST_USER}' principal checked/created."
             )
@@ -1013,7 +1016,7 @@ async def _validate_new_calendar(calendar: Calendar, calendar_name: str) -> str:
         f"Successfully created unique calendar '{calendar_name}' with URL: {calendar_url}"
     )
 
-    events = await asyncio.to_thread(calendar.events)
+    events = sync_result(await asyncio.to_thread(calendar.get_events))
     assert len(events) == 0, (
         f"Newly created calendar '{calendar_name}' should have 0 events, found {len(events)}."
     )
@@ -1044,10 +1047,8 @@ async def radicale_server(
     # We'll use unique_calendar_name as the display name and also suggest it for the ID.
     unique_calendar_resource_id = unique_calendar_name.lower()
 
-    client = caldav.DAVClient(
-        url=base_url, username=username, password=password, timeout=30
-    )
-    principal = await asyncio.to_thread(client.principal)
+    client = DAVClient(url=base_url, username=username, password=password, timeout=30)
+    principal = await asyncio.to_thread(client.get_principal)
     new_calendar_obj = None  # To store the created calendar object for cleanup
 
     try:
@@ -1056,10 +1057,12 @@ async def radicale_server(
         )
         # Use principal.make_calendar()
         # This is a synchronous call, so wrap it with to_thread
-        new_calendar_obj = await asyncio.to_thread(
-            principal.make_calendar,
-            name=unique_calendar_name,
-            cal_id=unique_calendar_resource_id,
+        new_calendar_obj = sync_result(
+            await asyncio.to_thread(
+                principal.make_calendar,
+                name=unique_calendar_name,
+                cal_id=unique_calendar_resource_id,
+            )
         )
 
         assert new_calendar_obj is not None, (
