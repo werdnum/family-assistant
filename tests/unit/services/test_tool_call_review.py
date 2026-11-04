@@ -2995,6 +2995,63 @@ def _click_prompt(ref: str) -> str:
     return _prompt(assemble_tool_call_review_messages(review_input, _constraints()))
 
 
+def _browser_exec_prompt(arguments: dict[str, object]) -> str:
+    definition: ToolDefinition = {
+        "type": "function",
+        "function": {
+            "name": "browser_exec",
+            "description": "Run JavaScript in the current page.",
+            "parameters": {
+                "type": "object",
+                "properties": {"code": {"type": "string"}},
+            },
+        },
+    }
+    descriptor = ToolDescriptor(
+        name="browser_exec",
+        definition=definition,
+        tags=frozenset({ToolTag.BROWSER, ToolTag.STATE_CHANGING}),
+        origin="local",
+    )
+    review_input = replace(
+        _review_input(
+            messages=[
+                UserMessage(
+                    content="Find the cheapest 2TB SSD. Don't buy anything.",
+                    taint_metadata=TurnTaintState.empty().to_metadata(),
+                ),
+                ToolMessage(
+                    tool_call_id="call-1",
+                    name="browser_open",
+                    content=_SHOP_SNAPSHOT,
+                    taint_metadata=_unknown_state().to_metadata(),
+                ),
+            ],
+            descriptor=descriptor,
+        ),
+        arguments=arguments,
+        sink_class=SinkClass.ATTACKER_ADDRESSABLE_EGRESS,
+    )
+    return _prompt(assemble_tool_call_review_messages(review_input, _constraints()))
+
+
+@pytest.mark.no_db
+def test_ref_less_browser_call_shows_the_page_it_runs_on() -> None:
+    prompt = _browser_exec_prompt({"code": "document.querySelector('#pay').click()"})
+    block = prompt.split("<browser_action_page>", 1)[1]
+    body = block.split("</browser_action_page>", 1)[0].strip()
+    assert json.loads(body.removeprefix("```json").removesuffix("```")) == {
+        "url": "https://shop.example/p/1",
+        "title": "SSD",
+    }
+    assert "View offer" not in prompt
+
+
+@pytest.mark.no_db
+def test_ref_targeted_call_gets_its_element_not_the_page_block() -> None:
+    assert "<browser_action_page>" not in _click_prompt("e88")
+
+
 @pytest.mark.no_db
 def test_browser_click_review_shows_the_target_element() -> None:
     block = _click_prompt("e88").split("<browser_action_target>", 1)[1]
