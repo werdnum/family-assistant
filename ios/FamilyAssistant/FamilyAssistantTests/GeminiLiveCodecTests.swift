@@ -303,6 +303,22 @@ final class GeminiLiveCodecTests: XCTestCase {
         XCTAssertFalse(echo.silencesMic(at: start + .milliseconds(400)))
     }
 
+    func testWholeFirstReplySilencesTheMicUntilItEnds() {
+        var echo = VoiceEchoConvergence(silencesWholeFirstReply: true)
+        let start = ContinuousClock.now
+        echo.replyStarted(at: start)
+        XCTAssertTrue(echo.silencesMic(at: start + .seconds(30)))
+
+        _ = echo.replyFinished()
+        XCTAssertFalse(echo.silencesMic(at: start + .seconds(31)))
+        echo.replyStarted(at: start + .seconds(40))
+        XCTAssertFalse(echo.silencesMic(at: start + .seconds(40)), "only the first reply")
+
+        echo.reset()
+        echo.replyStarted(at: start + .seconds(50))
+        XCTAssertTrue(echo.silencesMic(at: start + .seconds(60)), "a reset keeps the policy")
+    }
+
     func testEchoLevelsAreSplitAtTheConvergenceWindow() {
         var echo = VoiceEchoConvergence()
         let start = ContinuousClock.now
