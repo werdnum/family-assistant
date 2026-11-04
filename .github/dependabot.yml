@@ -72,6 +72,11 @@ updates:
       interval: "monthly"
       day: "wednesday"
     open-pull-requests-limit: 5
+    # typescript-eslint supports only TypeScript below 6.1, so a TypeScript 7
+    # bump cannot install. Drop this once typescript-eslint supports 7.
+    ignore:
+      - dependency-name: "typescript"
+        versions: [">=7"]
     cooldown:
       default-days: 14
       semver-major-days: 30
