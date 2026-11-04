@@ -246,8 +246,8 @@ final class GeminiLiveClientTests: XCTestCase {
         socket.push(#"{"setupComplete":{}}"#)
         socket.push(#"{"serverContent":{"outputTranscription":{"text":"hi"},"turnComplete":true}}"#)
 
-        try await waitUntil { collector.events.contains(.turnComplete(reason: nil)) }
-        XCTAssertEqual(collector.events, [.setupComplete, .outputTranscription("hi"), .turnComplete(reason: nil)])
+        try await waitUntil { collector.events.contains(.turnComplete(reason: nil, waitingForInput: false)) }
+        XCTAssertEqual(collector.events, [.setupComplete, .outputTranscription("hi"), .turnComplete(reason: nil, waitingForInput: false)])
 
         client.close()
         collector.stop()

@@ -334,9 +334,11 @@ enum GeminiLiveServerEvent: Equatable {
     case outputTranscription(String)
     /// The model is done generating and will only start again in response to
     /// something the client sends. `reason` is Gemini's `turnCompleteReason`
-    /// when it gives one, such as `NEED_MORE_INPUT` or `MALFORMED_FUNCTION_CALL`.
-    case turnComplete(reason: String?)
-    /// The model is not generating because it expects the user to say more.
+    /// when it gives one, such as `NEED_MORE_INPUT` or `MALFORMED_FUNCTION_CALL`;
+    /// `waitingForInput` is whether the same message also carried that flag.
+    case turnComplete(reason: String?, waitingForInput: Bool)
+    /// The model is not generating because it expects the user to say more,
+    /// sent without a turnComplete.
     case waitingForInput
     /// The model finished generating (may precede audio fully draining).
     case generationComplete

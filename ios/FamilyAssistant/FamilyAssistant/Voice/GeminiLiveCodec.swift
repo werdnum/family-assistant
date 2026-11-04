@@ -228,11 +228,14 @@ enum GeminiLiveCodec {
         if serverContent["generationComplete"]?.boolValue == true {
             events.append(.generationComplete)
         }
-        if serverContent["waitingForInput"]?.boolValue == true {
-            events.append(.waitingForInput)
-        }
+        let waitingForInput = serverContent["waitingForInput"]?.boolValue == true
         if serverContent["turnComplete"]?.boolValue == true {
-            events.append(.turnComplete(reason: turnCompleteReason(serverContent["turnCompleteReason"])))
+            events.append(.turnComplete(
+                reason: turnCompleteReason(serverContent["turnCompleteReason"]),
+                waitingForInput: waitingForInput
+            ))
+        } else if waitingForInput {
+            events.append(.waitingForInput)
         }
     }
 
