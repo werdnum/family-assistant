@@ -37,6 +37,8 @@ from family_assistant.security.taint import (
 from family_assistant.services.tool_call_review import (
     TriggerReviewInput,
     build_delegation_review_trigger,
+    collect_earlier_requests,
+    earlier_requests_to_json,
 )
 from family_assistant.storage.delegation_runs import (
     CANCELLABLE_DELEGATION_STATUSES,
@@ -186,6 +188,18 @@ async def _delegation_review_trigger(
     ``tool_call_review_messages``, which carries prior turns as well: an earlier
     request must not arrive labelled as the one that authorized this delegation.
     """
+    started_by_human = exec_context.tool_call_review_trigger is None
+    earlier = (
+        await collect_earlier_requests(
+            exec_context.db_context,
+            interface_type=exec_context.interface_type,
+            conversation_id=exec_context.conversation_id,
+            subconversation_id=exec_context.subconversation_id,
+            source_turn_id=exec_context.turn_id,
+        )
+        if started_by_human and exec_context.turn_id is not None
+        else None
+    )
     return await build_delegation_review_trigger(
         exec_context.db_context,
         trigger_type="delegation_request",
@@ -198,15 +212,35 @@ async def _delegation_review_trigger(
         # event, a schedule, a script -- is exactly one carrying a review
         # trigger. An interactive turn carries none, and only it holds a human
         # message.
-        source_started_by_human=exec_context.tool_call_review_trigger is None,
+        source_started_by_human=started_by_human,
         inherited=exec_context.tool_call_review_trigger,
+        earlier_requests=earlier,
     )
+
+
+async def _run_review_context(
+    exec_context: ToolExecutionContext,
+    *,
+    user_request: str,
+    resume_delegation_id: str | None,
+) -> tuple[tuple[str, TaintMetadata] | None, tuple[tuple[str, TaintMetadata], ...]]:
+    """What a queued run's review answers to, resolved while its turn runs.
+
+    The originating request (see :func:`_run_originating_request`) and the
+    conversation's earlier requests, both recorded on the run so the worker
+    reviews against what this turn could see.
+    """
+    trigger = await _delegation_review_trigger(exec_context, definition=user_request)
+    originating = await _run_originating_request(
+        exec_context, trigger=trigger, resume_delegation_id=resume_delegation_id
+    )
+    return originating, trigger.earlier_requests
 
 
 async def _run_originating_request(
     exec_context: ToolExecutionContext,
     *,
-    user_request: str,
+    trigger: TriggerReviewInput,
     resume_delegation_id: str | None,
 ) -> tuple[str, TaintMetadata] | None:
     """The human request a queued run will answer, resolved while its turn runs.
@@ -219,7 +253,6 @@ async def _run_originating_request(
     comes first -- but only when the resuming turn's own request qualifies, so a
     resume from an untrusted turn cannot borrow the earlier run's standing.
     """
-    trigger = await _delegation_review_trigger(exec_context, definition=user_request)
     text = trigger.originating_request
     metadata = trigger.originating_request_taint_metadata
     if text is None or metadata is None:
@@ -1353,7 +1386,7 @@ async def _enqueue_delegation(
         delivery_hint,
     )
     taint_state_json = current_taint_metadata(exec_context)
-    originating = await _run_originating_request(
+    originating, earlier_requests = await _run_review_context(
         exec_context,
         user_request=user_request,
         resume_delegation_id=resume_delegation_id,
@@ -1392,6 +1425,7 @@ async def _enqueue_delegation(
             "model_selection_json": model_selection.to_json(),
             "originating_request": originating[0] if originating else None,
             "originating_request_taint_json": originating[1] if originating else None,
+            "earlier_requests_json": earlier_requests_to_json(earlier_requests),
         })
         if prepare_run is not None:
             await prepare_run(txn, delegation_id, subconversation_id)

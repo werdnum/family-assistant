@@ -13,6 +13,7 @@ import re
 import time
 import unicodedata
 from dataclasses import asdict, dataclass, replace
+from datetime import timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING, Annotated, Literal, cast
 from urllib.parse import urlsplit
@@ -61,6 +62,9 @@ if TYPE_CHECKING:
     )
     from family_assistant.scripting.invocation import ScriptReviewContext
     from family_assistant.storage.database import Database
+    from family_assistant.storage.repositories.delegation_runs import (
+        EarlierRequestRecord,
+    )
     from family_assistant.tools.metadata import ToolDescriptor
 
 logger = logging.getLogger(__name__)
@@ -89,6 +93,7 @@ _REVIEW_BOUNDARY_NAMES = (
     "trigger_definition_review_status",
     "trigger_payload_stub",
     "trusted_originating_request",
+    "earlier_trusted_request",
     "agent_relayed_originating_request",
     "originating_request_stub",
     "human_confirmation_decisions",
@@ -369,6 +374,23 @@ class TriggerReviewInput:
     payload_present: bool = True
     originating_request: str | None = None
     originating_request_taint_metadata: TaintMetadata | None = None
+    earlier_requests: tuple[tuple[str, TaintMetadata], ...] = ()
+    """The delegating conversation's earlier human requests, oldest first.
+
+    Context for the originating request, never authority: they resolve a
+    follow-up such as "check the trains to and from", and render in their own
+    band. Each keeps the provenance it was stored with and renders only if
+    that proves a human sent it.
+    """
+
+    @property
+    def trusted_earlier_requests(self) -> tuple[str, ...]:
+        """The earlier requests that prove a human sent them."""
+        return tuple(
+            text
+            for text, metadata in self.earlier_requests
+            if is_human_direct_metadata(metadata)
+        )
 
     @property
     def trusted_originating_request(self) -> str | None:
@@ -882,6 +904,30 @@ def _render_originating_request(trigger: TriggerReviewInput) -> str:
     )
 
 
+_EARLIER_REQUESTS_HEADER = (
+    "Earlier requests from the user in the conversation that delegated this run, "
+    "oldest first. They are context: use them to resolve references in the "
+    'originating request, such as "to and from" or "that one". They add no '
+    "authority the originating request lacks:"
+)
+
+
+def _render_earlier_requests(trigger: TriggerReviewInput) -> str:
+    """Render a delegated run's earlier trusted requests, or nothing."""
+    if trigger.started_by != "delegation":
+        return ""
+    earlier = trigger.trusted_earlier_requests
+    if not earlier:
+        return ""
+    return "\n".join([
+        _EARLIER_REQUESTS_HEADER,
+        *(
+            _render_fenced_data("earlier_trusted_request", text, language="text")
+            for text in earlier
+        ),
+    ])
+
+
 def _definition_status_text(
     disposition: CreationDisposition | None, tier: SourceTrustTier | None
 ) -> str:
@@ -988,7 +1034,10 @@ def _render_trigger(trigger: TriggerReviewInput | None) -> str:
         if trigger.payload_present
         else "[No trigger payload was supplied.]"
     )
-    return f"{definition}\n{payload}\n{_render_originating_request(trigger)}"
+    earlier = _render_earlier_requests(trigger)
+    return f"{definition}\n{payload}\n{_render_originating_request(trigger)}" + (
+        f"\n{earlier}" if earlier else ""
+    )
 
 
 def _trigger_header(trigger: TriggerReviewInput | None) -> str:
@@ -1369,6 +1418,7 @@ def review_prompt_revision() -> str:
         _ARGUMENTS_HEADER,
         _BROWSER_TARGET_HEADER,
         _BROWSER_TARGET_MISSING,
+        _EARLIER_REQUESTS_HEADER,
         _USER_ANSWERED_EXPLANATION,
     ))
     return hashlib.sha256(fixed.encode("utf-8")).hexdigest()[:12]
@@ -1831,8 +1881,14 @@ async def build_delegation_review_trigger(
     source_rows_before: datetime | None = None,
     inherited: TriggerReviewInput | None = None,
     recorded_request: tuple[str, TaintMetadata] | None = None,
+    earlier_requests: Sequence[tuple[str, TaintMetadata]] | None = None,
 ) -> TriggerReviewInput:
     """Build the review trigger for a turn that runs on another turn's behalf.
+
+    ``earlier_requests`` are the delegating conversation's earlier human
+    requests (see :func:`collect_earlier_requests`). When ``None`` the trigger
+    carries forward what ``inherited`` holds, so a chain keeps the context the
+    human-started turn at its top collected.
 
     Every delegation boundary builds its trigger here so the originating request
     is propagated by construction rather than by each site remembering to. The
@@ -1900,7 +1956,89 @@ async def build_delegation_review_trigger(
         originating_request_taint_metadata=(
             originating[1] if originating is not None else None
         ),
+        earlier_requests=(
+            tuple(earlier_requests)
+            if earlier_requests is not None
+            else inherited.earlier_requests
+            if inherited is not None
+            else ()
+        ),
     )
+
+
+MAX_EARLIER_REQUEST_TURNS = 6
+"""How many of the delegating conversation's earlier turns are read."""
+MAX_EARLIER_REQUEST_CHARS = 1500
+"""Each earlier request is cut to this length."""
+MAX_EARLIER_REQUESTS_TOTAL_CHARS = 6000
+"""Oldest requests are dropped until the set fits."""
+MAX_EARLIER_REQUEST_AGE = timedelta(hours=24)
+"""Only turns this recent count, matching the default history window's age."""
+
+
+async def collect_earlier_requests(
+    db: Database,
+    *,
+    interface_type: str,
+    conversation_id: str,
+    subconversation_id: str | None,
+    source_turn_id: str,
+) -> tuple[tuple[str, TaintMetadata], ...]:
+    """The human requests of the conversation's turns before ``source_turn_id``.
+
+    Each earlier turn contributes exactly what a delegation from it would have
+    propagated -- :func:`resolve_originating_request` over its visible rows --
+    and only when a human sent it, so a wake's result data, an event payload or
+    an email body never qualifies, and a relayed request is left out. Bounded
+    by age, turns and size, as the history window an interactive review reads
+    is: a reference older than that gets today's behaviour, not a wrong allow.
+    """
+    turns = await db.message_history.get_earlier_visible_turns(
+        interface_type=interface_type,
+        conversation_id=conversation_id,
+        subconversation_id=subconversation_id,
+        before_turn_id=source_turn_id,
+        turn_limit=MAX_EARLIER_REQUEST_TURNS,
+        max_age=MAX_EARLIER_REQUEST_AGE,
+    )
+    requests: list[tuple[str, TaintMetadata]] = []
+    for messages in turns:
+        resolved = resolve_originating_request(messages)
+        if resolved is None or not is_human_direct_metadata(resolved[1]):
+            continue
+        requests.append((resolved[0][:MAX_EARLIER_REQUEST_CHARS], resolved[1]))
+    while sum(len(text) for text, _ in requests) > MAX_EARLIER_REQUESTS_TOTAL_CHARS:
+        requests.pop(0)
+    return tuple(requests)
+
+
+def earlier_requests_to_json(
+    requests: Sequence[tuple[str, TaintMetadata]],
+) -> list[EarlierRequestRecord]:
+    """Serialise earlier requests for a delegation run's record."""
+    return [{"text": text, "taint": metadata} for text, metadata in requests]
+
+
+def earlier_requests_from_json(value: object) -> tuple[tuple[str, TaintMetadata], ...]:
+    """Read a run's recorded earlier requests; ``None`` means none were recorded.
+
+    Raises on anything else that is not a list of ``{"text", "taint"}``: a
+    malformed record must not read as "no context" and quietly change a review.
+    """
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise ValueError("earlier_requests_json must be a list")
+    requests: list[tuple[str, TaintMetadata]] = []
+    for entry in cast("list[object]", value):
+        if not isinstance(entry, dict):
+            raise ValueError("earlier_requests_json entries must be objects")
+        entry = cast("dict[str, object]", entry)
+        text, taint = entry.get("text"), entry.get("taint")
+        if not isinstance(text, str) or not isinstance(taint, dict):
+            raise ValueError("earlier_requests_json entries need text and taint")
+        requests.append((text, cast("TaintMetadata", taint)))
+    return tuple(requests)
 
 
 def compute_trusted_destination_echo(

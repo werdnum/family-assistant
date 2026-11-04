@@ -183,6 +183,7 @@ from family_assistant.services.notifier import MESSAGE_CATEGORY, NotificationMet
 from family_assistant.services.tool_call_review import (
     TriggerReviewInput,
     build_delegation_review_trigger,
+    earlier_requests_from_json,
 )
 from family_assistant.services.turn_resumption import (
     MAX_RESUME_ATTEMPTS,
@@ -263,6 +264,9 @@ async def _delegation_run_review_trigger(
         payload_present=payload_present,
         source_turn_id=run["source_turn_id"],
         recorded_request=_recorded_originating_request(run),
+        # Recorded with the run; a run created before they were recorded has
+        # none, rather than re-reading a conversation that has moved on.
+        earlier_requests=earlier_requests_from_json(run["earlier_requests_json"]),
         # A subconversation turn holds a composed goal rather than a human
         # message. The delegating turn's other unattended shapes are excluded by
         # the visible-rows read: a completion wake's result data is an internal

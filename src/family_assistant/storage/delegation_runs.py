@@ -218,6 +218,14 @@ delegation_runs_table = Table(
         JSON().with_variant(JSONB, "postgresql"),
         nullable=True,
     ),
+    # The trusted human requests of the delegating conversation's earlier
+    # turns, resolved the same way and recorded at creation, as a list of
+    # ``{"text", "taint"}``. They let the run's review resolve references like
+    # "to and from"; they add no authority. Null for runs created before they
+    # were recorded.
+    Column(
+        "earlier_requests_json", JSON().with_variant(JSONB, "postgresql"), nullable=True
+    ),
     Column("handed_off_at", DateTime(timezone=True), nullable=True),
     Column("started_at", DateTime(timezone=True), nullable=True),
     Column("completed_at", DateTime(timezone=True), nullable=True),

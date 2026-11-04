@@ -2861,6 +2861,52 @@ class MessageHistoryRepository(BaseRepository):
         rows = await self._db.fetch_all(stmt)
         return [self._process_message_row(row) for row in rows]
 
+    async def get_earlier_visible_turns(
+        self,
+        *,
+        interface_type: str,
+        conversation_id: str,
+        subconversation_id: str | None,
+        before_turn_id: str,
+        turn_limit: int,
+        max_age: timedelta,
+    ) -> list[list[LLMMessage]]:
+        """The visible rows of the newest ``turn_limit`` turns before a turn.
+
+        Scoped to one conversation and subconversation, and to rows written in
+        the ``max_age`` before ``before_turn_id`` began. Internal rows -- material a turn was
+        given rather than anything a person sent -- are left out, as in
+        :meth:`get_by_turn_id`. Turns oldest first, rows in order within each.
+        """
+        first = await self.get_first_row_by_turn_id(before_turn_id, role="user")
+        if first is None or turn_limit <= 0:
+            return []
+        stmt = (
+            select(message_history_table)
+            .where(
+                message_history_table.c.interface_type == interface_type,
+                message_history_table.c.conversation_id == conversation_id,
+                _exact_subconversation_condition(subconversation_id),
+                _visible_message_condition(),
+                message_history_table.c.turn_id.is_not(None),
+                message_history_table.c.turn_id != before_turn_id,
+                message_history_table.c.timestamp < first["timestamp"],
+                message_history_table.c.timestamp >= first["timestamp"] - max_age,
+            )
+            .order_by(
+                message_history_table.c.timestamp.desc(),
+                message_history_table.c.internal_id.desc(),
+            )
+            .limit(turn_limit * 20)
+        )
+        turns: dict[str, list[LLMMessage]] = {}
+        for row in await self._db.fetch_all(stmt):
+            turn_id = row["turn_id"]
+            if turn_id not in turns and len(turns) == turn_limit:
+                break
+            turns.setdefault(turn_id, []).append(self._process_message_row(row))
+        return [list(reversed(rows)) for rows in reversed(list(turns.values()))]
+
     async def get_rows_by_turn_id(self, turn_id: str) -> list[MessageHistoryRow]:
         """A turn's rows with every stored field, oldest first.
 
