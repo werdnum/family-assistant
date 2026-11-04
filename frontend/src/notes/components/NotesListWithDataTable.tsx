@@ -1,10 +1,9 @@
-import { ColumnDef } from '@tanstack/react-table';
 import { PaperclipIcon } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { DataTable, SortableHeader } from '@/components/ui/data-table';
+import { DataTable, DataTableColumnDef, SortableHeader } from '@/components/ui/data-table';
 
 interface Note {
   title: string;
@@ -89,7 +88,7 @@ const NotesListWithDataTable = () => {
     }
   };
 
-  const columns: ColumnDef<Note>[] = [
+  const columns: DataTableColumnDef<Note>[] = [
     {
       accessorKey: 'title',
       header: ({ column }) => <SortableHeader column={column} title="Title" />,
@@ -145,7 +144,7 @@ const NotesListWithDataTable = () => {
           </div>
         );
       },
-      sortingFn: (rowA, rowB) => {
+      sortFn: (rowA, rowB) => {
         const countA = ((rowA.getValue('attachment_ids') as string[]) || []).length;
         const countB = ((rowB.getValue('attachment_ids') as string[]) || []).length;
         return countA - countB;
