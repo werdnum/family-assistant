@@ -1075,12 +1075,13 @@ request *is* the authorization. A model choosing it is not, which is why the shi
 automatically.
 
 The shipped presets — `gpt_6_astra`, `gpt_6_1_sol`, `claude_opus_5_5`, `claude_sonnet_5_5`,
-`claude_haiku_5_5`, `claude_fable_5_1`, `kimi_k3` and `gemini_4_argon` — are listed once, in `default_profile_settings.delegation_model_tiers`, so a
-delegating model may pin any profile that has a tier to any of them without a confirmation ("run
-complex_tasks on Gemini 4 Argon"). A profile that names an inline model drops the inherited list,
-and a profile that declares its own replaces it, so `delegation_model_tiers: []` keeps a profile off
-presets entirely. Adding a preset is a `model_tiers` entry plus a name in that list. The profile
-catalog lists the presets most profiles share once, rather than under each profile.
+`claude_haiku_5_5`, `claude_fable_5_1`, `kimi_k3` and `gemini_4_argon` — are listed once, in
+`default_profile_settings.delegation_model_tiers`, so a delegating model may pin any profile that
+has a tier to any of them without a confirmation ("run complex_tasks on Gemini 4 Argon"). A profile
+that names an inline model drops the inherited list, and a profile that declares its own replaces
+it, so `delegation_model_tiers: []` keeps a profile off presets entirely. Adding a preset is a
+`model_tiers` entry plus a name in that list. The profile catalog lists the presets most profiles
+share once, rather than under each profile.
 
 #### The council's seats
 
@@ -1322,6 +1323,7 @@ typesafe:
   calendar_duplicates: { mode: "shadow", threshold: 0.6, timeout_seconds: 1.0 }
   calendar_search: { mode: "shadow", threshold: 0.5, timeout_seconds: 1.0 }
   document_search: { mode: "shadow", threshold: 0.5, timeout_seconds: 2.5 }
+  continue_selection: { mode: "active", threshold: 0.5, timeout_seconds: 2.0 }
   camera_frames: { mode: "active", threshold: 0.5, timeout_seconds: 10.0 }
 ```
 
@@ -1359,6 +1361,14 @@ typesafe:
   `shadow` (shipped) shows the top `limit` by rank and logs what Jev would have shown. The longer
   timeout covers 30 excerpts' worth of state. Sends excerpts of indexed documents, notes and emails
   to TypeSafe.
+- **Continue in a thread.** When the user continues a Home message in a thread with the conversation
+  along, the dialog previews the message's exchange and up to four Home turns before it. Jev is
+  asked of each earlier turn whether it goes with the message being continued, and in `active`
+  (shipped) mode only those at or above `threshold` start ticked; the user can change the ticks
+  before starting. `shadow` logs the answers and ticks every turn; `off` never asks. A timeout or
+  error ticks every turn. Sends the previewed turns' text (each user message and final reply,
+  shortened) to TypeSafe. Active by default because a wrong answer is visible and costs the user one
+  tick.
 - **Camera frames.** `scan_camera_frames` and `find_camera_change` ask Jev, one image per request,
   whether each sampled frame satisfies the search's condition, using TypeSafe's experimental image
   input (`TypeSafe-Danger-Zone-Images`). `active` (shipped) uses Jev; `off` keeps frames off

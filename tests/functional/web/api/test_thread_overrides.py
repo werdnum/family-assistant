@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
@@ -24,6 +24,7 @@ from family_assistant.llm.messages import (
     UserMessage,
 )
 from family_assistant.processing import ProcessingService
+from family_assistant.processing.history_relevance import RelevanceOutcome
 from family_assistant.security.taint import TurnTaintState
 from family_assistant.services.user_identity import UserIdentityResolver
 from family_assistant.storage import delegation_runs_table, message_history_table
@@ -33,6 +34,8 @@ from family_assistant.web.dependencies import get_current_user
 from tests.mocks.mock_llm import LLMOutput, MatcherArgs, RuleBasedMockLLMClient
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from fastapi import FastAPI
     from httpx import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -631,6 +634,262 @@ async def test_continuing_from_outside_the_callers_home_is_not_found(
         response = await api_test_client.post(
             "/api/v1/chat/home/threads",
             json={"profile_id": CONTEXT_PROFILE, "anchor_message_id": anchor["reply"]},
+        )
+    finally:
+        app_fixture.dependency_overrides.pop(get_current_user, None)
+
+    assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# What a continuation carries: the preview, and the user's pick
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class FakeRelevance:
+    """Turn relevance that answers yes for turns whose text holds a keyword."""
+
+    keyword: str
+    active: bool = True
+    asked: list[tuple[str, list[str]]] = field(default_factory=list)
+
+    async def assess(
+        self, *, request: str, turns: Sequence[tuple[str, str, str]]
+    ) -> RelevanceOutcome:
+        self.asked.append((request, [key for key, _, _ in turns]))
+        return RelevanceOutcome(
+            outcome="decided",
+            active=self.active,
+            model="fake",
+            latency_ms=0,
+            probabilities={
+                key: 1.0 if self.keyword in user_text else 0.0
+                for key, user_text, _ in turns
+            },
+        )
+
+
+async def _turn_id_of(db: Database, message_id: int) -> str:
+    row = await db.message_history.get_row_by_internal_id(message_id)
+    assert row is not None and row["turn_id"] is not None
+    return row["turn_id"]
+
+
+async def _six_turns(db: Database, home: str) -> list[dict[str, int]]:
+    words = [
+        "gutters",
+        "bins",
+        "gutter quote",
+        "weather",
+        "school pickup",
+        "gutter guard",
+    ]
+    return [
+        await _home_turn(db, home, words=word, at=NOW + timedelta(seconds=10 * index))
+        for index, word in enumerate(words)
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("profiles")
+async def test_the_preview_offers_the_anchor_and_the_turns_before_it(
+    api_test_client: AsyncClient, db_engine: AsyncEngine
+) -> None:
+    db = Database(engine=db_engine)
+    home = await _home(api_test_client)
+    turns = await _six_turns(db, home)
+
+    response = await api_test_client.get(
+        "/api/v1/chat/home/threads/continue-preview",
+        params={"anchor_message_id": turns[5]["reply"]},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert [turn["user_text"] for turn in body["turns"]] == [
+        "bins",
+        "gutter quote",
+        "weather",
+        "school pickup",
+        "gutter guard",
+    ]
+    assert [turn["reply_text"] for turn in body["turns"]][-1] == "reply to gutter guard"
+    assert [turn["is_anchor"] for turn in body["turns"]] == [False] * 4 + [True]
+    # With no classifier, everything on offer is ticked, as it always was.
+    assert all(turn["suggested"] for turn in body["turns"])
+    assert body["suggested_by"] == "default"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("profiles")
+async def test_the_preview_ticks_the_turns_the_classifier_relates_to_the_anchor(
+    app_fixture: FastAPI, api_test_client: AsyncClient, db_engine: AsyncEngine
+) -> None:
+    db = Database(engine=db_engine)
+    home = await _home(api_test_client)
+    turns = await _six_turns(db, home)
+    relevance = FakeRelevance(keyword="gutter")
+    app_fixture.state.continue_turn_relevance = relevance
+    try:
+        body = (
+            await api_test_client.get(
+                "/api/v1/chat/home/threads/continue-preview",
+                params={"anchor_message_id": turns[5]["reply"]},
+            )
+        ).json()
+    finally:
+        app_fixture.state.continue_turn_relevance = None
+
+    ticked = [turn["user_text"] for turn in body["turns"] if turn["suggested"]]
+    assert ticked == ["gutter quote", "gutter guard"]
+    assert body["suggested_by"] == "assistant"
+    [(request, asked)] = relevance.asked
+    assert "reply to gutter guard" in request
+    # The anchor is never put to the classifier: it always comes along.
+    assert await _turn_id_of(db, turns[5]["reply"]) not in asked
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("profiles")
+async def test_a_shadow_classifier_leaves_every_turn_ticked(
+    app_fixture: FastAPI, api_test_client: AsyncClient, db_engine: AsyncEngine
+) -> None:
+    db = Database(engine=db_engine)
+    home = await _home(api_test_client)
+    turns = await _six_turns(db, home)
+    app_fixture.state.continue_turn_relevance = FakeRelevance(
+        keyword="gutter", active=False
+    )
+    try:
+        body = (
+            await api_test_client.get(
+                "/api/v1/chat/home/threads/continue-preview",
+                params={"anchor_message_id": turns[5]["reply"]},
+            )
+        ).json()
+    finally:
+        app_fixture.state.continue_turn_relevance = None
+
+    assert all(turn["suggested"] for turn in body["turns"])
+    assert body["suggested_by"] == "default"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("profiles")
+async def test_the_preview_shows_a_scheduled_turn_without_its_trigger(
+    api_test_client: AsyncClient, db_engine: AsyncEngine
+) -> None:
+    db = Database(engine=db_engine)
+    home = await _home(api_test_client)
+    turn_id = str(uuid.uuid4())
+    for message, is_internal in (
+        (UserMessage.from_trusted_user(content="(scheduled: morning brief)"), True),
+        (
+            AssistantMessage(
+                content="Rain from 3pm.",
+                taint_metadata=TurnTaintState.empty().to_metadata(),
+            ),
+            False,
+        ),
+    ):
+        reply = await db.message_history.add_message(
+            message,
+            interface_type="web",
+            conversation_id=home,
+            turn_id=turn_id,
+            processing_profile_id="chat_api_test_profile",
+            timestamp=NOW,
+            is_internal=is_internal,
+        )
+
+    body = (
+        await api_test_client.get(
+            "/api/v1/chat/home/threads/continue-preview",
+            params={"anchor_message_id": reply},
+        )
+    ).json()
+
+    [turn] = body["turns"]
+    assert turn["user_text"] is None
+    assert turn["reply_text"] == "Rain from 3pm."
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("profiles")
+async def test_continuing_copies_only_the_turns_the_user_picked(
+    api_test_client: AsyncClient, db_engine: AsyncEngine
+) -> None:
+    db = Database(engine=db_engine)
+    home = await _home(api_test_client)
+    turns = await _six_turns(db, home)
+    picked = [
+        await _turn_id_of(db, turns[2]["reply"]),
+        await _turn_id_of(db, turns[5]["reply"]),
+    ]
+
+    body = await _start(
+        api_test_client,
+        profile_id=CONTEXT_PROFILE,
+        anchor_message_id=turns[5]["reply"],
+        carried_turn_ids=list(reversed(picked)),
+    )
+
+    copied = await _rows(db, body["thread"]["conversation_id"])
+    assert [row["content"] for row in copied if row["role"] == "user"] == [
+        "gutter quote",
+        "gutter guard",
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("profiles")
+async def test_a_pick_must_keep_the_anchor_and_stay_within_the_offer(
+    api_test_client: AsyncClient, db_engine: AsyncEngine
+) -> None:
+    db = Database(engine=db_engine)
+    home = await _home(api_test_client)
+    turns = await _six_turns(db, home)
+    anchor_turn = await _turn_id_of(db, turns[5]["reply"])
+    too_old = await _turn_id_of(db, turns[0]["reply"])
+
+    without_anchor = await api_test_client.post(
+        "/api/v1/chat/home/threads",
+        json={
+            "profile_id": CONTEXT_PROFILE,
+            "anchor_message_id": turns[5]["reply"],
+            "carried_turn_ids": [await _turn_id_of(db, turns[4]["reply"])],
+        },
+    )
+    beyond_the_offer = await api_test_client.post(
+        "/api/v1/chat/home/threads",
+        json={
+            "profile_id": CONTEXT_PROFILE,
+            "anchor_message_id": turns[5]["reply"],
+            "carried_turn_ids": [too_old, anchor_turn],
+        },
+    )
+
+    assert without_anchor.status_code == 422
+    assert beyond_the_offer.status_code == 422
+    listed = (await api_test_client.get("/api/v1/chat/home/threads")).json()
+    assert listed["threads"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("profiles")
+async def test_previewing_outside_the_callers_home_is_not_found(
+    app_fixture: FastAPI, api_test_client: AsyncClient, db_engine: AsyncEngine
+) -> None:
+    db = Database(engine=db_engine)
+    home = await _home(api_test_client)
+    anchor = await _home_turn(db, home, words="mine", at=NOW)
+
+    await _as(app_fixture, "someone_else")
+    try:
+        response = await api_test_client.get(
+            "/api/v1/chat/home/threads/continue-preview",
+            params={"anchor_message_id": anchor["reply"]},
         )
     finally:
         app_fixture.dependency_overrides.pop(get_current_user, None)
