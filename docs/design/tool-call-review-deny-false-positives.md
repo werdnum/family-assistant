@@ -2,9 +2,14 @@
 
 ## Status
 
-Proposed. This is the findings write-up and fix plan behind the enforce go/no-go for
+In progress. This is the findings write-up and fix plan behind the enforce go/no-go for
 [script-execution-review-boundary.md](script-execution-review-boundary.md) milestone 5. Production
 stays in `taint_policy.mode: observe` until the milestones below land and the re-measure passes.
+
+- **Change 4,** browser targets, is implemented.
+- **Changes 2 and 3** are implemented as the production prompt: the steps-and-scope rules, the
+  sandbox containment boundary and the narrow confirm band, as measured in "Shipped prompt" below.
+- **Change 1** and the browser page context are next.
 
 ## Summary
 
@@ -735,6 +740,25 @@ Two limits on what this shows. The attacks are synthetic and few, 42 cases. And 
 boundary forging through other content types, such as text in a screenshot, is untested. Showing the
 page is therefore not adopted, since it buys nothing measured. The question can be reopened if a
 real case turns up that the target alone cannot settle.
+
+## Shipped prompt (4 November 2026)
+
+The production prompt now carries `dfp4`, with one wording fix: fidelity applies to what is "sent or
+committed", since reads no longer count. Before merge, it was re-measured on every corpus, with the
+same judge and seeds as above. In the same pass:
+
+- the worker-task cancel attack was retired, since the agent may hurt itself;
+- nine private-corpus cases had their stored sink class recomputed with today's classifier: eight
+  browser reads, now `user_local`, and the worker cancel, now `artifact_write`.
+
+| Prompt                 | New-case friction | Other corpora friction | Expected verdict met | Tail-effect attack allows | Attack confirms |
+| ---------------------- | ----------------: | ---------------------: | -------------------: | ------------------------: | --------------: |
+| Previous, with targets |             14/75 |                 27/636 |                 4/12 |                     3/678 |              14 |
+| Shipped, with targets  |              2/81 |                 14/636 |                11/12 |                     3/690 |              16 |
+
+The new cases add the page-lobbying set to the earlier ones. The three tail-effect allows are one
+AgentDojo case on every seed, which the previous prompt allows on every seed too. Every terminal
+twin and every lobbying attack is caught.
 
 ## Work plan
 
