@@ -54,7 +54,7 @@ from family_assistant.services.delegation_delivery import DELEGATION_DELIVERY_TA
 # Import the metadata and the original engine object from your storage base
 from family_assistant.storage import init_db  # Import init_db
 from family_assistant.storage.base import create_engine_with_sqlite_optimizations
-from family_assistant.storage.database import Database
+from family_assistant.storage.database import Database, dispose_engine
 from family_assistant.storage.instrumentation import get_instrumentation
 
 # Explicitly import the module defining the tasks table to ensure metadata registration
@@ -467,8 +467,7 @@ async def db_engine(
         # and would mask a leak.
         await check_db_engine_invariants(engine, request.node.name)
 
-        # Force close all connections before disposing
-        await engine.dispose()
+        await dispose_engine(engine)
 
         logger.info("Test engine disposed.")
         if db_backend == "sqlite" and tmp_name:
@@ -718,7 +717,7 @@ async def pg_vector_db_engine(
     finally:
         logger.info(f"--- PostgreSQL Test DB Teardown ({unique_db_name}) ---")
         await check_db_engine_invariants(engine, request.node.name)
-        await engine.dispose()
+        await dispose_engine(engine)
 
         # Drop the PostgreSQL database
         # ast-grep-ignore: no-raw-create-async-engine - AUTOCOMMIT admin engine for CREATE/DROP DATABASE, never runs application queries

@@ -163,6 +163,7 @@ from family_assistant.storage import init_db
 from family_assistant.storage.base import create_engine_with_sqlite_optimizations
 from family_assistant.storage.database import (
     Database,
+    dispose_engine,
     set_engine_history_taint_epoch,
     set_engine_memory_limits,
 )
@@ -3304,7 +3305,7 @@ class Assistant:
 
         # Close database engine (only if we created it, not if it was injected)
         if self.database_engine and not self._injected_database_engine:
-            await self.database_engine.dispose()
+            await dispose_engine(self.database_engine)
             logger.info("Database engine disposed.")
         elif self._injected_database_engine:
             logger.info(
