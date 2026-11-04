@@ -6,10 +6,12 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, cast
 from zoneinfo import ZoneInfo
 
-import caldav
 import pytest
+from caldav.calendarobjectresource import Event
+from caldav.davclient import DAVClient
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.caldav_sync import sync_result
 from family_assistant.calendar_integration import (
     format_datetime_or_date,
 )
@@ -72,19 +74,19 @@ async def test_format_datetime_or_date_all_day_tomorrow_with_mock_clock() -> Non
 
 def get_radicale_client(
     radicale_server_details: tuple[str, str, str, str],
-) -> caldav.DAVClient:
+) -> DAVClient:
     """Helper to get a caldav client for the test Radicale server."""
     base_url, user, passwd, _ = radicale_server_details
-    return caldav.DAVClient(url=base_url, username=user, password=passwd, timeout=30)
+    return DAVClient(url=base_url, username=user, password=passwd, timeout=30)
 
 
 async def get_event_by_summary_from_radicale(
     radicale_server_details: tuple[str, str, str, str],
     event_summary: str,
-) -> caldav.objects.Event | None:
+) -> Event | None:
     """Fetches an event by its summary from the specified calendar_url on Radicale."""
     base_url, user, passwd, calendar_url = radicale_server_details
-    client = caldav.DAVClient(url=base_url, username=user, password=passwd, timeout=30)
+    client = DAVClient(url=base_url, username=user, password=passwd, timeout=30)
 
     try:
         target_calendar = await asyncio.to_thread(client.calendar, url=calendar_url)
@@ -95,7 +97,7 @@ async def get_event_by_summary_from_radicale(
         logger.exception(f"Error getting calendar at URL '{calendar_url}': {e_get_cal}")
         return None
 
-    events = await asyncio.to_thread(target_calendar.events)
+    events = sync_result(await asyncio.to_thread(target_calendar.get_events))
     for event_obj in events:
         try:
             vevent = event_obj.vobject_instance.vevent

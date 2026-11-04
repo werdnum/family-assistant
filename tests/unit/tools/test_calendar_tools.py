@@ -10,10 +10,12 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 from zoneinfo import ZoneInfo
 
-import caldav
 import httpx
 import pytest
+from caldav.calendarobjectresource import Event
+from caldav.davclient import DAVClient
 
+from family_assistant.caldav_sync import sync_result
 from family_assistant.config_models import JevFilterConfig, TypeSafeConfig
 from family_assistant.llm.typesafe import ChoiceQuestion, JevAnswers, NoulQuestion
 from family_assistant.security.taint import (
@@ -60,12 +62,12 @@ if TYPE_CHECKING:
 
 async def _get_radicale_event_by_summary(
     radicale_server: tuple[str, str, str, str], summary: str
-) -> caldav.objects.Event | None:
+) -> Event | None:
     """Fetches an event by its summary from the fixture's calendar on Radicale."""
     base_url, user, passwd, calendar_url = radicale_server
-    client = caldav.DAVClient(url=base_url, username=user, password=passwd, timeout=30)
+    client = DAVClient(url=base_url, username=user, password=passwd, timeout=30)
     target_calendar = await asyncio.to_thread(client.calendar, url=calendar_url)
-    events = await asyncio.to_thread(target_calendar.events)
+    events = sync_result(await asyncio.to_thread(target_calendar.get_events))
     for event in events:
         vevent = event.vobject_instance.vevent
         if vevent.summary.value == summary:

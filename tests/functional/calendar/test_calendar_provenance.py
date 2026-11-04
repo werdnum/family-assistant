@@ -8,10 +8,11 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
-import caldav
 import httpx
 import pytest
+from caldav.davclient import DAVClient
 
+from family_assistant.caldav_sync import sync_result
 from family_assistant.security.taint import (
     InMemoryTurnTaintTracker,
     SourceTrustTier,
@@ -170,8 +171,8 @@ async def test_caldav_write_search_and_out_of_band_change(
     )
     assert result.startswith("OK.")
 
-    with caldav.DAVClient(url=base_url, username=username, password=password) as client:
-        stored = client.calendar(url=calendar_url).events()[0]
+    with DAVClient(url=base_url, username=username, password=password) as client:
+        stored = sync_result(client.calendar(url=calendar_url).get_events())[0]
         marker = str(stored.icalendar_component.get(CALDAV_PROVENANCE_PROPERTY))
         record = (await db.calendar_provenance.get_many([marker]))[marker]
         assert (
@@ -186,8 +187,8 @@ async def test_caldav_write_search_and_out_of_band_change(
     assert "Dental checkup" in result
     assert read_tracker.snapshot().max_tier is SourceTrustTier.TRUSTED_USER
 
-    with caldav.DAVClient(url=base_url, username=username, password=password) as client:
-        event = client.calendar(url=calendar_url).events()[0]
+    with DAVClient(url=base_url, username=username, password=password) as client:
+        event = sync_result(client.calendar(url=calendar_url).get_events())[0]
         event.data = event.data.replace("Dental checkup", "Injected instruction")
         event.save()
 
@@ -198,8 +199,8 @@ async def test_caldav_write_search_and_out_of_band_change(
     assert "Injected instruction" in result
     assert changed_tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
 
-    with caldav.DAVClient(url=base_url, username=username, password=password) as client:
-        event = client.calendar(url=calendar_url).events()[0]
+    with DAVClient(url=base_url, username=username, password=password) as client:
+        event = sync_result(client.calendar(url=calendar_url).get_events())[0]
         event.data = re.sub(r"(?m)^X-FA-PROVENANCE-ID:[^\r\n]*\r?\n", "", event.data)
         event.save()
 
@@ -250,8 +251,8 @@ async def test_mixed_household_and_subscribed_calendar_grades_returned_events(
         "ical": {"urls": [{"id": "school", "url": "https://school.test/events.ics"}]},
     }
     db = Database(db_engine)
-    with caldav.DAVClient(url=base_url, username=username, password=password) as client:
-        client.calendar(url=calendar_url).save_event(
+    with DAVClient(url=base_url, username=username, password=password) as client:
+        client.calendar(url=calendar_url).add_event(
             "\r\n".join([
                 "BEGIN:VCALENDAR",
                 "VERSION:2.0",
