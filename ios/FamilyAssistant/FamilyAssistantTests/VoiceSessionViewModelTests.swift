@@ -468,7 +468,7 @@ final class VoiceSessionViewModelTests: XCTestCase {
         await model.start()
         session.emit(.audio(Data([0x01, 0x02])))
         session.emit(.generationComplete)
-        session.emit(.turnComplete)
+        session.emit(.turnComplete(reason: nil))
         session.emit(.outputTranscription("done"))
         try await waitUntil { !model.transcript.entries.isEmpty }
         XCTAssertTrue(model.isAssistantSpeaking)
@@ -610,6 +610,55 @@ final class VoiceSessionViewModelTests: XCTestCase {
             session.sentToolResponses.first?.first?.response,
             .object(["result": .object(["ok": .bool(true)])])
         )
+    }
+
+    func testWorkingLastsUntilTheModelEndsItsTurn() async throws {
+        let recorder = VoiceDiagnosticRecorder()
+        toolExecutor.handler = { _, _ in .object(["result": .string("ok")]) }
+        let model = makeModel(diagnostics: recorder.diagnostics)
+        await model.start()
+        XCTAssertFalse(model.isWorking)
+
+        session.emit(.toolCall([GeminiFunctionCall(id: "c1", name: "noop", args: .object([:]))]))
+        try await waitUntil { self.session.sentToolResponses.isEmpty == false && model.pendingToolCallIDs.isEmpty }
+        XCTAssertTrue(model.isWorking, "the model has the results and owes an answer")
+
+        session.emit(.turnComplete(reason: "NEED_MORE_INPUT"))
+        try await waitUntil { model.isWorking == false }
+        let turn = try XCTUnwrap(recorder.records.last { $0.0 == "turn_complete" })
+        XCTAssertEqual(turn.1["after_tool_results"], "true")
+        XCTAssertEqual(turn.1["produced_audio"], "false")
+        XCTAssertEqual(turn.1["silent_after_tool_results"], "true")
+        XCTAssertEqual(turn.1["turn_complete_reason"], "NEED_MORE_INPUT")
+        XCTAssertNotNil(turn.1["since_tool_results_ms"])
+    }
+
+    func testSpokenAnswerAfterToolResultsIsNotSilent() async throws {
+        let recorder = VoiceDiagnosticRecorder()
+        toolExecutor.handler = { _, _ in .object(["result": .string("ok")]) }
+        let model = makeModel(diagnostics: recorder.diagnostics)
+        await model.start()
+        session.emit(.toolCall([GeminiFunctionCall(id: "c1", name: "noop", args: .object([:]))]))
+        try await waitUntil { model.isWorking && model.pendingToolCallIDs.isEmpty }
+
+        session.emit(.audio(Data([0x01, 0x02])))
+        session.emit(.turnComplete(reason: nil))
+        try await waitUntil { model.isWorking == false }
+        let turn = try XCTUnwrap(recorder.records.last { $0.0 == "turn_complete" })
+        XCTAssertEqual(turn.1["produced_audio"], "true")
+        XCTAssertNil(turn.1["silent_after_tool_results"])
+        XCTAssertNil(turn.1["turn_complete_reason"])
+    }
+
+    func testWaitingForInputEndsWorking() async throws {
+        toolExecutor.handler = { _, _ in .object(["result": .string("ok")]) }
+        let model = makeModel()
+        await model.start()
+        session.emit(.toolCall([GeminiFunctionCall(id: "c1", name: "noop", args: .object([:]))]))
+        try await waitUntil { model.isWorking && model.pendingToolCallIDs.isEmpty }
+
+        session.emit(.waitingForInput)
+        try await waitUntil { model.isWorking == false }
     }
 
     func testLongSilenceIsReportedOnTheNextToolResult() async throws {

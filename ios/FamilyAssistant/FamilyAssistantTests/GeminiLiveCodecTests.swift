@@ -411,7 +411,19 @@ final class GeminiLiveCodecTests: XCTestCase {
         {"serverContent":{"modelTurn":{"parts":[{"inlineData":{"mimeType":"audio/pcm;rate=24000","data":"\(pcm.base64EncodedString())"}}]},"outputTranscription":{"text":"hello"},"turnComplete":true}}
         """
         let events = try GeminiLiveCodec.decodeServerMessage(Data(frame.utf8))
-        XCTAssertEqual(events, [.audio(pcm), .outputTranscription("hello"), .turnComplete])
+        XCTAssertEqual(events, [.audio(pcm), .outputTranscription("hello"), .turnComplete(reason: nil)])
+    }
+
+    func testDecodeTurnCompleteReasonAndWaitingForInput() throws {
+        let frame = #"{"serverContent":{"waitingForInput":true,"turnComplete":true,"turnCompleteReason":"NEED_MORE_INPUT"}}"#
+        let events = try GeminiLiveCodec.decodeServerMessage(Data(frame.utf8))
+        XCTAssertEqual(events, [.waitingForInput, .turnComplete(reason: "NEED_MORE_INPUT")])
+    }
+
+    func testTurnCompleteReasonThatIsNotAnEnumNameIsNotPassedOn() throws {
+        let frame = #"{"serverContent":{"turnComplete":true,"turnCompleteReason":"call 0412 555 000"}}"#
+        let events = try GeminiLiveCodec.decodeServerMessage(Data(frame.utf8))
+        XCTAssertEqual(events, [.turnComplete(reason: "other")])
     }
 
     func testDecodeInputTranscriptionAndInterrupted() throws {
