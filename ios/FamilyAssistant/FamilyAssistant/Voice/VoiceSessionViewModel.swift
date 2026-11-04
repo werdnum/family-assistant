@@ -437,6 +437,7 @@ final class VoiceSessionViewModel {
         if let toolResultsSentAt {
             fields["silent_after_tool_results"] = "true"
             fields["since_tool_results_ms"] = Self.milliseconds(since: toolResultsSentAt)
+            self.toolResultsSentAt = nil
         }
         diagnostics.record("turn_complete", fields: fields)
         turnProducedAudio = false

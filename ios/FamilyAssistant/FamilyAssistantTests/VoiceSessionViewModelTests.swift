@@ -631,6 +631,11 @@ final class VoiceSessionViewModelTests: XCTestCase {
         XCTAssertEqual(turn.1["silent_after_tool_results"], "true")
         XCTAssertEqual(turn.1["turn_complete_reason"], "NEED_MORE_INPUT")
         XCTAssertNotNil(turn.1["since_tool_results_ms"])
+
+        session.emit(.turnComplete(reason: nil))
+        try await waitUntil { recorder.records.filter { $0.0 == "turn_complete" }.count == 2 }
+        let next = try XCTUnwrap(recorder.records.last { $0.0 == "turn_complete" })
+        XCTAssertNil(next.1["silent_after_tool_results"], "the results belonged to the earlier turn")
     }
 
     func testSpokenAnswerAfterToolResultsIsNotSilent() async throws {
