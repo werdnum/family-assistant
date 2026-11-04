@@ -95,6 +95,13 @@ updates:
           - "@assistant-ui/*"
           - "@hookform/*"
           - "react-router*"
+      # @vitejs/plugin-react's majors each peer a single Vite major, so a
+      # separate PR for either one cannot install.
+      vite:
+        patterns:
+          - "vite"
+          - "@vitejs/*"
+          - "vite-plugin-*"
       vitest:
         patterns:
           - "vitest"
@@ -110,7 +117,6 @@ updates:
           - "@testing-library/*"
           - "@biomejs/*"
           - "*eslint*"
-          - "@vitejs/*"
           - "jsdom*"
           - "@types/*"
           - "msw*"
@@ -127,6 +133,9 @@ updates:
           - "@assistant-ui/*"
           - "@hookform/*"
           - "react-router*"
+          - "vite"
+          - "@vitejs/*"
+          - "vite-plugin-*"
           - "vitest"
           - "@vitest/*"
           - "tailwindcss*"
