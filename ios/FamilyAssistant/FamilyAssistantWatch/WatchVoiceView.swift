@@ -74,7 +74,8 @@ struct WatchVoiceView: View {
         case .idle, .requestingPermission, .connecting:
             ProgressView("Connecting…")
         case .active:
-            Text(model.isAssistantSpeaking ? "Speaking…" : model.isMuted ? "Muted" : "Listening…")
+            Text(model.isAssistantSpeaking ? "Speaking…" : model.isWorking ? "Working…"
+                : model.isMuted ? "Muted" : "Listening…")
             ProgressView(value: model.hasRecentInputLevel && !model.isMuted ? model.inputLevel : 0)
                 .tint(.green)
                 .accessibilityLabel("Microphone activity")

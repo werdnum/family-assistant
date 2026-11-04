@@ -57,6 +57,9 @@ final class VoiceSessionViewModel {
     private(set) var phase: Phase = .idle
     private(set) var transcript = VoiceTranscript()
     private(set) var isAssistantSpeaking = false
+    /// Tool results have gone back and Gemini has not yet ended its turn, so it
+    /// is still producing an answer rather than waiting for the user.
+    private(set) var isAwaitingModelTurn = false
     private(set) var inputLevel = 0.0
     private(set) var lastInputLevelAt: Date?
     var isMuted = false {
@@ -112,10 +115,19 @@ final class VoiceSessionViewModel {
     /// served neither and its instruction therefore asks for no reminder.
     private var voiceReminder: (key: String, afterSeconds: Int)?
     private var interruptionCount = 0
+    /// Whether any assistant audio arrived since the last turnComplete.
+    private var turnProducedAudio = false
     private var activityDetectionProfile = "default"
 
     var pendingToolCallIDs: Set<String> {
         Set(toolTasks.keys)
+    }
+
+    /// The model is busy on something other than the user: a tool call is
+    /// running, or it has the results and has not ended its turn. Only Gemini's
+    /// turnComplete says it is waiting for the user again.
+    var isWorking: Bool {
+        !toolTasks.isEmpty || isAwaitingModelTurn
     }
 
     init(
@@ -349,6 +361,7 @@ final class VoiceSessionViewModel {
                 self.toolResultsSentAt = nil
             }
             silenceBrokenAt = .now
+            turnProducedAudio = true
             audio.enqueue(data)
             let isPlaying = audio.isDucked
             if isPlaying, !isAssistantSpeaking {
@@ -362,10 +375,14 @@ final class VoiceSessionViewModel {
             // While the user is talking there is no dead air to apologise for.
             silenceBrokenAt = .now
             transcript.appendUser(text)
-        case .turnComplete, .generationComplete:
-            // Gemini generates faster than it plays, so these arrive while the
+        case let .turnComplete(reason, waitingForInput):
+            // Gemini generates faster than it plays, so this arrives while the
             // reply is still coming out of the speaker. Playback ending clears
             // isAssistantSpeaking.
+            recordTurnEnd("turn_complete", reason: reason, waitingForInput: waitingForInput)
+        case .waitingForInput:
+            recordTurnEnd("waiting_for_input", reason: nil, waitingForInput: true)
+        case .generationComplete:
             break
         case .interrupted:
             recordInterruption()
@@ -399,6 +416,29 @@ final class VoiceSessionViewModel {
             fields["since_first_playback_ms"] = Self.milliseconds(since: firstPlaybackAt)
         }
         diagnostics.record("interrupted", fields: fields.merging(audio.routeSnapshot.telemetryFields) { current, _ in current })
+    }
+
+    /// The model has stopped and is waiting for the user, so the turn's state is
+    /// retired and recorded. `silent_after_tool_results` is the turn that took
+    /// tool results and ended without a word or another tool call, leaving the
+    /// user waiting on an answer the model has decided not to give.
+    private func recordTurnEnd(_ event: String, reason: String?, waitingForInput: Bool) {
+        var fields = [
+            "produced_audio": String(turnProducedAudio),
+            "after_tool_results": String(isAwaitingModelTurn),
+            "waiting_for_input": String(waitingForInput),
+        ]
+        if let reason {
+            fields["turn_complete_reason"] = reason
+        }
+        if let toolResultsSentAt {
+            fields["silent_after_tool_results"] = "true"
+            fields["since_tool_results_ms"] = Self.milliseconds(since: toolResultsSentAt)
+        }
+        diagnostics.record(event, fields: fields)
+        toolResultsSentAt = nil
+        turnProducedAudio = false
+        isAwaitingModelTurn = false
     }
 
     private static func milliseconds(since instant: ContinuousClock.Instant) -> String {
@@ -517,6 +557,11 @@ final class VoiceSessionViewModel {
                 "execution_ms": Self.milliseconds(since: startedAt),
             ]
             let outgoing = self.applyingSilenceReminder(to: responses)
+            // Before the send, not after: Gemini can answer and end its turn
+            // while the send is still suspended, and that end must not be
+            // overwritten when the send resumes.
+            self.toolResultsSentAt = .now
+            self.isAwaitingModelTurn = true
             do {
                 try await session.sendToolResponses(outgoing)
             } catch {
@@ -531,7 +576,6 @@ final class VoiceSessionViewModel {
                 return
             }
             self.diagnostics.record("tool_results_sent", fields: fields)
-            self.toolResultsSentAt = .now
         }
         // A Gemini tool-call event is one ordered batch. Map every call ID to
         // the shared task so cancelling any member suppresses the whole batch
@@ -636,6 +680,7 @@ final class VoiceSessionViewModel {
         connectionTimeoutTask = nil
         persistTranscriptIfNeeded()
         isAssistantSpeaking = false
+        isAwaitingModelTurn = false
         inputLevel = 0
         lastInputLevelAt = nil
         for task in toolTasks.values {

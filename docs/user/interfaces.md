@@ -432,11 +432,13 @@ beside the composer. The Photos share sheet does not list Family Assistant — c
 paste it, use the composer's photo button, or share from Files. Long-pressing the app icon offers
 **New Chat** and **Voice** quick actions.
 
-**Voice** asks for microphone permission and shows a level meter while capturing audio. A call
-always runs on the default assistant, whatever is picked in Chat, and when it ends the transcript is
-saved as its own conversation, including its tool calls and results — so opening it in Chat picks
-the conversation up where the call left off. Quick delegated results are spoken in the call; later
-results appear directly in Chat and can send a notification. Calls placed by Siri work the same way.
+**Voice** asks for microphone permission and shows a level meter while capturing audio. The status
+reads **Working…** while the assistant is running a tool or still putting together its answer, and
+**Listening…** once it has finished and is waiting for you. A call always runs on the default
+assistant, whatever is picked in Chat, and when it ends the transcript is saved as its own
+conversation, including its tool calls and results — so opening it in Chat picks the conversation up
+where the call left off. Quick delegated results are spoken in the call; later results appear
+directly in Chat and can send a notification. Calls placed by Siri work the same way.
 
 If you need something on your phone while talking, ask voice to **send it to my Chat**. It saves the
 text in that call's conversation and sends a notification to your registered devices. For an HTTPS
@@ -464,10 +466,10 @@ up with iPhone** again. Signing out or changing accounts on the phone clears the
 when the devices next exchange updates; this is not immediate while disconnected. You can also
 revoke the watch's credentials in API token settings.
 
-Tap **Start Voice**, allow microphone access, and speak. The screen shows microphone activity and
-the latest transcription. Use **Mute** to pause your microphone or **End** to finish. Leaving the
-app ends the session. The transcript is saved to Chat when the session ends, and any handoff you
-requested remains in that conversation.
+Tap **Start Voice**, allow microphone access, and speak. The screen shows microphone activity, the
+latest transcription, and the same **Working…** and **Listening…** status as the phone. Use **Mute**
+to pause your microphone or **End** to finish. Leaving the app ends the session. The transcript is
+saved to Chat when the session ends, and any handoff you requested remains in that conversation.
 
 To start from your watch face, edit the face, choose a complication slot, and select **Family
 Assistant Voice**. Tapping its microphone opens the app and starts voice mode once you are signed

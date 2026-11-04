@@ -228,9 +228,24 @@ enum GeminiLiveCodec {
         if serverContent["generationComplete"]?.boolValue == true {
             events.append(.generationComplete)
         }
+        let waitingForInput = serverContent["waitingForInput"]?.boolValue == true
         if serverContent["turnComplete"]?.boolValue == true {
-            events.append(.turnComplete)
+            events.append(.turnComplete(
+                reason: turnCompleteReason(serverContent["turnCompleteReason"]),
+                waitingForInput: waitingForInput
+            ))
+        } else if waitingForInput {
+            events.append(.waitingForInput)
         }
+    }
+
+    /// The reason goes into diagnostics, so only an enum-shaped name is kept;
+    /// anything else is reported as `other` rather than as server text.
+    private static func turnCompleteReason(_ value: JSONValue?) -> String? {
+        guard let reason = value?.stringValue else { return nil }
+        let isEnumName = (1 ... 64).contains(reason.count)
+            && reason.allSatisfy { ("A" ... "Z").contains($0) || $0 == "_" }
+        return isEnumName ? reason : "other"
     }
 
     private static func decodeFunctionCall(_ value: JSONValue) -> GeminiFunctionCall? {
