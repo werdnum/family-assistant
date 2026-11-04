@@ -17,6 +17,12 @@ npm test --prefix frontend        # vitest
 npm run build --prefix frontend
 ```
 
+The `overrides` entry for `@babel/plugin-transform-runtime` in `package.json` works around an npm
+resolver bug: npm follows `@vitejs/plugin-react`'s optional peer chain (`@rolldown/plugin-babel` →
+`@babel/plugin-transform-runtime`) to the Babel 8 release and then fails with `ERESOLVE` against the
+Babel 7 that workbox needs, even though none of that chain is installed. Drop it once `npm install`
+resolves without it.
+
 ## Testing
 
 Tests run under Vitest with jsdom. `vitest.config.js` registers `src/test/setup.js` as its

@@ -149,11 +149,29 @@ struct VoicePlaybackRamp {
 /// the canceller has never heard, and each reply's microphone and played levels
 /// are kept apart for ``window`` and for the rest of the reply.
 ///
+/// On the watch speaker the canceller was still letting echo through 1.4 s into
+/// a first reply, peaking 10 dB below what was playing, and had converged by the
+/// second. There the microphone stays silent for the whole first reply.
+///
 /// Timed from scheduling the reply's first buffer, which precedes hearing it by
 /// the route's output latency. Mic levels are taken before ducking and silencing,
 /// because what the canceller let through is the question they answer.
 struct VoiceEchoConvergence {
     static let window: Duration = .milliseconds(500)
+
+    let silencesWholeFirstReply: Bool
+
+    init(silencesWholeFirstReply: Bool = false) {
+        self.silencesWholeFirstReply = silencesWholeFirstReply
+    }
+
+    static func forThisPlatform() -> VoiceEchoConvergence {
+        #if os(watchOS)
+        VoiceEchoConvergence(silencesWholeFirstReply: true)
+        #else
+        VoiceEchoConvergence()
+        #endif
+    }
 
     private struct Levels {
         var micEnergy = 0.0
@@ -190,7 +208,6 @@ struct VoiceEchoConvergence {
         }
     }
 
-    private var firstReplyStartedAt: ContinuousClock.Instant?
     private var replyStartedAt: ContinuousClock.Instant?
     private var replyIndex = 0
     private var converging = Levels()
@@ -199,14 +216,13 @@ struct VoiceEchoConvergence {
     mutating func replyStarted(at now: ContinuousClock.Instant) {
         replyIndex += 1
         replyStartedAt = now
-        firstReplyStartedAt = firstReplyStartedAt ?? now
         converging = Levels()
         converged = Levels()
     }
 
     func silencesMic(at now: ContinuousClock.Instant) -> Bool {
-        guard replyStartedAt != nil, let firstReplyStartedAt else { return false }
-        return now - firstReplyStartedAt < Self.window
+        guard replyIndex == 1, let replyStartedAt else { return false }
+        return silencesWholeFirstReply || now - replyStartedAt < Self.window
     }
 
     mutating func recordCaptured(rms: Double, frames: Int, at now: ContinuousClock.Instant) {
@@ -239,7 +255,7 @@ struct VoiceEchoConvergence {
     }
 
     mutating func reset() {
-        self = VoiceEchoConvergence()
+        self = VoiceEchoConvergence(silencesWholeFirstReply: silencesWholeFirstReply)
     }
 }
 
@@ -402,7 +418,7 @@ final class VoiceAudioEngine: VoiceAudioIO {
     private struct TapState {
         var muted = false
         var ducking = VoiceMicDucking()
-        var echo = VoiceEchoConvergence()
+        var echo = VoiceEchoConvergence.forThisPlatform()
         var converter: StreamingPCMConverter?
         var onCaptured: (@Sendable (Data) -> Void)?
         var onInputLevel: (@Sendable (Double) -> Void)?
