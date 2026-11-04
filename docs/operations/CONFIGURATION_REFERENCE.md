@@ -595,6 +595,16 @@ back to arbitrary external senders. This is intentional: the email intake profil
 read tools, so outbound replies require a per-user sender mapping to avoid data exfiltration. It is
 not a general-purpose arbitrary-recipient email tool.
 
+The assistant's answer to an inbound email is a reply-all: it goes to the mapped sender and copies
+every other address on that email's `To` and `Cc` lines, minus the sender and the assistant's own
+addresses (the envelope recipient, `outbound_from_address` and `allowed_recipient_addresses`). If
+none of the assistant's addresses is on those lines, the sender Bcc'd it, and nobody else is copied.
+The turn's prompt names everyone who will read the reply. Other messages on the conversation, such
+as confirmation results, go to the sender only. The copied people never receive anything the sender
+did not address to them, but they do read model output from a turn that can use the profile's read
+tools. That is an accepted residual: the authenticated sender chose them, and the prompt tells the
+model to leave out private household details nobody asked it to share.
+
 | Option                     | Default        | Environment variable             | Sensitive |
 | -------------------------- | -------------- | -------------------------------- | --------- |
 | `outbound_mailgun_api_key` | `null`         | `MAILGUN_OUTBOUND_API_KEY`       | Yes       |
@@ -629,15 +639,22 @@ DMARC authenticates the `From:` header, while `allowed_sender_addresses` and the
 the SMTP envelope sender, which any client can set. So the policy also requires the message to have
 exactly one `From:` address and that address to equal the envelope sender. Otherwise a message from
 an attacker's own DMARC-passing domain, sent with a forged allowlisted envelope sender, would be
-accepted. Mail sent directly from a user's mailbox (including a forward) satisfies this. The sender's
-domain must publish a DMARC record: without one the result is `none`, not `pass`, even when DKIM and
-SPF pass.
+accepted. Mail sent directly from a user's mailbox (including a forward) satisfies this. The
+sender's domain must publish a DMARC record: without one the result is `none`, not `pass`, even when
+DKIM and SPF pass.
 
 | Option                         | Default | Recommended |
 | ------------------------------ | ------- | ----------- |
 | `require_authenticated_sender` | `false` | `true`      |
 
 If `require_authenticated_sender` is true, the Mailgun signing key must also be set.
+
+The setting also decides whose words an email turn treats as a request. With it on, mail whose
+envelope sender is mapped to the target user in `users[].email_intake.sender_addresses` carries the
+text that sender typed as a trusted request, separate from the quoted, forwarded and signature
+material, so the `email_intake` profile's `review` rules can be satisfied by tool-call review. With
+it off, the whole email stays untrusted material and reviewed calls escalate to confirmation. See
+[email-authored-request.md](../design/email-authored-request.md).
 
 ### Size Limits
 
@@ -1057,8 +1074,8 @@ request *is* the authorization. A model choosing it is not, which is why the shi
 `default_assistant` allows `standard`, `deep` and `frontier` but admits only `standard` and `deep`
 automatically.
 
-The shipped presets — `gpt_6_astra`, `gpt_6_1_sol`, `claude_opus_5_5`, `claude_fable_5_1`, `kimi_k3`
-and `gemini_4_argon` — are listed once, in `default_profile_settings.delegation_model_tiers`, so a
+The shipped presets — `gpt_6_astra`, `gpt_6_1_sol`, `claude_opus_5_5`, `claude_sonnet_5_5`,
+`claude_haiku_5_5`, `claude_fable_5_1`, `kimi_k3` and `gemini_4_argon` — are listed once, in `default_profile_settings.delegation_model_tiers`, so a
 delegating model may pin any profile that has a tier to any of them without a confirmation ("run
 complex_tasks on Gemini 4 Argon"). A profile that names an inline model drops the inherited list,
 and a profile that declares its own replaces it, so `delegation_model_tiers: []` keeps a profile off

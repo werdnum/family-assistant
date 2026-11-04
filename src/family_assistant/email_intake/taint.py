@@ -12,6 +12,7 @@ from family_assistant.security.taint import (
     TaintSourceType,
     TurnTaintState,
 )
+from family_assistant.services.user_identity import UserIdentityResolver
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -31,6 +32,31 @@ def configured_sender_set(raw_addresses: list[str]) -> set[str]:
 def email_authentication_passed(email_row: Mapping[str, object]) -> bool:
     """Return whether the stored inbound email authentication result passed."""
     return email_row.get("dmarc_result") == "pass"
+
+
+def email_sender_is_authenticated_household_member(
+    email_row: Mapping[str, object],
+    app_config: AppConfig,
+) -> bool:
+    """Whether the email's own words can be taken as the target user's.
+
+    Requires the strict intake mode, where a DMARC pass is bound to the
+    envelope sender at the webhook, and an envelope sender explicitly mapped to
+    the user the email is for. Mail accepted by recipient mapping alone, or in
+    the permissive mode where a recorded DMARC pass is only telemetry, does not
+    qualify.
+    """
+    if not app_config.email_intake.require_authenticated_sender:
+        return False
+    if not email_authentication_passed(email_row):
+        return False
+    sender = email_row.get("sender_address")
+    target_user_id = email_row.get("target_user_id")
+    if not isinstance(sender, str) or not isinstance(target_user_id, str):
+        return False
+    return UserIdentityResolver(app_config).is_email_sender_authorized_for_user(
+        sender, target_user_id
+    )
 
 
 def email_initial_taint_source(

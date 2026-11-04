@@ -751,7 +751,7 @@ class ToolResult:
         if self.text is not None:
             try:
                 return json.loads(self.text)  # type: ignore[return-value]
-            except (json.JSONDecodeError, TypeError):
+            except json.JSONDecodeError, TypeError:
                 return self.text
 
         return None

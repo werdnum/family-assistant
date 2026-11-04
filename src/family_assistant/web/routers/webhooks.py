@@ -79,7 +79,7 @@ def _extract_mime_body_content(raw_mime: bytes) -> MimeBodyContent:
 
         try:
             content = part.get_content()
-        except (LookupError, UnicodeError):
+        except LookupError, UnicodeError:
             logger.warning(
                 "Skipping undecodable %s MIME part while extracting email body",
                 content_type,

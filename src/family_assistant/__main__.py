@@ -107,7 +107,8 @@ def main() -> int:
     # LLM client overrides would be passed here if needed for main execution,
     # but typically this is for testing. For main run, it's None.
     assistant_app = Assistant(config, llm_client_overrides=None)
-    loop = asyncio.get_event_loop()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
 
     # Setup Signal Handlers
     signal_map = {signal.SIGINT: "SIGINT", signal.SIGTERM: "SIGTERM"}

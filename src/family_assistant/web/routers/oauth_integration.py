@@ -223,7 +223,7 @@ def _decode_id_token_email(id_token: str) -> str | None:
     try:
         payload_bytes = base64.urlsafe_b64decode(payload_b64 + padding)
         payload = json.loads(payload_bytes)
-    except (ValueError, UnicodeDecodeError):
+    except ValueError, UnicodeDecodeError:
         return None
     email = payload.get("email")
     return email if isinstance(email, str) else None

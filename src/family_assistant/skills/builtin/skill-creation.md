@@ -98,4 +98,9 @@ This skill would only appear in the catalog for sessions using the `research` pr
 
 - **Built-in skills** ship with the assistant (browser automation, camera, image tools, scheduling)
 - **User skills** (DB-based) are created via `add_or_update_note` with frontmatter
-- User skills with the same name as a built-in skill override the built-in version
+- A user skill overrides a built-in one when its frontmatter `name` matches the built-in's name
+  exactly. The note's title does not count: an ordinary note titled like a built-in skill (a memory
+  note, say) does not replace it, and loading the skill by name still returns the built-in.
+- An override replaces the built-in completely, including its `activate_tools` and
+  `activate_mcp_servers`. Copy those lists from the built-in into the override, or the tools it
+  relied on are not made available when the override is loaded.
