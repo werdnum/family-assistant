@@ -969,7 +969,7 @@ async def harvest_gemini_batch(
                 TrialRecord(
                     case_id=entry.case_id,
                     boundary=case.boundary,
-                    label=case.label,
+                    label=case.scoring_label,
                     source=case.source,
                     source_group=case.source_group,
                     matched_group=case.matched_group,
