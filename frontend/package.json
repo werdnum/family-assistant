@@ -42,7 +42,7 @@
     "@radix-ui/react-slot": "^1.2.4",
     "@radix-ui/react-switch": "^1.2.6",
     "@radix-ui/react-tooltip": "^1.2.8",
-    "@tanstack/react-table": "^8.21.3",
+    "@tanstack/react-table": "^9.2.6",
     "@vitejs/plugin-react": "^5.0.2",
     "class-variance-authority": "^0.7.1",
     "classnames": "^2.5.1",
