@@ -1070,6 +1070,9 @@ default_profile_settings:
             - "test_script_with_simulated_tools"
             - "send_message_to_user"
             - "send_to_my_chat"
+            # A note into another of the acting user's own conversations;
+            # it starts no turn there.
+            - "post_to_conversation"
             - "attach_to_response"
             - "list_calendars"
             - "add_calendar_event"

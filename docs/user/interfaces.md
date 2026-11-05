@@ -194,6 +194,15 @@ To catch up without opening each thread, ask in Home, for example *"How are the 
 assistant answers from each thread's title, where it stands and the outcome it reported. It doesn't
 read the threads' conversations, so for the detail, open the thread.
 
+**Passing something to another conversation.** Ask the assistant in one conversation to tell
+another of your conversations something, for example in a thread, *"Tell Home the quotes are in"*,
+or in Home, *"Let the plumbing thread know I prefer Acme"*. The assistant posts a note there, and the
+assistant in that conversation picks it up straight away and replies there, so the reply shows up
+in that conversation like any other. It only reaches your own conversations; to message someone
+else in the household, see [Messaging other people](#messaging-other-people-in-your-household).
+A note carries along how much the assistant trusted what it was working from, so a note written
+after reading a web page or an email is treated with the same care in the conversation it lands in.
+
 Click the card to open the thread. On a wide screen the thread opens in a panel on the right, and
 Home stays where it is in the middle, with anything you were typing still in its message box. You
 can keep chatting in Home while the thread works, and send messages in either: each reply appears in
