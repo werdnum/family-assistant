@@ -7,16 +7,18 @@ from datetime import date, datetime, time, timedelta  # Added time
 from typing import TYPE_CHECKING, Any, Literal, cast
 from zoneinfo import ZoneInfo  # Import ZoneInfo
 
-import caldav
 import httpx  # Import httpx
 import recurring_ical_events
 import vobject
+from caldav.collection import Calendar
+from caldav.davclient import DAVClient
 from caldav.lib.error import (  # Reverted to original-like import path
     DAVError,
     NotFoundError,
 )
 from icalendar import Calendar as ICalendar
 
+from family_assistant.caldav_sync import sync_result
 from family_assistant.utils.clock import Clock, SystemClock
 
 if TYPE_CHECKING:
@@ -641,7 +643,7 @@ def _fetch_caldav_events_sync(
         return []
 
     try:
-        client = caldav.DAVClient(
+        client = DAVClient(
             url=client_url,
             username=username,
             password=password,
@@ -710,7 +712,7 @@ def _fetch_caldav_events_sync(
 
 
 def _fetch_caldav_calendar(
-    client: caldav.DAVClient,
+    client: DAVClient,
     calendar_url: str,
     start_date: date,
     end_date: date,
@@ -718,15 +720,17 @@ def _fetch_caldav_calendar(
     all_events: list["CalendarEvent"],
     source: CalendarSource | None = None,
 ) -> None:
-    target_calendar = client.calendar(url=calendar_url)  # type: ignore[no-untyped-call]
+    target_calendar: Calendar = client.calendar(url=calendar_url)
     logger.info(
         f"Searching for events between {start_date} and {end_date} in calendar {target_calendar.url}"
     )
-    caldav_results = target_calendar.search(
-        start=start_date,
-        end=end_date,
-        event=True,
-        expand=True,
+    caldav_results = sync_result(
+        target_calendar.search(
+            start=start_date,
+            end=end_date,
+            event=True,
+            expand=True,
+        )
     )
     logger.debug(
         f"Found {len(caldav_results)} potential events in calendar {target_calendar.url}"
@@ -958,23 +962,21 @@ async def fetch_event_details_for_confirmation(
         return None
 
     def fetch_sync_unchecked() -> "CalendarEvent | None":
-        with caldav.DAVClient(
+        with DAVClient(
             url=client_url_to_use,
             username=username,
             password=password,
             timeout=30,
         ) as client:
-            target_calendar_obj: caldav.objects.Calendar = client.calendar(
-                url=calendar_url
-            )
+            target_calendar_obj: Calendar = client.calendar(url=calendar_url)
             if not target_calendar_obj:
                 logger.error(f"Could not get calendar object for {calendar_url}")
                 return None
             logger.debug(
                 f"Fetching event with UID {uid} from {target_calendar_obj.url}"
             )
-            event_resource: caldav.objects.Event = target_calendar_obj.event_by_uid(uid)  # type: ignore
-            event_data_str: str = event_resource.data  # type: ignore
+            event_resource = sync_result(target_calendar_obj.get_event_by_uid(uid))
+            event_data_str: str = event_resource.data
             parsed_event = parse_event(event_data_str, timezone=timezone)
             if parsed_event:
                 logger.info(

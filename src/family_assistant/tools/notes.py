@@ -696,6 +696,14 @@ def _database_skill_activations(note: NoteModel) -> dict[str, list[str]]:
     return activations
 
 
+def _shadowed_note_message(title: str) -> str:
+    return (
+        f"A separate note is also titled '{title}', but that name belongs to a "
+        "skill in the catalog, so the skill was returned. Rename the note to "
+        "read it with get_note."
+    )
+
+
 async def get_note_tool(
     title: str,
     exec_context: ToolExecutionContext,
@@ -705,32 +713,44 @@ async def get_note_tool(
     attachment_registry = exec_context.attachment_registry
 
     read_policy = exec_context.note_read_policy()
-    note = await db_context.notes.get_by_title(
-        title, read_policy=read_policy
-    ) or await db_context.notes.get_skill_by_name(title, read_policy=read_policy)
-    if not note:
-        # Fall back to file-based skills via NoteRegistry
-        if exec_context.note_registry:
-            skill = exec_context.note_registry.get_skill_by_name(
-                title, exec_context.note_read_policy()
-            )
-            if skill:
-                result_data = {
-                    "exists": True,
-                    "title": skill.name,
-                    "content": skill.content,
-                    "include_in_prompt": False,
-                    "attachment_count": 0,
-                    "source": "file",
-                }
-                if skill.activate_tools:
-                    result_data["activate_tools"] = list(skill.activate_tools)
-                if skill.activate_mcp_servers:
-                    result_data["activate_mcp_servers"] = list(
-                        skill.activate_mcp_servers
-                    )
-                return ToolResult(data=result_data)
+    # A name the skill catalog lists resolves to the entry it lists: a database
+    # skill, else the file skill it would otherwise show. Only then is the name
+    # read as a note title, so an ordinary note (such as an automatically
+    # created memory note) cannot hide an advertised skill.
+    titled_note = await db_context.notes.get_by_title(title, read_policy=read_policy)
+    note = await db_context.notes.get_skill_by_name(title, read_policy=read_policy)
+    file_skill = (
+        exec_context.note_registry.get_skill_by_name(title, read_policy)
+        if note is None and exec_context.note_registry
+        else None
+    )
+    skill_found = note is not None or file_skill is not None
+    shadowed_title = (
+        titled_note.title
+        if skill_found
+        and titled_note is not None
+        and (note is None or note.title != titled_note.title)
+        else None
+    )
+    if file_skill is not None:
+        file_result = {
+            "exists": True,
+            "title": file_skill.name,
+            "content": file_skill.content,
+            "include_in_prompt": False,
+            "attachment_count": 0,
+            "source": "file",
+        }
+        if file_skill.activate_tools:
+            file_result["activate_tools"] = list(file_skill.activate_tools)
+        if file_skill.activate_mcp_servers:
+            file_result["activate_mcp_servers"] = list(file_skill.activate_mcp_servers)
+        if shadowed_title is not None:
+            file_result["shadowed_note"] = _shadowed_note_message(shadowed_title)
+        return ToolResult(data=file_result)
 
+    note = note or titled_note
+    if not note:
         return ToolResult(
             data={
                 "exists": False,
@@ -781,6 +801,8 @@ async def get_note_tool(
         ),
     }
     result_data.update(_database_skill_activations(note))
+    if shadowed_title is not None:
+        result_data["shadowed_note"] = _shadowed_note_message(shadowed_title)
 
     # Fetch attachment metadata and content
     attachments: list[ToolAttachment] = []

@@ -113,7 +113,7 @@ def _extract_activations_from_result(
             return [], []
         try:
             data = json.loads(content)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             return [], []
 
     if not isinstance(data, dict):
@@ -312,7 +312,7 @@ class LLMStreamingLoop:
             )
             async for item in attributed_to_profile(attribution, inner):
                 yield item
-        except (asyncio.CancelledError, GeneratorExit):
+        except asyncio.CancelledError, GeneratorExit:
             turn.finish("cancelled")
             raise
         except BaseException:

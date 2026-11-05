@@ -75,6 +75,33 @@ def test_standard_tier_falls_back_to_sonnet_at_medium_effort(
     }
 
 
+def test_sonnet_preset_runs_as_the_standard_fallback_does(
+    shipped_config: AppConfig,
+) -> None:
+    """An experiment arm on the preset compares models, not efforts."""
+    preset = shipped_config.model_tiers["claude_sonnet_5_5"]
+    standard_fallback = shipped_config.model_tiers["standard"].chain[1]
+
+    assert len(preset.chain) == 1
+    assert preset.chain[0].model == standard_fallback.model
+    assert resolve_entry_model_parameters(
+        preset.chain[0], shipped_config.llm_parameters
+    ) == _standard_fallback_parameters(shipped_config)
+
+
+@pytest.mark.parametrize("preset", ["claude_sonnet_5_5", "claude_haiku_5_5"])
+def test_default_assistant_can_run_the_standard_candidate_presets(
+    shipped_config: AppConfig, preset: str
+) -> None:
+    """An experiment arm must be a tier the profile can run on."""
+    assistant = shipped_profile(shipped_config, "default_assistant")
+    eligibility = ModelTierEligibility.from_profile(
+        assistant, shipped_config.model_tiers
+    )
+
+    assert preset in {option.id for option in eligibility.runnable}
+
+
 @pytest.mark.parametrize(
     "profile_id",
     [

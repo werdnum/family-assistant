@@ -207,7 +207,7 @@ private struct VoiceSessionContent: View {
         case .connecting:
             "Connecting…"
         case .active:
-            model.isAssistantSpeaking ? "Assistant speaking" : "Listening…"
+            model.isAssistantSpeaking ? "Assistant speaking" : model.isWorking ? "Working…" : "Listening…"
         case .permissionDenied:
             "Microphone access is required for voice mode."
         case .finished:

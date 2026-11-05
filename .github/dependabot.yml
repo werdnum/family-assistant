@@ -72,6 +72,11 @@ updates:
       interval: "monthly"
       day: "wednesday"
     open-pull-requests-limit: 5
+    # typescript-eslint supports only TypeScript below 6.1, so a TypeScript 7
+    # bump cannot install. Drop this once typescript-eslint supports 7.
+    ignore:
+      - dependency-name: "typescript"
+        versions: [">=7"]
     cooldown:
       default-days: 14
       semver-major-days: 30
@@ -90,6 +95,13 @@ updates:
           - "@assistant-ui/*"
           - "@hookform/*"
           - "react-router*"
+      # @vitejs/plugin-react's majors each peer a single Vite major, so a
+      # separate PR for either one cannot install.
+      vite:
+        patterns:
+          - "vite"
+          - "@vitejs/*"
+          - "vite-plugin-*"
       vitest:
         patterns:
           - "vitest"
@@ -105,7 +117,6 @@ updates:
           - "@testing-library/*"
           - "@biomejs/*"
           - "*eslint*"
-          - "@vitejs/*"
           - "jsdom*"
           - "@types/*"
           - "msw*"
@@ -122,6 +133,9 @@ updates:
           - "@assistant-ui/*"
           - "@hookform/*"
           - "react-router*"
+          - "vite"
+          - "@vitejs/*"
+          - "vite-plugin-*"
           - "vitest"
           - "@vitest/*"
           - "tailwindcss*"

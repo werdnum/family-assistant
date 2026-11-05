@@ -740,14 +740,14 @@ def _llm_callback_definition_refs(
     if listener_id is not None:
         try:
             return (EventListenerRef(listener_id=int(listener_id)),)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return ()
 
     automation_id = payload.get("automation_id")
     if automation_id is not None and payload.get("automation_type") == "schedule":
         try:
             return (ScheduleAutomationRef(automation_id=int(automation_id)),)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return ()
 
     record = payload.get("tool_call_review_definition_record")
@@ -794,12 +794,12 @@ def _script_execution_definition_refs(
     if listener_id is not None:
         try:
             refs.append(EventListenerRef(listener_id=int(listener_id)))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return ()
     elif automation_id is not None and payload.get("automation_type") == "schedule":
         try:
             refs.append(ScheduleAutomationRef(automation_id=int(automation_id)))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return ()
     else:
         record = payload.get("tool_call_review_definition_record")

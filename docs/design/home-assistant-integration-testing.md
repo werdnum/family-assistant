@@ -160,17 +160,9 @@ async def test_name(home_assistant_service):
 
 ### Recording New Tests
 
-**Prerequisites**: Home Assistant is installed as a dev dependency. Ensure dev dependencies are
-installed:
-
-```bash
-# Install all dependencies including HA
-uv sync --extra dev
-
-# Verify installation
-which hass
-hass --version  # Should show 2025.10.4 or later
-```
+**Prerequisites**: none beyond `uv`. The fixture runs `hass` with `uvx` in its own environment,
+because Home Assistant pins SQLAlchemy exactly and would hold the project's version back. The first
+recording run downloads it.
 
 **Recording**:
 

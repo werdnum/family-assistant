@@ -12,7 +12,7 @@ source-roots=src,.
 persistent=yes
 
 # Minimum Python version to use for version dependent checks.
-py-version=3.11
+py-version=3.14
 
 # Discover python modules and packages in the file system subtree.
 recursive=yes

@@ -324,7 +324,7 @@ class ModelRouter:
                 self._timeout_seconds,
             )
             return self._failed("timeout", started)
-        except (StructuredOutputError, ValidationError):
+        except StructuredOutputError, ValidationError:
             # The classifier answered, but not with one of the offered ids in
             # the shape asked for. That is a different problem from the
             # provider being unavailable, and a deployment seeing a lot of it
