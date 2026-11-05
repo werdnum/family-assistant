@@ -488,3 +488,253 @@ def test_only_oldest_eligible_pr_is_chosen_within_the_window() -> None:
         )
         is None
     )
+
+
+# --- Agent PRs ------------------------------------------------------------------
+#
+# A coding agent's dependency fix opens as the owner from a claude/ branch.
+# Nothing about its author is trusted, so it qualifies only on what its diff
+# shows: version-only manifest lines, and lockfile entries that moved to
+# another release from the public registry.
+
+AGENT: Snapshot = POLICY["agent"]  # type: ignore[assignment]
+NOON = dt.datetime(2026, 10, 10, 2, tzinfo=dt.UTC)  # 13:00 in Sydney
+
+
+def _uv_entry(name: str, version: str, **overrides: object) -> dict[str, object]:
+    stem = name.replace("-", "_")
+    entry: dict[str, object] = {
+        "name": name,
+        "version": version,
+        "source": {"registry": AGENT["uv_registry"]},
+        "sdist": {
+            "url": f"{AGENT['uv_file_host']}packages/aa/{stem}-{version}.tar.gz",
+            "hash": "sha256:" + "1" * 64,
+        },
+        "wheels": [
+            {
+                "url": f"{AGENT['uv_file_host']}packages/bb/{stem}-{version}-py3-none-any.whl",
+                "hash": "sha256:" + "2" * 64,
+            }
+        ],
+    }
+    entry.update(overrides)
+    return entry
+
+
+def _toml_value(value: object) -> str:
+    if isinstance(value, dict):
+        return (
+            "{ " + ", ".join(f"{k} = {_toml_value(v)}" for k, v in value.items()) + " }"
+        )
+    if isinstance(value, list):
+        return "[" + ", ".join(_toml_value(v) for v in value) + "]"
+    return json.dumps(value)
+
+
+def _uv_lock_entries(*entries: dict[str, object]) -> str:
+    project = {
+        "name": "family-assistant",
+        "version": "0.1.0",
+        "source": {"editable": "."},
+    }
+    return 'version = 1\nrevision = 3\nrequires-python = "==3.14.*"\n\n' + "".join(
+        "[[package]]\n"
+        + "".join(f"{key} = {_toml_value(value)}\n" for key, value in entry.items())
+        + "\n"
+        for entry in (project, *entries)
+    )
+
+
+def agent_candidate(*files: dict[str, str]) -> Snapshot:
+    if not files:
+        files = (
+            _file(
+                "uv.lock",
+                base_text=_uv_lock_entries(_uv_entry("pillow", "11.3.0")),
+                head_text=_uv_lock_entries(_uv_entry("pillow", "11.3.1")),
+            ),
+        )
+    snap = candidate(*files)
+    snap["pr"]["user"] = {"id": AGENT["creator_id"]}
+    snap["pr"]["head"]["ref"] = "claude/project-thread-abc123"
+    snap["pr"]["commits"] = 2
+    signed = {"verified": True, "reason": "valid"}
+    snap["commits"] = [
+        {
+            "sha": "c" * 40,
+            "committer": {"login": "claude"},
+            "commit": {
+                "author": {"email": "noreply@anthropic.com"},
+                "committer": {"date": "2026-10-09T22:00:00Z"},
+                "verification": dict(signed),
+            },
+        },
+        {
+            "sha": HEAD,
+            "committer": {"login": "claude"},
+            "commit": {
+                "author": {"email": "noreply@anthropic.com"},
+                "committer": {"date": COMMITTED},
+                "verification": dict(signed),
+            },
+        },
+    ]
+    return snap
+
+
+def test_agent_lockfile_fix_is_eligible_but_only_reported() -> None:
+    result = lane.evaluate(agent_candidate(), POLICY)
+    assert result["kind"] == "agent"
+    assert result["decision"] == "eligible", result
+    merging = dict(POLICY, mode="merge")
+    assert (
+        lane.choose([result], {"state": "clear", "reasons": []}, merging, NOON) is None
+    )
+    assert result["decision"] == "would-merge (agent lane is report-only)"
+    assert not lane.acting("agent", merging)
+    assert lane.acting("dependabot", merging)
+
+
+def test_report_only_agent_pr_does_not_take_the_merge_slot() -> None:
+    agent = lane.evaluate(agent_candidate(), POLICY)
+    agent["created_at"] = "2026-10-01T00:00:00Z"
+    dependabot = lane.evaluate(candidate(), POLICY)
+    merging = dict(POLICY, mode="merge")
+    chosen = lane.choose(
+        [agent, dependabot], {"state": "clear", "reasons": []}, merging, NOON
+    )
+    assert chosen is dependabot
+
+
+def test_agent_manifest_change_must_be_version_only() -> None:
+    ok = '@@ -1 +1 @@\n-    "pillow>=11.3.0",\n+    "pillow>=11.3.1",\n'
+    snap = agent_candidate(_file("pyproject.toml", patch=ok))
+    assert lane.evaluate(snap, POLICY)["decision"] == "eligible"
+    renamed = '@@ -1 +1 @@\n-    "pillow>=11.3.0",\n+    "pilow>=11.3.0",\n'
+    held(agent_candidate(_file("pyproject.toml", patch=renamed)), "more than a version")
+
+
+def test_agent_pr_outside_dependency_files_is_manual() -> None:
+    patch = "@@ -1 +1 @@\n-x = 1\n+x = 2\n"
+    snap = agent_candidate(_file("src/family_assistant/config.py", patch=patch))
+    assert held(snap, "outside dependency files")["status"] == "manual"
+
+
+def test_agent_may_not_add_a_package() -> None:
+    snap = agent_candidate(
+        _file(
+            "uv.lock",
+            base_text=_uv_lock_entries(_uv_entry("authlib", "1.6.4")),
+            head_text=_uv_lock_entries(
+                _uv_entry("authlib", "1.9.4"), _uv_entry("joserfc", "1.7.7")
+            ),
+        )
+    )
+    held(snap, "added package joserfc")
+
+
+@pytest.mark.parametrize(
+    ("overrides", "reason"),
+    [
+        (
+            {"source": {"registry": "https://evil.example/simple"}},
+            "not from the registry",
+        ),
+        (
+            {
+                "sdist": {
+                    "url": "https://evil.example/pillow-11.3.1.tar.gz",
+                    "hash": "sha256:1",
+                }
+            },
+            "not from the registry",
+        ),
+        (
+            {
+                "sdist": {
+                    "url": "https://files.pythonhosted.org/packages/aa/other-11.3.1.tar.gz",
+                    "hash": "sha256:1",
+                }
+            },
+            "not from the registry",
+        ),
+    ],
+)
+def test_agent_lock_entry_must_come_from_the_registry(
+    overrides: dict[str, object], reason: str
+) -> None:
+    snap = agent_candidate(
+        _file(
+            "uv.lock",
+            base_text=_uv_lock_entries(_uv_entry("pillow", "11.3.0")),
+            head_text=_uv_lock_entries(_uv_entry("pillow", "11.3.1", **overrides)),
+        )
+    )
+    held(snap, reason)
+
+
+def test_agent_may_not_repoint_a_package_at_the_same_version() -> None:
+    sneaky = _uv_entry(
+        "pillow",
+        "11.3.0",
+        sdist={
+            "url": "https://files.pythonhosted.org/packages/zz/pillow-11.3.0.tar.gz",
+            "hash": "sha256:" + "9" * 64,
+        },
+    )
+    snap = agent_candidate(
+        _file(
+            "uv.lock",
+            base_text=_uv_lock_entries(_uv_entry("pillow", "11.3.0")),
+            head_text=_uv_lock_entries(sneaky),
+        )
+    )
+    held(snap, "without changing its version")
+
+
+def test_agent_may_not_change_the_lockfile_header() -> None:
+    base = _uv_lock_entries(_uv_entry("pillow", "11.3.0"))
+    head = _uv_lock_entries(_uv_entry("pillow", "11.3.1")).replace(
+        "revision = 3", "revision = 4"
+    )
+    held(agent_candidate(_file("uv.lock", base_text=base, head_text=head)), "header")
+
+
+def test_agent_npm_entry_must_resolve_from_the_registry() -> None:
+    def lock(version: str, resolved: str | None = None) -> str:
+        url = resolved or f"{AGENT['npm_registry']}vite/-/vite-{version}.tgz"
+        return json.dumps({
+            "lockfileVersion": 3,
+            "packages": {
+                "": {"name": "frontend"},
+                "node_modules/vite": {
+                    "version": version,
+                    "resolved": url,
+                    "integrity": "sha512-abc",
+                },
+            },
+        })
+
+    good = _file(
+        "frontend/package-lock.json", base_text=lock("8.3.2"), head_text=lock("8.3.5")
+    )
+    assert lane.evaluate(agent_candidate(good), POLICY)["decision"] == "eligible"
+    bad = _file(
+        "frontend/package-lock.json",
+        base_text=lock("8.3.2"),
+        head_text=lock("8.3.5", "https://evil.example/vite-8.3.5.tgz"),
+    )
+    held(agent_candidate(bad), "not from the registry")
+
+
+def test_agent_commits_must_all_be_signed() -> None:
+    snap = agent_candidate()
+    snap["commits"][0]["commit"]["verification"]["verified"] = False
+    held(snap, "unsigned commit")
+
+
+def test_agent_review_is_judged_against_the_head_commit() -> None:
+    snap = agent_candidate()
+    snap["reactions"][0]["created_at"] = "2026-10-09T23:00:00Z"  # before the head
+    held(snap, "review-stale")

@@ -15,6 +15,20 @@
     "end_hour": 21
   },
   "min_minutes_between_merges": 60,
+  "agent": {
+    "mode": "report-only",
+    "creator_id": 271070,
+    "branch_prefix": "claude/",
+    "allowed_files": [
+      "pyproject.toml",
+      "uv.lock",
+      "frontend/package.json",
+      "frontend/package-lock.json"
+    ],
+    "uv_registry": "https://pypi.org/simple",
+    "uv_file_host": "https://files.pythonhosted.org/",
+    "npm_registry": "https://registry.npmjs.org/"
+  },
   "required_checks": ["all-tests"],
   "checks": {
     "all-tests": ".github/workflows/ci-with-devcontainer.yml"
