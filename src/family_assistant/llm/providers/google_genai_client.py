@@ -2273,11 +2273,13 @@ class GoogleGenAIClient(BaseLLMClient):
         with a bare ``400 Request contains an invalid argument`` -- which is
         every photo or screenshot a user attaches.
 
-        A run on an existing environment ignores any ``env`` sent with the run,
-        so the egress policy's ``env`` is set on the environment when it is
-        created; ``network`` goes with every run, since the credentials its
-        rules carry are minted per run. Environments are not deleted: deleting
-        one deletes the interactions run in it.
+        The egress policy's ``network`` and ``env`` go with every run rather
+        than on the created environment: the Environments API's create call
+        takes no ``env`` (it rejects one with ``Unknown parameter 'env'``),
+        while a run naming an ``environment_id`` updates that environment with
+        the block it carries, and the credentials its rules name are minted
+        per run anyway. Environments are not deleted: deleting one deletes the
+        interactions run in it.
         """
         environments = self.client.aio.environments
         environment_id: str | None = None
@@ -2289,13 +2291,8 @@ class GoogleGenAIClient(BaseLLMClient):
             )
             environment_id = previous.environment_id
         if environment_id is None:
-            # ast-grep-ignore: no-dict-any - environment payload for the Interactions SDK
-            extra_body: dict[str, Any] = {}
-            if "env" in environment:
-                extra_body["env"] = environment["env"]
             created = await environments.create_environment(
-                network=environment.get("network"),
-                extra_body=extra_body or None,
+                network=environment.get("network")
             )
             if not created.id:
                 raise DelegationTransientError(
@@ -2306,8 +2303,9 @@ class GoogleGenAIClient(BaseLLMClient):
             await self._upload_sandbox_file(environment_id, file)
         # ast-grep-ignore: no-dict-any - environment payload for the Interactions SDK
         block: dict[str, Any] = {"type": "remote", "environment_id": environment_id}
-        if "network" in environment:
-            block["network"] = environment["network"]
+        for key in ("network", "env"):
+            if key in environment:
+                block[key] = environment[key]
         return block
 
     async def _upload_sandbox_file(

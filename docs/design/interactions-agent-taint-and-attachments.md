@@ -143,8 +143,8 @@ They are uploaded through the environments API rather than sent as inline `envir
 API rejects an inline source over 1 MiB of base64, or inline sources totalling over 2 MiB, with a
 bare `400 Request contains an invalid argument`, which is any ordinary photo or screenshot. A run
 with files therefore creates its environment first, uploads into it, and starts the interaction on
-that `environment_id`. A run on an existing environment ignores an `env` block sent with the run, so
-the egress policy (`network` and `env`) is set on the environment when it is created.
+that `environment_id`. The egress policy (`network` and `env`) travels on the run's environment
+block, which updates the named environment; the environments API's create call takes no `env`.
 
 Each attachment contributes a `TaintSource` derived from its stored provenance (the same
 `taint_metadata` / `source_trust_tier` fields `merge_artifact_taint_into_context` reads), merged

@@ -485,8 +485,8 @@ async def test_submit_path_uploads_files_into_an_environment(
 async def test_uploaded_environment_carries_the_egress_policy(
     sdk: _SdkCalls,
 ) -> None:
-    """A run on an existing environment ignores ``env`` sent with the run, so
-    network and env are set when the environment is created."""
+    """The created environment gets the network policy; the run carries both
+    network and env, since the create call takes no ``env``."""
     client = _egress_client(_STORED_GITHUB)
     _accept_submissions(sdk)
 
@@ -502,7 +502,6 @@ async def test_uploaded_environment_carries_the_egress_policy(
     sdk.create_environment.assert_awaited_once_with(
         client.client.aio.environments,
         network=_STORED_GITHUB.network,
-        extra_body={"env": _STORED_GITHUB.env},
     )
 
 
@@ -614,18 +613,20 @@ _STORED_GITHUB = EgressResolution(
 async def test_a_stored_git_credential_is_bound_to_the_sandbox_variable(
     sdk: _SdkCalls,
 ) -> None:
-    """The binding is made when the sandbox is created.
+    """The binding rides the run's environment block.
 
-    A run in an existing environment ignores an ``env`` sent with the run, so
-    the variable has to be on the environment itself.
+    The environments API's create call rejects ``env`` as an unknown
+    parameter, so the variable goes with the run, which updates the
+    environment it names.
     """
     client = _egress_client(_STORED_GITHUB)
     create = _accept_submissions(sdk)
 
     await client.start_agent_interaction([UserMessage(content="Fix the bug.")])
 
-    assert sdk.create_environment.await_args.kwargs["extra_body"] == {
-        "env": {GITHUB_GIT_AUTH_ENV: {"credential": "fa-egress-github-app-1-git"}}
+    assert "extra_body" not in sdk.create_environment.await_args.kwargs
+    assert create.call_args.kwargs["environment"]["env"] == {
+        GITHUB_GIT_AUTH_ENV: {"credential": "fa-egress-github-app-1-git"}
     }
     body = _CREATE_INTERACTION_ADAPTER.validate_python(create.call_args.kwargs)
     assert body.environment.environment_id == "env_1"
