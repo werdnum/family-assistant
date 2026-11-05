@@ -1830,7 +1830,7 @@ class AttachmentRegistry:
         try:
             resolved = path.resolve()
             base = self.storage_path.resolve()
-        except (OSError, ValueError):
+        except OSError, ValueError:
             return False
         try:
             resolved.relative_to(base)

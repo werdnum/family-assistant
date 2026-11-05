@@ -1,5 +1,5 @@
 {
-  "comment": "Project-specific bash-guard configuration for family-assistant. Extends default rules with containerized development environment patterns.",
+  "comment": "Project-specific bash-guard configuration for family-assistant. Extends the plugin's default rules.",
   "command_rules": [
     {
       "regexp": "\\bpython\\s+-m\\s+pytest\\b",
@@ -17,50 +17,6 @@
       "action": "replace",
       "replacement": "npm \\3 --prefix frontend\\4",
       "explanation": "Automatically rewriting to use 'npm --prefix frontend' instead of changing directories."
-    },
-    {
-      "regexp": "\\bpoe\\s+(dev|serve)\\b",
-      "action": "block",
-      "explanation": "The dev server is already running and auto-reloading. No need to start/restart it. Check logs at /var/log/family-assistant/dev-server.log if needed."
-    },
-    {
-      "regexp": "\\bpkill\\b.*\\bpoe\\b",
-      "action": "block",
-      "explanation": "Don't kill the poe dev server - it's already running and auto-reloading. Check logs at /var/log/family-assistant/dev-server.log if needed."
-    },
-    {
-      "regexp": "\\bnpm\\s+run\\s+dev\\b",
-      "action": "block",
-      "explanation": "The dev server is already running on devcontainer-backend-1:5173 with hot reloading. Do not start another instance."
-    },
-    {
-      "regexp": "\\blocalhost:5173\\b",
-      "action": "replace",
-      "replacement": "devcontainer-backend-1:5173",
-      "explanation": "Automatically rewriting to use devcontainer-backend-1:5173 (the app runs in a container)."
-    },
-    {
-      "regexp": "\\blocalhost:8000\\b",
-      "action": "replace",
-      "replacement": "devcontainer-backend-1:8000",
-      "explanation": "Automatically rewriting to use devcontainer-backend-1:8000 (the backend API runs in a container)."
-    },
-    {
-      "regexp": "\\b127\\.0\\.0\\.1:5173\\b",
-      "action": "replace",
-      "replacement": "devcontainer-backend-1:5173",
-      "explanation": "Automatically rewriting to use devcontainer-backend-1:5173 (the app runs in a container)."
-    },
-    {
-      "regexp": "\\b127\\.0\\.0\\.1:8000\\b",
-      "action": "replace",
-      "replacement": "devcontainer-backend-1:8000",
-      "explanation": "Automatically rewriting to use devcontainer-backend-1:8000 (the backend API runs in a container)."
-    },
-    {
-      "regexp": "\\bss\\s+-[tlnp]+",
-      "action": "block",
-      "explanation": "Port checking is unnecessary. Frontend runs on devcontainer-backend-1:5173 and backend on devcontainer-backend-1:8000. Use these addresses directly."
     },
     {
       "regexp": "\\bcat\\s+([^|\\s]+)\\s*\\|\\s*llm\\b",
@@ -82,11 +38,6 @@
       "regexp": "\\bcat\\s+>.*<<",
       "action": "block",
       "explanation": "Use the Write tool to create files instead of cat with heredocs. The Write tool is more reliable and doesn't require approval for each attempt."
-    },
-    {
-      "regexp": "DATABASE_URL=.*alembic",
-      "action": "block",
-      "explanation": "DATABASE_URL is already correctly set in the environment. Do not override it when running alembic commands. Simply run 'alembic revision --autogenerate -m \"Description\"' without DATABASE_URL prefix."
     }
   ],
   "timeout_requirements": [

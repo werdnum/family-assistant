@@ -289,9 +289,8 @@ struct ChatAPIClient {
         return try JSONDecoder.chatDecoder.decode(ChatConversationMessagesResponse.self, from: data)
     }
 
-    func getConversationShareStatus(conversationID: String) async throws -> Bool {
-        let encodedID = Self.encodedPathComponent(conversationID)
-        let url = try apiURL("/api/v1/chat/conversations/\(encodedID)/share")
+    func getShareStatus(target: ConversationShareTarget) async throws -> Bool {
+        let url = try apiURL(target.path(encoding: Self.encodedPathComponent))
         let (data, response) = try await authorizedGETWithAuthRetry(url: url)
         try validate(response: response, data: data)
         return try JSONDecoder.chatDecoder.decode(ChatConversationShareStatusResponse.self, from: data).active
@@ -305,12 +304,11 @@ struct ChatAPIClient {
         return try JSONDecoder.chatDecoder.decode(ChatPendingDelegationsResponse.self, from: data).delegations
     }
 
-    /// Rotate the conversation's active share and return its absolute URL.
-    func createConversationShare(conversationID: String) async throws -> URL {
+    /// Rotate the target's active share and return its absolute URL.
+    func createShare(target: ConversationShareTarget) async throws -> URL {
         let capturedAuthEpoch = authManager.authEpoch
-        let encodedID = Self.encodedPathComponent(conversationID)
         let request = try await authManager.authorizedRequest(
-            url: apiURL("/api/v1/chat/conversations/\(encodedID)/share"),
+            url: apiURL(target.path(encoding: Self.encodedPathComponent)),
             method: "POST"
         )
         let (data, response) = try await urlSession.dataExpectingJSON(for: request, authWallError: ChatAPIError.authWall)
@@ -324,11 +322,10 @@ struct ChatAPIClient {
         return try apiURL(share.shareURL)
     }
 
-    func revokeConversationShare(conversationID: String) async throws {
+    func revokeShare(target: ConversationShareTarget) async throws {
         let capturedAuthEpoch = authManager.authEpoch
-        let encodedID = Self.encodedPathComponent(conversationID)
         let request = try await authManager.authorizedRequest(
-            url: apiURL("/api/v1/chat/conversations/\(encodedID)/share"),
+            url: apiURL(target.path(encoding: Self.encodedPathComponent)),
             method: "DELETE"
         )
         let (data, response) = try await urlSession.dataExpectingJSON(for: request, authWallError: ChatAPIError.authWall)

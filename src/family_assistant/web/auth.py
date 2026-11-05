@@ -191,7 +191,7 @@ def session_jwt_binding_is_valid(request: Request) -> bool:
         return True
     try:
         return time.time() < float(raw_expiry)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         logger.warning("Session invalidated: malformed bound JWT expiry.")
         return False
 

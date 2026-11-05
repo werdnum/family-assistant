@@ -728,7 +728,7 @@ def harvest_batch(run_dir: str | Path) -> EvalReport:
             TrialRecord(
                 case_id=request.case_id,
                 boundary=case.boundary,
-                label=case.label,
+                label=case.scoring_label,
                 source=case.source,
                 source_group=case.source_group,
                 matched_group=case.matched_group,

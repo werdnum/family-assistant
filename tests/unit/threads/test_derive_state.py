@@ -8,7 +8,6 @@ import pytest
 
 from family_assistant.storage.repositories.conversation_threads import ThreadClose
 from family_assistant.threads.listing import (
-    QUIET_AFTER,
     ThreadState,
     derive_state,
     is_quiet,
@@ -215,26 +214,17 @@ def test_a_run_failing_after_its_turn_closed_the_thread_is_failed() -> None:
 
 
 @pytest.mark.parametrize(
-    ("state", "unread_count", "idle_for", "expected"),
+    ("state", "unread_count", "expected"),
     [
-        ("waiting", 0, QUIET_AFTER, True),
-        ("waiting", 0, QUIET_AFTER - MINUTE, False),
-        ("waiting", 1, QUIET_AFTER * 10, False),
-        ("waiting", None, QUIET_AFTER * 10, False),
-        ("working", 0, QUIET_AFTER * 10, False),
-        ("done", 0, QUIET_AFTER * 10, False),
-        ("failed", 0, QUIET_AFTER * 10, False),
+        ("waiting", 0, True),
+        ("waiting", 1, False),
+        ("waiting", None, False),
+        ("working", 0, False),
+        ("done", 0, False),
+        ("failed", 0, False),
     ],
 )
-def test_only_a_read_and_idle_waiting_thread_is_quiet(
-    state: ThreadState, unread_count: int | None, idle_for: timedelta, expected: bool
+def test_only_a_read_waiting_thread_is_quiet(
+    state: ThreadState, unread_count: int | None, expected: bool
 ) -> None:
-    assert (
-        is_quiet(
-            state,
-            unread_count=unread_count,
-            updated_at=CLOSED_AT,
-            now=CLOSED_AT + idle_for,
-        )
-        is expected
-    )
+    assert is_quiet(state, unread_count=unread_count) is expected

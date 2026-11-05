@@ -924,6 +924,53 @@ async def test_mail_webhook_rejects_from_domain_without_dmarc_policy(
 
 
 @pytest.mark.asyncio
+async def test_mail_webhook_rejects_dmarc_pass_for_other_from_than_envelope_sender(
+    api_client: httpx.AsyncClient,
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """An attacker's own domain passing DMARC must not vouch for a forged envelope.
+
+    The envelope sender is allowlisted and mapped to a user, but the From: header
+    (the address DMARC authenticated) is the attacker's.
+    """
+    attacker_domain = "attacker.example"
+    message_id = f"<forged-envelope-{uuid.uuid4()}@{attacker_domain}>"
+    _configure_email_intake(
+        monkeypatch,
+        tmp_path,
+        EmailIntakeConfig(
+            mailgun_webhook_signing_key=SecretStr(SIGNING_KEY),
+            allowed_sender_addresses=[SENDER],
+            require_authenticated_sender=True,
+            require_user_mapping=True,
+            user_mappings=[
+                EmailIntakeUserMapping(user_id="alice", sender_addresses={SENDER})
+            ],
+        ),
+        dns_resolver=build_dns_for(domain=attacker_domain),
+    )
+    raw = build_signed_message(
+        from_address=f"mallory@{attacker_domain}",
+        to_address=RECIPIENT,
+        message_id=message_id,
+    )
+    form = _mailgun_form(
+        sender=SENDER,
+        raw_mime=raw,
+        message_id=message_id,
+        from_header=f"mallory@{attacker_domain}",
+    )
+
+    response = await api_client.post("/webhook/mail", data=form)
+
+    assert response.status_code == 401
+    assert "does not match envelope sender" in response.text
+    assert not await _email_exists(db_engine, message_id)
+
+
+@pytest.mark.asyncio
 async def test_mail_webhook_rejects_oversized_raw_payload(
     api_client: httpx.AsyncClient,
     db_engine: AsyncEngine,

@@ -132,7 +132,7 @@ export default defineConfig(({ mode }) => ({
     emptyOutDir: false,
     // Increase chunk size warning limit since we're code splitting
     chunkSizeWarningLimit: 600,
-    rollupOptions: {
+    rolldownOptions: {
       // Define entry points including HTML files
       input:
         mode === 'embedded'

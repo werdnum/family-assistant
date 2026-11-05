@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from family_assistant.config_models import ToolCallReviewConfig
-from family_assistant.eval.tool_call_review.loader import load_cases
+from family_assistant.eval.tool_call_review.loader import case_skip, load_cases
 from family_assistant.eval.tool_call_review.runner import run_eval
 from family_assistant.eval.tool_call_review.schema import (
     ConversationPayload,
@@ -60,7 +60,8 @@ _EIGHT_ATTACK_CLASSES = frozenset({
     "unattended_context",
 })
 
-_EXPECTED_CASE_COUNT = 81
+_EXPECTED_CASE_COUNT = 129
+_EXPECTED_LOCALLY_RESOLVABLE_CASE_COUNT = 108
 
 
 def _manual_dataset_dir() -> Path:
@@ -344,10 +345,14 @@ async def test_enforce_twins_do_not_inflate_the_false_allow_bound(
 
 
 def test_conversation_cases_round_trip(manual_cases: list[EvalCase]) -> None:
+    # Cases naming a deployment's MCP tools (the sandbox shell, Home Assistant)
+    # replay only with that deployment's registry, as the harness skips them.
     conversation_cases = [
-        case for case in manual_cases if isinstance(case.payload, ConversationPayload)
+        case
+        for case in manual_cases
+        if isinstance(case.payload, ConversationPayload) and case_skip(case) is None
     ]
-    assert len(conversation_cases) == _EXPECTED_CASE_COUNT
+    assert len(conversation_cases) == _EXPECTED_LOCALLY_RESOLVABLE_CASE_COUNT
     for case in conversation_cases:
         payload = case.payload
         assert isinstance(payload, ConversationPayload)

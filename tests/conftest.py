@@ -17,10 +17,13 @@ from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any, Protocol
 from zoneinfo import ZoneInfo
 
+from caldav.davclient import DAVClient
+
+from family_assistant.caldav_sync import sync_result
+
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
-import caldav
 import pytest
 import pytest_asyncio  # Import the correct decorator
 import vcr
@@ -54,7 +57,7 @@ from family_assistant.services.delegation_delivery import DELEGATION_DELIVERY_TA
 # Import the metadata and the original engine object from your storage base
 from family_assistant.storage import init_db  # Import init_db
 from family_assistant.storage.base import create_engine_with_sqlite_optimizations
-from family_assistant.storage.database import Database
+from family_assistant.storage.database import Database, dispose_engine
 from family_assistant.storage.instrumentation import get_instrumentation
 
 # Explicitly import the module defining the tasks table to ensure metadata registration
@@ -467,8 +470,7 @@ async def db_engine(
         # and would mask a leak.
         await check_db_engine_invariants(engine, request.node.name)
 
-        # Force close all connections before disposing
-        await engine.dispose()
+        await dispose_engine(engine)
 
         logger.info("Test engine disposed.")
         if db_backend == "sqlite" and tmp_name:
@@ -718,7 +720,7 @@ async def pg_vector_db_engine(
     finally:
         logger.info(f"--- PostgreSQL Test DB Teardown ({unique_db_name}) ---")
         await check_db_engine_invariants(engine, request.node.name)
-        await engine.dispose()
+        await dispose_engine(engine)
 
         # Drop the PostgreSQL database
         # ast-grep-ignore: no-raw-create-async-engine - AUTOCOMMIT admin engine for CREATE/DROP DATABASE, never runs application queries
@@ -945,7 +947,7 @@ backtrace_on_debug = True
                     logger.info(f"Radicale server is up on port {port}.")
                     server_ready = True
                     break
-            except (TimeoutError, ConnectionRefusedError):
+            except TimeoutError, ConnectionRefusedError:
                 # ast-grep-ignore: no-time-sleep-in-tests - Retry delay for Radicale startup
                 time.sleep(0.5)
                 if process.poll() is not None:  # Check if process terminated
@@ -968,14 +970,14 @@ backtrace_on_debug = True
         # It only ensures the server is running and the user exists.
         try:
             # Verify user principal exists by making a client connection
-            client = caldav.DAVClient(
+            client = DAVClient(
                 url=base_url,
                 username=RADICALE_TEST_USER,
                 password=RADICALE_TEST_PASS,
                 timeout=30,
             )
             # This call will create the user's collection if it doesn't exist
-            client.principal()  # Direct synchronous call
+            client.get_principal()
             logger.info(
                 f"Radicale server session ready. User '{RADICALE_TEST_USER}' principal checked/created."
             )
@@ -1013,7 +1015,7 @@ async def _validate_new_calendar(calendar: Calendar, calendar_name: str) -> str:
         f"Successfully created unique calendar '{calendar_name}' with URL: {calendar_url}"
     )
 
-    events = await asyncio.to_thread(calendar.events)
+    events = sync_result(await asyncio.to_thread(calendar.get_events))
     assert len(events) == 0, (
         f"Newly created calendar '{calendar_name}' should have 0 events, found {len(events)}."
     )
@@ -1044,10 +1046,8 @@ async def radicale_server(
     # We'll use unique_calendar_name as the display name and also suggest it for the ID.
     unique_calendar_resource_id = unique_calendar_name.lower()
 
-    client = caldav.DAVClient(
-        url=base_url, username=username, password=password, timeout=30
-    )
-    principal = await asyncio.to_thread(client.principal)
+    client = DAVClient(url=base_url, username=username, password=password, timeout=30)
+    principal = await asyncio.to_thread(client.get_principal)
     new_calendar_obj = None  # To store the created calendar object for cleanup
 
     try:
@@ -1056,10 +1056,12 @@ async def radicale_server(
         )
         # Use principal.make_calendar()
         # This is a synchronous call, so wrap it with to_thread
-        new_calendar_obj = await asyncio.to_thread(
-            principal.make_calendar,
-            name=unique_calendar_name,
-            cal_id=unique_calendar_resource_id,
+        new_calendar_obj = sync_result(
+            await asyncio.to_thread(
+                principal.make_calendar,
+                name=unique_calendar_name,
+                cal_id=unique_calendar_resource_id,
+            )
         )
 
         assert new_calendar_obj is not None, (
@@ -1337,67 +1339,6 @@ def llm_replay_config(
         # Other providers use VCR.py (configured via vcr_config fixture)
         # Return empty dict - VCR.py intercepts HTTP automatically
         return {}
-
-
-@pytest.fixture(scope="session")
-def built_frontend() -> Generator[None]:
-    """
-    Ensures the frontend is built before tests that require it.
-    This fixture runs npm install and npm run build if needed.
-    """
-    frontend_dir = pathlib.Path(__file__).parent.parent / "frontend"
-    dist_dir = (
-        pathlib.Path(__file__).parent.parent
-        / "src"
-        / "family_assistant"
-        / "static"
-        / "dist"
-    )
-
-    # Check if we need to build
-    needs_install = not (frontend_dir / "node_modules").exists()
-    needs_build = not (dist_dir / "chat.html").exists()
-
-    if needs_install or needs_build:
-        logger.info("Building frontend for tests...")
-
-        # Run npm install if needed
-        if needs_install:
-            logger.info("Running npm install...")
-            try:
-                subprocess.run(
-                    ["npm", "install"],
-                    cwd=frontend_dir,
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-            except subprocess.CalledProcessError as err:
-                pytest.fail(f"npm install failed: {err.stderr}")
-
-        # Run npm run build
-        if needs_build:
-            logger.info("Running npm run build...")
-            try:
-                subprocess.run(
-                    ["npm", "run", "build"],
-                    cwd=frontend_dir,
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-            except subprocess.CalledProcessError as err:
-                pytest.fail(f"npm run build failed: {err.stderr}")
-
-            logger.info(
-                f"Frontend built successfully. Files in dist: {list(dist_dir.glob('*.html'))}"
-            )
-    else:
-        logger.info("Frontend already built, skipping build step")
-
-    yield
-
-    # No cleanup needed - we want to keep the built files
 
 
 @pytest.fixture(scope="session", autouse=True)

@@ -87,7 +87,7 @@ def _validate_rule(recurrence_rule: str) -> None:
     """
     try:
         parsed = rrule.rrulestr(recurrence_rule)
-    except (ValueError, ParserError):
+    except ValueError, ParserError:
         # Evaluating the rule reports it as invalid.
         return
     if not isinstance(parsed, rrule.rrule):
@@ -791,7 +791,7 @@ class ScheduleAutomationsRepository(BaseRepository):
                     cutoff=now,
                     timezone=timezone,
                 )
-            except (ValueError, ParserError):
+            except ValueError, ParserError:
                 # A rule that does not parse is a broken automation, not a
                 # spent one. Deleting it would destroy the evidence, so leave
                 # it for its owner and say which row needs looking at.

@@ -10,7 +10,11 @@ const CONVERSATION = 'conv-feedback';
 const REPLY = 'Spaghetti bolognese tonight.';
 
 interface FeedbackServer {
-  writes: { method: string; turnId: string; body: Record<string, unknown> | null }[];
+  writes: {
+    method: string;
+    turnId: string;
+    body: Record<string, unknown> | null;
+  }[];
   failNext: boolean;
   /** Holds the next write's response until it resolves. */
   holdNext: Promise<void> | null;
@@ -53,7 +57,11 @@ function serveConversation(
       return HttpResponse.json({ detail: 'nope' }, { status: 500 });
     }
     return method === 'PUT'
-      ? HttpResponse.json({ turn_id: turnId, ...body, updated_at: '2026-10-22T09:01:00Z' })
+      ? HttpResponse.json({
+          turn_id: turnId,
+          ...body,
+          updated_at: '2026-10-22T09:01:00Z',
+        })
       : new HttpResponse(null, { status: 204 });
   };
   server.use(
@@ -116,13 +124,21 @@ describe('rating a reply', () => {
     await user.click(up);
     await waitFor(() => expect(up).toHaveAttribute('aria-pressed', 'true'));
     expect(state.writes).toEqual([
-      { method: 'PUT', turnId: 'turn-dinner', body: { rating: 'up', comment: null } },
+      {
+        method: 'PUT',
+        turnId: 'turn-dinner',
+        body: { rating: 'up', comment: null },
+      },
     ]);
     expect(reply.queryByTestId('feedback-comment-form')).not.toBeInTheDocument();
 
     await user.click(up);
     await waitFor(() => expect(up).toHaveAttribute('aria-pressed', 'false'));
-    expect(state.writes[1]).toEqual({ method: 'DELETE', turnId: 'turn-dinner', body: null });
+    expect(state.writes[1]).toEqual({
+      method: 'DELETE',
+      turnId: 'turn-dinner',
+      body: null,
+    });
   });
 
   it('asks what was wrong after thumbs down and sends the answer', async () => {
@@ -282,5 +298,77 @@ describe('a reply from a live model experiment', () => {
     expect(badge).toHaveTextContent('Experiment');
     expect(badge.getAttribute('title')).not.toMatch(/argon/i);
     expect(reply.queryByText(/argon/i)).not.toBeInTheDocument();
+    expect(reply.queryByRole('button', { name: 'Which model answered' })).not.toBeInTheDocument();
+  });
+
+  it('reveals the arm once the reply is rated', async () => {
+    serveConversation(null, EXPERIMENT_REASONING);
+    const user = userEvent.setup();
+    const reply = await openReply();
+
+    await user.click(reply.getByRole('button', { name: 'Good response' }));
+    const reveal = await reply.findByRole('button', {
+      name: 'Which model answered',
+    });
+    await user.click(reveal);
+
+    const details = reply.getByTestId('served-by-details');
+    expect(details).toHaveTextContent('argon-vs-opus');
+    expect(details).toHaveTextContent('gemini-4-argon-001 via google');
+    // The badge stays blind; only the opened details name the arm.
+    expect(reply.getByTestId('model-tier-badge')).toHaveTextContent('Experiment');
+
+    await user.click(reveal);
+    expect(reply.queryByTestId('served-by-details')).not.toBeInTheDocument();
+  });
+
+  it('hides the arm again if the rating is withdrawn', async () => {
+    serveConversation('up', EXPERIMENT_REASONING);
+    const user = userEvent.setup();
+    const reply = await openReply();
+
+    await user.click(reply.getByRole('button', { name: 'Which model answered' }));
+    expect(reply.getByTestId('served-by-details')).toBeInTheDocument();
+
+    await user.click(reply.getByRole('button', { name: 'Good response' }));
+    await waitFor(() => expect(reply.queryByTestId('served-by-details')).not.toBeInTheDocument());
+    expect(reply.queryByRole('button', { name: 'Which model answered' })).not.toBeInTheDocument();
+  });
+});
+
+const EXPERIMENT_REASONING = {
+  model: 'gemini-4-argon',
+  resolved_model: 'gemini-4-argon-001',
+  provider: 'google',
+  model_tier: 'gemini_4_argon',
+  model_tier_source: 'experiment',
+  experiment_id: 'argon-vs-opus',
+  experiment_arm: 'gemini_4_argon',
+};
+
+describe('which model answered an ordinary reply', () => {
+  beforeEach(() => {
+    resetLocalStorageMock();
+    vi.clearAllMocks();
+    window.history.replaceState(null, '', `/chat?conversation_id=${CONVERSATION}`);
+  });
+
+  afterEach(() => {
+    window.history.replaceState(null, '', '/');
+  });
+
+  it('can be shown without rating first', async () => {
+    serveConversation(null, {
+      model: 'claude-opus-5-5',
+      model_tier: 'claude_opus_5_5',
+      model_tier_source: 'user',
+    });
+    const user = userEvent.setup();
+    const reply = await openReply();
+
+    await user.click(reply.getByRole('button', { name: 'Which model answered' }));
+    const details = reply.getByTestId('served-by-details');
+    expect(details).toHaveTextContent('claude-opus-5-5');
+    expect(details).toHaveTextContent('chosen by you');
   });
 });

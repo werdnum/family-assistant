@@ -134,6 +134,14 @@ what `@google/genai` sends; this is the single biggest unknown and is settled in
 - **Server→client:** `setupComplete`; `serverContent` with `modelTurn.parts[].inlineData` (24 kHz
   PCM16 audio), `inputTranscription`, `outputTranscription`, `turnComplete`, `interrupted`;
   `toolCall.functionCalls[]`; `toolCallCancellation`.
+- **Working vs. listening:** `turnComplete` means the model is done and will generate again only in
+  response to something the client sends, so it is the signal that the model is waiting for the
+  user. From a tool call until the next `turnComplete` (or `waitingForInput`) the status reads
+  "Working…" whenever no reply is playing. Before a tool call the client cannot see a turn begin —
+  Gemini does not say when its speech detection decided the user had stopped — so that stretch reads
+  "Listening…". Each `turnComplete` is recorded as a `turn_complete` breadcrumb with its
+  `turnCompleteReason`, whether the turn produced audio, and `silent_after_tool_results` when the
+  model took tool results and ended its turn without a word or another tool call.
 - **Tool response (client→server):** `toolResponse.functionResponses=[{id, name, response}]` after
   calling the backend executor.
 - **Barge-in:** on `interrupted` (or local VAD detecting user speech), flush the playback queue

@@ -10,7 +10,7 @@ authors = [
 ]
 description = "A family assistant bot using Telegram, LLMs, and background tasks."
 readme = "README.md"
-requires-python = ">=3.13.2,<3.14"
+requires-python = ">=3.14,<3.15"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
@@ -27,7 +27,7 @@ dependencies = [
     # Google Gemini SDK for direct API access
     "python-dotenv>=1.2.2",
     # Pinned to >= 1.2.2 for CVE-2026-28684 (set_key follows symlinks)
-    "sqlalchemy[asyncio]>=2.0.0",
+    "sqlalchemy[asyncio]>=2.0.46,<2.1", # Earlier releases hang at exit on aiosqlite 0.22
     "aiosqlite>=0.19.0",
     # Async driver for SQLite (default)
     "asyncpg>=0.29.0",
@@ -200,7 +200,6 @@ dev = [
     "ruff>=0.16.0",
     "pre-commit>=4.6.1",
     "basedpyright",
-    "pytype",
     "mdformat>=0.7.17",
     "mdformat-gfm>=0.3.5",
     "mdformat-frontmatter>=2.0.0",
@@ -213,7 +212,6 @@ dev = [
     "watchdog>=3.0.0",
     "pytest-playwright-asyncio>=0.8.0",
     "playwright==1.52.0", # Pin to match rebrowser-playwright version for shared browser binaries
-    "homeassistant>=2025.4.4",
     "pixeltable-pgserver>=0.4.0",
     "monkeytype>=23.3.0", # Runtime type inference from tests
     "browser-handoff-service",
@@ -228,7 +226,7 @@ local-embeddings = [
     # CVE-2025-2999, CVE-2025-3000, CVE-2025-3001 (memory corruption)
 ]
 pgserver = [
-    "pixeltable-pgserver>=0.4.0",  # PostgreSQL test server (supports Python 3.13+)
+    "pixeltable-pgserver>=0.4.0",  # PostgreSQL test server
 ]
 
 [project.scripts]
@@ -426,6 +424,10 @@ extend-exclude = ["alembic/**", "docs/**", ".ast-grep/tests/**"]
 preview = true
 
 [tool.ruff.lint]
+# The existing `noqa: TC00x` markers record imports pydantic needs at runtime.
+# Keep them while those rules are ignored (see `ignore` below) instead of
+# letting RUF100 delete them, so re-enabling the rules does not lose them.
+external = ["TC001", "TC002", "TC003"]
 select = [
     # pycodestyle
     "E",
@@ -480,6 +482,15 @@ select = [
 ignore = [
         # Line length - fornatter can deal with it
         "E501",
+        # On Python 3.14, where annotations are evaluated lazily, these flag
+        # every quoted annotation and every import used only in annotations.
+        # Unquoting or moving them breaks code that reads type hints at
+        # runtime (inspect.signature() now evaluates them, so a name imported
+        # under TYPE_CHECKING raises NameError), so it is left to its own change.
+        "UP037",
+        "TC001",
+        "TC002",
+        "TC003",
         # Allow short loops to avoid invasive refactors
         "PLR1702",
         # Disabled in pylint configuration

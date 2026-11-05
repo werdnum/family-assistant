@@ -89,6 +89,12 @@ wrong. Filling it in is optional, but a few words make the rating far more usefu
 different models do. Ratings are private to you and are only used to judge reply quality. In the iOS
 app the two thumbs sit under each finished reply, and a thumbs down asks the same optional question.
 
+**See which model answered.** **Which model answered** (the eye button, after the thumbs) opens a
+short summary under the reply: the profile, the intelligence level and who chose it, the exact model
+and provider, and the comparison it belongs to, if any. On a reply that is part of a model
+comparison, the button appears only once you have rated the reply, so knowing the model cannot sway
+the rating. Taking the rating back hides it again.
+
 A long conversation opens at its most recent messages. Scroll to the top and select **Load earlier
 messages** to bring in older ones, as many times as you need to reach the start.
 
@@ -153,19 +159,19 @@ same way.
 Your household may have threads turned on. If the web chat opens on a page titled **Home**, they
 are; otherwise the chat works as a list of separate conversations, as described above.
 
-**Home** is one ongoing conversation with the assistant, and it is where the web chat opens. Ask
-quick questions, make small changes, and set reminders there, the way you would message someone you
-talk to every day. You don't need to pick a conversation or start a new one first. Home always uses
-the main assistant, so the profile picker is locked while you are in it.
+**Home** is where the web chat opens, and it shows what's going on: reminders, your morning brief,
+automation results, and a card for each thread. Type in Home's message box and press Send to start a
+**thread** with the main assistant, whatever you're asking. The thread opens and the assistant
+answers there, so carry on the conversation in the thread. You don't need to pick a conversation or
+decide anything first. To send a message to a different kind of assistant, such as research or
+browsing, use the arrow button beside Send and choose one. A thread keeps its assistant for as long
+as it runs.
 
-Some jobs outlive a single reply: they run in the background, wait on someone, take several steps
-you'll want to follow, or are a project you'll come back to. For those, the assistant starts a
-**thread** and says so in its reply. You can ask for one too, for example *"Start a thread to find
-three plumbers and get quotes."* A thread is handled by whichever kind of assistant suits the job,
-such as research or browsing, and keeps that choice for as long as it runs.
+A thread starts without seeing the rest of Home, but the assistant can look back at Home's latest
+messages when you mention something it can't see, so *"snooze that"* after a reminder works.
 
-Where the assistant started a thread, Home shows a card for it. The card keeps itself up to date
-rather than adding a message for every step. It shows:
+Every thread has a card in Home, where it was started. The card keeps itself up to date rather than
+adding a message for every step. It shows:
 
 - a coloured dot for where the thread stands: **Working**, **Waiting on you**, **Done**, or
   **Failed**
@@ -209,14 +215,11 @@ To close a thread yourself, select **Mark done** in the bar above it. It's there
 Nothing is added to Home when you do, because the thread's last message may be a question rather
 than an outcome. If the thread can't be marked done, the bar says so and the thread stays as it was.
 
-**Starting a thread yourself.** Besides asking the assistant, you can start one in three ways:
+**Other ways to start a thread.** Besides sending a message in Home, you can start one in two ways:
 
 - **New thread**, in the sidebar under Home. Choose which assistant runs it and write what it should
   do. The thread opens (in the panel on a wide screen) and the assistant starts on your message
   straight away.
-- **Send as a new thread**, the branch button beside Send in Home's message box. Choose an
-  assistant, and what you've written opens a new thread instead of going to Home. Any files you
-  attached go with it, and so does the intelligence you picked, if that assistant offers it.
 - **Continue in a thread**, among the buttons that appear when you point at one of Home's replies.
   Choose an assistant. With **Bring the conversation along** ticked, that exchange and up to four
   before it are copied into the thread, so it carries on where Home left off, and adding a message
@@ -225,6 +228,19 @@ than an outcome. If the thread can't be marked done, the bar says so and the thr
   from your message alone. Either way the thread's bar says **Started from Home** and quotes the
   reply you continued from, and Home keeps the exchange too.
 
+**Sharing from Home.** Home holds everything, so share a piece of it rather than the whole thing:
+
+- **Share a thread**: select the share icon on its card in Home, or in the thread's own header.
+  Anyone with the link can read the whole thread, including messages added later.
+- **Share a message**: select **Share message** among the buttons that appear when you point at one
+  of Home's replies. The link shows that message and its attachments, and nothing else: not your
+  question, the rest of Home, or the tools the assistant used.
+
+Each message has its own link, and sharing one doesn't affect another. Open **Share message** on the
+same reply again to replace the link or stop sharing it. If the exchange is later moved to a thread,
+links to its messages stop working. The share icon in Home's own header shares all of Home,
+including what comes later, and says so before you create a link.
+
 **Moving an exchange into a thread.** **Move to thread…**, beside **Continue in a thread**, moves
 the whole exchange (your message, what the assistant did and its reply) into a thread you already
 have. Home keeps a **Moved to …** note in its place; click it to open the thread. Only threads whose
@@ -232,6 +248,9 @@ assistant receives your household's information can take it. The others are list
 the reason, as are threads that are still working. Only an exchange you started can move, so a
 thread's outcome or a reminder stays in Home. If anything is still in progress, the dialog says so
 and nothing moves.
+
+Files you attach in Home go with the message, and so does the intelligence you picked, if that
+assistant offers it. A file needs a message with it.
 
 If a thread can't be started or an exchange can't be moved, the reason is shown where you asked, and
 what you wrote is kept so you can try again.
@@ -245,12 +264,12 @@ counts are your own: someone else in the household reading a thread doesn't clea
 
 The sidebar lists **Home** first, with a count of the threads waiting on you, then your threads
 grouped by where they stand: **Working**, **Waiting on you**, **Failed**, **Quiet** and **Done**. A
-thread you've read that has had nothing new for three days is listed under **Quiet**, not counted as
-waiting, until something new arrives in it. Each thread shows its unread count, and one you closed
-yourself says so. Conversations from before threads, and any you start with the new-chat button, are
-listed under **Earlier**. Searching looks through all of them, and matches words said anywhere in a
-conversation, not just its latest message: every word you type must start a word somewhere in the
-chat, and each result shows a snippet of where it matched. The iOS chat list searches the same way.
+thread you've read is listed under **Quiet**, not counted as waiting, until something new arrives in
+it. Each thread shows its unread count, and one you closed yourself says so. Conversations from
+before threads, and any you start with the new-chat button, are listed under **Earlier**. Searching
+looks through all of them, and matches words said anywhere in a conversation, not just its latest
+message: every word you type must start a word somewhere in the chat, and each result shows a
+snippet of where it matched. The iOS chat list searches the same way.
 
 ### Voice
 
@@ -354,24 +373,23 @@ conversation where the assistant offers a choice of them (see
 approve/reject confirmations, and uploads images, PDFs, plain text, and Markdown up to 100 MB. Very
 long messages render a section at a time behind a **Show more** control.
 
-**Home and threads.** Where your assistant has threads turned on, Chat opens on **Home**, one
-ongoing conversation for quick questions and everyday requests. When the assistant moves a bigger
-job into a thread, the thread appears in Home as a card. The card shows the thread's title, whether
-it is working, waiting on you, done or failed, its latest line, and how many of its messages you
-haven't read. A thread the assistant finished shows its outcome; one you closed yourself says "You
-marked this done". When a thread finishes, its outcome also appears in Home under a **From thread:**
-label; tap the label to open that thread. Tap a card to open the thread; Back returns you to Home
-where you left it. A thread keeps its own profile, so it has no profile picker, and its top shows
-the request the assistant started it with. To close a thread yourself, choose **Mark Done** from the
-**…** menu at the top of the thread, or long-press its card in Home. It's offered while the thread
-is **Waiting on you**, **Quiet** or **Failed**; a thread that is still working can be marked done
-once it stops. It reopens by itself when something new arrives in it. In the chat list, swipe a
-thread left to mark it done.
+**Home and threads.** Where your assistant has threads turned on, Chat opens on **Home**, which
+shows your reminders, morning brief and a card for each thread. Sending a message in Home starts a
+thread with the main assistant and opens it. Every thread appears in Home as a card. The card shows
+the thread's title, whether it is working, waiting on you, done or failed, its latest line, and how
+many of its messages you haven't read. A thread the assistant finished shows its outcome; one you
+closed yourself says "You marked this done". When a thread finishes, its outcome also appears in
+Home under a **From thread:** label; tap the label to open that thread. Tap a card to open the
+thread; Back returns you to Home where you left it. A thread keeps its own profile, so it has no
+profile picker, and its top shows the request the assistant started it with. To close a thread
+yourself, choose **Mark Done** from the **…** menu at the top of the thread, or long-press its card
+in Home. It's offered while the thread is **Waiting on you**, **Quiet** or **Failed**; a thread that
+is still working can be marked done once it stops. It reopens by itself when something new arrives
+in it. In the chat list, swipe a thread left to mark it done.
 
 While a thread is working, a bar at the top of Home shows it; tap to open it, or to open the chat
-list when several are running. A thread you've read that has had nothing new for three days moves
-from **Waiting on you** to **Quiet** and stops counting towards the number on the **Chats** button.
-Anything new in it brings it back.
+list when several are running. A thread you've read moves from **Waiting on you** to **Quiet** and
+stops counting towards the number on the **Chats** button. Anything new in it brings it back.
 
 Home and threads count as read once you have scrolled to their newest message with the app open, so
 opening a thread clears its unread count. The **Chats** button at the top right counts threads
@@ -386,9 +404,9 @@ You can start and fill threads yourself:
 
 - **New Thread**, the pencil at the top of Home and of the chat list: pick an assistant, write the
   opening message, and the thread opens with its first reply on the way.
-- **Send as Thread**: long-press the send button in Home to send what you've written, with its
-  attachments, as a new thread's first message instead. Pick the assistant next. The intelligence
-  level you picked goes with it if that assistant offers the same level.
+- **Send To**: long-press the send button in Home to pick a different assistant for what you've
+  written. Your attachments go with it, and so does the intelligence level you picked if that
+  assistant offers the same one.
 - **Continue in Thread**: long-press a message in Home. With **Bring this conversation** on, the
   thread starts with that exchange and up to four before it, and an opening message is optional.
   Some assistants (such as the browser) never see Home conversations; for those the thread starts
@@ -402,17 +420,25 @@ You can start and fill threads yourself:
 
 If the server refuses one of these, an alert says why, and nothing changes.
 
+To share from Home, long-press a message and choose **Share Message**, or long-press a thread's card
+and choose **Share Thread**. Inside a thread, **Share Thread** is in the **⋯** menu. Choose **Create
+Link** and pick where to send it; the same sheet replaces the link or stops sharing. A message link
+shows that message and its attachments and nothing else, and a thread link shows the whole thread,
+including messages added later.
+
 **Getting content in:** share a supported file from the iOS share sheet or Files "Open In" and it
 opens a new Chat draft with the file attached. A copied image can be pasted with the paste button
 beside the composer. The Photos share sheet does not list Family Assistant — copy the photo and
 paste it, use the composer's photo button, or share from Files. Long-pressing the app icon offers
 **New Chat** and **Voice** quick actions.
 
-**Voice** asks for microphone permission and shows a level meter while capturing audio. A call
-always runs on the default assistant, whatever is picked in Chat, and when it ends the transcript is
-saved as its own conversation, including its tool calls and results — so opening it in Chat picks
-the conversation up where the call left off. Quick delegated results are spoken in the call; later
-results appear directly in Chat and can send a notification. Calls placed by Siri work the same way.
+**Voice** asks for microphone permission and shows a level meter while capturing audio. The status
+reads **Working…** while the assistant is running a tool or still putting together its answer, and
+**Listening…** once it has finished and is waiting for you. A call always runs on the default
+assistant, whatever is picked in Chat, and when it ends the transcript is saved as its own
+conversation, including its tool calls and results — so opening it in Chat picks the conversation up
+where the call left off. Quick delegated results are spoken in the call; later results appear
+directly in Chat and can send a notification. Calls placed by Siri work the same way.
 
 If you need something on your phone while talking, ask voice to **send it to my Chat**. It saves the
 text in that call's conversation and sends a notification to your registered devices. For an HTTPS
@@ -440,10 +466,10 @@ up with iPhone** again. Signing out or changing accounts on the phone clears the
 when the devices next exchange updates; this is not immediate while disconnected. You can also
 revoke the watch's credentials in API token settings.
 
-Tap **Start Voice**, allow microphone access, and speak. The screen shows microphone activity and
-the latest transcription. Use **Mute** to pause your microphone or **End** to finish. Leaving the
-app ends the session. The transcript is saved to Chat when the session ends, and any handoff you
-requested remains in that conversation.
+Tap **Start Voice**, allow microphone access, and speak. The screen shows microphone activity, the
+latest transcription, and the same **Working…** and **Listening…** status as the phone. Use **Mute**
+to pause your microphone or **End** to finish. Leaving the app ends the session. The transcript is
+saved to Chat when the session ends, and any handoff you requested remains in that conversation.
 
 To start from your watch face, edit the face, choose a complication slot, and select **Family
 Assistant Voice**. Tapping its microphone opens the app and starts voice mode once you are signed

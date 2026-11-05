@@ -18,6 +18,7 @@ from family_assistant.actions import (
     execute_action,
 )
 from family_assistant.events.condition_evaluator import EventConditionEvaluator
+from family_assistant.events.mcp_source import SERVER_KEY
 from family_assistant.events.sources import EventSource
 from family_assistant.events.storage import EventStorage
 from family_assistant.scripting.errors import ScriptExecutionError
@@ -26,6 +27,7 @@ from family_assistant.storage.database import (
     DatabaseTransaction,
 )
 from family_assistant.storage.events import (
+    EventSourceType,
     check_and_update_rate_limit,
     event_listeners_table,
 )
@@ -79,6 +81,7 @@ class EventProcessor:
         get_db_context_func: Callable[[], Database] | None = None,
         timezone: tzinfo | None = None,
         profile_wake_llm_flags: Mapping[str, bool] | None = None,
+        trusted_event_server_ids: Collection[str] = (),
     ) -> None:
         """
         Initialize event processor.
@@ -94,9 +97,13 @@ class EventProcessor:
                 to refuse wake_llm listeners whose *origin* profile may not wake
                 the LLM (creation-path guards cannot cover pre-existing or
                 admin-created listeners). None disables the check.
+            trusted_event_server_ids: MCP servers configured with
+                ``trusted_events``, whose wakes run under the listener's origin
+                profile instead of event_handler.
         """
         self.sources = sources
         self.profile_wake_llm_flags = profile_wake_llm_flags
+        self.trusted_event_server_ids = frozenset(trusted_event_server_ids)
         self.event_storage = EventStorage(
             sample_interval_hours, get_db_context_func=get_db_context_func
         )
@@ -407,9 +414,11 @@ class EventProcessor:
         # Event triggers are untrusted (e.g. attacker-influenced email/webhook
         # content). A wake_llm turn processes that content and is the injectable
         # component, so it runs under the restricted "event_handler" profile
-        # rather than the listener creator's (often full-trust) profile. Script
-        # actions keep running under the creating profile so their validated tool
-        # set matches execution.
+        # rather than the listener creator's (often full-trust) profile -- unless
+        # the event comes from an MCP server the operator declared trusted_events
+        # for. Script actions keep running under the creating profile so their
+        # validated tool set matches execution.
+        payload_trusted = self._payload_is_trusted(listener)
         if action_type == ActionType.WAKE_LLM:
             # The event_handler routing must not launder a wake the origin
             # profile may not perform: creation of wake_llm listeners is denied
@@ -430,7 +439,11 @@ class EventProcessor:
                     origin_profile_id,
                 )
                 return
-            action_profile_id: str | None = EVENT_HANDLER_PROFILE_ID
+            action_profile_id: str | None = (
+                origin_profile_id
+                if payload_trusted and origin_profile_id is not None
+                else EVENT_HANDLER_PROFILE_ID
+            )
         else:
             action_profile_id = listener.get("processing_profile_id")
 
@@ -450,11 +463,19 @@ class EventProcessor:
                 else listener.get("description")
             ),
             tool_call_review_trigger_payload_present="event_data" in context,
+            tool_call_review_trigger_payload_trusted=payload_trusted,
         )
 
         logger.info(
             f"Executed {action_type.value} action for listener {listener['id']}"
         )
+
+    def _payload_is_trusted(self, listener: EventListenerDict) -> bool:
+        """Whether the listener's events come from a trusted_events MCP server."""
+        if str(listener["source_id"]) != EventSourceType.mcp.value:
+            return False
+        server_id = (listener["match_conditions"] or {}).get(SERVER_KEY)
+        return server_id in self.trusted_event_server_ids
 
     async def _disable_listener(self, listener_id: int) -> None:
         """Disable a one-time listener after it triggers (opens new DB context)."""

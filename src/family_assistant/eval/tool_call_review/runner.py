@@ -216,7 +216,7 @@ async def run_eval(
                 TrialRecord(
                     case_id=case.id,
                     boundary=case.boundary,
-                    label=case.label,
+                    label=case.scoring_label,
                     source=case.source,
                     source_group=case.source_group,
                     matched_group=case.matched_group,

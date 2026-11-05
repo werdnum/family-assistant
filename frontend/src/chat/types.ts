@@ -86,6 +86,11 @@ export interface MessageReasoningInfo {
   model_tier?: string | null;
   model_tier_source?: 'user' | 'model' | 'auto' | 'experiment' | 'default' | null;
   model_tier_requested?: string | null;
+  /** The model the provider reported serving, when an alias resolved differently. */
+  resolved_model?: string | null;
+  provider?: string | null;
+  experiment_id?: string | null;
+  experiment_arm?: string | null;
 }
 
 export interface Message {
@@ -111,10 +116,14 @@ export interface Message {
   reasoning_info?: MessageReasoningInfo;
   /** The stored row this message was built from; absent until it is stored. */
   internalId?: number;
+  /** The stored row itself holds attachments, not just the tool rows of its turn. */
+  hasOwnAttachments?: boolean;
   /** On a Home message echoing a thread's outcome: that thread's conversation. */
   echoed_from_thread?: string;
   /** On the Home marker left by a turn moved into a thread: that thread's conversation. */
   moved_to_thread?: string;
+  /** On the Home marker left by a thread the user started: that thread's conversation. */
+  started_thread?: string;
   /** The user's thumbs up/down on the turn this message belongs to. */
   feedback?: TurnRating;
   /** A marker made here with no stored reply behind it, so nothing to rate. */
@@ -200,6 +209,8 @@ export interface BackendConversationMessage extends Record<string, unknown> {
   echoed_from_thread?: string | null;
   /** On the Home marker left by a turn moved into a thread: that thread's conversation. */
   moved_to_thread?: string | null;
+  /** On the Home marker left by a thread the user started: that thread's conversation. */
+  started_thread?: string | null;
   feedback?: TurnRating | null;
 }
 

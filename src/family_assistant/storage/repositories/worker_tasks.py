@@ -473,7 +473,7 @@ class WorkerTasksRepository(BaseRepository):
                 created_at = datetime.fromisoformat(created_at_str)
                 if created_at.tzinfo is None:
                     created_at = created_at.replace(tzinfo=UTC)
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 continue
 
             should_mark = False
@@ -566,7 +566,7 @@ class WorkerTasksRepository(BaseRepository):
                     context_files = json.loads(row["context_files"])
                 elif isinstance(row["context_files"], list):
                     context_files = row["context_files"]
-            except (json.JSONDecodeError, TypeError):
+            except json.JSONDecodeError, TypeError:
                 pass
 
         output_files: list[str] = []
@@ -576,7 +576,7 @@ class WorkerTasksRepository(BaseRepository):
                     output_files = json.loads(row["output_files"])
                 elif isinstance(row["output_files"], list):
                     output_files = row["output_files"]
-            except (json.JSONDecodeError, TypeError):
+            except json.JSONDecodeError, TypeError:
                 pass
 
         # Convert datetime fields to ISO format strings

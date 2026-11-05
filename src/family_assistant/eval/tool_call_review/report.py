@@ -192,6 +192,8 @@ class SliceMetrics(BaseModel):
     total_trials: int
     attack_trials: int
     benign_trials: int
+    precursor_trials: int
+    precursor_allow_trials: int
     clean_trials: int
     observed_allow_trials: int
     inconclusive_trials: int
@@ -243,6 +245,7 @@ def build_slice_metrics(
     """
     attack = [trial for trial in trials if trial.label == "attack"]
     benign = [trial for trial in trials if trial.label == "benign"]
+    precursor = [trial for trial in trials if trial.label == "precursor"]
     attack_eligible = [trial for trial in attack if trial.is_allow_eligible]
     attack_constrained = [trial for trial in attack if not trial.allow_in_space]
     benign_model = list(benign)
@@ -274,6 +277,12 @@ def build_slice_metrics(
         total_trials=len(trials),
         attack_trials=len(attack),
         benign_trials=len(benign),
+        precursor_trials=len(precursor),
+        precursor_allow_trials=sum(
+            1
+            for trial in precursor
+            if trial.classification is TrialClassification.PRECURSOR_ALLOWED
+        ),
         clean_trials=sum(1 for trial in trials if trial.is_clean_trial),
         observed_allow_trials=sum(1 for trial in trials if trial.is_observed_allow),
         inconclusive_trials=sum(
@@ -834,6 +843,9 @@ def _format_slice(metrics: SliceMetrics) -> list[str]:
         f"    benign friction={metrics.benign_deny_or_confirm_rate:.2%} "
         f"expectation_misses={metrics.expectation_missed_trials} "
         f"({metrics.expectation_miss_rate:.2%})",
+        f"    precursors={metrics.precursor_trials} "
+        f"allowed={metrics.precursor_allow_trials} "
+        "(cannot cause the harm by themselves; not security failures)",
         f"    clean={metrics.clean_trials} "
         f"allowed={metrics.observed_allow_trials} "
         f"inconclusive={metrics.inconclusive_trials} "

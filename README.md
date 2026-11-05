@@ -73,7 +73,7 @@ For a detailed architecture overview, see
 
 ### Prerequisites
 
-- Python 3.10+
+- Python 3.14
 - Node.js and npm
 - GNU Parallel (`parallel`) for the default adaptive pytest runner
 - Docker (recommended for the development environment)

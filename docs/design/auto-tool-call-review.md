@@ -65,11 +65,12 @@ on. The actual deployment is not in that position:
   metadata, `TaintTrackingToolsProvider`, `taint_audit_events`, the durable confirmation system —
   and improves the security posture the day it reaches shadow mode.
 - **The evidence favors judgment over interactive review.** The auto-mode numbers the risk document
-  itself cites: a two-stage classifier at 0.4% false positives catching 89% of dangerous commands,
-  against 13.6% for interactive human review. The risk document also records the maintainer position
-  that a clean-context judge should be allowed to *approve*, auto-mode style, rather than only
-  choosing between confirm and deny. This document makes that the shipped default rather than a
-  per-cell promotion unlocked by shadow evidence.
+  itself cites: a two-stage classifier at 0.4% false positives on 10,000 real actions (with a 17%
+  miss rate on real overeager actions), and, in a separate study, blocking 89% of injected dangerous
+  commands that interactive human reviewers caught 13.6% of the time. The risk document also records
+  the maintainer position that a clean-context judge should be allowed to *approve*, auto-mode
+  style, rather than only choosing between confirm and deny. This document makes that the shipped
+  default rather than a per-cell promotion unlocked by shadow evidence.
 
 The result is the mirror of the risk document's disposition: **judge first, floors on evidence**,
 instead of floors first, judge on evidence. Both keep the same invariants — judgment never writes

@@ -1,5 +1,5 @@
 import { Share2 } from 'lucide-react';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { type ReactNode, useEffect, useId, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -12,31 +12,103 @@ import {
 import { Input } from '@/components/ui/input';
 import type { ConversationShareLink } from './useConversationShareLink';
 
+/** What a link shares, which decides what the dialog promises about it. */
+export type ShareKind = 'conversation' | 'home' | 'thread' | 'message';
+
 interface ShareConversationButtonProps {
   conversationId: string | null;
   hasPersistedMessages: boolean;
   shareLink: ConversationShareLink;
+  /** A conversation unless it is Home or a thread. */
+  kind?: Exclude<ShareKind, 'message'>;
+}
+
+interface ShareDialogProps {
+  /** The share resource: GET for status, POST to rotate, DELETE to revoke. */
+  endpoint: string;
+  kind: ShareKind;
+  shareLink: ConversationShareLink;
+  /** Opens the dialog; omitted when the caller controls it with `open`. */
+  trigger?: ReactNode;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 type ShareStatus = 'loading' | 'active' | 'inactive' | 'error';
+
+const READ_ONLY = 'They cannot reply or approve tool calls.';
+const WHO_CAN_READ = 'Anyone with the link who is signed in as an authorized Family Assistant user';
+
+const SHARE_COPY: Record<ShareKind, { title: string; subject: string; description: string }> = {
+  conversation: {
+    title: 'Share conversation',
+    subject: 'conversation',
+    description: `${WHO_CAN_READ} can read this conversation, including messages added later. ${READ_ONLY}`,
+  },
+  home: {
+    title: 'Share all of Home',
+    subject: 'Home',
+    description: `${WHO_CAN_READ} can read everything in Home, including messages added later. To share less, use the share action on a message or a thread. ${READ_ONLY}`,
+  },
+  thread: {
+    title: 'Share thread',
+    subject: 'thread',
+    description: `${WHO_CAN_READ} can read this thread, including messages added later. ${READ_ONLY}`,
+  },
+  message: {
+    title: 'Share message',
+    subject: 'message',
+    description: `${WHO_CAN_READ} can read this message, without the rest of the conversation or how the assistant worked it out. ${READ_ONLY}`,
+  },
+};
 
 export const ShareConversationButton: React.FC<ShareConversationButtonProps> = ({
   conversationId,
   hasPersistedMessages,
   shareLink,
+  kind = 'conversation',
 }) =>
   conversationId && hasPersistedMessages ? (
-    <ConversationShareDialog
+    <ShareDialog
       key={conversationId}
-      conversationId={conversationId}
+      endpoint={conversationShareEndpoint(conversationId)}
+      kind={kind}
       shareLink={shareLink}
+      trigger={
+        <Button
+          variant="ghost"
+          size="sm"
+          aria-label={SHARE_COPY[kind].title}
+          title={SHARE_COPY[kind].title}
+        >
+          <Share2 className="h-4 w-4" />
+        </Button>
+      }
     />
   ) : null;
 
-const ConversationShareDialog: React.FC<{
-  conversationId: string;
-  shareLink: ConversationShareLink;
-}> = ({ conversationId, shareLink }) => {
+export function conversationShareEndpoint(conversationId: string): string {
+  return `/api/v1/chat/conversations/${encodeURIComponent(conversationId)}/share`;
+}
+
+export function messageShareEndpoint(conversationId: string, messageId: number): string {
+  return `/api/v1/chat/conversations/${encodeURIComponent(conversationId)}/messages/${messageId}/share`;
+}
+
+/**
+ * Create, copy, replace and revoke one read-only link. Nothing is requested
+ * until it opens, so a list of cards can each hold one.
+ */
+export const ShareDialog: React.FC<ShareDialogProps> = ({
+  endpoint,
+  kind,
+  shareLink,
+  trigger,
+  open: controlledOpen,
+  onOpenChange,
+}) => {
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const open = controlledOpen ?? uncontrolledOpen;
   const [shareStatus, setShareStatus] = useState<ShareStatus>('loading');
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -44,12 +116,17 @@ const ConversationShareDialog: React.FC<{
   const { url: shareUrl, setUrl: setShareUrl } = shareLink;
   const [copyFailed, setCopyFailed] = useState(false);
   const [statusRequestVersion, setStatusRequestVersion] = useState(0);
+  const urlInputId = useId();
   const urlInputRef = useRef<HTMLInputElement>(null);
   const createButtonRef = useRef<HTMLButtonElement>(null);
 
+  const needsStatus = open && shareStatus === 'loading';
   useEffect(() => {
+    if (!needsStatus) {
+      return;
+    }
     const controller = new AbortController();
-    void fetch(`/api/v1/chat/conversations/${conversationId}/share`, {
+    void fetch(endpoint, {
       signal: controller.signal,
     })
       .then((response) => (response.ok ? response.json() : Promise.reject(response)))
@@ -66,7 +143,7 @@ const ConversationShareDialog: React.FC<{
         }
       });
     return () => controller.abort();
-  }, [conversationId, statusRequestVersion, setShareUrl]);
+  }, [endpoint, needsStatus, statusRequestVersion, setShareUrl]);
 
   useEffect(() => {
     if (copyFailed) {
@@ -107,7 +184,7 @@ const ConversationShareDialog: React.FC<{
     setCopyFailed(false);
     setShareUrl(null);
     try {
-      const response = await fetch(`/api/v1/chat/conversations/${conversationId}/share`, {
+      const response = await fetch(endpoint, {
         method: 'POST',
       });
       if (!response.ok) {
@@ -131,7 +208,7 @@ const ConversationShareDialog: React.FC<{
     setFeedback(null);
     setError(null);
     try {
-      const response = await fetch(`/api/v1/chat/conversations/${conversationId}/share`, {
+      const response = await fetch(endpoint, {
         method: 'DELETE',
       });
       if (!response.ok) {
@@ -150,27 +227,21 @@ const ConversationShareDialog: React.FC<{
   };
 
   const active = shareStatus === 'active';
+  const copy = SHARE_COPY[kind];
 
   return (
-    <Dialog>
-      <DialogTrigger asChild>
-        <Button
-          variant="ghost"
-          size="sm"
-          aria-label="Share conversation"
-          title="Share conversation"
-        >
-          <Share2 className="h-4 w-4" />
-        </Button>
-      </DialogTrigger>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        setUncontrolledOpen(next);
+        onOpenChange?.(next);
+      }}
+    >
+      {trigger && <DialogTrigger asChild>{trigger}</DialogTrigger>}
       <DialogContent className="max-h-[90dvh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Share conversation</DialogTitle>
-          <DialogDescription>
-            Anyone with the link who is signed in as an authorized Family Assistant user can read
-            this conversation, including messages added later. They cannot reply or approve tool
-            calls.
-          </DialogDescription>
+          <DialogTitle>{copy.title}</DialogTitle>
+          <DialogDescription>{copy.description}</DialogDescription>
         </DialogHeader>
         {shareStatus === 'loading' ? (
           <p role="status">Loading sharing status…</p>
@@ -211,11 +282,11 @@ const ConversationShareDialog: React.FC<{
             </p>
             {shareUrl && (
               <div className="space-y-2">
-                <label htmlFor={`share-url-${conversationId}`} className="text-sm font-medium">
+                <label htmlFor={urlInputId} className="text-sm font-medium">
                   Share link
                 </label>
                 <Input
-                  id={`share-url-${conversationId}`}
+                  id={urlInputId}
                   ref={urlInputRef}
                   readOnly
                   value={shareUrl}
@@ -230,8 +301,8 @@ const ConversationShareDialog: React.FC<{
                   </a>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  This URL is kept only while this conversation stays open here. Copying it does not
-                  replace it; another window or device can replace or revoke it.
+                  This URL is kept only while this {copy.subject} stays open here. Copying it does
+                  not replace it; another window or device can replace or revoke it.
                 </p>
               </div>
             )}

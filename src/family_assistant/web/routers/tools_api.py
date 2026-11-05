@@ -168,7 +168,7 @@ async def execute_tool_api(
             if not voice_conversation_id.startswith("web_conv_"):
                 raise ValueError
             uuid.UUID(voice_conversation_id.removeprefix("web_conv_"))
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             raise HTTPException(
                 status_code=400, detail="Invalid voice conversation ID."
             ) from None
