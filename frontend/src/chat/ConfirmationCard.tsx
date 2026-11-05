@@ -124,7 +124,7 @@ export const ConfirmationCard: React.FC<ConfirmationCardProps> = ({
       role="group"
       aria-labelledby={titleId}
       data-testid="confirmation-card"
-      className="tool-confirmation-container shrink-0 overflow-hidden rounded-lg border bg-card text-card-foreground shadow-sm"
+      className="tool-confirmation-container shrink-0 overflow-hidden rounded-lg border bg-card text-card-foreground shadow-xs"
     >
       <div className="flex items-start gap-3 px-4 pt-3">
         <ShieldQuestion

@@ -28,6 +28,12 @@ from family_assistant.threads.boundary import (
     MovedTurn,
     move_turn_across_boundary,
 )
+from family_assistant.threads.carry import (
+    SuggestionSource,
+    carry_candidates,
+    carry_window,
+    suggest_carried_turns,
+)
 from family_assistant.threads.creation import (
     CONTINUE_CONTEXT_TURNS,
     NewThread,
@@ -63,6 +69,7 @@ from family_assistant.web.routers.chat_api import (
 )
 
 if TYPE_CHECKING:
+    from family_assistant.processing.history_relevance import TurnRelevance
     from family_assistant.web.web_chat_interface import WebChatInterface
 
 threads_api_router = APIRouter()
@@ -158,6 +165,15 @@ class StartThreadRequest(BaseModel):
             "false there to start from the opening message alone"
         ),
     )
+    carried_turn_ids: list[str] | None = Field(
+        default=None,
+        description=(
+            "With include_context: which of the turns GET "
+            "/v1/chat/home/threads/continue-preview offered to copy. Must "
+            "include the anchor's turn, and may name only offered turns (422 "
+            "otherwise). Omitted, every offered turn is copied"
+        ),
+    )
     model_tier: str | None = Field(
         default=None,
         description="Optional model tier for the thread, from the profile's model_tiers",
@@ -183,6 +199,33 @@ class StartThreadResponse(BaseModel):
     copied_message_ids: list[int] = Field(
         default_factory=list,
         description="The thread's copies of the Home rows it was continued with",
+    )
+
+
+class CarryCandidateResponse(BaseModel):
+    """A Home turn "Continue in a thread" can copy."""
+
+    turn_id: str
+    started_at: datetime
+    user_text: str | None = Field(
+        description="What the user wrote, shortened; null for a turn they didn't start"
+    )
+    reply_text: str | None = Field(description="The turn's final reply, shortened")
+    is_anchor: bool = Field(description="The turn of the message being continued")
+    is_echo: bool = Field(description="A finished thread's outcome, echoed into Home")
+    suggested: bool = Field(description="Ticked to start with")
+
+
+class ContinuePreviewResponse(BaseModel):
+    """What "Continue in a thread" would copy from Home, oldest first."""
+
+    anchor_message_id: int
+    turns: list[CarryCandidateResponse]
+    suggested_by: SuggestionSource = Field(
+        description=(
+            "'assistant' when a classifier picked the turns that go with the "
+            "anchor; 'default' when every turn is ticked"
+        )
     )
 
 
@@ -492,6 +535,66 @@ async def _thread_summary(
     return thread_summary_response(summary, thread.home_conversation_id)
 
 
+def _continue_relevance(request: Request) -> TurnRelevance | None:
+    """Jev's turn relevance for picking what a continuation carries, if configured."""
+    return getattr(request.app.state, "continue_turn_relevance", None)
+
+
+@threads_api_router.get("/v1/chat/home/threads/continue-preview")
+async def preview_continue(
+    anchor_message_id: int,
+    request: Request,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    db_context: Annotated[Database, Depends(get_db)],
+) -> ContinuePreviewResponse:
+    """What "Continue in a thread" from a Home message would bring along.
+
+    The anchor's turn and the Home turns just before it (``CONTINUE_CONTEXT_TURNS``
+    in all), oldest first, each
+    marked whether it is ticked to start with: the anchor always, and the
+    earlier turns a classifier judges to go with it, or all of them when there
+    is no classifier or it gives no answer. Send the ticked ones back as
+    ``carried_turn_ids`` on POST /v1/chat/home/threads.
+
+    404 while threads are disabled, and for an anchor outside the caller's
+    Home; 409 for an anchor that cannot be continued, as on the start.
+    """
+    config = _app_config(request)
+    if not config.conversation_threads.enabled:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    user_id = _user_id(current_user)
+    home = await ensure_web_home(
+        db_context, config, user_id=user_id, now=datetime.now(UTC)
+    )
+    anchor = await _home_turn_row(
+        db_context, home, anchor_message_id, get_stream_hub(request)
+    )
+    assert anchor["turn_id"] is not None
+    candidates = await carry_candidates(
+        db_context,
+        interface_type=anchor["interface_type"],
+        home=home,
+        anchor_turn_id=anchor["turn_id"],
+    )
+    suggestion = await suggest_carried_turns(candidates, _continue_relevance(request))
+    return ContinuePreviewResponse(
+        anchor_message_id=anchor_message_id,
+        turns=[
+            CarryCandidateResponse(
+                turn_id=candidate.turn_id,
+                started_at=candidate.started_at,
+                user_text=candidate.user_text,
+                reply_text=candidate.reply_text,
+                is_anchor=candidate.is_anchor,
+                is_echo=candidate.is_echo,
+                suggested=candidate.turn_id in suggestion.suggested_turn_ids,
+            )
+            for candidate in suggestion.candidates
+        ],
+        suggested_by=suggestion.source,
+    )
+
+
 @threads_api_router.post("/v1/chat/home/threads")
 async def start_home_thread(
     payload: StartThreadRequest,
@@ -635,16 +738,17 @@ async def _create_user_thread(
         anchor = await _home_turn_row(db, home, payload.anchor_message_id, hub)
         if payload.include_context:
             assert anchor["turn_id"] is not None
+            window = await carry_window(
+                db,
+                interface_type=anchor["interface_type"],
+                home=home,
+                anchor_turn_id=anchor["turn_id"],
+            )
             seed = CopiedTurns(
                 source_interface_type=anchor["interface_type"],
                 source_conversation_id=home,
-                turn_ids=tuple(
-                    await db.message_history.turn_ids_leading_to(
-                        interface_type=anchor["interface_type"],
-                        conversation_id=home,
-                        turn_id=anchor["turn_id"],
-                        limit=CONTINUE_CONTEXT_TURNS,
-                    )
+                turn_ids=_chosen_turns(
+                    window, anchor["turn_id"], payload.carried_turn_ids
                 ),
             )
     title = (payload.title or "").strip() or _derived_title(prompt)
@@ -686,6 +790,28 @@ async def _create_user_thread(
                 "without context, or choose another profile."
             ),
         ) from refusal
+
+
+def _chosen_turns(
+    window: list[str], anchor_turn_id: str, chosen: list[str] | None
+) -> tuple[str, ...]:
+    """The turns of ``window`` the caller chose to carry, in window order."""
+    if chosen is None:
+        return tuple(window)
+    if anchor_turn_id not in chosen:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="The exchange you're continuing has to come along.",
+        )
+    if not set(chosen) <= set(window):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                "Some of the messages you picked can't be carried any more. "
+                "Close this and try again."
+            ),
+        )
+    return tuple(turn_id for turn_id in window if turn_id in chosen)
 
 
 @threads_api_router.post("/v1/chat/home/threads/{conversation_id}/moved-turns")

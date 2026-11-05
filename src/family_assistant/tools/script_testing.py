@@ -540,7 +540,7 @@ def _format_transcript_result_for_text(result: object) -> str:
     """Render transcript results defensively for the user-facing text block."""
     try:
         return json.dumps(result, ensure_ascii=False, default=str)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return str(result)
 
 

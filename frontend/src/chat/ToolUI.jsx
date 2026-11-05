@@ -61,7 +61,7 @@ const ToolAttachmentDisplay = ({ attachment }) => {
           <img
             src={attachment.content_url}
             alt={attachment.description || 'Tool result image'}
-            className="max-w-full max-h-64 rounded border"
+            className="max-w-full max-h-64 rounded-sm border"
             style={{ width: 'auto', height: 'auto' }}
           />
           {attachment.description && (
@@ -75,7 +75,7 @@ const ToolAttachmentDisplay = ({ attachment }) => {
   // For non-image attachments, show a file link
   return (
     <div className="tool-attachment-item" data-testid="attachment-preview">
-      <div className="flex items-center gap-2 p-2 border rounded">
+      <div className="flex items-center gap-2 p-2 border rounded-sm">
         <DownloadIcon size={16} />
         <span className="text-sm">{attachment.description || 'Attachment'}</span>
         {attachment.content_url && (
@@ -132,7 +132,7 @@ const RawToolSection = ({ label, text, testId }) => (
       <span className="text-xs font-medium text-muted-foreground">{label}</span>
       <CopyRawButton text={text} label={label.toLowerCase()} />
     </div>
-    <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded bg-muted/50 p-2 text-xs">
+    <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-sm bg-muted/50 p-2 text-xs">
       {text}
     </pre>
   </div>

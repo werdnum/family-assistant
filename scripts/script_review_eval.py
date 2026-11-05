@@ -200,7 +200,7 @@ def _source_revision() -> dict[str, object] | None:
             text=True,
             check=True,
         )
-    except (OSError, subprocess.CalledProcessError):
+    except OSError, subprocess.CalledProcessError:
         return None
     return {"commit": head.stdout.strip(), "dirty": bool(status.stdout.strip())}
 

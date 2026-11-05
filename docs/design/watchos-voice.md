@@ -49,8 +49,17 @@ volume and route. Microphone levels are taken after the canceller and before duc
 so the level Gemini received is 20 dB lower while ducked. The `interrupted` breadcrumb carries
 `since_first_playback_ms`.
 
+On 2026-11-04 that was not enough on the watch. The first reply interrupted itself 1.4 s in, and the
+transcript shows its own words, "starting the", coming back as the user's. Its `audio_echo_levels`
+put the microphone at -32.5 dBFS RMS and -22.5 dBFS peak against -12.2 dBFS played after the first
+500 ms: about 20 dB of cancellation, with peaks only 10 dB below what was playing. The second
+reply's microphone was at -74 dBFS in its first 500 ms and digital silence after it. The canceller
+on the watch speaker therefore takes well over a second of playback to converge, not 200 ms. On
+watchOS the microphone stays silent for the whole of the session's first reply; the iPhone keeps the
+500 ms, since it has shown no echo after convergence.
+
 A gate on the microphone for all playback, manual speech detection and a second canceller are not
-part of this. They become options only if `audio_echo_levels` shows echo after convergence.
+part of this. Later replies have shown no echo, so nothing yet calls for them.
 
 ## Milestones and verification
 
@@ -81,9 +90,11 @@ part of this. They become options only if `audio_echo_levels` shows echo after c
   the session, so the watch can suspend before the upload finishes and lose that transcript. A
   reliable upload across suspension needs durable delivery, which is outside the voice launcher
   feature.
-- Someone who talks over the first 500 ms of a session's first reply is not heard, and their words
-  are lost. That is a small window at the start of a single reply, and it is the one where their
-  voice and the echo cannot be told apart.
+- Someone who talks over a session's first reply is not heard, and their words are lost: for its
+  first 500 ms on iPhone, and for the whole reply on the watch. That reply is where their voice and
+  the echo cannot be told apart. On the watch it also means the first reply cannot be interrupted,
+  however long it runs. A reply ends after 200 ms of silence, so a longer gap inside the first reply
+  ends the silencing early.
 - The 500 ms runs from scheduling the reply's first buffer, not from the sound leaving the speaker,
   so it is shorter than 500 ms of audible playback by the route's output latency. A route change
   mid-session does not restart it, even if the canceller has to converge again.

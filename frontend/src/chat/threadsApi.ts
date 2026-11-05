@@ -99,6 +99,8 @@ export interface StartThreadRequest {
   anchor_message_id?: number;
   /** With an anchor: copy the anchor's turn and the Home turns before it. */
   include_context?: boolean;
+  /** With include_context: which of the previewed turns to copy. All of them when omitted. */
+  carried_turn_ids?: string[];
   model_tier?: string;
   attachments?: ThreadAttachment[];
 }
@@ -118,6 +120,45 @@ export interface StartThreadResponse {
   copied_message_ids: number[];
 }
 
+/** A Home turn "Continue in a thread" can bring along. */
+export interface CarryCandidate {
+  turn_id: string;
+  started_at: string;
+  /** What the user wrote; null for a turn the assistant started, like a reminder. */
+  user_text: string | null;
+  reply_text: string | null;
+  is_anchor: boolean;
+  is_echo: boolean;
+  /** Ticked to start with. */
+  suggested: boolean;
+}
+
+export interface ContinuePreview {
+  anchor_message_id: number;
+  /** Oldest first; the anchor's turn is last. */
+  turns: CarryCandidate[];
+  /** 'assistant' when the ticks were picked as related to the anchor; 'default' when all are. */
+  suggested_by: 'assistant' | 'default';
+}
+
+/** What continuing from `anchorMessageId` would bring along, and what is ticked to start with. */
+export async function fetchContinuePreview(
+  anchorMessageId: number,
+  signal?: AbortSignal
+): Promise<ContinuePreview> {
+  const response = await fetch(
+    `/api/v1/chat/home/threads/continue-preview?anchor_message_id=${anchorMessageId}`,
+    { signal }
+  );
+  if (!response.ok) {
+    throw new ThreadActionError(
+      await refusalMessage(response, "Couldn't load what comes along"),
+      response.status
+    );
+  }
+  return (await response.json()) as ContinuePreview;
+}
+
 export interface MoveTurnResponse {
   thread: ThreadSummary;
   marker_message_id: number;
@@ -125,7 +166,9 @@ export interface MoveTurnResponse {
 }
 
 async function refusalMessage(response: Response, fallback: string): Promise<string> {
-  const body = (await response.json().catch(() => null)) as { detail?: unknown } | null;
+  const body = (await response.json().catch(() => null)) as {
+    detail?: unknown;
+  } | null;
   if (typeof body?.detail === 'string' && body.detail) {
     return body.detail;
   }

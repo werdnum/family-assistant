@@ -105,8 +105,8 @@ async def test_get_note_falls_back_to_file_skill(db_engine: AsyncEngine) -> None
 
 
 @pytest.mark.asyncio
-async def test_get_note_db_overrides_file_skill(db_engine: AsyncEngine) -> None:
-    """DB note should take priority over file-based skill with same name."""
+async def test_get_note_db_skill_overrides_file_skill(db_engine: AsyncEngine) -> None:
+    """A database skill with the file skill's name replaces it."""
     await cleanup_notes(db_engine)
 
     registry = NoteRegistry([
@@ -121,7 +121,10 @@ async def test_get_note_db_overrides_file_skill(db_engine: AsyncEngine) -> None:
     db = Database(engine=db_engine)
     await db.notes.add_or_update(
         title="Research Assistant",
-        content="DB version of research assistant.",
+        content=(
+            "---\nname: Research Assistant\ndescription: DB version.\n---\n"
+            "DB version of research assistant."
+        ),
         include_in_prompt=False,
         write_policy=NoteWritePolicy.UNCONSTRAINED,
         provenance=NoteProvenanceStamp.internal(),
@@ -132,8 +135,47 @@ async def test_get_note_db_overrides_file_skill(db_engine: AsyncEngine) -> None:
 
     data = _data(result)
     assert data["exists"] is True
-    assert data["content"] == "DB version of research assistant."
+    assert "DB version of research assistant." in data["content"]
     assert "source" not in data  # DB notes don't have source field
+    assert "shadowed_note" not in data
+
+
+@pytest.mark.asyncio
+async def test_ordinary_note_does_not_hide_a_file_skill(db_engine: AsyncEngine) -> None:
+    """A memory note titled like a built-in skill must not stand in for it.
+
+    The catalog still lists the built-in, so get_note has to load it, with its
+    tool activations, rather than the note.
+    """
+    await cleanup_notes(db_engine)
+    registry = NoteRegistry([
+        ParsedSkill(
+            name="Home Assistant",
+            description="The built-in skill.",
+            content="Built-in steps.",
+            source_path=Path("/fake/home-assistant.md"),
+            activate_tools=("call_home_assistant_action",),
+        ),
+    ])
+    db = Database(engine=db_engine)
+    await db.notes.add_or_update(
+        title="Home Assistant",
+        content="Facts the household mentioned about the home.",
+        include_in_prompt=False,
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
+    )
+
+    result = await get_note_tool(
+        title="Home Assistant",
+        exec_context=make_exec_context(db, note_registry=registry),
+    )
+
+    data = _data(result)
+    assert data["source"] == "file"
+    assert data["content"] == "Built-in steps."
+    assert data["activate_tools"] == ["call_home_assistant_action"]
+    assert "Home Assistant" in data["shadowed_note"]
 
 
 SKILL_WITH_TOOLS = (
@@ -262,6 +304,35 @@ async def test_get_note_finds_a_database_skill_by_its_catalog_name(
     result = await get_note_tool(title="Home", exec_context=make_exec_context(db))
 
     assert _data(result)["title"] == "Our house"
+
+
+@pytest.mark.asyncio
+async def test_skill_name_wins_over_a_different_note_with_that_title(
+    db_engine: AsyncEngine,
+) -> None:
+    await cleanup_notes(db_engine)
+    db = Database(engine=db_engine)
+    await db.notes.add_or_update(
+        title="Our house",
+        content=SKILL_WITH_TOOLS,
+        include_in_prompt=False,
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
+    )
+    await db.notes.add_or_update(
+        title="Home",
+        content="Facts about the home.",
+        include_in_prompt=False,
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
+    )
+
+    result = await get_note_tool(title="Home", exec_context=make_exec_context(db))
+
+    data = _data(result)
+    assert data["title"] == "Our house"
+    assert data["activate_tools"] == ["call_home_assistant_action"]
+    assert "'Home'" in data["shadowed_note"]
 
 
 @pytest.mark.asyncio

@@ -102,7 +102,7 @@ A similar measurement in `frontend/src` shows `frontend/src/chat/ToolUI.jsx` at 
 - **Evidence**
   - Documentation heavily references `config.yaml`, while repository root only has `defaults.yaml`
     and no committed `config.yaml`.
-  - README prerequisites claim Python 3.10+, but project metadata requires Python 3.13.x
+  - README prerequisites claim Python 3.10+, but project metadata requires Python 3.14.x
     (`pyproject.toml`).
 - **Why this matters**
   - New contributor setup friction and failed first-run experiences.

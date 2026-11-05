@@ -194,6 +194,15 @@ To catch up without opening each thread, ask in Home, for example *"How are the 
 assistant answers from each thread's title, where it stands and the outcome it reported. It doesn't
 read the threads' conversations, so for the detail, open the thread.
 
+**Passing something to another conversation.** Ask the assistant in one conversation to tell
+another of your conversations something, for example in a thread, *"Tell Home the quotes are in"*,
+or in Home, *"Let the plumbing thread know I prefer Acme"*. The assistant posts a note there, and the
+assistant in that conversation picks it up straight away and replies there, so the reply shows up
+in that conversation like any other. It only reaches your own conversations; to message someone
+else in the household, see [Messaging other people](#messaging-other-people-in-your-household).
+A note carries along how much the assistant trusted what it was working from, so a note written
+after reading a web page or an email is treated with the same care in the conversation it lands in.
+
 Click the card to open the thread. On a wide screen the thread opens in a panel on the right, and
 Home stays where it is in the middle, with anything you were typing still in its message box. You
 can keep chatting in Home while the thread works, and send messages in either: each reply appears in
@@ -221,12 +230,15 @@ than an outcome. If the thread can't be marked done, the bar says so and the thr
   do. The thread opens (in the panel on a wide screen) and the assistant starts on your message
   straight away.
 - **Continue in a thread**, among the buttons that appear when you point at one of Home's replies.
-  Choose an assistant. With **Bring the conversation along** ticked, that exchange and up to four
-  before it are copied into the thread, so it carries on where Home left off, and adding a message
-  is optional. Some assistants, such as the browsing one, don't receive your household's
-  information, so Home's conversation can't go with them. The dialog says so, and the thread starts
-  from your message alone. Either way the thread's bar says **Started from Home** and quotes the
-  reply you continued from, and Home keeps the exchange too.
+  Choose an assistant. With **Bring the conversation along** ticked, the dialog lists what will be
+  copied into the thread: that exchange and up to four Home messages before it, each with a tick.
+  The ones that look related to the message you're continuing are ticked for you, so an unrelated
+  reminder or briefing just before it is left behind; tick or untick any of them before you start.
+  The thread carries on where Home left off, and adding a message is optional. Some assistants, such
+  as the browsing one, don't receive your household's information, so Home's conversation can't go
+  with them. The dialog says so, and the thread starts from your message alone. Either way the
+  thread's bar says **Started from Home** and quotes the reply you continued from, and Home keeps
+  the exchange too.
 
 **Sharing from Home.** Home holds everything, so share a piece of it rather than the whole thing:
 
@@ -432,11 +444,13 @@ beside the composer. The Photos share sheet does not list Family Assistant — c
 paste it, use the composer's photo button, or share from Files. Long-pressing the app icon offers
 **New Chat** and **Voice** quick actions.
 
-**Voice** asks for microphone permission and shows a level meter while capturing audio. A call
-always runs on the default assistant, whatever is picked in Chat, and when it ends the transcript is
-saved as its own conversation, including its tool calls and results — so opening it in Chat picks
-the conversation up where the call left off. Quick delegated results are spoken in the call; later
-results appear directly in Chat and can send a notification. Calls placed by Siri work the same way.
+**Voice** asks for microphone permission and shows a level meter while capturing audio. The status
+reads **Working…** while the assistant is running a tool or still putting together its answer, and
+**Listening…** once it has finished and is waiting for you. A call always runs on the default
+assistant, whatever is picked in Chat, and when it ends the transcript is saved as its own
+conversation, including its tool calls and results — so opening it in Chat picks the conversation up
+where the call left off. Quick delegated results are spoken in the call; later results appear
+directly in Chat and can send a notification. Calls placed by Siri work the same way.
 
 If you need something on your phone while talking, ask voice to **send it to my Chat**. It saves the
 text in that call's conversation and sends a notification to your registered devices. For an HTTPS
@@ -464,10 +478,10 @@ up with iPhone** again. Signing out or changing accounts on the phone clears the
 when the devices next exchange updates; this is not immediate while disconnected. You can also
 revoke the watch's credentials in API token settings.
 
-Tap **Start Voice**, allow microphone access, and speak. The screen shows microphone activity and
-the latest transcription. Use **Mute** to pause your microphone or **End** to finish. Leaving the
-app ends the session. The transcript is saved to Chat when the session ends, and any handoff you
-requested remains in that conversation.
+Tap **Start Voice**, allow microphone access, and speak. The screen shows microphone activity, the
+latest transcription, and the same **Working…** and **Listening…** status as the phone. Use **Mute**
+to pause your microphone or **End** to finish. Leaving the app ends the session. The transcript is
+saved to Chat when the session ends, and any handoff you requested remains in that conversation.
 
 To start from your watch face, edit the face, choose a complication slot, and select **Family
 Assistant Voice**. Tapping its microphone opens the app and starts voice mode once you are signed

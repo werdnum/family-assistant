@@ -1504,7 +1504,7 @@ class NotesRepository(BaseRepository):
                 write_policy,
                 provenance,
             )
-        except (NoteNotFoundError, DuplicateNoteError, NoteWritePolicyError):
+        except NoteNotFoundError, DuplicateNoteError, NoteWritePolicyError:
             raise
         except SQLAlchemyError as e:
             self._logger.exception(

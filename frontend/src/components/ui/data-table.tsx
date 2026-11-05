@@ -1,14 +1,23 @@
 import {
+  CellData,
   Column,
   ColumnDef,
+  columnFilteringFeature,
   ColumnFiltersState,
-  flexRender,
-  getCoreRowModel,
-  getFilteredRowModel,
-  getPaginationRowModel,
-  getSortedRowModel,
+  createFilteredRowModel,
+  createPaginatedRowModel,
+  createSortedRowModel,
+  filterFn_includesString,
+  RowData,
+  rowPaginationFeature,
+  rowSortingFeature,
+  sortFn_alphanumeric,
+  sortFn_basic,
+  sortFn_datetime,
+  sortFn_text,
   SortingState,
-  useReactTable,
+  tableFeatures,
+  useTable,
 } from '@tanstack/react-table';
 import { ChevronDown, ChevronsUpDown, ChevronUp } from 'lucide-react';
 import * as React from 'react';
@@ -25,8 +34,33 @@ import {
 } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 
-interface DataTableProps<TData, TValue> {
-  columns: ColumnDef<TData, TValue>[];
+// The features every DataTable uses. The 'auto' filter and sort functions only
+// resolve to functions registered here.
+const dataTableFeatures = tableFeatures({
+  columnFilteringFeature,
+  rowSortingFeature,
+  rowPaginationFeature,
+  filteredRowModel: createFilteredRowModel(),
+  sortedRowModel: createSortedRowModel(),
+  paginatedRowModel: createPaginatedRowModel(),
+  filterFns: { includesString: filterFn_includesString },
+  sortFns: {
+    alphanumeric: sortFn_alphanumeric,
+    basic: sortFn_basic,
+    datetime: sortFn_datetime,
+    text: sortFn_text,
+  },
+});
+
+export type DataTableFeatures = typeof dataTableFeatures;
+
+export type DataTableColumnDef<
+  TData extends RowData,
+  TValue extends CellData = CellData,
+> = ColumnDef<DataTableFeatures, TData, TValue>;
+
+interface DataTableProps<TData extends RowData> {
+  columns: DataTableColumnDef<TData>[];
   data: TData[];
   searchable?: boolean;
   searchColumnId?: string;
@@ -35,7 +69,7 @@ interface DataTableProps<TData, TValue> {
   emptyStateMessage?: string;
 }
 
-export function DataTable<TData, TValue>({
+export function DataTable<TData extends RowData>({
   columns,
   data,
   searchable = false,
@@ -43,21 +77,19 @@ export function DataTable<TData, TValue>({
   searchPlaceholder = 'Search...',
   pageSize = 10,
   emptyStateMessage = 'No results.',
-}: DataTableProps<TData, TValue>) {
+}: DataTableProps<TData>) {
   const [sorting, setSorting] = React.useState<SortingState>([]);
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([]);
 
-  const table = useReactTable({
+  const table = useTable({
+    features: dataTableFeatures,
     data,
     columns,
     onSortingChange: setSorting,
     onColumnFiltersChange: setColumnFilters,
-    getCoreRowModel: getCoreRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
     initialState: {
       pagination: {
+        pageIndex: 0,
         pageSize: pageSize,
       },
     },
@@ -90,9 +122,7 @@ export function DataTable<TData, TValue>({
                 {headerGroup.headers.map((header) => {
                   return (
                     <TableHead key={header.id}>
-                      {header.isPlaceholder
-                        ? null
-                        : flexRender(header.column.columnDef.header, header.getContext())}
+                      {header.isPlaceholder ? null : <table.FlexRender header={header} />}
                     </TableHead>
                   );
                 })}
@@ -102,10 +132,10 @@ export function DataTable<TData, TValue>({
           <TableBody>
             {table.getRowModel().rows?.length ? (
               table.getRowModel().rows.map((row) => (
-                <TableRow key={row.id} data-state={row.getIsSelected() && 'selected'}>
-                  {row.getVisibleCells().map((cell) => (
+                <TableRow key={row.id}>
+                  {row.getAllCells().map((cell) => (
                     <TableCell key={cell.id}>
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      <table.FlexRender cell={cell} />
                     </TableCell>
                   ))}
                 </TableRow>
@@ -149,13 +179,17 @@ export function DataTable<TData, TValue>({
 }
 
 // Helper component for sortable column headers
-interface SortableHeaderProps<TData> {
-  column: Column<TData, unknown>;
+interface SortableHeaderProps<TData extends RowData> {
+  column: Column<DataTableFeatures, TData, unknown>;
   title: string;
   className?: string;
 }
 
-export function SortableHeader<TData>({ column, title, className }: SortableHeaderProps<TData>) {
+export function SortableHeader<TData extends RowData>({
+  column,
+  title,
+  className,
+}: SortableHeaderProps<TData>) {
   return (
     <Button
       variant="ghost"

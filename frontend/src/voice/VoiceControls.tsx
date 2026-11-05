@@ -32,7 +32,7 @@ export function VoiceControls({
           disabled={disabled}
           className={`
             px-8 py-4 rounded-full text-lg font-semibold
-            transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2
+            transition-all duration-200 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2
             ${
               disabled
                 ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
@@ -52,7 +52,7 @@ export function VoiceControls({
           disabled={isConnecting}
           className={`
             px-8 py-4 rounded-full text-lg font-semibold
-            transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2
+            transition-all duration-200 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2
             ${
               isConnecting
                 ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
