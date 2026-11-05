@@ -147,6 +147,7 @@ def candidate(*files: dict[str, str]) -> Snapshot:
                 "conclusion": "success",
             }
         ],
+        "statuses": [],
         "jobs": {
             "7": [
                 {
@@ -405,6 +406,65 @@ def test_unmapped_ruleset_check_holds() -> None:
         "parameters": {"required_status_checks": [{"context": "lint"}]},
     })
     held(snap, "ci-unmapped-required-check: lint")
+
+
+def _alembic_heads(*reports: tuple[str, str, str]) -> Snapshot:
+    snap = candidate()
+    snap["rules"].append({
+        "type": "required_status_checks",
+        "parameters": {"required_status_checks": [{"context": "alembic-heads"}]},
+    })
+    snap["statuses"] = [
+        {
+            "id": index,
+            "context": "alembic-heads",
+            "state": state,
+            "created_at": created_at,
+            "creator": {"login": login},
+        }
+        for index, (state, login, created_at) in enumerate(reports)
+    ]
+    return snap
+
+
+def test_required_commit_status_passes() -> None:
+    snap = _alembic_heads(
+        ("pending", "github-actions[bot]", "2026-10-10T00:10:00Z"),
+        ("success", "github-actions[bot]", "2026-10-10T00:11:00Z"),
+    )
+    assert lane.evaluate(snap, POLICY)["decision"] == "eligible"
+
+
+def test_missing_or_pending_commit_status_waits() -> None:
+    assert held(_alembic_heads(), "ci-pending: alembic-heads")["status"] == "waiting"
+    snap = _alembic_heads(("pending", "github-actions[bot]", "2026-10-10T00:10:00Z"))
+    assert held(snap, "ci-pending: alembic-heads")["status"] == "waiting"
+
+
+def test_failed_commit_status_blocks() -> None:
+    snap = _alembic_heads(
+        ("success", "github-actions[bot]", "2026-10-10T00:10:00Z"),
+        ("failure", "github-actions[bot]", "2026-10-10T00:20:00Z"),
+    )
+    assert held(snap, "ci-failure: alembic-heads")["status"] == "blocked"
+
+
+def test_commit_status_from_another_poster_holds() -> None:
+    """Anyone with status write can post a context; only the workflow's report counts."""
+    snap = _alembic_heads(
+        ("failure", "github-actions[bot]", "2026-10-10T00:10:00Z"),
+        ("success", "someone", "2026-10-10T00:20:00Z"),
+    )
+    held(snap, "ci-untrusted-status: alembic-heads")
+
+
+def test_alembic_plugin_is_not_the_denied_package() -> None:
+    snap = candidate(
+        _uv_lock_file({"pytest-alembic": "0.12.1"}, {"pytest-alembic": "0.12.2"})
+    )
+    assert lane.evaluate(snap, POLICY)["decision"] == "eligible"
+    snap = candidate(_uv_lock_file({"alembic": "1.16.4"}, {"alembic": "1.16.5"}))
+    held(snap, "denied package alembic")
 
 
 def test_collection_errors_have_no_status() -> None:

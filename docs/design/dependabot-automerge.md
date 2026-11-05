@@ -35,7 +35,9 @@ these hold:
   review is missing or stale and CI has passed, the lane posts `@codex review` once per head commit,
   because Codex does not review on push and has not reliably reviewed PRs Dependabot opens.
 - **CI:** `all-tests` passed on a `pull_request` run for this head, along with any check the branch
-  ruleset requires, and no workflow run on the head failed.
+  ruleset requires, and no workflow run on the head failed. A required check reported as a commit
+  status rather than a job (`alembic-heads`) is named in the policy's `statuses` with the account
+  that posts it, and passes only when that account's report is the newest one on the head.
 - **Lane:** no open issue labelled `dependabot-automerge-paused`, inside 07:00–21:00 Sydney time,
   and at least an hour since the previous automatic merge. One PR merges per run, oldest first, with
   the expected head SHA, so a PR that changed after evaluation is not merged.
