@@ -402,6 +402,21 @@ def required_contexts(snapshot: Json, policy: Json) -> list[str]:
     return sorted(from_rules | set(policy["required_checks"]))
 
 
+def status_state(snapshot: Json, name: str, creator: str) -> str:
+    """Judge a required commit status by its newest report on the head."""
+    reports = [s for s in snapshot["statuses"] if s["context"] == name]
+    if not reports:
+        return "ci-pending: " + name
+    newest = max(reports, key=lambda s: (s["created_at"], s["id"]))
+    if (newest["creator"] or {}).get("login") != creator:
+        return "ci-untrusted-status: " + name
+    if newest["state"] == "pending":
+        return "ci-pending: " + name
+    if newest["state"] != "success":
+        return "ci-failure: " + name
+    return "passed"
+
+
 def ci_state(snapshot: Json, policy: Json) -> str:
     pr = snapshot["pr"]
     head = pr["head"]["sha"]
@@ -415,6 +430,13 @@ def ci_state(snapshot: Json, policy: Json) -> str:
     # A failure outranks a pending check, so keep looking past the first pending one.
     pending = None
     for name in contexts:
+        if name in policy["statuses"]:
+            state = status_state(snapshot, name, policy["statuses"][name])
+            if state.startswith("ci-pending"):
+                pending = pending or state
+            elif state != "passed":
+                return state
+            continue
         workflow = policy["checks"].get(name)
         if not workflow:
             return "ci-unmapped-required-check: " + name
@@ -757,6 +779,13 @@ def collect_ci(prefix: str, head: str, policy: Json, snapshot: Json) -> None:
         run["pull_requests"] = [
             trim(p, ("number",)) for p in run["pull_requests"] or []
         ]
+    snapshot["statuses"] = [
+        {
+            **trim(s, ("id", "context", "state", "created_at")),
+            "creator": trim(s["creator"] or {}, ("login",)),
+        }
+        for s in api(f"{prefix}/commits/{head}/statuses?per_page=100", True)
+    ]
     snapshot["jobs"] = {}
     for run in snapshot["runs"]:
         if run["path"] in policy["checks"].values():

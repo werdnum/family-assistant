@@ -19,6 +19,9 @@
   "checks": {
     "all-tests": ".github/workflows/ci-with-devcontainer.yml"
   },
+  "statuses": {
+    "alembic-heads": "github-actions[bot]"
+  },
   "deny_paths": [
     "^\\.github/",
     "^\\.devcontainer/",
@@ -28,7 +31,7 @@
     "\\btorch\\b",
     "\\bsentence-transformers\\b",
     "\\bsqlalchemy\\b",
-    "\\balembic\\b",
+    "(?<![\\w-])alembic(?![\\w-])",
     "\\basyncpg\\b",
     "\\bpsycopg",
     "\\bpgvector\\b",
