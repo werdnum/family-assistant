@@ -131,6 +131,28 @@ HASHLIKE = re.compile(
 VERSION = re.compile(r"\d+(?:\.\d+)*")
 
 
+def kind_of(pr: Json, policy: Json) -> str | None:
+    """`dependabot`, `agent` (a coding agent's dependency fix), or None."""
+    ref, author = pr["head"]["ref"], pr["user"]["id"]
+    if ref.startswith("dependabot/") and author == policy["creator_id"]:
+        return "dependabot"
+    agent = policy.get("agent")
+    if (
+        agent
+        and ref.startswith(agent["branch_prefix"])
+        and author == agent["creator_id"]
+    ):
+        return "agent"
+    return None
+
+
+def acting(kind: str | None, policy: Json) -> bool:
+    """Whether the lane may act on a PR of this kind, not just report on it."""
+    if policy.get("mode") != "merge":
+        return False
+    return kind != "agent" or policy["agent"]["mode"] == "merge"
+
+
 def admission(pr: Json, policy: Json) -> None:
     if (
         pr["state"] != "open"
@@ -138,15 +160,34 @@ def admission(pr: Json, policy: Json) -> None:
         or pr["base"]["ref"] != "main"
         or pr["base"]["repo"]["full_name"] != policy["repository"]
         or pr["head"]["repo"]["full_name"] != policy["repository"]
-        or not pr["head"]["ref"].startswith("dependabot/")
-        or pr["user"]["id"] != policy["creator_id"]
+        or kind_of(pr, policy) is None
     ):
-        raise EvidenceError("not an admitted Dependabot candidate")
+        raise EvidenceError("not an admitted Dependabot or agent candidate")
     if policy["stop_label"] in [label["name"] for label in pr["labels"]]:
         raise EvidenceError(policy["stop_label"] + " hold")
 
 
+def agent_provenance(snapshot: Json) -> dt.datetime:
+    """An agent PR may have several commits; each must carry a valid signature.
+
+    Who wrote the commits proves nothing here (agents open PRs as the owner),
+    so the gates that matter are the file and lockfile rules below.
+    """
+    commits = snapshot["commits"]
+    if not commits or len(commits) != snapshot["pr"]["commits"]:
+        raise EvidenceError("incomplete commit list")
+    if commits[-1]["sha"] != snapshot["pr"]["head"]["sha"]:
+        raise EvidenceError("last commit is not the head")
+    for commit in commits:
+        verification = commit["commit"]["verification"]
+        if verification["verified"] is not True or verification["reason"] != "valid":
+            raise EvidenceError("unsigned commit " + commit["sha"][:7])
+    return timestamp(commits[-1]["commit"]["committer"]["date"])
+
+
 def provenance(snapshot: Json, policy: Json) -> dt.datetime:
+    if kind_of(snapshot["pr"], policy) == "agent":
+        return agent_provenance(snapshot)
     commits = snapshot["commits"]
     if len(commits) != 1 or snapshot["pr"]["commits"] != 1:
         raise EvidenceError("not exactly one commit")
@@ -272,6 +313,119 @@ def lock_changes(
     }
 
 
+# --- Agent lockfile entries ---------------------------------------------------
+#
+# A lockfile written by an agent is checked entry by entry, because a version
+# comparison alone would miss a package repointed at another source. An entry
+# may change only by moving to another version from the public registry; no
+# package may appear (the dependency list that pulls it in is unverified
+# text); the root project's own entry and the file's header are exempt from
+# the first rule and forbidden from changing, respectively.
+
+Entries = dict[str, list[str]]
+
+
+def _canonical(value: object) -> str:
+    return json.dumps(value, sort_keys=True)
+
+
+def uv_entries(text: str) -> tuple[str, Entries]:
+    data = tomllib.loads(text)
+    header = _canonical({k: v for k, v in data.items() if k != "package"})
+    entries: dict[str, list[str]] = {}
+    for package in data.get("package", []):
+        entries.setdefault(package["name"], []).append(_canonical(package))
+    return header, {name: sorted(items) for name, items in entries.items()}
+
+
+def npm_entries(text: str) -> tuple[str, Entries]:
+    data = json.loads(text)
+    header = _canonical({k: v for k, v in data.items() if k != "packages"})
+    entries: dict[str, list[str]] = {}
+    for path, entry in data.get("packages", {}).items():
+        name = path.rsplit("node_modules/", 1)[-1] if path else ""
+        entries.setdefault(name, []).append(_canonical(dict(entry, path=path)))
+    return header, {name: sorted(items) for name, items in entries.items()}
+
+
+def _project_entry(entry: Json) -> bool:
+    """The repository's own project, whose versions come from its manifest."""
+    return ("path" in entry and not entry["path"]) or entry.get("source") in (
+        {"editable": "."},
+        {"virtual": "."},
+    )
+
+
+def _dist_token(value: str) -> str:
+    return re.sub(r"[-_.]+", "_", value).lower()
+
+
+def _uv_entry_ok(entry: Json, policy: Json) -> bool:
+    agent = policy["agent"]
+    if entry.get("source") != {"registry": agent["uv_registry"]}:
+        return False
+    stem, version = _dist_token(entry["name"]), _dist_token(entry["version"])
+    for artifact in filter(None, [entry.get("sdist"), *entry.get("wheels", [])]):
+        url = artifact.get("url", "")
+        base = _dist_token(url.rsplit("/", 1)[-1])
+        if (
+            not url.startswith(agent["uv_file_host"])
+            or not base.startswith(f"{stem}_{version}")
+            or not str(artifact.get("hash", "")).startswith("sha256:")
+        ):
+            return False
+    return True
+
+
+def _npm_entry_ok(entry: Json, policy: Json) -> bool:
+    name = entry["path"].rsplit("node_modules/", 1)[-1]
+    expected = (
+        f"{policy['agent']['npm_registry']}{name}/-/"
+        f"{name.rsplit('/', 1)[-1]}-{entry.get('version')}.tgz"
+    )
+    return entry.get("resolved") == expected and str(
+        entry.get("integrity", "")
+    ).startswith("sha512-")
+
+
+def agent_lock_rules(file: Json, policy: Json) -> None:
+    path = file["filename"]
+    uv = path.rsplit("/", 1)[-1] == "uv.lock"
+    parse = uv_entries if uv else npm_entries
+    entry_ok = _uv_entry_ok if uv else _npm_entry_ok
+    try:
+        base_header, before = parse(file["base_text"])
+        head_header, after = parse(file["head_text"])
+    except (
+        tomllib.TOMLDecodeError,
+        json.JSONDecodeError,
+        KeyError,
+        TypeError,
+    ) as error:
+        raise EvidenceError("unparseable lockfile: " + path) from error
+    if base_header != head_header:
+        raise EvidenceError("agent changed the lockfile header in " + path)
+    for name in sorted(before.keys() | after.keys()):
+        old, new = before.get(name), after.get(name)
+        if old == new or new is None:
+            continue  # unchanged, or dropped
+        if old is None:
+            raise EvidenceError(f"agent added package {name} in {path}")
+        old_versions = {json.loads(raw).get("version") for raw in old}
+        for raw in set(new) - set(old):
+            entry = json.loads(raw)
+            if _project_entry(entry):
+                continue
+            if entry.get("version") in old_versions:
+                raise EvidenceError(
+                    f"agent changed {name} without changing its version"
+                )
+            if not entry_ok(entry, policy):
+                raise EvidenceError(
+                    f"agent lock entry for {name} is not from the registry"
+                )
+
+
 def denied_package(name: str, policy: Json) -> bool:
     return any(re.search(p, name, re.I) for p in policy["deny_packages"])
 
@@ -282,6 +436,12 @@ def file_rules(snapshot: Json, policy: Json) -> None:
         raise EvidenceError("incomplete or empty changed-file inventory")
     if len(files) > policy["max_files"]:
         raise EvidenceError("too many files")
+    agent = kind_of(snapshot["pr"], policy) == "agent"
+    for file in files:
+        if agent and file["filename"] not in policy["agent"]["allowed_files"]:
+            raise EvidenceError(
+                "agent change outside dependency files: " + file["filename"]
+            )
     for file in files:
         path = file["filename"]
         if file["status"] != "modified":
@@ -307,13 +467,35 @@ def file_rules(snapshot: Json, policy: Json) -> None:
     for file in files:
         if file.get("head_type") != "file" or file.get("base_type") != "file":
             raise EvidenceError("not a regular file: " + file["filename"])
+    if agent:
+        agent_file_rules(files)
+
+
+def agent_file_rules(files: list[Json]) -> None:
+    """An agent's manifest change may only change version numbers.
+
+    Dependabot's own diffs are trusted to be version bumps; an agent's are
+    not, so every changed manifest line must be identical to the line it
+    replaces apart from its version numbers.
+    """
+    for file in files:
+        path = file["filename"]
+        if lockfile(path):
+            continue
+        for before, after in changed_pairs(file["patch"]):
+            assert before is not None and after is not None  # file_rules checked
+            if VERSION.sub("#", before) != VERSION.sub("#", after):
+                raise EvidenceError(f"agent changed more than a version in {path}")
 
 
 def lock_rules(snapshot: Json, policy: Json) -> None:
     """Hold a lockfile change that moves a denied package or crosses a major."""
+    agent = kind_of(snapshot["pr"], policy) == "agent"
     for file in snapshot["files"]:
         if not lockfile(file["filename"]):
             continue
+        if agent:
+            agent_lock_rules(file, policy)
         for name, (before, after) in sorted(lock_changes(file).items()):
             if denied_package(name, policy):
                 raise EvidenceError(f"denied package {name} in {file['filename']}")
@@ -402,6 +584,21 @@ def required_contexts(snapshot: Json, policy: Json) -> list[str]:
     return sorted(from_rules | set(policy["required_checks"]))
 
 
+def status_state(snapshot: Json, name: str, creator: str) -> str:
+    """Judge a required commit status by its newest report on the head."""
+    reports = [s for s in snapshot["statuses"] if s["context"] == name]
+    if not reports:
+        return "ci-pending: " + name
+    newest = max(reports, key=lambda s: (s["created_at"], s["id"]))
+    if (newest["creator"] or {}).get("login") != creator:
+        return "ci-untrusted-status: " + name
+    if newest["state"] == "pending":
+        return "ci-pending: " + name
+    if newest["state"] != "success":
+        return "ci-failure: " + name
+    return "passed"
+
+
 def ci_state(snapshot: Json, policy: Json) -> str:
     pr = snapshot["pr"]
     head = pr["head"]["sha"]
@@ -415,6 +612,13 @@ def ci_state(snapshot: Json, policy: Json) -> str:
     # A failure outranks a pending check, so keep looking past the first pending one.
     pending = None
     for name in contexts:
+        if name in policy["statuses"]:
+            state = status_state(snapshot, name, policy["statuses"][name])
+            if state.startswith("ci-pending"):
+                pending = pending or state
+            elif state != "passed":
+                return state
+            continue
         workflow = policy["checks"].get(name)
         if not workflow:
             return "ci-unmapped-required-check: " + name
@@ -630,6 +834,7 @@ def evaluate(snapshot: Json, policy: Json) -> Json:
         "mode": policy.get("mode"),
         "observed_at": snapshot.get("observed_at"),
         "check_run_ids": [r["id"] for r in snapshot.get("runs", [])],
+        "kind": kind_of(pr, policy) if pr else None,
         "decision": "hold",
         "reason": "unavailable-evidence",
         "nudge": False,
@@ -757,6 +962,13 @@ def collect_ci(prefix: str, head: str, policy: Json, snapshot: Json) -> None:
         run["pull_requests"] = [
             trim(p, ("number",)) for p in run["pull_requests"] or []
         ]
+    snapshot["statuses"] = [
+        {
+            **trim(s, ("id", "context", "state", "created_at")),
+            "creator": trim(s["creator"] or {}, ("login",)),
+        }
+        for s in api(f"{prefix}/commits/{head}/statuses?per_page=100", True)
+    ]
     snapshot["jobs"] = {}
     for run in snapshot["runs"]:
         if run["path"] in policy["checks"].values():
@@ -907,6 +1119,20 @@ def collect_lane(repository: str, policy: Json) -> Json:
     return lane
 
 
+def discovered(repository: str, pr: Json, policy: Json) -> bool:
+    """Every Dependabot PR, and agent PRs that change only dependency files.
+
+    An agent opens many PRs; only those confined to the allowed files are
+    dependency fixes, so the rest stay out of the report.
+    """
+    kind = kind_of(pr, policy)
+    if kind != "agent":
+        return kind == "dependabot"
+    files = api(f"repos/{repository}/pulls/{pr['number']}/files?per_page=100", True)
+    allowed = set(policy["agent"]["allowed_files"])
+    return bool(files) and all(f["filename"] in allowed for f in files)
+
+
 def required_rules(repository: str) -> list[Json]:
     return [
         trim(r, ("type", "parameters"))
@@ -1030,6 +1256,8 @@ def final_merge(repository: str, policy: Json, number: int, head: str) -> str:
     report = evaluate(collect(repository, number, policy, rules), policy)
     if report["decision"] != "eligible" or report["head"] != head:
         return f"hold: {report['reason']} (head {report['head']})"
+    if not acting(report["kind"], policy):
+        return "hold: the policy only reports on this kind of PR"
     lane = lane_state(collect_lane(repository, policy))
     if lane["state"] != "clear":
         return "hold: lane " + lane["state"] + ": " + "; ".join(lane["reasons"])
@@ -1066,8 +1294,9 @@ def markdown(
     ]
     for report in reports:
         status = f" [{report['status']}]" if report.get("status") else ""
+        kind = " (agent)" if report.get("kind") == "agent" else ""
         lines += [
-            f"- PR #{report['pr']}{status}: **{report['decision']}** — {report['reason']}"
+            f"- PR #{report['pr']}{kind}{status}: **{report['decision']}** — {report['reason']}"
             + (nudge_note if report.get("nudge") else ""),
             f"  Head: `{report['head']}`; policy digest: `{report['policy_sha256'][:12]}`.",
         ]
@@ -1104,6 +1333,15 @@ def choose(
     reports: list[Json], lane: Json, policy: Json, now: dt.datetime
 ) -> Json | None:
     """Pick the oldest eligible PR, if the lane and pacing allow one."""
+    for report in reports:
+        # An agent PR the policy only reports on must not take the slot from
+        # a Dependabot PR the lane could merge.
+        if (
+            report["decision"] == "eligible"
+            and report.get("kind") == "agent"
+            and policy["agent"]["mode"] != "merge"
+        ):
+            report["decision"] = "would-merge (agent lane is report-only)"
     eligible = sorted(
         (r for r in reports if r["decision"] == "eligible"),
         key=lambda r: r.get("created_at") or "",
@@ -1145,7 +1383,7 @@ def report_all(args: argparse.Namespace, policy: Json) -> int:
                     for p in api(
                         f"repos/{args.repository}/pulls?state=open&per_page=100", True
                     )
-                    if p["head"]["ref"].startswith("dependabot/")
+                    if discovered(args.repository, p, policy)
                 ]
             snapshots = [collect(args.repository, n, policy, rules) for n in numbers]
         except (EvidenceError, KeyError, TypeError, ValueError) as error:
@@ -1168,16 +1406,23 @@ def report_all(args: argparse.Namespace, policy: Json) -> int:
             markdown(reports, lane, candidate, policy.get("mode")), encoding="utf-8"
         )
     if args.github_output:
-        acting = policy.get("mode") == "merge"
+
+        def lane_acts_on(report: Json) -> bool:
+            return acting(report.get("kind"), policy)
+
         values = {
             "mode": policy.get("mode") or "off",
-            "candidate": str(candidate["pr"]) if candidate and acting else "",
-            "candidate_head": candidate["head"] if candidate and acting else "",
-            "nudge": json.dumps(
-                [{"pr": r["pr"], "head": r["head"]} for r in reports if r.get("nudge")]
-                if acting
-                else []
-            ),
+            "candidate": str(candidate["pr"])
+            if candidate and lane_acts_on(candidate)
+            else "",
+            "candidate_head": candidate["head"]
+            if candidate and lane_acts_on(candidate)
+            else "",
+            "nudge": json.dumps([
+                {"pr": r["pr"], "head": r["head"]}
+                for r in reports
+                if r.get("nudge") and lane_acts_on(r)
+            ]),
         }
         with open(args.github_output, "a", encoding="utf-8") as handle:
             for name, value in values.items():
@@ -1212,9 +1457,9 @@ def main() -> int:
         if policy.get("mode") != "merge":
             print("not labelling: policy is not in merge mode")
             return 0
+        reports = json.loads(Path(args.label).read_text(encoding="utf-8"))["reports"]
         return label(
-            args.repository,
-            json.loads(Path(args.label).read_text(encoding="utf-8"))["reports"],
+            args.repository, [r for r in reports if acting(r.get("kind"), policy)]
         )
     if args.final is not None:
         result = final_merge(args.repository, policy, args.final, args.head)

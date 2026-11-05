@@ -391,6 +391,46 @@ async def test_mail_webhook_mime_alias_accepts_same_payload(
 
 @pytest.mark.asyncio
 @pytest.mark.postgres
+async def test_mail_webhook_mime_alias_accepts_raw_mime_over_one_mebibyte(
+    api_client: httpx.AsyncClient,
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Mailgun posts the whole raw message as one urlencoded ``body-mime`` field.
+
+    Starlette caps a form field at 1 MiB unless told otherwise, which would turn
+    away most mail carrying an attachment.
+    """
+    _configure_email_intake(
+        monkeypatch,
+        tmp_path,
+        EmailIntakeConfig(
+            mailgun_webhook_signing_key=SecretStr(SIGNING_KEY),
+            allowed_sender_addresses=[SENDER],
+            allowed_recipient_addresses=[RECIPIENT],
+            require_authenticated_sender=True,
+        ),
+    )
+    message_id = f"<mailgun-large-{uuid.uuid4()}@example.com>"
+    raw_mime = build_signed_message(
+        from_address=SENDER,
+        to_address=RECIPIENT,
+        message_id=message_id,
+        body="A line of a long message.\r\n" * 50_000,
+    )
+    assert len(raw_mime) > 1024 * 1024
+    form = _mailgun_form(message_id=message_id, raw_mime=raw_mime)
+
+    response = await api_client.post("/webhook/mail/mime", data=form)
+
+    assert response.status_code == 200, response.text
+    assert await _email_exists(db_engine, message_id)
+    assert await _email_dmarc_result(db_engine, message_id) == "pass"
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
 async def test_mail_webhook_mime_alias_extracts_missing_body_fields_from_raw_mime(
     api_client: httpx.AsyncClient,
     db_engine: AsyncEngine,

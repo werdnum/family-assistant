@@ -619,7 +619,7 @@ mcp_config:
           - "read_only"
           - "output_trusted"
     brave:
-      # Invoke the globally installed, pinned entry point (see Dockerfile) rather than
+      # Invoke the entry point the image installs from a lockfile (see Dockerfile) rather than
       # resolving the package at MCP startup, which would pick up whatever version is
       # current on npm inside the MCP initialization timeout.
       command: "brave-search-mcp-server"
@@ -1070,6 +1070,9 @@ default_profile_settings:
             - "test_script_with_simulated_tools"
             - "send_message_to_user"
             - "send_to_my_chat"
+            # A note into another of the acting user's own conversations;
+            # it starts no turn there.
+            - "post_to_conversation"
             - "attach_to_response"
             - "list_calendars"
             - "add_calendar_event"

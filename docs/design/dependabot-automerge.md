@@ -35,13 +35,46 @@ these hold:
   review is missing or stale and CI has passed, the lane posts `@codex review` once per head commit,
   because Codex does not review on push and has not reliably reviewed PRs Dependabot opens.
 - **CI:** `all-tests` passed on a `pull_request` run for this head, along with any check the branch
-  ruleset requires, and no workflow run on the head failed.
+  ruleset requires, and no workflow run on the head failed. A required check reported as a commit
+  status rather than a job (`alembic-heads`) is named in the policy's `statuses` with the account
+  that posts it, and passes only when that account's report is the newest one on the head.
 - **Lane:** no open issue labelled `dependabot-automerge-paused`, inside 07:00–21:00 Sydney time,
   and at least an hour since the previous automatic merge. One PR merges per run, oldest first, with
   the expected head SHA, so a PR that changed after evaluation is not merged.
 
 Missing or unreadable evidence is a hold, never a pass. In `merge` mode each PR also carries one
 `automerge: queued|waiting|blocked|manual` label saying where it stands.
+
+## Agent dependency fixes
+
+Coding agents open dependency fixes too, such as the security-fix tasks that kube-config's
+`vuln-tasks` job hands to `agent:claude-ai`. The lane also reports on those PRs, under the policy's
+`agent` section, which has its own `mode`. It ships as `report-only` and acts only once both it and
+the top-level mode are `merge`. Until then an eligible agent PR is reported as "would-merge" and is
+never the merge candidate, labelled or nudged.
+
+An agent opens its PRs as the repository owner, so its identity proves nothing. An agent PR (head
+branch `claude/`, opened by the owner) qualifies only on what its diff shows:
+
+- **Files:** only `pyproject.toml`, `uv.lock`, `frontend/package.json` and
+  `frontend/package-lock.json`. Discovery skips any `claude/` PR that changes anything else, so the
+  report lists only dependency fixes.
+- **Manifests:** every changed line must match the line it replaces once version numbers are
+  ignored, so a renamed package or a new requirement is held.
+- **Lockfiles, entry by entry:** a package's entry may change only by moving to another version
+  served by the public registry. For uv, that means source `https://pypi.org/simple`, and every
+  artifact URL is on `files.pythonhosted.org`, is named for that package and version, and has a
+  sha256 hash. For npm, `resolved` is the registry tarball for that name and version, with sha512
+  integrity. A changed entry that keeps its version (a package repointed somewhere else) is held, as
+  is any change to the file's header. No package may appear: the dependency list that would pull it
+  in is unverified text in the lockfile, so a new package needs a person.
+- **Provenance:** every commit carries a valid signature. Review freshness is measured from the head
+  commit.
+- Review, CI, pacing and the denied packages and paths work as they do for Dependabot. The major
+  version check also applies.
+
+Against #1534's lockfile, these rules accept all 15 upgraded packages and hold on one thing: Authlib
+1.9 brings in `joserfc`, which is a new package.
 
 ## Differences from kube-config
 
@@ -79,6 +112,10 @@ Missing or unreadable evidence is a hold, never a pass. In `merge` mode each PR 
   guard, and kube-config's history shows no breakage from that class.
 - **Lockfile-only security fixes are not special-cased.** They go through the same gates as any
   other update, so a transitive security fix that crosses a major waits for a person.
+- **Agent PRs have no release-age gate.** A genuine registry release published that day passes, as
+  it does for Dependabot's security updates; the Codex review and CI are the guard. Hashes are not
+  re-fetched: the installer verifies them against the registry file at install time, so a forged
+  hash fails CI.
 - **The script is a port, not a shared library.** Both repositories carry their own copy. They
   differ in the places listed above and in their CI wiring, and a shared copy would couple two
   repositories' merge credentials to one file.

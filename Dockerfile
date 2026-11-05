@@ -1,5 +1,5 @@
 # Use the official UV image as the base
-FROM ghcr.io/astral-sh/uv:0.13.6-debian-slim@sha256:caa9f629fcb575ba2ed6ee160ec51e82e8444f6bdc3fc05c855b2636a5511eb8 AS base
+FROM ghcr.io/astral-sh/uv:0.13.7-debian-slim@sha256:f6da342fe598dc462a7e6f61e7b3bf7fc84e381467efbdf29ccc1d32f2fc68a4 AS base
 
 # Create non-root user and group early in the build with specific UID/GID
 RUN groupadd -r -g 1001 appuser && useradd -r -u 1001 -g appuser -m -d /home/appuser -s /bin/bash appuser
@@ -31,12 +31,23 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     # Clean up apt cache to reduce image size
     rm -rf /var/lib/apt/lists/*
 
+# The npm bundled with the NodeSource package lags behind npm releases, and its vendored
+# dependencies (undici, brace-expansion) carry advisories fixed in later npm releases.
+ARG NPM_VERSION=11.21.2
+RUN npm install --global "npm@${NPM_VERSION}" && npm --version
+
 # Install the first-party Brave Search MCP server, pinned for a reproducible build. This
 # replaces @modelcontextprotocol/server-brave-search, which came from the archived MCP
 # reference-server collection and has a monthly rate-limit counter that never resets,
 # permanently failing "Rate limit exceeded" after ~15,000 calls until the process restarts.
-ARG BRAVE_SEARCH_MCP_VERSION=2.1.3
-RUN npm install --global "@brave/brave-search-mcp-server@${BRAVE_SEARCH_MCP_VERSION}"
+#
+# It is installed from its own lockfile rather than with `npm install --global`, because the
+# package pins @modelcontextprotocol/sdk to an exact version with known advisories, and only a
+# project install honours the `overrides` that lift it.
+COPY docker/brave-search-mcp/package.json docker/brave-search-mcp/package-lock.json /opt/brave-search-mcp/
+RUN cd /opt/brave-search-mcp && \
+    npm ci --omit=dev && \
+    ln -s /opt/brave-search-mcp/node_modules/.bin/brave-search-mcp-server /usr/local/bin/brave-search-mcp-server
 
 # Set working directory and prepare directories with proper permissions
 WORKDIR /app

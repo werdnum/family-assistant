@@ -17,8 +17,7 @@ filtering, and pagination capabilities.
 ### Basic Usage
 
 ```tsx
-import { DataTable } from '@/components/ui/data-table';
-import { ColumnDef } from '@tanstack/react-table';
+import { DataTable, DataTableColumnDef } from '@/components/ui/data-table';
 
 interface User {
   id: string;
@@ -26,7 +25,7 @@ interface User {
   email: string;
 }
 
-const columns: ColumnDef<User>[] = [
+const columns: DataTableColumnDef<User>[] = [
   {
     accessorKey: 'name',
     header: 'Name',
@@ -53,9 +52,9 @@ export function UsersTable({ data }: { data: User[] }) {
 ### With Sortable Headers
 
 ```tsx
-import { DataTable, SortableHeader } from '@/components/ui/data-table';
+import { DataTable, DataTableColumnDef, SortableHeader } from '@/components/ui/data-table';
 
-const columns: ColumnDef<User>[] = [
+const columns: DataTableColumnDef<User>[] = [
   {
     accessorKey: 'name',
     header: ({ column }) => (
@@ -74,7 +73,7 @@ const columns: ColumnDef<User>[] = [
 ### Custom Cell Rendering
 
 ```tsx
-const columns: ColumnDef<User>[] = [
+const columns: DataTableColumnDef<User>[] = [
   {
     accessorKey: 'name',
     header: ({ column }) => (
@@ -106,18 +105,22 @@ const columns: ColumnDef<User>[] = [
 ];
 ```
 
+`DataTableColumnDef<TData>` is TanStack Table's `ColumnDef` bound to the features `DataTable`
+enables (sorting, column filtering, pagination). A column's `sortFn` and `filterFn` may be a
+function, `'auto'`, or one of the names registered in `data-table.tsx`.
+
 ### Props
 
 #### DataTable
 
-| Prop                | Type                         | Default       | Description                        |
-| ------------------- | ---------------------------- | ------------- | ---------------------------------- |
-| `columns`           | `ColumnDef<TData, TValue>[]` | -             | Column definitions for the table   |
-| `data`              | `TData[]`                    | -             | Array of data to display           |
-| `searchable`        | `boolean`                    | `false`       | Whether to show search input       |
-| `searchColumnId`    | `string`                     | `"title"`     | Column ID to filter when searching |
-| `searchPlaceholder` | `string`                     | `"Search..."` | Placeholder text for search input  |
-| `pageSize`          | `number`                     | `10`          | Number of rows per page            |
+| Prop                | Type                          | Default       | Description                        |
+| ------------------- | ----------------------------- | ------------- | ---------------------------------- |
+| `columns`           | `DataTableColumnDef<TData>[]` | -             | Column definitions for the table   |
+| `data`              | `TData[]`                     | -             | Array of data to display           |
+| `searchable`        | `boolean`                     | `false`       | Whether to show search input       |
+| `searchColumnId`    | `string`                      | `"title"`     | Column ID to filter when searching |
+| `searchPlaceholder` | `string`                      | `"Search..."` | Placeholder text for search input  |
+| `pageSize`          | `number`                      | `10`          | Number of rows per page            |
 
 #### SortableHeader
 
