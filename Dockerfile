@@ -31,12 +31,23 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     # Clean up apt cache to reduce image size
     rm -rf /var/lib/apt/lists/*
 
+# The npm bundled with the NodeSource package lags behind npm releases, and its vendored
+# dependencies (undici, brace-expansion) carry advisories fixed in later npm releases.
+ARG NPM_VERSION=11.21.2
+RUN npm install --global "npm@${NPM_VERSION}" && npm --version
+
 # Install the first-party Brave Search MCP server, pinned for a reproducible build. This
 # replaces @modelcontextprotocol/server-brave-search, which came from the archived MCP
 # reference-server collection and has a monthly rate-limit counter that never resets,
 # permanently failing "Rate limit exceeded" after ~15,000 calls until the process restarts.
-ARG BRAVE_SEARCH_MCP_VERSION=2.1.3
-RUN npm install --global "@brave/brave-search-mcp-server@${BRAVE_SEARCH_MCP_VERSION}"
+#
+# It is installed from its own lockfile rather than with `npm install --global`, because the
+# package pins @modelcontextprotocol/sdk to an exact version with known advisories, and only a
+# project install honours the `overrides` that lift it.
+COPY docker/brave-search-mcp/package.json docker/brave-search-mcp/package-lock.json /opt/brave-search-mcp/
+RUN cd /opt/brave-search-mcp && \
+    npm ci --omit=dev && \
+    ln -s /opt/brave-search-mcp/node_modules/.bin/brave-search-mcp-server /usr/local/bin/brave-search-mcp-server
 
 # Set working directory and prepare directories with proper permissions
 WORKDIR /app
