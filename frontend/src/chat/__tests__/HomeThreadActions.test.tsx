@@ -5,6 +5,7 @@ import { vi } from 'vitest';
 import { resetLocalStorageMock } from '../../test/mocks/localStorageMock';
 import { server } from '../../test/setup.js';
 import { renderChatApp } from '../../test/utils/renderChatApp';
+import type { CarryCandidate } from '../threadsApi';
 import type { ThreadSummary } from '../types';
 
 const HOME = 'web_conv_home';
@@ -87,6 +88,22 @@ interface ActionsServer {
   refuseNextMove: (() => Response) | null;
   /** Answer starts as a retry whose turn finished and left the live stream. */
   startsAlreadyComplete: boolean;
+  /** What a continuation preview offers; the anchor's turn is added last. */
+  previewEarlier: CarryCandidate[];
+  previewSuggestedBy: 'assistant' | 'default';
+  previewRequests: string[];
+}
+
+function candidate(overrides: Partial<CarryCandidate> & { turn_id: string }): CarryCandidate {
+  return {
+    started_at: '2026-10-18T08:00:00Z',
+    user_text: null,
+    reply_text: null,
+    is_anchor: false,
+    is_echo: false,
+    suggested: true,
+    ...overrides,
+  };
 }
 
 /** Threads on, Home holding a user's exchange, an echo and a reminder. */
@@ -100,13 +117,19 @@ function serveHome(threads: ThreadSummary[] = [QUOTES, BROWSING, FLIGHTS]): Acti
     refuseNextStart: null,
     refuseNextMove: null,
     startsAlreadyComplete: false,
+    previewEarlier: [],
+    previewSuggestedBy: 'default',
+    previewRequests: [],
   };
   const threadRows = new Map<string, Record<string, unknown>[]>();
   let lastTurnId = 'mock-turn';
   server.use(
     // A Home turn is stored as it streams: the user's message, then the reply.
     http.post('/api/v1/chat/turns', async ({ request }) => {
-      const body = (await request.json()) as { turn_id: string; prompt: string };
+      const body = (await request.json()) as {
+        turn_id: string;
+        prompt: string;
+      };
       lastTurnId = body.turn_id;
       state.homeRows = [
         ...state.homeRows,
@@ -138,11 +161,35 @@ function serveHome(threads: ThreadSummary[] = [QUOTES, BROWSING, FLIGHTS]): Acti
       HttpResponse.json({ home_conversation_id: HOME, threads: state.threads })
     ),
     http.post('/api/v1/chat/conversations/:conversationId/read', ({ params }) =>
-      HttpResponse.json({ conversation_id: String(params.conversationId), unread_count: 0 })
+      HttpResponse.json({
+        conversation_id: String(params.conversationId),
+        unread_count: 0,
+      })
     ),
     http.get('/api/v1/chat/conversations', () =>
       HttpResponse.json({ conversations: [], count: 0 })
     ),
+    http.get('/api/v1/chat/home/threads/continue-preview', ({ request }) => {
+      const anchorId = Number(new URL(request.url).searchParams.get('anchor_message_id'));
+      state.previewRequests.push(String(anchorId));
+      const row = state.homeRows.find((r) => r.internal_id === anchorId);
+      const anchorTurn = String(row?.turn_id);
+      const userRow = state.homeRows.find((r) => r.turn_id === anchorTurn && r.role === 'user');
+      return HttpResponse.json({
+        anchor_message_id: anchorId,
+        turns: [
+          ...state.previewEarlier,
+          candidate({
+            turn_id: anchorTurn,
+            started_at: String(row?.timestamp),
+            user_text: (userRow?.content as string | undefined) ?? null,
+            reply_text: String(row?.content),
+            is_anchor: true,
+          }),
+        ],
+        suggested_by: state.previewSuggestedBy,
+      });
+    }),
     http.post('/api/v1/chat/home/threads', async ({ request }) => {
       const body = (await request.json()) as Record<string, unknown>;
       state.starts.push(body);
@@ -268,14 +315,20 @@ function serveHome(threads: ThreadSummary[] = [QUOTES, BROWSING, FLIGHTS]): Acti
           controller.close();
         },
       });
-      return new HttpResponse(stream, { headers: { 'Content-Type': 'text/event-stream' } });
+      return new HttpResponse(stream, {
+        headers: { 'Content-Type': 'text/event-stream' },
+      });
     })
   );
   return state;
 }
 
 function setWindowWidth(width: number): void {
-  Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: width });
+  Object.defineProperty(window, 'innerWidth', {
+    writable: true,
+    configurable: true,
+    value: width,
+  });
   act(() => {
     window.dispatchEvent(new Event('resize'));
   });
@@ -438,22 +491,6 @@ describe('Starting and moving threads from Home', () => {
     expect(home.starts[1].turn_id).not.toBe(home.starts[0].turn_id);
   });
 
-  it('continues from a reply streamed here, anchored on that reply', async () => {
-    const user = userEvent.setup({ pointerEventsCheck: 0 });
-    const home = serveHome();
-    await renderChatApp({ waitForReady: true });
-    const homePane = await findPane(HOME);
-    await homeReply(GUTTER_REPLY);
-
-    await user.type(within(homePane).getByTestId('chat-input'), 'What about box gutters?');
-    await user.keyboard('{Enter}');
-    const dialog = await openContinue(user, `Reply in ${HOME}`);
-    await user.click(within(dialog).getByTestId('start-thread-submit'));
-
-    await findPane(NEW_THREAD);
-    expect(home.starts[0].anchor_message_id).toBe(61);
-  });
-
   it('reads a retried start whose turn already finished from the record, not the stream', async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     const home = serveHome();
@@ -470,7 +507,7 @@ describe('Starting and moving threads from Home', () => {
     expect(home.streamUrls.filter((url) => url.includes(`/${NEW_THREAD}/stream`))).toEqual([]);
   });
 
-  it('starts afresh when the tier of a refused send-as-thread is changed', async () => {
+  it('starts afresh when the tier of a refused send is changed', async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     const home = serveHome();
     home.refuseNextStart = () => HttpResponse.error();
@@ -481,19 +518,16 @@ describe('Starting and moving threads from Home', () => {
       await user.click(within(homePane).getByRole('combobox', { name: 'Intelligence' }));
       await user.click(await screen.findByRole('option', { name: tier }));
     };
-    const sendAsThread = async () => {
-      await user.click(within(homePane).getByTestId('send-as-thread-button'));
-      await user.click(await screen.findByTestId('send-as-thread-default_assistant'));
-    };
+    const send = () => user.click(within(homePane).getByTestId('send-button'));
     await pickTier(/Deep/);
     await user.type(within(homePane).getByTestId('chat-input'), 'Compare solar quotes');
-    await sendAsThread();
+    await send();
     await within(homePane).findByTestId('send-as-thread-error');
     await waitFor(() =>
       expect(within(homePane).getByTestId('chat-input')).toHaveValue('Compare solar quotes')
     );
     await pickTier(/Standard/);
-    await sendAsThread();
+    await send();
 
     await findPane(NEW_THREAD);
     expect(home.starts).toHaveLength(2);
@@ -503,14 +537,16 @@ describe('Starting and moving threads from Home', () => {
     expect(home.starts[1].turn_id).not.toBe(home.starts[0].turn_id);
   });
 
-  it('sends the composed message as a thread, with its attachment and tier', async () => {
+  it('starts a thread on the default assistant from a Home send, with attachment and tier', async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     const home = serveHome();
     await renderChatApp({ waitForReady: true });
     const homePane = await findPane(HOME);
     await homeReply(GUTTER_REPLY);
 
-    const intelligence = within(homePane).getByRole('combobox', { name: 'Intelligence' });
+    const intelligence = within(homePane).getByRole('combobox', {
+      name: 'Intelligence',
+    });
     await user.click(intelligence);
     await user.click(await screen.findByRole('option', { name: /Deep/ }));
     await user.type(within(homePane).getByTestId('chat-input'), 'Compare solar quotes');
@@ -518,8 +554,7 @@ describe('Starting and moving threads from Home', () => {
       within(homePane).getByTestId('file-input'),
       new File(['quote'], 'quote.pdf', { type: 'application/pdf' })
     );
-    await user.click(within(homePane).getByTestId('send-as-thread-button'));
-    await user.click(await screen.findByTestId('send-as-thread-default_assistant'));
+    await user.click(within(homePane).getByTestId('send-button'));
 
     const panel = await findPane(NEW_THREAD);
     expect(await within(panel).findByText(`Reply in ${NEW_THREAD}`)).toBeInTheDocument();
@@ -532,11 +567,53 @@ describe('Starting and moving threads from Home', () => {
       turn_id: expect.stringMatching(UUID),
     });
     expect(start.attachments).toEqual([
-      expect.objectContaining({ name: 'quote.pdf', content: expect.any(String) }),
+      expect.objectContaining({
+        name: 'quote.pdf',
+        content: expect.any(String),
+      }),
     ]);
     // It went to the thread, not into Home.
     expect(within(homePane).queryByText('Compare solar quotes')).not.toBeInTheDocument();
     expect(within(homePane).getByTestId('chat-input')).toHaveValue('');
+    // A tier chosen in Home is for one send.
+    expect(intelligence).toHaveTextContent('Standard');
+  });
+
+  it("offers every assistant but Home's own for one message", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    serveHome();
+    await renderChatApp({ waitForReady: true });
+    const homePane = await findPane(HOME);
+
+    await user.type(within(homePane).getByTestId('chat-input'), 'Research heat pumps');
+    await user.click(within(homePane).getByTestId('send-as-thread-button'));
+
+    expect(await screen.findByTestId('send-as-thread-research')).toBeInTheDocument();
+    expect(screen.queryByTestId('send-as-thread-default_assistant')).not.toBeInTheDocument();
+  });
+
+  it('shows a thread the user started as its card, where it was started', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const home = serveHome();
+    home.homeRows = [
+      ...home.homeRows,
+      {
+        internal_id: 5,
+        role: 'assistant',
+        content: '(The user started a thread from here.)',
+        timestamp: '2026-10-18T09:30:00Z',
+        started_thread: QUOTES.conversation_id,
+      },
+    ];
+    await renderChatApp({ waitForReady: true });
+    const homePane = await findPane(HOME);
+
+    const marker = await within(homePane).findByTestId('started-thread-marker');
+    expect(within(marker).getByTestId('thread-card-title')).toHaveTextContent(QUOTES.title);
+    expect(within(homePane).queryByText('(The user started a thread from here.)')).toBeNull();
+
+    await user.click(within(marker).getByTestId('thread-card'));
+    expect(await findPane(QUOTES.conversation_id)).toBeInTheDocument();
   });
 
   it('leaves out a tier the thread profile does not offer', async () => {
@@ -583,35 +660,6 @@ describe('Starting and moving threads from Home', () => {
     );
   });
 
-  it('gives up on a failed send-as-thread when the message is sent to Home instead', async () => {
-    const user = userEvent.setup({ pointerEventsCheck: 0 });
-    const home = serveHome();
-    // The start's answer is lost, so it may have reached the server.
-    home.refuseNextStart = () => HttpResponse.error();
-    await renderChatApp({ waitForReady: true });
-    const homePane = await findPane(HOME);
-    const sendAsThread = async () => {
-      await user.click(within(homePane).getByTestId('send-as-thread-button'));
-      await user.click(await screen.findByTestId('send-as-thread-default_assistant'));
-    };
-
-    await user.type(within(homePane).getByTestId('chat-input'), 'Book the plumber');
-    await sendAsThread();
-    await within(homePane).findByTestId('send-as-thread-error');
-    await waitFor(() =>
-      expect(within(homePane).getByTestId('chat-input')).toHaveValue('Book the plumber')
-    );
-    await user.click(within(homePane).getByTestId('send-button'));
-    expect(await within(homePane).findByText(`Reply in ${HOME}`)).toBeInTheDocument();
-
-    expect(within(homePane).queryByTestId('send-as-thread-error')).not.toBeInTheDocument();
-    await user.type(within(homePane).getByTestId('chat-input'), 'Book the plumber');
-    await sendAsThread();
-    await findPane(NEW_THREAD);
-    expect(home.starts).toHaveLength(2);
-    expect(home.starts[1].turn_id).not.toBe(home.starts[0].turn_id);
-  });
-
   it('continues a Home reply in a thread with its context, quoting where it started', async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     const home = serveHome();
@@ -631,12 +679,85 @@ describe('Starting and moving threads from Home', () => {
         turn_id: expect.stringMatching(UUID),
         anchor_message_id: 2,
         include_context: true,
+        carried_turn_ids: ['turn-gutter'],
       },
     ]);
     expect(within(panel).getByTestId('thread-anchor-quote')).toHaveTextContent(GUTTER_REPLY);
     expect(await within(panel).findByText('Is gutter guard worth it?')).toBeInTheDocument();
     // Nothing to follow: the thread waits for the user.
     expect(home.streamUrls).toEqual([]);
+  });
+
+  it('previews what comes along, with the related turns ticked, and sends only the ticked ones', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const home = serveHome();
+    home.previewSuggestedBy = 'assistant';
+    home.previewEarlier = [
+      candidate({
+        turn_id: 'turn-bins',
+        reply_text: 'Bins go out tonight.',
+        suggested: false,
+      }),
+      candidate({
+        turn_id: 'turn-roof',
+        user_text: 'Who did the roof?',
+        reply_text: 'Acme Roofing, in March.',
+      }),
+      candidate({
+        turn_id: 'turn-leaves',
+        user_text: 'Are the trees dropping leaves?',
+        reply_text: 'Yes, the gums shed in summer.',
+      }),
+    ];
+    await renderChatApp({ waitForReady: true });
+
+    const dialog = await openContinue(user, GUTTER_REPLY);
+    const list = await within(dialog).findByTestId('start-thread-carry-preview');
+    expect(within(dialog).getByTestId('start-thread-carry-hint')).toHaveTextContent(
+      'The ones that look related are ticked for you.'
+    );
+    expect(within(list).getByText('You: Who did the roof?')).toBeInTheDocument();
+    expect(within(list).getByTestId('carry-turn-turn-bins')).not.toBeChecked();
+    expect(within(list).getByTestId('carry-turn-turn-roof')).toBeChecked();
+    const anchorTick = within(list).getByTestId('carry-turn-turn-gutter');
+    expect(anchorTick).toBeChecked();
+    expect(anchorTick).toBeDisabled();
+
+    await user.click(within(list).getByTestId('carry-turn-turn-leaves'));
+    await user.click(within(dialog).getByTestId('start-thread-submit'));
+
+    await findPane(NEW_THREAD);
+    expect(home.previewRequests).toEqual(['2']);
+    expect(home.starts).toEqual([
+      expect.objectContaining({
+        anchor_message_id: 2,
+        include_context: true,
+        carried_turn_ids: ['turn-roof', 'turn-gutter'],
+      }),
+    ]);
+  });
+
+  it('starts without a pick when the preview cannot load, and says what will come along', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const home = serveHome();
+    server.use(
+      http.get('/api/v1/chat/home/threads/continue-preview', () =>
+        HttpResponse.json({ detail: 'Something broke.' }, { status: 500 })
+      )
+    );
+    await renderChatApp({ waitForReady: true });
+
+    const dialog = await openContinue(user, GUTTER_REPLY);
+    expect(await within(dialog).findByTestId('start-thread-carry-hint')).toHaveTextContent(
+      'Something broke. This message and up to four before it will be copied.'
+    );
+    await waitFor(() => expect(within(dialog).getByTestId('start-thread-submit')).toBeEnabled());
+    await user.click(within(dialog).getByTestId('start-thread-submit'));
+
+    await findPane(NEW_THREAD);
+    expect(home.starts).toEqual([
+      expect.not.objectContaining({ carried_turn_ids: expect.anything() }),
+    ]);
   });
 
   it('offers a profile without household context as a request-only start, and says so', async () => {
@@ -647,7 +768,9 @@ describe('Starting and moving threads from Home', () => {
     const dialog = await openContinue(user, GUTTER_REPLY);
     const picker = within(dialog).getByTestId('start-thread-profile');
     expect(
-      within(picker).getByRole('option', { name: 'Browser_profile (your message only)' })
+      within(picker).getByRole('option', {
+        name: 'Browser_profile (your message only)',
+      })
     ).toBeInTheDocument();
     expect(within(picker).getByRole('option', { name: 'Research' })).toBeInTheDocument();
     await user.selectOptions(picker, 'browser_profile');
@@ -730,7 +853,9 @@ describe('Starting and moving threads from Home', () => {
     const home = serveHome();
     home.refuseNextMove = () =>
       HttpResponse.json(
-        { detail: 'Wait for the reply in progress to finish, then move the turn.' },
+        {
+          detail: 'Wait for the reply in progress to finish, then move the turn.',
+        },
         { status: 409 }
       );
     await renderChatApp({ waitForReady: true });
@@ -754,6 +879,94 @@ describe('Starting and moving threads from Home', () => {
 
     expect(within(dialog).getByTestId('move-to-thread-unavailable')).toBeInTheDocument();
     expect(within(dialog).getByTestId('move-to-thread-submit')).toBeDisabled();
+  });
+
+  it('shares one Home reply through its own link', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const shareUrl = `/api/v1/chat/conversations/${HOME}/messages/2/share`;
+    const create = vi.fn(() => HttpResponse.json({ share_url: '/shared/conversations/token' }));
+    serveHome();
+    server.use(
+      http.get(shareUrl, () => HttpResponse.json({ active: false })),
+      http.post(shareUrl, create)
+    );
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: vi.fn().mockResolvedValue(undefined) },
+    });
+    await renderChatApp({ waitForReady: true });
+
+    await user.click(within(await homeReply(GUTTER_REPLY)).getByTestId('share-message'));
+    const dialog = await screen.findByRole('dialog', { name: 'Share message' });
+    expect(dialog).toHaveAccessibleDescription(/can read this message, without the rest/);
+    await user.click(
+      await within(dialog).findByRole('button', {
+        name: 'Create and copy link',
+      })
+    );
+
+    await waitFor(() => expect(create).toHaveBeenCalledOnce());
+    expect(await within(dialog).findByRole('textbox', { name: 'Share link' })).toHaveValue(
+      `${window.location.origin}/shared/conversations/token`
+    );
+  });
+
+  it('offers to share a reply that is only an attachment', async () => {
+    const home = serveHome();
+    home.homeRows = [
+      ...home.homeRows,
+      {
+        internal_id: 5,
+        turn_id: 'turn-picture',
+        role: 'assistant',
+        content: '',
+        timestamp: '2026-10-18T09:30:00Z',
+        attachments: [
+          {
+            type: 'attachment_reference',
+            attachment_id: 'picture',
+            mime_type: 'image/png',
+            content_url: '/api/attachments/picture',
+          },
+        ],
+      },
+    ];
+    await renderChatApp({ waitForReady: true });
+
+    const homePane = await findPane(HOME);
+    await within(homePane).findByText(REMINDER);
+    await waitFor(() => {
+      const replies = within(homePane).getAllByTestId('assistant-message');
+      expect(replies).toHaveLength(HOME_ROWS.length);
+      expect(within(replies[replies.length - 1]).getByTestId('share-message')).toBeInTheDocument();
+    });
+  });
+
+  it('shares a thread from its Home card without opening it', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const home = serveHome();
+    home.homeRows = [
+      ...home.homeRows,
+      {
+        internal_id: 5,
+        role: 'assistant',
+        content: '(The user started a thread from here.)',
+        timestamp: '2026-10-18T09:30:00Z',
+        started_thread: QUOTES.conversation_id,
+      },
+    ];
+    const status = vi.fn(() => HttpResponse.json({ active: false }));
+    server.use(http.get(`/api/v1/chat/conversations/${QUOTES.conversation_id}/share`, status));
+    await renderChatApp({ waitForReady: true });
+    const homePane = await findPane(HOME);
+    const marker = await within(homePane).findByTestId('started-thread-marker');
+    expect(status).not.toHaveBeenCalled();
+
+    await user.click(within(marker).getByTestId('thread-card-share'));
+
+    expect(await screen.findByRole('dialog', { name: 'Share thread' })).toBeInTheDocument();
+    await waitFor(() => expect(status).toHaveBeenCalledOnce());
+    expect(screen.queryByText(`Earlier in ${QUOTES.conversation_id}`)).not.toBeInTheDocument();
   });
 
   it("offers no move for an echo or a message the user didn't start", async () => {

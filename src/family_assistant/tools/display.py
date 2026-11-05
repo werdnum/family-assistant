@@ -235,6 +235,11 @@ _PHRASES: dict[str, _Phrase] = {
     "send_to_my_chat": _Phrase(
         "Sending to your chat", "Sent to your chat", _quoted("", "title"), changes=True
     ),
+    "post_to_conversation": _Phrase(
+        "Posting to another conversation",
+        "Posted to another conversation",
+        changes=True,
+    ),
     "delegate_to_service": _Phrase("Asking", "Asked", _plain("", "target_service_id")),
     "get_delegation_status": _Phrase(
         "Checking on delegated task", "Checked on delegated task"

@@ -79,7 +79,7 @@ def _extract_mime_body_content(raw_mime: bytes) -> MimeBodyContent:
 
         try:
             content = part.get_content()
-        except (LookupError, UnicodeError):
+        except LookupError, UnicodeError:
             logger.warning(
                 "Skipping undecodable %s MIME part while extracting email body",
                 content_type,
@@ -246,8 +246,12 @@ async def handle_mail_webhook(
         raise HTTPException(status_code=413, detail=str(exc)) from exc
 
     async def process_mail() -> Response:
-        # FastAPI's request.form() will parse multipart/form-data
-        form_data = await request.form()
+        # Mailgun's MIME forwarding posts the whole message as one urlencoded
+        # field (body-mime), and Starlette caps each form field at 1 MiB by
+        # default. The body was already bounded by max_raw_request_bytes above.
+        form_data = await request.form(
+            max_part_size=email_intake_config.max_raw_request_bytes
+        )
 
         timestamp, token, signature = get_security_fields(form_data)
         verify_mailgun_signature(

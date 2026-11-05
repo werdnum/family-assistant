@@ -597,7 +597,7 @@ def get_cached_review(cache_key: str, cache_dir: Path) -> dict[str, Any] | None:
     try:
         with open(cache_file, encoding="utf-8") as f:
             return json.load(f)
-    except (json.JSONDecodeError, OSError):
+    except json.JSONDecodeError, OSError:
         # Invalid cache file, ignore it
         return None
 

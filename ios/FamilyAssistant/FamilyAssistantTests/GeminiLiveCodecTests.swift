@@ -303,6 +303,22 @@ final class GeminiLiveCodecTests: XCTestCase {
         XCTAssertFalse(echo.silencesMic(at: start + .milliseconds(400)))
     }
 
+    func testWholeFirstReplySilencesTheMicUntilItEnds() {
+        var echo = VoiceEchoConvergence(silencesWholeFirstReply: true)
+        let start = ContinuousClock.now
+        echo.replyStarted(at: start)
+        XCTAssertTrue(echo.silencesMic(at: start + .seconds(30)))
+
+        _ = echo.replyFinished()
+        XCTAssertFalse(echo.silencesMic(at: start + .seconds(31)))
+        echo.replyStarted(at: start + .seconds(40))
+        XCTAssertFalse(echo.silencesMic(at: start + .seconds(40)), "only the first reply")
+
+        echo.reset()
+        echo.replyStarted(at: start + .seconds(50))
+        XCTAssertTrue(echo.silencesMic(at: start + .seconds(60)), "a reset keeps the policy")
+    }
+
     func testEchoLevelsAreSplitAtTheConvergenceWindow() {
         var echo = VoiceEchoConvergence()
         let start = ContinuousClock.now
@@ -395,7 +411,19 @@ final class GeminiLiveCodecTests: XCTestCase {
         {"serverContent":{"modelTurn":{"parts":[{"inlineData":{"mimeType":"audio/pcm;rate=24000","data":"\(pcm.base64EncodedString())"}}]},"outputTranscription":{"text":"hello"},"turnComplete":true}}
         """
         let events = try GeminiLiveCodec.decodeServerMessage(Data(frame.utf8))
-        XCTAssertEqual(events, [.audio(pcm), .outputTranscription("hello"), .turnComplete])
+        XCTAssertEqual(events, [.audio(pcm), .outputTranscription("hello"), .turnComplete(reason: nil, waitingForInput: false)])
+    }
+
+    func testDecodeTurnCompleteReasonAndWaitingForInput() throws {
+        let frame = #"{"serverContent":{"waitingForInput":true,"turnComplete":true,"turnCompleteReason":"NEED_MORE_INPUT"}}"#
+        let events = try GeminiLiveCodec.decodeServerMessage(Data(frame.utf8))
+        XCTAssertEqual(events, [.turnComplete(reason: "NEED_MORE_INPUT", waitingForInput: true)])
+    }
+
+    func testTurnCompleteReasonThatIsNotAnEnumNameIsNotPassedOn() throws {
+        let frame = #"{"serverContent":{"turnComplete":true,"turnCompleteReason":"call 0412 555 000"}}"#
+        let events = try GeminiLiveCodec.decodeServerMessage(Data(frame.utf8))
+        XCTAssertEqual(events, [.turnComplete(reason: "other", waitingForInput: false)])
     }
 
     func testDecodeInputTranscriptionAndInterrupted() throws {

@@ -1823,6 +1823,61 @@ final class HomeThreadsTests: XCTestCase {
         XCTAssertNil(starts.first?.modelTier)
     }
 
+    func testSendingInHomeStartsAThreadOnTheDefaultProfile() async throws {
+        let model = try await makeHomeModelWithProfiles()
+        var starts: [HomeThreadStart] = []
+        model.startHomeThread = { starts.append($0); return true }
+        model.draftText = "Is the bin out?"
+
+        await model.sendDraft()
+
+        XCTAssertEqual(starts.map(\.profileID), [model.defaultProfileID])
+        XCTAssertEqual(starts.first?.prompt, "Is the bin out?")
+        XCTAssertEqual(model.draftText, "")
+    }
+
+    func testAnAttachmentSentAloneInHomeAsksForAMessageAndStaysInTheComposer() async throws {
+        let model = try await makeHomeModelWithProfiles()
+        var starts: [HomeThreadStart] = []
+        model.startHomeThread = { starts.append($0); return true }
+        model.draftAttachments = [uploadedAttachment()]
+
+        await model.sendDraft()
+
+        XCTAssertTrue(starts.isEmpty)
+        XCTAssertEqual(model.draftAttachments.count, 1)
+    }
+
+    func testARoutedPromptRetriesItsThreadStartUnderTheSameTurnID() async throws {
+        let model = try await makeHomeModelWithProfiles()
+        var starts: [HomeThreadStart] = []
+        var accepts = false
+        model.startHomeThread = { starts.append($0); return accepts }
+        await model.bootstrap()
+
+        await model.sendPromptInPlace("Book the plumber")
+        accepts = true
+        await model.reloadMessages()
+        try await waitUntil { starts.count == 2 }
+        guard starts.count == 2 else {
+            return
+        }
+
+        XCTAssertEqual(starts[0].turnID, starts[1].turnID)
+        XCTAssertTrue(model.heldRoutedPrompts.isEmpty)
+    }
+
+    func testAStartedThreadMarkerDecodesItsThread() throws {
+        let json = """
+        {"internal_id": 5, "role": "assistant", "content": "(marker)",
+         "timestamp": "2026-10-18T09:30:00Z", "started_thread": "t1"}
+        """
+
+        let message = try JSONDecoder.chatDecoder.decode(ChatBackendMessage.self, from: Data(json.utf8))
+
+        XCTAssertEqual(message.startedThread, "t1")
+    }
+
     func testSendAsThreadNeedsTextAndIsHomeOnly() async throws {
         let model = try await makeHomeModelWithProfiles()
         model.draftAttachments = [uploadedAttachment()]
@@ -1894,6 +1949,59 @@ final class HomeThreadsTests: XCTestCase {
         XCTAssertEqual(actions(echo)?.canMove, false, "A thread's echoed outcome stays in Home.")
         XCTAssertNil(actions(marker))
         XCTAssertNil(actions(unsaved), "An unsaved bubble has no id the server knows.")
+    }
+
+    func testAFinishedHomeMessageCanBeSharedAlone() {
+        let home = makeViewModel(conversationID: "home", role: .home)
+
+        XCTAssertEqual(
+            home.shareTarget(for: homeMessage(id: 2, role: .assistant, turnID: "a")),
+            .message(conversationID: "home", messageID: 2)
+        )
+    }
+
+    func testAReplyThatIsOnlyAnAttachmentCanBeShared() {
+        let home = makeViewModel(conversationID: "home", role: .home)
+        var picture = homeMessage(id: 2, role: .assistant, turnID: "a")
+        picture.text = ""
+        picture.attachments = [
+            ChatAttachment(
+                id: "picture",
+                attachmentID: "picture",
+                type: .image,
+                name: "picture.png",
+                contentURL: "/api/attachments/picture",
+                mimeType: "image/png",
+                size: nil,
+                localFileURL: nil,
+                uploadState: .uploaded,
+                errorMessage: nil
+            )
+        ]
+
+        XCTAssertEqual(home.shareTarget(for: picture), .message(conversationID: "home", messageID: 2))
+    }
+
+    func testAMessageWithNothingOfItsOwnCannotBeShared() {
+        let home = makeViewModel(conversationID: "home", role: .home)
+        var moved = homeMessage(id: 3, role: .assistant, turnID: "a")
+        moved.movedToThread = "t1"
+        var started = homeMessage(id: 4, role: .assistant, turnID: "b")
+        started.startedThread = "t1"
+        let unsaved = ChatMessage(
+            id: "local_assistant_x", role: .assistant, text: "…", createdAt: Date(), toolCalls: [], attachments: [],
+            isLoading: true, status: .running, processingProfileID: nil, errorTraceback: nil, turnID: "c"
+        )
+
+        XCTAssertNil(home.shareTarget(for: moved), "A marker is a pointer, not a message.")
+        XCTAssertNil(home.shareTarget(for: started), "A marker is a pointer, not a message.")
+        XCTAssertNil(home.shareTarget(for: unsaved), "An unsaved bubble has no id the server knows.")
+    }
+
+    func testOnlyHomeOffersMessageSharing() {
+        let pushed = makeViewModel(conversationID: "t1", role: .pushed)
+
+        XCTAssertNil(pushed.shareTarget(for: homeMessage(id: 1, role: .assistant, turnID: "a")))
     }
 
     func testOnlyHomeOffersThreadActions() {

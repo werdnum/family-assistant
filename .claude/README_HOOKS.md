@@ -21,8 +21,6 @@ Prevents dangerous shell commands and enforces best practices through PreToolUse
 
 **Project-Specific Rules** (see `bash-guard.json`):
 
-- Container URL rewrites (localhost → devcontainer-backend-1)
-- Dev server blocking (prevents duplicate instances)
 - Command optimizations (npm --prefix, llm -f)
 - Test timeout requirements (pytest: 5min, poe test: 15min)
 - Background restrictions (poe test must run in foreground)
@@ -88,10 +86,10 @@ Example:
 {
   "command_rules": [
     {
-      "regexp": "\\blocalhost:5173\\b",
+      "regexp": "\\bpython\\s+-m\\s+pytest\\b",
       "action": "replace",
-      "replacement": "devcontainer-backend-1:5173",
-      "explanation": "App runs in container"
+      "replacement": "pytest",
+      "explanation": "pytest is already configured in the virtual environment"
     }
   ]
 }

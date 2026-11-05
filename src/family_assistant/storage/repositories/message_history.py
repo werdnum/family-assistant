@@ -443,6 +443,16 @@ class LatestVisibleMessage:
     turn_id: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class HomeMessage:
+    """A message a reader of Home sees, with its taint resolved."""
+
+    role: str
+    content: str
+    timestamp: datetime
+    taint_metadata: TaintMetadata | None
+
+
 def _nth_copy_time(start: datetime, index: int) -> datetime:
     """When the ``index``-th row of a copy is stamped.
 
@@ -2330,6 +2340,80 @@ class MessageHistoryRepository(BaseRepository):
 
         return await self._db.atomic(_move)
 
+    async def add_thread_start_marker(
+        self,
+        *,
+        interface_type: str,
+        home_conversation_id: str,
+        thread_conversation_id: str,
+        content: str,
+        now: datetime,
+    ) -> int:
+        """Record in Home that the user started a thread; returns the marker's id.
+
+        The marker belongs to no turn and no profile: no turn can carry it
+        anywhere, and no model's history window reads it.
+        """
+        result = await self._db.execute(
+            insert(message_history_table)
+            .values(
+                interface_type=interface_type,
+                conversation_id=home_conversation_id,
+                turn_id=None,
+                timestamp=now,
+                role="assistant",
+                content=content,
+                processing_profile_id=None,
+                subconversation_id=None,
+                taint_metadata_json=TurnTaintState.empty().to_metadata(),
+                taint_metadata_version=TAINT_METADATA_VERSION,
+                is_internal=False,
+                started_thread_conversation_id=thread_conversation_id,
+            )
+            .returning(message_history_table.c.internal_id)
+        )
+        return cast("int", result.scalar_one())
+
+    async def recent_home_messages(
+        self,
+        *,
+        conversation_id: str,
+        limit: int,
+        history_taint_epoch: datetime | None,
+    ) -> list[HomeMessage]:
+        """The newest messages a reader of Home sees, newest last, at most ``limit``.
+
+        Only what was said: tool rows have no place here, and the markers of
+        moved turns and started threads are not messages. Taint is resolved as
+        every other history read resolves it, so a row with none recorded is
+        not taken for clean.
+        """
+        rows = await self._db.fetch_all(
+            select(message_history_table)
+            .where(
+                message_history_table.c.conversation_id == conversation_id,
+                message_history_table.c.subconversation_id.is_(None),
+                message_history_table.c.is_internal.is_(False),
+                message_history_table.c.role.in_(("user", "assistant")),
+                message_history_table.c.content.isnot(None),
+                message_history_table.c.moved_to_conversation_id.is_(None),
+                message_history_table.c.started_thread_conversation_id.is_(None),
+            )
+            .order_by(message_history_table.c.internal_id.desc())
+            .limit(limit)
+        )
+        return [
+            HomeMessage(
+                role=row["role"],
+                content=row["content"],
+                timestamp=row["timestamp"],
+                taint_metadata=_message_history_taint_metadata(
+                    row, history_taint_epoch=history_taint_epoch
+                ),
+            )
+            for row in reversed(rows)
+        ]
+
     async def moved_turn_conversation(self, turn_id: str) -> str | None:
         """The conversation a turn was moved out of, if ``turn_id`` names a moved turn.
 
@@ -2381,6 +2465,21 @@ class MessageHistoryRepository(BaseRepository):
             .limit(limit)
         )
         return [row["turn_id"] for row in reversed(rows)]
+
+    async def top_level_turn_rows(
+        self,
+        *,
+        interface_type: str,
+        conversation_id: str,
+        turn_ids: Sequence[str],
+    ) -> list[MessageHistoryRow]:
+        """The rows :meth:`copy_turns` would copy for ``turn_ids``, oldest first."""
+        if not turn_ids:
+            return []
+        rows = await self._top_level_turn_rows(
+            self._db, interface_type, conversation_id, turn_ids
+        )
+        return [self._process_message_row_as_dict(row) for row in rows]
 
     @staticmethod
     async def _top_level_turn_rows(
@@ -3869,7 +3968,10 @@ class MessageHistoryRepository(BaseRepository):
         ownership_condition = self._sole_owner_condition(owner_user_ids)
 
         # Build base conditions
-        base_conditions = []
+        # A thread's marker is not what a conversation last said.
+        base_conditions: list[ColumnElement[bool]] = [
+            message_history_table.c.started_thread_conversation_id.is_(None)
+        ]
         base_conditions.append(_visible_message_condition())
         base_conditions.append(message_history_table.c.role.in_(["user", "assistant"]))
         base_conditions.append(message_history_table.c.content.isnot(None))

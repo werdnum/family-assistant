@@ -232,6 +232,25 @@ def _engine_transaction_lock(engine: AsyncEngine) -> asyncio.Lock | None:
     return lock
 
 
+async def dispose_engine(engine: AsyncEngine) -> None:
+    """Dispose ``engine`` without racing a transaction still running on it.
+
+    On SQLite every transaction runs on the StaticPool's one connection.
+    Disposing closes that connection, and the close awaits, so a background
+    task can check the connection out in the meantime, find it closed, and
+    start reconnecting. StaticPool.dispose then fails with
+    ``KeyError: 'connection'``. Holding the transaction lock keeps any
+    transaction from running while the pool is disposed. Work that starts
+    afterwards connects to the recreated pool.
+    """
+    lock = _engine_transaction_lock(engine)
+    if lock is None:
+        await engine.dispose()
+        return
+    async with lock:
+        await engine.dispose()
+
+
 def sanitize_text_for_postgres(text: str | None) -> str | None:
     """
     Sanitize text content for storage in PostgreSQL TEXT columns.
@@ -265,7 +284,7 @@ def sanitize_text_for_postgres(text: str | None) -> str | None:
         text = text.encode("utf-8", errors="surrogatepass").decode(
             "utf-8", errors="replace"
         )
-    except (UnicodeDecodeError, UnicodeEncodeError):
+    except UnicodeDecodeError, UnicodeEncodeError:
         # If encoding fails completely, replace all problematic chars
         text = text.encode("utf-8", errors="replace").decode("utf-8", errors="replace")
 

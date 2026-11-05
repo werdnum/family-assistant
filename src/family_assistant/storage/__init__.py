@@ -30,7 +30,10 @@ from family_assistant.storage.calendar_provenance import calendar_event_provenan
 
 # Import table definitions for direct use
 from family_assistant.storage.confirmation_requests import confirmation_requests_table
-from family_assistant.storage.conversation_shares import conversation_shares_table
+from family_assistant.storage.conversation_shares import (
+    conversation_message_shares_table,
+    conversation_shares_table,
+)
 from family_assistant.storage.conversation_summaries import (
     conversation_summaries_table,
 )
@@ -46,7 +49,6 @@ from family_assistant.storage.error_logs import error_logs_table
 from family_assistant.storage.events import (
     EventActionType,
     EventSourceType,
-    InterfaceType,
     event_listeners_table,
     recent_events_table,
 )
@@ -366,10 +368,10 @@ __all__ = [
     # Enums
     "EventActionType",
     "EventSourceType",
-    "InterfaceType",
     "calendar_event_provenance_table",
     "confirmation_requests_table",
     "conversation_homes_table",
+    "conversation_message_shares_table",
     "conversation_read_markers_table",
     "conversation_shares_table",
     "conversation_summaries_table",

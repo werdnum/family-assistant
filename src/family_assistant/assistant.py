@@ -163,6 +163,7 @@ from family_assistant.storage import init_db
 from family_assistant.storage.base import create_engine_with_sqlite_optimizations
 from family_assistant.storage.database import (
     Database,
+    dispose_engine,
     set_engine_history_taint_epoch,
     set_engine_memory_limits,
 )
@@ -1412,6 +1413,7 @@ class Assistant:
                 typesafe.calendar_duplicates.timeout_seconds,
                 typesafe.calendar_search.timeout_seconds,
                 typesafe.document_search.timeout_seconds,
+                typesafe.continue_selection.timeout_seconds,
                 typesafe.camera_frames.timeout_seconds,
             ),
             base_url=typesafe.base_url,
@@ -1427,6 +1429,18 @@ class Assistant:
             mode=typesafe.relevance_mode,
             threshold=typesafe.relevance_threshold,
             timeout_seconds=typesafe.timeout_seconds,
+        )
+
+    def _create_continue_relevance(self) -> TurnRelevance | None:
+        """Jev's turn relevance for what "Continue in a thread" ticks, unless it is off."""
+        selection = self.config.typesafe.continue_selection
+        if self._jev_client is None or selection.mode == "off":
+            return None
+        return JevTurnRelevance(
+            self._jev_client,
+            mode=selection.mode,
+            threshold=selection.threshold,
+            timeout_seconds=selection.timeout_seconds,
         )
 
     def _create_model_router(self) -> TierRouter | None:
@@ -2059,6 +2073,9 @@ class Assistant:
         assert self.fastapi_app is not None
         default_service_profile_id = self.config.default_service_profile_id
         self.fastapi_app.state.processing_services = self.processing_services_registry
+        self.fastapi_app.state.continue_turn_relevance = (
+            self._create_continue_relevance()
+        )
         self.fastapi_app.state.a2a_cancel_events = self.a2a_cancel_events
         self.fastapi_app.state.a2a_background_tasks = self.a2a_background_tasks
 
@@ -2225,6 +2242,11 @@ class Assistant:
                         profile.id: profile.processing_config.allow_wake_llm
                         for profile in self.config.service_profiles
                     },
+                    trusted_event_server_ids=[
+                        server_id
+                        for server_id, server in self.config.mcp_config.mcpServers.items()
+                        if server.trusted_events
+                    ],
                 )
                 logger.info(
                     f"Event processor initialized with {len(event_sources)} sources"
@@ -3299,7 +3321,7 @@ class Assistant:
 
         # Close database engine (only if we created it, not if it was injected)
         if self.database_engine and not self._injected_database_engine:
-            await self.database_engine.dispose()
+            await dispose_engine(self.database_engine)
             logger.info("Database engine disposed.")
         elif self._injected_database_engine:
             logger.info(

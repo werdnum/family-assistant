@@ -391,6 +391,46 @@ async def test_mail_webhook_mime_alias_accepts_same_payload(
 
 @pytest.mark.asyncio
 @pytest.mark.postgres
+async def test_mail_webhook_mime_alias_accepts_raw_mime_over_one_mebibyte(
+    api_client: httpx.AsyncClient,
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Mailgun posts the whole raw message as one urlencoded ``body-mime`` field.
+
+    Starlette caps a form field at 1 MiB unless told otherwise, which would turn
+    away most mail carrying an attachment.
+    """
+    _configure_email_intake(
+        monkeypatch,
+        tmp_path,
+        EmailIntakeConfig(
+            mailgun_webhook_signing_key=SecretStr(SIGNING_KEY),
+            allowed_sender_addresses=[SENDER],
+            allowed_recipient_addresses=[RECIPIENT],
+            require_authenticated_sender=True,
+        ),
+    )
+    message_id = f"<mailgun-large-{uuid.uuid4()}@example.com>"
+    raw_mime = build_signed_message(
+        from_address=SENDER,
+        to_address=RECIPIENT,
+        message_id=message_id,
+        body="A line of a long message.\r\n" * 50_000,
+    )
+    assert len(raw_mime) > 1024 * 1024
+    form = _mailgun_form(message_id=message_id, raw_mime=raw_mime)
+
+    response = await api_client.post("/webhook/mail/mime", data=form)
+
+    assert response.status_code == 200, response.text
+    assert await _email_exists(db_engine, message_id)
+    assert await _email_dmarc_result(db_engine, message_id) == "pass"
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
 async def test_mail_webhook_mime_alias_extracts_missing_body_fields_from_raw_mime(
     api_client: httpx.AsyncClient,
     db_engine: AsyncEngine,
@@ -881,6 +921,53 @@ async def test_mail_webhook_rejects_from_domain_without_dmarc_policy(
     assert response.status_code == 401
     assert "DMARC" in response.text
     assert not await _email_exists(db_engine, form["Message-Id"])
+
+
+@pytest.mark.asyncio
+async def test_mail_webhook_rejects_dmarc_pass_for_other_from_than_envelope_sender(
+    api_client: httpx.AsyncClient,
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """An attacker's own domain passing DMARC must not vouch for a forged envelope.
+
+    The envelope sender is allowlisted and mapped to a user, but the From: header
+    (the address DMARC authenticated) is the attacker's.
+    """
+    attacker_domain = "attacker.example"
+    message_id = f"<forged-envelope-{uuid.uuid4()}@{attacker_domain}>"
+    _configure_email_intake(
+        monkeypatch,
+        tmp_path,
+        EmailIntakeConfig(
+            mailgun_webhook_signing_key=SecretStr(SIGNING_KEY),
+            allowed_sender_addresses=[SENDER],
+            require_authenticated_sender=True,
+            require_user_mapping=True,
+            user_mappings=[
+                EmailIntakeUserMapping(user_id="alice", sender_addresses={SENDER})
+            ],
+        ),
+        dns_resolver=build_dns_for(domain=attacker_domain),
+    )
+    raw = build_signed_message(
+        from_address=f"mallory@{attacker_domain}",
+        to_address=RECIPIENT,
+        message_id=message_id,
+    )
+    form = _mailgun_form(
+        sender=SENDER,
+        raw_mime=raw,
+        message_id=message_id,
+        from_header=f"mallory@{attacker_domain}",
+    )
+
+    response = await api_client.post("/webhook/mail", data=form)
+
+    assert response.status_code == 401
+    assert "does not match envelope sender" in response.text
+    assert not await _email_exists(db_engine, message_id)
 
 
 @pytest.mark.asyncio

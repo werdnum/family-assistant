@@ -14,13 +14,16 @@ import {
   CalendarIcon,
   CheckCircle2Icon,
   CheckIcon,
-  ChevronDownIcon,
   ChevronRightIcon,
+  ChevronUpIcon,
   CopyIcon,
+  EyeIcon,
+  EyeOffIcon,
   FileSearchIcon,
   FolderInputIcon,
   GitBranchPlusIcon,
   Loader2Icon,
+  Share2Icon,
   StickyNoteIcon,
   SquareIcon,
   ThumbsDownIcon,
@@ -51,6 +54,7 @@ import { useHomeTurnActions } from './homeTurnActions';
 import { MarkdownText } from './MarkdownText';
 import { PendingDelegationsChip } from './PendingDelegationsChip';
 import { ThreadEchoHeader } from './ThreadEchoHeader';
+import { ThreadCard } from './StartThreadCard';
 import { useThreadsContext } from './threadsContext';
 import { useProfiles } from './profilesContext';
 import { ToolGroup } from './ToolGroup';
@@ -129,7 +133,10 @@ const ThreadLoadOlderMessages: React.FC<{
   // Older messages arrive above the reader, which would push what they were
   // looking at down the page. Remember the distance from the bottom when they
   // ask, and restore it once the longer thread renders.
-  const pendingAnchorRef = useRef<{ messageCount: number; fromBottom: number } | null>(null);
+  const pendingAnchorRef = useRef<{
+    messageCount: number;
+    fromBottom: number;
+  } | null>(null);
   const status = controls?.olderMessagesStatus;
 
   useLayoutEffect(() => {
@@ -425,7 +432,7 @@ const Composer: React.FC = () => {
           />
         </div>
         <ComposerAction steering={steering} onSteer={submitSteer} />
-        {controls?.sendAsThread && (
+        {controls?.sendAsThread && controls.sendAsThread.profiles.length > 0 && (
           <ThreadPrimitive.If running={false}>
             <SendAsThreadMenu
               profiles={controls.sendAsThread.profiles}
@@ -441,10 +448,7 @@ const Composer: React.FC = () => {
   );
 };
 
-/**
- * Sends what the composer holds as a new thread's opening message, on the
- * profile picked here, instead of as a Home turn.
- */
+/** Sends what the composer holds to an assistant other than Home's own. */
 const SendAsThreadMenu: React.FC<{
   profiles: { id: string; label: string }[];
   onSend: (profileId: string) => void;
@@ -457,17 +461,16 @@ const SendAsThreadMenu: React.FC<{
           type="button"
           variant="outline"
           className="h-11 shrink-0 gap-1 rounded-full px-3"
-          disabled={!canSend || profiles.length === 0}
-          aria-label="Send as a new thread"
-          title="Send as a new thread"
+          disabled={!canSend}
+          aria-label="Send to another assistant"
+          title="Send to another assistant"
           data-testid="send-as-thread-button"
         >
-          <GitBranchPlusIcon size={16} aria-hidden="true" />
-          <ChevronDownIcon size={12} aria-hidden="true" />
+          <ChevronUpIcon size={16} aria-hidden="true" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" side="top">
-        <DropdownMenuLabel>Send as a new thread on</DropdownMenuLabel>
+        <DropdownMenuLabel>Send to</DropdownMenuLabel>
         {profiles.map((profile) => (
           <DropdownMenuItem
             key={profile.id}
@@ -488,14 +491,10 @@ interface ComposerActionProps {
 }
 
 const ComposerAction: React.FC<ComposerActionProps> = ({ steering, onSteer }) => {
-  // The composer refuses to send while it is already sending, which is the
-  // window in which attachments upload. Reading that rather than attachment
-  // status keeps the button honest whatever an attachment adapter reports.
-  // Sending is also refused while the open conversation's history loads, which
-  // is not a send in progress.
+  // A send waits as the composer's submission while its attachments upload.
+  // Sending is also refused while the open conversation's history loads.
   const conversationLoading = (useChatControls()?.conversationLoadStatus ?? null) !== null;
-  const isSending =
-    useAuiState((s) => !s.composer.canSend && !s.composer.isEmpty) && !conversationLoading;
+  const isSending = useAuiState((s) => s.composer.submission !== undefined);
   // While running, the single action button steers when there's text to send
   // and stops the turn when the composer is empty.
   const hasText = useAuiState((s) => s.composer.text.trim().length > 0);
@@ -646,13 +645,18 @@ const AssistantMessage: React.FC = () => {
     reasoning_info?: MessageReasoningInfo;
     echoed_from_thread?: string;
     moved_to_thread?: string;
+    started_thread?: string;
     internal_id?: number;
+    has_own_attachments?: boolean;
     turn_id?: string;
     feedback?: TurnRating;
     unrateable?: boolean;
   };
   if (custom.moved_to_thread) {
     return <MovedTurnMarker threadConversationId={custom.moved_to_thread} />;
+  }
+  if (custom.started_thread) {
+    return <StartedThreadMarker threadConversationId={custom.started_thread} />;
   }
   // An echo of a thread's outcome is attributed to the thread rather than to
   // the Home profile and turn its copy was stored under.
@@ -768,6 +772,16 @@ const AssistantMessage: React.FC = () => {
                 feedback={custom.feedback}
                 unrateable={Boolean(custom.unrateable)}
                 canCopy={hasCopyableContent}
+                canShare={hasCopyableContent || Boolean(custom.has_own_attachments)}
+                servedBy={
+                  reasoningInfo
+                    ? {
+                        reasoningInfo,
+                        profileLabel: profile?.description ?? profileId,
+                        tierLabels,
+                      }
+                    : undefined
+                }
               />
             </div>
           </div>
@@ -815,6 +829,84 @@ const MovedTurnMarker: React.FC<{ threadConversationId: string }> = ({ threadCon
   );
 };
 
+interface ServedBy {
+  reasoningInfo: MessageReasoningInfo;
+  profileLabel?: string;
+  tierLabels: Record<string, string>;
+}
+
+const TIER_SOURCE_LABELS: Record<string, string> = {
+  user: 'chosen by you',
+  model: 'chosen by the assistant',
+  auto: 'chosen by Auto',
+  experiment: 'assigned by an experiment',
+  default: 'profile default',
+};
+
+/** What served a reply, spelled out: the profile, tier, model and any experiment arm. */
+const ServedByDetails: React.FC<{ servedBy: ServedBy }> = ({ servedBy }) => {
+  const { reasoningInfo: info, profileLabel, tierLabels } = servedBy;
+  const tierName = (tier: string) => tierLabels[tier] ?? tier;
+  const model = info.resolved_model ?? info.model;
+  const source = info.model_tier_source ? TIER_SOURCE_LABELS[info.model_tier_source] : undefined;
+  const rows: [string, string][] = [];
+  if (profileLabel) {
+    rows.push(['Profile', profileLabel]);
+  }
+  if (info.model_tier) {
+    rows.push([
+      'Intelligence',
+      source ? `${tierName(info.model_tier)} (${source})` : tierName(info.model_tier),
+    ]);
+  }
+  if (info.model_tier_requested && info.model_tier_requested !== info.model_tier) {
+    rows.push(['Requested', tierName(info.model_tier_requested)]);
+  }
+  if (model) {
+    rows.push(['Model', info.provider ? `${model} via ${info.provider}` : model]);
+  }
+  if (info.experiment_id) {
+    rows.push(['Experiment', info.experiment_id]);
+    if (info.experiment_arm) {
+      rows.push(['Arm', tierName(info.experiment_arm)]);
+    }
+  }
+  return (
+    <dl
+      className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs"
+      data-testid="served-by-details"
+    >
+      {rows.length === 0 ? (
+        <dd className="col-span-2 text-muted-foreground">No model details were recorded.</dd>
+      ) : (
+        rows.map(([label, value]) => (
+          <React.Fragment key={label}>
+            <dt className="text-muted-foreground">{label}</dt>
+            <dd className="min-w-0 break-words">{value}</dd>
+          </React.Fragment>
+        ))
+      )}
+    </dl>
+  );
+};
+
+/** A thread the user started from Home: its card, where it was started. */
+const StartedThreadMarker: React.FC<{ threadConversationId: string }> = ({
+  threadConversationId,
+}) => {
+  const thread = useThreadsContext()?.threadsByConversationId.get(threadConversationId);
+  if (!thread) {
+    return null;
+  }
+  return (
+    <MessagePrimitive.Root className="px-4 py-1 md:px-6" data-testid="started-thread-marker">
+      <div className="max-w-3xl mx-auto">
+        <ThreadCard thread={thread} />
+      </div>
+    </MessagePrimitive.Root>
+  );
+};
+
 const AssistantActionBar: React.FC<{
   internalId?: number;
   turnId?: string;
@@ -822,7 +914,10 @@ const AssistantActionBar: React.FC<{
   feedback?: TurnRating;
   unrateable: boolean;
   canCopy: boolean;
-}> = ({ internalId, turnId, isEcho, feedback, unrateable, canCopy }) => {
+  /** Text to read or an attachment of its own, unlike a turn's tool-only step. */
+  canShare: boolean;
+  servedBy?: ServedBy;
+}> = ({ internalId, turnId, isEcho, feedback, unrateable, canCopy, canShare, servedBy }) => {
   const aui = useAui();
   const homeActions = useHomeTurnActions();
   const turnFeedback = useTurnFeedback();
@@ -831,6 +926,16 @@ const AssistantActionBar: React.FC<{
   const [askingWhy, setAskingWhy] = useState(false);
   const [feedbackComment, setFeedbackComment] = useState('');
   const [feedbackError, setFeedbackError] = useState(false);
+  const [showServedBy, setShowServedBy] = useState(false);
+  // An experiment reply stays blind until it is rated, so the reveal cannot
+  // bias the rating. A reply that cannot be rated has nothing to protect.
+  const canReveal =
+    servedBy !== undefined &&
+    !isEcho &&
+    (servedBy.reasoningInfo.model_tier_source !== 'experiment' ||
+      !canRate ||
+      feedback !== undefined);
+  const servedByShown = showServedBy && canReveal;
 
   // A slower earlier request must not reopen or close the form after a newer
   // press has settled what the user sees.
@@ -877,7 +982,11 @@ const AssistantActionBar: React.FC<{
   };
   // Only an exchange the user started moves; an echo stays in Home.
   const canMove = homeActions !== null && !isEcho && homeActions.turnHasUserMessage(turnId);
-  const target = () => ({ internalId, turnId, quote: aui.message().getCopyText() });
+  const target = () => ({
+    internalId,
+    turnId,
+    quote: aui.message().getCopyText(),
+  });
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
 
@@ -904,7 +1013,7 @@ const AssistantActionBar: React.FC<{
 
   // A reply of only images or tool results has nothing to copy but can still
   // be rated.
-  if (!canCopy && !canRate) {
+  if (!canCopy && !canRate && !canReveal && !(homeActions && canShare)) {
     return null;
   }
 
@@ -952,6 +1061,7 @@ const AssistantActionBar: React.FC<{
           </Button>
         </form>
       )}
+      {servedByShown && servedBy && <ServedByDetails servedBy={servedBy} />}
       <span role="status" className="sr-only">
         {copied ? 'Response copied to clipboard.' : ''}
       </span>
@@ -1019,6 +1129,25 @@ const AssistantActionBar: React.FC<{
             </TooltipIconButton>
           </>
         )}
+        {canReveal && (
+          /* @ts-expect-error - TooltipIconButton JSX component */
+          <TooltipIconButton
+            tooltip={servedByShown ? 'Hide model details' : 'Which model answered?'}
+            aria-label="Which model answered"
+            aria-expanded={servedByShown}
+            size="icon"
+            variant="ghost"
+            className={`h-7 w-7 rounded-lg ${servedByShown ? 'text-primary' : ''}`}
+            onClick={() => setShowServedBy((shown) => !shown)}
+            data-testid="reveal-served-by"
+          >
+            {servedByShown ? (
+              <EyeOffIcon size={12} aria-hidden="true" />
+            ) : (
+              <EyeIcon size={12} aria-hidden="true" />
+            )}
+          </TooltipIconButton>
+        )}
         {homeActions && (internalId !== undefined || turnId) && (
           <>
             {/* @ts-expect-error - TooltipIconButton JSX component */}
@@ -1045,6 +1174,20 @@ const AssistantActionBar: React.FC<{
                 data-testid="move-to-thread"
               >
                 <FolderInputIcon size={12} aria-hidden="true" />
+              </TooltipIconButton>
+            )}
+            {canShare && (
+              /* @ts-expect-error - TooltipIconButton JSX component */
+              <TooltipIconButton
+                tooltip="Share message"
+                aria-label="Share message"
+                size="icon"
+                variant="ghost"
+                className="h-7 w-7 rounded-lg"
+                onClick={() => homeActions.shareMessage(target())}
+                data-testid="share-message"
+              >
+                <Share2Icon size={12} aria-hidden="true" />
               </TooltipIconButton>
             )}
           </>

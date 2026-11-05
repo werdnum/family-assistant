@@ -1,10 +1,9 @@
-import { ColumnDef } from '@tanstack/react-table';
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { DataTable, SortableHeader } from '@/components/ui/data-table';
+import { DataTable, DataTableColumnDef, SortableHeader } from '@/components/ui/data-table';
 
 interface Document {
   id: number;
@@ -39,7 +38,9 @@ const DocumentsListWithDataTable = () => {
       setLoading(true);
       setError(null);
       // Fetch all documents at once for DataTable client-side pagination
-      const response = await fetch('/api/documents/?limit=1000&offset=0', { signal });
+      const response = await fetch('/api/documents/?limit=1000&offset=0', {
+        signal,
+      });
 
       if (!response.ok) {
         throw new Error(`Failed to fetch documents: ${response.statusText}`);
@@ -95,7 +96,7 @@ const DocumentsListWithDataTable = () => {
     return new Date(dateString).toLocaleString();
   };
 
-  const columns: ColumnDef<Document>[] = [
+  const columns: DataTableColumnDef<Document>[] = [
     {
       accessorKey: 'title',
       header: ({ column }) => <SortableHeader column={column} title="Title" />,

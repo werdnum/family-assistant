@@ -17,7 +17,12 @@ applies three:
    evidence of what the user said. A finished thread's echo is the thread
    assistant's own message, so it stays an assistant row.
 
-See docs/design/one-thread-chat-ux.md, "Moving content across the boundary".
+A note one conversation's assistant posts into another of the user's
+conversations (``post_to_conversation``) is an assistant request too: the
+prompt of the turn it wakes there.
+
+See docs/design/one-thread-chat-ux.md, "Moving content across the boundary",
+and docs/design/cross-conversation-notes.md.
 """
 
 from __future__ import annotations
@@ -156,6 +161,14 @@ from the thread it names rather than from this text.
 """
 
 
+THREAD_START_MARKER = "(The user started a thread from here.)"
+"""What a thread the user started leaves in Home.
+
+Fixed text written by code, so it carries no taint; clients draw the thread's
+card from the thread it names rather than from this text.
+"""
+
+
 async def move_turn_across_boundary(
     db: DatabaseExecutor,
     *,
@@ -203,12 +216,15 @@ async def _write_assistant_request(
     turn_id: str,
     now: datetime,
 ) -> int:
-    # A turn with no taint tracker has introduced nothing untrusted, which is
-    # how a delegation request with no recorded taint is treated too.
+    # The writer's stamp splits what its turn introduced from what it inherited
+    # from its own window, and the destination's window takes only what a row
+    # introduced. Nothing of the writer's window is in the destination's, so
+    # the request introduces all of it there: re-reading the stamp without its
+    # origin does that. A turn with no taint tracker has introduced nothing
+    # untrusted, which is how a delegation request with no recorded taint is
+    # treated too.
     taint = floor_machine_authored_metadata(
-        request.taint
-        if request.taint is not None
-        else TurnTaintState.empty().to_metadata()
+        TurnTaintState.from_metadata(request.taint).to_metadata()
     )
     return await db.message_history.add_message(
         UserMessage(

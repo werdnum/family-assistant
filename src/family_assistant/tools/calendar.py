@@ -15,13 +15,16 @@ from datetime import date, datetime, time, timedelta
 from typing import TYPE_CHECKING, Literal, NotRequired, TypedDict
 from zoneinfo import ZoneInfo
 
-import caldav
 import httpx
 import vobject
+from caldav.calendarobjectresource import Event
+from caldav.collection import Calendar
+from caldav.davclient import DAVClient
 from caldav.lib.error import DAVError, NotFoundError
 from dateutil.parser import isoparse
 from sqlalchemy.exc import SQLAlchemyError
 
+from family_assistant.caldav_sync import sync_result
 from family_assistant.calendar_integration import (
     CalendarSource,
     fetch_ical_events_async,
@@ -256,7 +259,7 @@ def _format_event_time_for_display(
 
 
 def _parse_caldav_event_component(
-    event: caldav.objects.Event,
+    event: Event,
     src: CalendarSource,
     local_tz: ZoneInfo,
 ) -> CalendarSearchResult | None:
@@ -302,13 +305,13 @@ def _parse_caldav_event_component(
     }
 
 
-def _caldav_event_version(event: caldav.objects.Event) -> str:
+def _caldav_event_version(event: Event) -> str:
     """Hash the complete event body; CalDAV Event exposes no stable ETag API."""
     return hashlib.sha256(event.icalendar_component.to_ical()).hexdigest()
 
 
 def _search_single_caldav_source(
-    client: caldav.DAVClient,
+    client: DAVClient,
     src: CalendarSource,
     search_start: datetime,
     search_end: datetime,
@@ -326,15 +329,17 @@ def _search_single_caldav_source(
         else search_end
     )
     try:
-        calendar_obj = client.calendar(url=src.url)
+        calendar_obj: Calendar = client.calendar(url=src.url)
         if not calendar_obj:
             logger.warning(f"Could not access calendar at {src.url}")
             return []
-        events = calendar_obj.search(
-            start=start_arg,
-            end=end_arg,
-            event=True,
-            expand=True,
+        events = sync_result(
+            calendar_obj.search(
+                start=start_arg,
+                end=end_arg,
+                event=True,
+                expand=True,
+            )
         )
     except Exception as e:
         logger.error(f"Error searching calendar {src.url}: {e}")
@@ -361,7 +366,7 @@ def _search_caldav_sources_sync(
     """Synchronously queries CalDAV collections for events in the specified range."""
     logger.debug(f"Connecting to CalDAV server: {client_url}")
     all_events: list[CalendarSearchResult] = []
-    with caldav.DAVClient(
+    with DAVClient(
         url=client_url,
         username=username,
         password=password,
@@ -1105,14 +1110,14 @@ async def add_calendar_event_tool(
         # Connect to CalDAV server and save event (synchronous, run in executor)
         def save_event_sync() -> tuple[str, str | None]:
             logger.debug(f"Connecting to CalDAV server: {client_url_to_use}")
-            with caldav.DAVClient(
+            with DAVClient(
                 url=client_url_to_use,  # Use base_url for client
                 username=username,
                 password=password,
                 timeout=30,
             ) as client:
                 # Get the specific calendar object using its full URL
-                target_calendar_obj: caldav.objects.Calendar = client.calendar(
+                target_calendar_obj: Calendar = client.calendar(
                     url=target_calendar_url  # Use full collection URL here
                 )
                 if not target_calendar_obj:
@@ -1122,8 +1127,8 @@ async def add_calendar_event_tool(
 
                 logger.info(f"Saving event to calendar: {target_calendar_obj.url}")
                 # Save event with no_overwrite=True to use If-None-Match:* for creation
-                new_event_resource: caldav.objects.Event = (
-                    target_calendar_obj.save_event(event_data, no_overwrite=True)
+                new_event_resource = sync_result(
+                    target_calendar_obj.add_event(event_data, no_overwrite=True)
                 )
                 logger.info(
                     f"Event saved successfully. URL: {getattr(new_event_resource, 'url', 'N/A')}, ETag: {getattr(new_event_resource, 'etag', 'N/A')}"
@@ -2002,14 +2007,14 @@ async def modify_calendar_event_tool(
         # Modify event (synchronous, run in executor)
         def modify_event_sync() -> tuple[str, CalendarSearchResult | None, str | None]:
             logger.debug(f"Connecting to CalDAV server: {client_url_to_use}")
-            with caldav.DAVClient(
+            with DAVClient(
                 url=client_url_to_use,
                 username=username,
                 password=password,
                 timeout=30,
             ) as client:
                 # Get the specific calendar
-                calendar_obj = client.calendar(url=target_cal_url)
+                calendar_obj: Calendar = client.calendar(url=target_cal_url)
                 if not calendar_obj:
                     raise ConnectionError(
                         f"Failed to obtain calendar object for URL: {target_cal_url}"
@@ -2021,7 +2026,7 @@ async def modify_calendar_event_tool(
                 def update_event() -> tuple[
                     str, CalendarSearchResult | None, str | None
                 ]:
-                    all_events = calendar_obj.events()
+                    all_events = sync_result(calendar_obj.get_events())
                     event = None
 
                     for evt in all_events:
@@ -2316,14 +2321,14 @@ async def delete_calendar_event_tool(
         # Delete event (synchronous, run in executor)
         def delete_event_sync() -> tuple[str, CalendarSearchResult | None]:
             logger.debug(f"Connecting to CalDAV server: {client_url_to_use}")
-            with caldav.DAVClient(
+            with DAVClient(
                 url=client_url_to_use,
                 username=username,
                 password=password,
                 timeout=30,
             ) as client:
                 # Get the specific calendar
-                calendar_obj = client.calendar(url=target_cal_url)
+                calendar_obj: Calendar = client.calendar(url=target_cal_url)
                 if not calendar_obj:
                     raise ConnectionError(
                         f"Failed to obtain calendar object for URL: {target_cal_url}"
@@ -2333,7 +2338,7 @@ async def delete_calendar_event_tool(
                 # Note: calendar.search(uid=uid) doesn't work reliably with all CalDAV servers
                 # So we fetch all events and search manually
                 def remove_event() -> tuple[str, CalendarSearchResult | None]:
-                    all_events = calendar_obj.events()
+                    all_events = sync_result(calendar_obj.get_events())
                     event = None
 
                     for evt in all_events:

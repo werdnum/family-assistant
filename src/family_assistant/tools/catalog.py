@@ -87,6 +87,10 @@ from family_assistant.tools.computer_use import (
     computer_use_type,
     computer_use_wait,
 )
+from family_assistant.tools.cross_conversation import (
+    CROSS_CONVERSATION_TOOLS_DEFINITION,
+    post_to_conversation_tool,
+)
 from family_assistant.tools.data_manipulation import (
     DATA_MANIPULATION_TOOLS_DEFINITION,
     jq_query_tool,
@@ -228,6 +232,7 @@ from family_assistant.tools.threads import (
     THREAD_TOOLS_DEFINITION,
     finish_thread_tool,
     list_threads_tool,
+    read_home_messages_tool,
     start_thread_tool,
 )
 from family_assistant.tools.video_generation import (
@@ -309,6 +314,7 @@ _LOCAL_TOOL_DEFINITIONS: list[ToolDefinition] = (
     + AUTOMATIONS_TOOLS_DEFINITION
     + CALENDAR_TOOLS_DEFINITION
     + COMMUNICATION_TOOLS_DEFINITION
+    + CROSS_CONVERSATION_TOOLS_DEFINITION
     + SCRIPT_TOOLS_DEFINITION
     + STORED_SCRIPTS_TOOLS_DEFINITION
     + SCRIPT_TESTING_TOOLS_DEFINITION
@@ -351,6 +357,7 @@ _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
     "reindex_email": reindex_email_tool,
     "send_message_to_user": send_message_to_user_tool,
     "send_to_my_chat": send_to_my_chat_tool,
+    "post_to_conversation": post_to_conversation_tool,
     # Calendar tools
     "list_calendars": list_calendars_tool,
     "add_calendar_event": add_calendar_event_tool,
@@ -361,6 +368,7 @@ _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
     "start_thread": start_thread_tool,
     "finish_thread": finish_thread_tool,
     "list_threads": list_threads_tool,
+    "read_home_messages": read_home_messages_tool,
     "get_delegation_status": get_delegation_status_tool,
     "list_delegations": list_delegations_tool,
     "cancel_delegation": cancel_delegation_tool,
@@ -544,6 +552,12 @@ _CORE_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     # OUTPUT_TRUSTED: like list_delegations, the tool adds each fact's own taint
     # to the turn -- a title its creating turn's, an outcome its echo's.
     "list_threads": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    # OUTPUT_TRUSTED: the tool adds each message's own taint to the turn.
+    "read_home_messages": _metadata(
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.OUTPUT_TRUSTED,
@@ -791,6 +805,15 @@ _CORE_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.EXTERNAL_COMM,
         ToolTag.KNOWN_USER_COMM,
         ToolTag.SENSITIVE_DATA,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    # A note into another conversation the acting user owns, refused
+    # server-side otherwise. It wakes that conversation's profile with this
+    # turn's work and taint, so it is a delegation and classified as one. It
+    # takes no target_service_id: the profile is the one the user talks to in
+    # the target, so the per-target delegation rules do not match it.
+    "post_to_conversation": _metadata(
+        ToolTag.DELEGATION,
         ToolTag.OUTPUT_TRUSTED,
     ),
     "get_attachment_info": _metadata(

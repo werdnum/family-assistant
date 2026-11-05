@@ -167,6 +167,7 @@ _MID_CONVERSATION_TOOL_CHANGE_MODELS = (
     "claude-fable-5",
     "claude-mythos-5",
     "claude-sonnet-5-5",
+    "claude-haiku-5-5",
 )
 
 
@@ -1765,7 +1766,7 @@ class AnthropicClient(BaseLLMClient):
             try:
                 async with aiofiles.open(file_path, encoding="utf-8") as f:
                     file_content = await f.read()
-            except (UnicodeDecodeError, ValueError):
+            except UnicodeDecodeError, ValueError:
                 description = (
                     f"[Binary file: {file_path} ({mime_type or 'unknown type'})"
                     f" - content cannot be displayed as text]"
@@ -2054,7 +2055,7 @@ class AnthropicClient(BaseLLMClient):
         # the SDK accepts without one; an explicit timeout skips that check.
         try:
             response = await self.client.messages.create(**params, timeout=600)
-        except (anthropic.APIConnectionError, anthropic.APITimeoutError):
+        except anthropic.APIConnectionError, anthropic.APITimeoutError:
             return None
 
         events: list[LLMStreamEvent] = []

@@ -244,7 +244,8 @@ class TypeSafeConfig(BaseModel):
     Enabled by setting ``api_key`` (``TYPESAFE_API_KEY``). Jev then ranks which
     turns a new message continues at each history compaction event, classifies
     the Auto tier in place of the ``model_routing`` classifier, and filters
-    calendar search, duplicate-check and document search candidates, and judges
+    calendar search, duplicate-check and document search candidates, picks the
+    Home turns "Continue in a thread" suggests bringing along, and judges
     camera frames for the camera search tools. A deployment without it compacts
     oldest-first, keeps its configured Auto classifier, filters calendar events
     by title similarity alone, returns document search's top results by rank
@@ -282,6 +283,12 @@ class TypeSafeConfig(BaseModel):
     """Which of ``search_documents``' deeper candidate pool answer the query.
     Thirty candidates take several requests' worth of state, hence the longer
     timeout."""
+    continue_selection: JevFilterConfig = Field(
+        default_factory=lambda: JevFilterConfig(mode="active", timeout_seconds=2.0)
+    )
+    """Which Home turns "Continue in a thread" ticks to bring along with the
+    message being continued. Active by default because the user sees the ticks
+    and confirms them; ``shadow`` only logs the answers and ticks every turn."""
     camera_frames: CameraFrameJudgeConfig = Field(
         default_factory=CameraFrameJudgeConfig
     )
@@ -1777,6 +1784,12 @@ class MCPServerConfig(BaseModel):
     token: SecretStr | None = None
     user_auth: MCPUserAuthConfig | None = None
     tool_name_prefix: str = Field(default="", pattern=r"^[A-Za-z0-9_-]*$")
+    # Whether this server's events are as trustworthy as its tool output: the
+    # operator's statement that an event's payload carries nothing an outside
+    # party wrote. A wake_llm listener on such an event runs under the profile
+    # that created it, with the payload contributing no taint, instead of the
+    # restricted event_handler profile. Off by default, like every event source.
+    trusted_events: bool = False
 
     @model_validator(mode="after")
     def validate_user_auth(self) -> MCPServerConfig:

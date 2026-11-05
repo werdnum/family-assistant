@@ -113,7 +113,7 @@ def _extract_activations_from_result(
             return [], []
         try:
             data = json.loads(content)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             return [], []
 
     if not isinstance(data, dict):
@@ -312,7 +312,7 @@ class LLMStreamingLoop:
             )
             async for item in attributed_to_profile(attribution, inner):
                 yield item
-        except (asyncio.CancelledError, GeneratorExit):
+        except asyncio.CancelledError, GeneratorExit:
             turn.finish("cancelled")
             raise
         except BaseException:
@@ -490,6 +490,10 @@ class LLMStreamingLoop:
                             and processing_service.service_config.tools_config.async_delegation_enabled
                         ),
                         in_script=False,
+                        receives_household_context=(
+                            processing_service is not None
+                            and processing_service.service_config.receives_household_context
+                        ),
                         interface_type=interface_type,
                         conversation_id=conversation_id,
                         subconversation_id=subconversation_id,

@@ -20,6 +20,10 @@ from tests.integration.home_assistant.bulk_entities import BULK_ENTITY_ID_PREFIX
 
 logger = logging.getLogger(__name__)
 
+# Home Assistant pins SQLAlchemy exactly, so it runs from its own environment
+# rather than constraining ours.
+HASS_COMMAND = ["uvx", "--python", "3.14", "--from", "homeassistant==2026.10.4", "hass"]
+
 
 class OnboardingResponse(TypedDict, total=False):
     """Fields consumed from the Home Assistant onboarding response."""
@@ -403,11 +407,12 @@ def home_assistant_service(
         # Validate configuration before starting
         logger.info("Validating Home Assistant configuration...")
         validate_process = subprocess.run(
-            ["hass", "--script", "check_config", "-c", str(config_dir)],
+            [*HASS_COMMAND, "--script", "check_config", "-c", str(config_dir)],
             check=False,
             capture_output=True,
             text=True,
-            timeout=30,
+            # The first run installs Home Assistant into uvx's cache.
+            timeout=600,
         )
         if validate_process.returncode != 0:
             logger.error(
@@ -422,7 +427,7 @@ def home_assistant_service(
         log_file_path = config_dir / "home-assistant.log"
         logger.info(f"Starting Home Assistant with config dir: {config_dir}")
         process = subprocess.Popen(
-            ["hass", "-c", str(config_dir), "--log-file", str(log_file_path)],
+            [*HASS_COMMAND, "-c", str(config_dir), "--log-file", str(log_file_path)],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,

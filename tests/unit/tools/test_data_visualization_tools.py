@@ -891,7 +891,12 @@ March,200"""
         assert content is not None
         img = Image.open(io.BytesIO(content)).convert("RGB")
         red_pixels = sum(
-            1 for r, g, b in img.getdata() if r > 200 and g < 60 and b < 60
+            1
+            for pixel in img.get_flattened_data()
+            if isinstance(pixel, tuple)
+            and pixel[0] > 200
+            and pixel[1] < 60
+            and pixel[2] < 60
         )
         assert red_pixels > 0, "Layered chart rendered without its data"
 

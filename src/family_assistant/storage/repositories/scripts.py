@@ -453,7 +453,7 @@ def _parse_parameters_schema(
         return value
     try:
         return json.loads(value)
-    except (json.JSONDecodeError, TypeError):
+    except json.JSONDecodeError, TypeError:
         return None
 
 

@@ -1,0 +1,11 @@
+{
+  "name": "family-assistant-brave-search-mcp",
+  "private": true,
+  "description": "Pinned install of the Brave Search MCP server for the production image.",
+  "dependencies": {
+    "@brave/brave-search-mcp-server": "2.1.4"
+  },
+  "overrides": {
+    "@modelcontextprotocol/sdk": "1.32.2"
+  }
+}

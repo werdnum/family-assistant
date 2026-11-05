@@ -664,7 +664,7 @@ class UnknownMessageTargetError(ValueError):
     """Raised when a ``send_message_to_user`` target is not a known conversation."""
 
 
-async def _resolve_send_message_target(
+async def resolve_send_message_target(
     exec_context: ToolExecutionContext,
     target_chat_id: str,
 ) -> str:
@@ -841,7 +841,7 @@ async def send_message_to_user_tool(
     # Detect the interface type for the target conversation, rejecting any
     # conversation that no authorized user has ever talked to the bot in.
     try:
-        target_interface_type = await _resolve_send_message_target(
+        target_interface_type = await resolve_send_message_target(
             exec_context, target_chat_id
         )
     except UnknownMessageTargetError as exc:
