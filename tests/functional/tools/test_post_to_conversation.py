@@ -138,11 +138,17 @@ class NoteWorld:
     tool_results: list[str] = field(default_factory=list)
     target: str = "home"
 
-    async def say_in_thread(self, text: str) -> None:
+    async def say_in_thread(
+        self,
+        text: str,
+        *,
+        interface_type: str = "web",
+        conversation_id: str = THREAD,
+    ) -> None:
         result = await self.thread_service.handle_chat_interaction(
             db_context=self.db,
-            interface_type="web",
-            conversation_id=THREAD,
+            interface_type=interface_type,
+            conversation_id=conversation_id,
             trigger_content_parts=[{"type": "text", "text": text}],
             trigger_interface_message_id=None,
             user_name="Alice",
@@ -357,3 +363,17 @@ async def test_the_targets_later_turns_stay_tainted_while_the_note_is_in_view(
         processing_profile_id=HOME_PROFILE,
     )
     assert prompt_window_taint(window).max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+
+
+@pytest.mark.asyncio
+async def test_home_is_the_web_home_when_posting_from_telegram(
+    world: NoteWorld,
+) -> None:
+    await world.say_in_thread(
+        "tell Home the quotes are in",
+        interface_type="telegram",
+        conversation_id="12345",
+    )
+    await world.wait_for_the_woken_turn()
+
+    assert any(NOTE in str(message) for message in world.home_calls[0])

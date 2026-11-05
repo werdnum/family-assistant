@@ -148,7 +148,7 @@ async def _resolve_target_id(
         exec_context.db_context,
         app_config,
         user_id=user_id,
-        interface_type=exec_context.interface_type,
+        interface_type=NOTE_INTERFACE_TYPE,
     )
     if home is None:
         return _error("This user has no Home to post into.")
