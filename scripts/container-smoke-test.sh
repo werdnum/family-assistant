@@ -15,7 +15,7 @@ SLEEP_INTERVAL=2
 # MCP servers whose entry points the image installs itself, so they must start without reaching the
 # network. Servers fetched at runtime (the Deno ones) are deliberately left out. A failed MCP server
 # does not make the app unhealthy — it just silently loses its tools — so this is checked directly.
-MCP_SERVERS=${MCP_SERVERS:-"time"}
+MCP_SERVERS=${MCP_SERVERS:-"time brave"}
 
 echo "Starting smoke test for image: $IMAGE_NAME"
 echo "Health check endpoint: http://localhost:$PORT$HEALTH_PATH"
