@@ -221,12 +221,15 @@ than an outcome. If the thread can't be marked done, the bar says so and the thr
   do. The thread opens (in the panel on a wide screen) and the assistant starts on your message
   straight away.
 - **Continue in a thread**, among the buttons that appear when you point at one of Home's replies.
-  Choose an assistant. With **Bring the conversation along** ticked, that exchange and up to four
-  before it are copied into the thread, so it carries on where Home left off, and adding a message
-  is optional. Some assistants, such as the browsing one, don't receive your household's
-  information, so Home's conversation can't go with them. The dialog says so, and the thread starts
-  from your message alone. Either way the thread's bar says **Started from Home** and quotes the
-  reply you continued from, and Home keeps the exchange too.
+  Choose an assistant. With **Bring the conversation along** ticked, the dialog lists what will be
+  copied into the thread: that exchange and up to four Home messages before it, each with a tick.
+  The ones that look related to the message you're continuing are ticked for you, so an unrelated
+  reminder or briefing just before it is left behind; tick or untick any of them before you start.
+  The thread carries on where Home left off, and adding a message is optional. Some assistants, such
+  as the browsing one, don't receive your household's information, so Home's conversation can't go
+  with them. The dialog says so, and the thread starts from your message alone. Either way the
+  thread's bar says **Started from Home** and quotes the reply you continued from, and Home keeps
+  the exchange too.
 
 **Sharing from Home.** Home holds everything, so share a piece of it rather than the whole thing:
 

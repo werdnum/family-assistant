@@ -2466,6 +2466,21 @@ class MessageHistoryRepository(BaseRepository):
         )
         return [row["turn_id"] for row in reversed(rows)]
 
+    async def top_level_turn_rows(
+        self,
+        *,
+        interface_type: str,
+        conversation_id: str,
+        turn_ids: Sequence[str],
+    ) -> list[MessageHistoryRow]:
+        """The rows :meth:`copy_turns` would copy for ``turn_ids``, oldest first."""
+        if not turn_ids:
+            return []
+        rows = await self._top_level_turn_rows(
+            self._db, interface_type, conversation_id, turn_ids
+        )
+        return [self._process_message_row_as_dict(row) for row in rows]
+
     @staticmethod
     async def _top_level_turn_rows(
         db: DatabaseExecutor,
