@@ -22,7 +22,7 @@ export interface ImageLightboxProps {
 }
 
 const overlayButtonClass =
-  'flex size-10 items-center justify-center rounded-full bg-black/60 text-white transition-colors hover:bg-black/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-white';
+  'flex size-10 items-center justify-center rounded-full bg-black/60 text-white transition-colors hover:bg-black/80 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-white';
 
 /**
  * Full-screen viewer for chat image attachments.
@@ -93,7 +93,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
       <DialogPortal>
         <DialogOverlay className="bg-black/90" />
         <DialogPrimitiveContent
-          className="fixed inset-0 z-50 flex flex-col focus:outline-none"
+          className="fixed inset-0 z-50 flex flex-col focus:outline-hidden"
           onKeyDown={handleKeyDown}
           onClick={handleBackdropClick}
           aria-describedby={undefined}
@@ -161,7 +161,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
                   src={image.url}
                   alt={image.name}
                   className={cn(
-                    'rounded',
+                    'rounded-sm',
                     zoomed ? 'max-w-none' : 'max-h-full max-w-full object-contain'
                   )}
                   data-testid="image-lightbox-image"

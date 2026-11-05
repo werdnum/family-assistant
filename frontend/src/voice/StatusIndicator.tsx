@@ -154,7 +154,7 @@ export function StatusIndicator({
 
       {(isCapturingAudio || connectionState === 'connected') && (
         <div
-          className="flex h-10 items-end gap-1 rounded-md border border-gray-200 bg-white/80 px-2 py-1.5 shadow-sm dark:border-gray-700 dark:bg-gray-900/80"
+          className="flex h-10 items-end gap-1 rounded-md border border-gray-200 bg-white/80 px-2 py-1.5 shadow-xs dark:border-gray-700 dark:bg-gray-900/80"
           aria-label="Microphone level"
           data-testid="voice-mic-level"
         >
@@ -164,7 +164,7 @@ export function StatusIndicator({
             return (
               <div
                 key={threshold}
-                className={`w-2 rounded-sm transition-colors duration-100 ${
+                className={`w-2 rounded-xs transition-colors duration-100 ${
                   isLit ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-700'
                 }`}
                 style={{ height: `${height}px` }}

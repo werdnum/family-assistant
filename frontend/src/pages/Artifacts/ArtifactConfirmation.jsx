@@ -48,7 +48,7 @@ export const ArtifactContent = ({ content }) => (
       <div key={field}>
         <dt className="mb-1 text-sm font-medium">{field.replaceAll('_', ' ')}</dt>
         <dd>
-          <pre className="whitespace-pre-wrap break-words rounded border bg-muted/50 p-3 font-mono text-sm">
+          <pre className="whitespace-pre-wrap break-words rounded-sm border bg-muted/50 p-3 font-mono text-sm">
             {typeof value === 'string' ? value : JSON.stringify(value, null, 2)}
           </pre>
         </dd>
