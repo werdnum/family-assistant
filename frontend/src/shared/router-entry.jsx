@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import AppRouter from './AppRouter';
 import { isEmbeddedPage } from './embeddedNavigation';
 import SessionBridgeGate from './SessionBridgeGate';
+import { scheduleServiceWorkerUpdates } from './serviceWorkerUpdates';
 import { ThemeProvider } from './ThemeProvider';
 import { initializeErrorHandlers } from '../errors/errorHandlers';
 
@@ -48,13 +49,7 @@ if (typeof window !== 'undefined' && !isEmbeddedPage() && 'serviceWorker' in win
   window.navigator.serviceWorker
     .register('/sw.js', { scope: '/' })
     .then((registration) => {
-      // Check for updates periodically (every hour)
-      window.setInterval(
-        () => {
-          registration.update();
-        },
-        60 * 60 * 1000
-      );
+      scheduleServiceWorkerUpdates(registration);
     })
     .catch((error) => {
       console.error('Service Worker registration failed:', error);
