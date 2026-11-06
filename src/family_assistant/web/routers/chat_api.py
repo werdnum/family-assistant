@@ -2938,7 +2938,7 @@ async def run_non_streaming_turn(
                 if context.taint_tracker is not None
                 else None
             )
-            durable_request = await create_durable_confirmation(
+            durable = await create_durable_confirmation(
                 confirmation_service=api_confirmation_service,
                 db_context=context.db_context,
                 target_user_id=acting_user_id,
@@ -2954,9 +2954,11 @@ async def run_non_streaming_turn(
                 processing_profile_id=context.processing_profile_id,
                 origin_interface_type=context.interface_type,
                 origin_conversation_id=context.conversation_id,
+                origin_subconversation_id=context.subconversation_id,
                 taint_state_json=taint_state_json,
                 tool_call_review_authorization=(context.tool_call_review_authorization),
             )
+            durable_request = durable.request
             return ConfirmationOutcome(
                 kind="completed",
                 result=(

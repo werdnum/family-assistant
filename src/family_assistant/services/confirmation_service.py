@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -111,6 +112,7 @@ class ConfirmationService:
         processing_profile_id: str | None = None,
         origin_interface_type: str | None = None,
         origin_conversation_id: str | None = None,
+        origin_subconversation_id: str | None = None,
         taint_state_json: TaintMetadata | None = None,
         sink_class: str | None = None,
         static_policy_reason: str | None = None,
@@ -149,6 +151,7 @@ class ConfirmationService:
             processing_profile_id=processing_profile_id,
             origin_interface_type=origin_interface_type,
             origin_conversation_id=origin_conversation_id,
+            origin_subconversation_id=origin_subconversation_id,
             taint_state_json=taint_state_json,
             sink_class=sink_class,
             static_policy_reason=static_policy_reason,
@@ -447,6 +450,14 @@ class ConfirmationService:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class DurableConfirmation:
+    """A durable confirmation request and whether it already existed."""
+
+    request: ConfirmationRequestRow
+    reused: bool
+
+
 async def create_durable_confirmation(
     *,
     confirmation_service: ConfirmationService,
@@ -462,30 +473,51 @@ async def create_durable_confirmation(
     processing_profile_id: str | None = None,
     origin_interface_type: str | None = None,
     origin_conversation_id: str | None = None,
+    origin_subconversation_id: str | None = None,
     taint_state_json: TaintMetadata | None = None,
     sink_class: str | None = None,
     static_policy_reason: str | None = None,
     taint_policy_reason: str | None = None,
     tool_call_review_authorization: ToolCallReviewAuthorization | None = None,
-) -> ConfirmationRequestRow:
+) -> DurableConfirmation:
     """Record a durable pending confirmation for a tool that needs approval.
 
     Shared by callers that persist a confirmation for later approval rather than
-    waiting on a live channel (email intake, the non-streaming chat API, and the
-    durable half of the streaming chat path). Resolves the originating user
-    message from ``turn_id`` so the approval threads back to the right
-    conversation. ``processing_profile_id`` and the origin interface/conversation
-    record the requesting context so the deferred execution runs under the same
-    profile and conversation, which matters for callers (automation scripts)
-    whose background turn has no source message row.
+    waiting on a live channel (email intake, automation scripts, scheduled
+    callbacks, delegation wakeups and the non-streaming chat API). Resolves the
+    originating user message from ``turn_id`` so the approval threads back to
+    the right conversation. ``processing_profile_id`` and the origin
+    interface/conversation/subconversation record the requesting context so the
+    deferred execution runs under the same profile and in the same thread, which
+    matters for callers whose background turn has no source message row.
+
+    The commit is deliberately independent of the requesting turn, so a turn
+    that fails after this point and is retried asks again. An unexpired pending
+    request for the same tool, arguments, profile and origin is therefore
+    returned instead of a second one (``reused``), so approving cannot run the
+    same side effect twice. The call id is not part of that key: it changes on
+    every model run.
     """
+    existing = await db_context.confirmation_requests.find_pending_duplicate(
+        target_user_id=target_user_id,
+        tool_name=tool_name,
+        tool_args=tool_args,
+        processing_profile_id=processing_profile_id,
+        origin_interface_type=origin_interface_type,
+        origin_conversation_id=origin_conversation_id,
+        origin_subconversation_id=origin_subconversation_id,
+        now=now,
+    )
+    if existing is not None:
+        return DurableConfirmation(request=existing, reused=True)
+
     source_message_internal_id: int | None = None
     if turn_id is not None:
         source_row = await db_context.message_history.get_user_row_by_turn_id(turn_id)
         if source_row is not None:
             source_message_internal_id = source_row["internal_id"]
 
-    return await confirmation_service.create_request(
+    request = await confirmation_service.create_request(
         target_user_id=target_user_id,
         tool_name=tool_name,
         tool_args=tool_args,
@@ -496,9 +528,11 @@ async def create_durable_confirmation(
         processing_profile_id=processing_profile_id,
         origin_interface_type=origin_interface_type,
         origin_conversation_id=origin_conversation_id,
+        origin_subconversation_id=origin_subconversation_id,
         taint_state_json=taint_state_json,
         sink_class=sink_class,
         static_policy_reason=static_policy_reason,
         taint_policy_reason=taint_policy_reason,
         tool_call_review_authorization=tool_call_review_authorization,
     )
+    return DurableConfirmation(request=request, reused=False)

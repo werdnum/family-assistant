@@ -8037,11 +8037,12 @@ async def _build_confirmation_execution_context(
     # read processing_profile_id directly (history filtering, automation
     # stamping) see the same profile their provider belongs to.
     processing_profile_id = processing_service.service_config.id
-    subconversation_id = (
-        str(source_row["subconversation_id"])
-        if source_row is not None and source_row.get("subconversation_id") is not None
-        else exec_context.subconversation_id
-    )
+    if source_row is None and request["origin_conversation_id"] is not None:
+        subconversation_id = request["origin_subconversation_id"]
+    elif source_row is not None and source_row.get("subconversation_id") is not None:
+        subconversation_id = str(source_row["subconversation_id"])
+    else:
+        subconversation_id = exec_context.subconversation_id
 
     chat_interface = exec_context.chat_interface
     if exec_context.chat_interfaces is not None:
