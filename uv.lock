@@ -1195,7 +1195,7 @@ requires-dist = [
     { name = "types-vobject", marker = "extra == 'dev'" },
     { name = "typing-extensions", specifier = ">=4.15.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.29.0" },
-    { name = "vcrpy", marker = "extra == 'dev'", specifier = ">=7.0.0" },
+    { name = "vcrpy", marker = "extra == 'dev'", specifier = ">=8.5.0" },
     { name = "vl-convert-python", specifier = ">=1.6.0" },
     { name = "vobject", specifier = ">=0.9.6" },
     { name = "watchdog", marker = "extra == 'dev'", specifier = ">=3.0.0" },
