@@ -2263,22 +2263,23 @@ class GoogleGenAIClient(BaseLLMClient):
         any file uploaded for the resume, or -- given an environment created
         for the resume -- run there instead of where the work is.
 
-        A first run gets an environment created for it, even with nothing to
-        upload, because only an environment created through the API accepts
-        uploads later: a resume that brings new files needs one.
-
         Files go through the environments API's upload rather than as inline
         ``environment.sources``, because the API rejects an inline source over
         1 MiB of base64 (and a request whose inline sources total over 2 MiB)
         with a bare ``400 Request contains an invalid argument`` -- which is
         every photo or screenshot a user attaches.
 
-        The egress policy's ``network`` and ``env`` go with every run rather
-        than on the created environment: the Environments API's create call
-        takes no ``env`` (it rejects one with ``Unknown parameter 'env'``),
-        while a run naming an ``environment_id`` updates that environment with
-        the block it carries, and the credentials its rules name are minted
-        per run anyway. Environments are not deleted: deleting one deletes the
+        The Environments API's create call rejects ``env`` with ``Unknown
+        parameter 'env'``, and the Interactions API rejects ``env`` alongside
+        ``environment_id`` with ``Updating environment variables for an
+        existing environment is not supported`` (#1635). A first run that
+        carries ``env`` therefore lets ``interactions.create`` create its
+        sandbox implicitly so ``env`` is bound at creation; any files for that
+        run are uploaded to the returned ``environment_id`` immediately after
+        create, and a resumed run omits ``env`` because the sandbox it
+        continues already holds it. A first run without ``env`` gets an
+        environment created ahead of time so its files are in place before the
+        run starts. Environments are not deleted: deleting one deletes the
         interactions run in it.
         """
         environments = self.client.aio.environments
@@ -2290,6 +2291,8 @@ class GoogleGenAIClient(BaseLLMClient):
                 )
             )
             environment_id = previous.environment_id
+        if environment_id is None and "env" in environment:
+            return dict(environment)
         if environment_id is None:
             created = await environments.create_environment(
                 network=environment.get("network")
@@ -2303,10 +2306,20 @@ class GoogleGenAIClient(BaseLLMClient):
             await self._upload_sandbox_file(environment_id, file)
         # ast-grep-ignore: no-dict-any - environment payload for the Interactions SDK
         block: dict[str, Any] = {"type": "remote", "environment_id": environment_id}
-        for key in ("network", "env"):
-            if key in environment:
-                block[key] = environment[key]
+        if "network" in environment:
+            block["network"] = environment["network"]
         return block
+
+    @staticmethod
+    def _uploading_files_note(files: Sequence[SandboxFile]) -> str:
+        """Tell the agent that its attached files are being uploaded right after start."""
+        paths = ", ".join(f"`{file.path}`" for file in files)
+        verb = "is" if len(files) == 1 else "are"
+        return (
+            f"Note: {paths} {verb} being uploaded into the sandbox right now "
+            "and will appear in a few seconds; if a file is not there on your "
+            "first check, wait briefly and check again."
+        )
 
     async def _upload_sandbox_file(
         self, environment_id: str, file: SandboxFile
@@ -2419,14 +2432,8 @@ class GoogleGenAIClient(BaseLLMClient):
         # reaches no terminal poll.
         started = time.monotonic()
         try:
-            if sandbox_files or self.runs_in_sandbox:
-                create_kwargs["environment"] = await self._provision_sandbox(
-                    create_kwargs.get("environment", {}),
-                    sandbox_files,
-                    create_kwargs.get("previous_interaction_id"),
-                )
-            interaction = _agent_interaction_response(
-                await self.client.aio.interactions.create(**create_kwargs, stream=False)
+            interaction = await self._submit_agent_interaction(
+                create_kwargs, sandbox_files
             )
         except Exception as e:
             error = self._classify_agent_delegation_error(e)
@@ -2438,6 +2445,42 @@ class GoogleGenAIClient(BaseLLMClient):
             )
             self._record_failed_submission(error, time.monotonic() - started)
             raise error
+        return interaction
+
+    async def _submit_agent_interaction(
+        self,
+        # ast-grep-ignore: no-dict-any - SDK create() kwargs
+        create_kwargs: dict[str, Any],
+        sandbox_files: Sequence[SandboxFile],
+    ) -> Interaction:
+        """Provision the sandbox, submit the interaction, and upload any post-create files."""
+        if sandbox_files or self.runs_in_sandbox:
+            environment = await self._provision_sandbox(
+                create_kwargs.get("environment", {}),
+                sandbox_files,
+                create_kwargs.get("previous_interaction_id"),
+            )
+            create_kwargs["environment"] = environment
+        else:
+            environment = {}
+        upload_after_create = (
+            bool(sandbox_files) and "environment_id" not in environment
+        )
+        if upload_after_create:
+            create_kwargs["input"] = (
+                f"{create_kwargs['input']}\n\n"
+                f"{self._uploading_files_note(sandbox_files)}"
+            )
+        interaction = _agent_interaction_response(
+            await self.client.aio.interactions.create(**create_kwargs, stream=False)
+        )
+        if upload_after_create:
+            if not interaction.environment_id:
+                raise DelegationTransientError(
+                    "Interactions API create response carried no environment id"
+                )
+            for file in sandbox_files:
+                await self._upload_sandbox_file(interaction.environment_id, file)
         return interaction
 
     def _record_failed_submission(

@@ -153,7 +153,9 @@ def _completing_stream(
 
 def _accept_submissions(sdk: _SdkCalls) -> AsyncMock:
     """Make the SDK's create() accept a submit-path request, and return it."""
-    sdk.create.return_value = Interaction(id="inter_ag_submitted", status="in_progress")
+    sdk.create.return_value = Interaction(
+        id="inter_ag_submitted", status="in_progress", environment_id="env_1"
+    )
     return sdk.create
 
 
@@ -485,10 +487,11 @@ async def test_submit_path_uploads_files_into_an_environment(
 async def test_uploaded_environment_carries_the_egress_policy(
     sdk: _SdkCalls,
 ) -> None:
-    """The created environment gets the network policy; the run carries both
-    network and env, since the create call takes no ``env``."""
+    """When ``env`` is present, the run creates the sandbox implicitly with
+    network and env, uploads the files into the returned ``environment_id``,
+    and tells the agent in the prompt that they are being uploaded."""
     client = _egress_client(_STORED_GITHUB)
-    _accept_submissions(sdk)
+    create = _accept_submissions(sdk)
 
     await client.start_agent_interaction(
         [UserMessage(content="Fix the bug in this file.")],
@@ -499,9 +502,22 @@ async def test_uploaded_environment_carries_the_egress_policy(
         ],
     )
 
-    sdk.create_environment.assert_awaited_once_with(
-        client.client.aio.environments,
-        network=_STORED_GITHUB.network,
+    sdk.create_environment.assert_not_awaited()
+    assert create.call_args.kwargs["environment"] == {
+        "type": "remote",
+        "network": _STORED_GITHUB.network,
+        "env": _STORED_GITHUB.env,
+    }
+    assert (
+        "`/workspace/a.py` is being uploaded into the sandbox right now"
+        in create.call_args.kwargs["input"]
+    )
+    sdk.upload.assert_awaited_once_with(
+        client.client.aio.environments.files,
+        environment="env_1",
+        path="/workspace/a.py",
+        file=b"x = 1\n",
+        mime_type="text/x-python",
     )
 
 
@@ -613,23 +629,27 @@ _STORED_GITHUB = EgressResolution(
 async def test_a_stored_git_credential_is_bound_to_the_sandbox_variable(
     sdk: _SdkCalls,
 ) -> None:
-    """The binding rides the run's environment block.
+    """The binding rides the run's environment block without pre-creating an
+    environment.
 
     The environments API's create call rejects ``env`` as an unknown
-    parameter, so the variable goes with the run, which updates the
-    environment it names.
+    parameter, and ``interactions.create`` rejects ``env`` alongside
+    ``environment_id``, so a first run with ``env`` lets the interaction
+    create the environment implicitly.
     """
     client = _egress_client(_STORED_GITHUB)
     create = _accept_submissions(sdk)
 
     await client.start_agent_interaction([UserMessage(content="Fix the bug.")])
 
-    assert "extra_body" not in sdk.create_environment.await_args.kwargs
-    assert create.call_args.kwargs["environment"]["env"] == {
-        GITHUB_GIT_AUTH_ENV: {"credential": "fa-egress-github-app-1-git"}
+    sdk.create_environment.assert_not_awaited()
+    assert create.call_args.kwargs["environment"] == {
+        "type": "remote",
+        "network": _STORED_GITHUB.network,
+        "env": {GITHUB_GIT_AUTH_ENV: {"credential": "fa-egress-github-app-1-git"}},
     }
     body = _CREATE_INTERACTION_ADAPTER.validate_python(create.call_args.kwargs)
-    assert body.environment.environment_id == "env_1"
+    assert body.environment.environment_id is None
 
 
 @pytest.mark.asyncio
@@ -844,6 +864,37 @@ async def test_a_resumed_run_continues_in_its_predecessors_sandbox(
         "environment_id": "env_prev",
         "network": "disabled",
     }
+
+
+@pytest.mark.asyncio
+async def test_a_resumed_run_omits_env_because_the_existing_sandbox_already_holds_it(
+    sdk: _SdkCalls,
+) -> None:
+    """The API rejects ``env`` alongside ``environment_id`` with ``Updating
+    environment variables for an existing environment is not supported``, and
+    the predecessor's sandbox already holds the ``env`` bound at creation."""
+    client = _egress_client(_STORED_GITHUB)
+    create = _accept_submissions(sdk)
+    _previous_run_in(sdk, "env_prev")
+
+    await client.start_agent_interaction(
+        [UserMessage(content="Now push the fix.")],
+        previous_interaction_id="inter_prev",
+        sandbox_files=[
+            SandboxFile(
+                path="/workspace/patch.diff", content=b"diff", mime_type="text/plain"
+            )
+        ],
+    )
+
+    sdk.create_environment.assert_not_awaited()
+    assert sdk.upload.await_args.kwargs["environment"] == "env_prev"
+    assert create.call_args.kwargs["environment"] == {
+        "type": "remote",
+        "environment_id": "env_prev",
+        "network": _STORED_GITHUB.network,
+    }
+    assert "being uploaded" not in create.call_args.kwargs["input"]
 
 
 @pytest.mark.asyncio

@@ -141,10 +141,15 @@ agent, and it makes binary attachments work instead of being refused.
 
 They are uploaded through the environments API rather than sent as inline `environment.sources`: the
 API rejects an inline source over 1 MiB of base64, or inline sources totalling over 2 MiB, with a
-bare `400 Request contains an invalid argument`, which is any ordinary photo or screenshot. A run
-with files therefore creates its environment first, uploads into it, and starts the interaction on
-that `environment_id`. The egress policy (`network` and `env`) travels on the run's environment
-block, which updates the named environment; the environments API's create call takes no `env`.
+bare `400 Request contains an invalid argument`, which is any ordinary photo or screenshot. Because
+the environments API's create call rejects `env` (`Unknown parameter 'env'`) and the interactions
+API rejects `env` alongside `environment_id`
+(`Updating environment variables for an existing environment is not supported`, #1635), a first run
+without `env` creates its environment first, uploads into it, and starts the interaction on that
+`environment_id`, while a first run carrying `env` starts the interaction without `environment_id`
+so `env` is bound at creation and then uploads its files into the returned `environment_id` (noting
+in the prompt that they are being uploaded). A resumed run continues in its predecessor's
+`environment_id`, omitting `env` because the sandbox already holds it.
 
 Each attachment contributes a `TaintSource` derived from its stored provenance (the same
 `taint_metadata` / `source_trust_tier` fields `merge_artifact_taint_into_context` reads), merged
