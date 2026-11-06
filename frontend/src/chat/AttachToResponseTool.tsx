@@ -191,9 +191,9 @@ export const AttachToResponseTool: React.FC<AttachToResponseToolProps> = ({
   const attachments = extractAttachments();
 
   // Determine the status icon and styling
-  let statusIcon = null;
-  let statusClass = '';
-  let statusText = '';
+  let statusIcon: React.ReactNode;
+  let statusClass: string;
+  let statusText: string;
 
   if (status?.type === 'running' || isLoading) {
     statusIcon = <ClockIcon size={16} className="animate-spin" />;

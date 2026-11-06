@@ -1047,7 +1047,7 @@ export const useStreamingResponse = ({
       }
       const url = `/api/v1/chat/turns/${encodeURIComponent(active.turnId)}/cancel`;
       const body = JSON.stringify({ conversation_id: active.conversationId });
-      let retryable = false;
+      let retryable;
       try {
         const response = await fetch(url, {
           method: 'POST',
