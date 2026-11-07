@@ -37,7 +37,11 @@ from family_assistant.services.oauth_credentials import (
     OAuthScopeNotGrantedError,
 )
 from family_assistant.tools.taint_helpers import tool_attachment_taint_state
-from family_assistant.tools.types import ToolAttachment, ToolResult
+from family_assistant.tools.types import (
+    ToolAttachment,
+    ToolResult,
+    get_attachment_limits,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping
@@ -68,12 +72,8 @@ _MESSAGE_BODY_CHAR_LIMIT = 50_000
 _HTML_CONVERSION_CHAR_LIMIT = 400_000
 # Drive files below this size are pulled inline as text; larger go to attachments.
 _DRIVE_INLINE_TEXT_LIMIT = 200 * 1024
-# Hard ceiling on a Drive download. When the metadata already reports a larger
-# ``size`` we refuse without issuing the ``alt=media`` request, so a multi-gigabyte
-# file can never be materialized in memory. This mirrors the backend's own
-# response-body cap (``HttpApiBackend.max_response_bytes``), which is the
-# defense for Google-native exports that report no size.
-_DRIVE_DOWNLOAD_LIMIT = 25 * 1024 * 1024
+# Room for the JSON envelope around a base64url-encoded Gmail attachment body.
+_GMAIL_ATTACHMENT_JSON_OVERHEAD = 64 * 1024
 # Gmail draft writes are limited to the API's non-resumable upload budget;
 # attachments expand inside MIME and the API's base64url JSON.
 _GMAIL_DRAFT_ATTACHMENT_BYTES_LIMIT = 18 * 1024 * 1024
@@ -429,12 +429,15 @@ async def _google_request(
     content: bytes | None = None,
     content_type: str | None = None,
     headers: Mapping[str, str] | None = None,
+    max_response_bytes: int | None = None,
 ) -> ApiResponse:
     """Issue an authenticated Google REST request for the tool's acting user.
 
     See :meth:`GoogleUserApi.request` for the retry and error semantics. A turn
     with no acting user resolves through the credential resolver so it fails
-    closed with its actionable message.
+    closed with its actionable message. ``max_response_bytes`` overrides the
+    backend's default body cap; downloads bound for the attachment registry
+    pass the registry's file-size limit.
     """
     resolvers = exec_context.credential_resolvers or {}
     resolver = resolvers.get(GOOGLE_PROVIDER.name)
@@ -453,6 +456,7 @@ async def _google_request(
         content=content,
         content_type=content_type,
         headers=headers,
+        max_response_bytes=max_response_bytes,
     )
 
 
@@ -706,6 +710,7 @@ async def gmail_get_attachment_tool(
     async def _impl() -> ToolResult:
         if exec_context.attachment_registry is None:
             return ToolResult(text="Error: Attachment registry not available.")
+        max_file_size, _ = get_attachment_limits(exec_context)
         payload = (
             await _google_request(
                 exec_context,
@@ -714,6 +719,9 @@ async def gmail_get_attachment_tool(
                     f"{_GMAIL_API_BASE}/users/me/messages/{message_id}/attachments/"
                     f"{attachment_id}"
                 ),
+                # The body is the attachment base64url-encoded inside JSON.
+                max_response_bytes=-(-max_file_size // 3) * 4
+                + _GMAIL_ATTACHMENT_JSON_OVERHEAD,
             )
         ).json()
         content = _decode_attachment_payload(payload)
@@ -1225,16 +1233,20 @@ async def drive_get_file_tool(
         if mime_type in _GOOGLE_DOC_EXPORTS:
             return await _drive_export_native(exec_context, file_id, name, mime_type)
         size = _coerce_int(meta.get("size"))
-        # Pre-check on the ``alt=media`` path: the metadata already reports the
-        # byte size for non-native files, so a file over the download limit is
-        # refused before any body is fetched (Google-native exports report no
-        # size and rely on the backend's response-body cap instead).
-        if size is not None and size > _DRIVE_DOWNLOAD_LIMIT:
+        # Non-native files are stored in the attachment registry (or inlined
+        # when small text), so the registry's file-size limit is the download
+        # limit. The metadata already reports the size, so an oversized file is
+        # refused before any body is fetched; the same limit caps the streamed
+        # body in case the metadata was missing or wrong.
+        max_file_size, _ = get_attachment_limits(exec_context)
+        if size is not None and size > max_file_size:
             raise GoogleApiError(
                 f"Drive file {name} is {size} bytes, which exceeds the "
-                f"{_DRIVE_DOWNLOAD_LIMIT}-byte download limit."
+                f"{max_file_size}-byte attachment size limit."
             )
-        return await _drive_fetch_content(exec_context, file_id, name, mime_type, size)
+        return await _drive_fetch_content(
+            exec_context, file_id, name, mime_type, size, max_file_size
+        )
 
     return await _guard(_impl)
 
@@ -1245,6 +1257,7 @@ async def _drive_fetch_content(
     name: str,
     mime_type: str,
     size: int | None,
+    max_file_size: int,
 ) -> ToolResult:
     """Download a non-native Drive file inline (if small text) or into the registry."""
     content = (
@@ -1253,6 +1266,7 @@ async def _drive_fetch_content(
             GoogleScope.DRIVE_READONLY,
             url=f"{_DRIVE_API_BASE}/files/{file_id}",
             params={"alt": "media"},
+            max_response_bytes=max_file_size,
         )
     ).content
 

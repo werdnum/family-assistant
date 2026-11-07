@@ -25,7 +25,8 @@ _DEFAULT_TIMEOUT_SECONDS = 30.0
 # Hard ceiling on a response body read from a REST endpoint (bytes). The
 # body is streamed and aborted once this budget is exceeded, so a multi-gigabyte
 # Drive download (``alt=media``) or a hostile export can never be materialized in
-# memory. 25 MiB matches the Drive download pre-check in ``tools/google_data.py``.
+# memory. A caller that streams a download into the attachment registry passes
+# the registry's own file-size limit per request instead.
 _DEFAULT_MAX_RESPONSE_BYTES = 25 * 1024 * 1024
 
 # Request bodies are sent in chunks of this size. The transport applies its
@@ -78,8 +79,13 @@ class ApiBackend(Protocol):
         content: bytes | None = None,
         content_type: str | None = None,
         headers: Mapping[str, str] | None = None,
+        max_response_bytes: int | None = None,
     ) -> ApiResponse:
-        """Issue an authenticated request to a full REST URL."""
+        """Issue an authenticated request to a full REST URL.
+
+        ``max_response_bytes`` overrides the backend's default body cap for this
+        request.
+        """
         ...
 
 
@@ -108,13 +114,15 @@ class HttpApiBackend:
         content: bytes | None = None,
         content_type: str | None = None,
         headers: Mapping[str, str] | None = None,
+        max_response_bytes: int | None = None,
     ) -> ApiResponse:
         """Issue an authenticated request, returning status and raw bytes.
 
         The access token is sent as a Bearer ``Authorization`` header and is
         never logged. The response body is streamed and read against a hard
-        ``max_response_bytes`` budget so an unbounded download can never be
-        materialized in memory; exceeding it raises :class:`ApiBackendError`.
+        ``max_response_bytes`` budget (the per-request value when given, else the
+        backend default) so an unbounded download can never be materialized in
+        memory; exceeding it raises :class:`ApiBackendError`.
         Transport-level failures also raise :class:`ApiBackendError`; HTTP error
         statuses are returned for the caller to interpret.
         """
@@ -127,6 +135,11 @@ class HttpApiBackend:
                 content=content,
                 content_type=content_type,
                 headers=headers,
+                max_response_bytes=(
+                    max_response_bytes
+                    if max_response_bytes is not None
+                    else self._max_response_bytes
+                ),
             )
         except httpx.HTTPError as exc:
             raise ApiBackendError(f"API request to {url} failed") from exc
@@ -141,6 +154,7 @@ class HttpApiBackend:
         content: bytes | None,
         content_type: str | None,
         headers: Mapping[str, str] | None,
+        max_response_bytes: int,
     ) -> ApiResponse:
         """Stream the response body under the ``max_response_bytes`` budget."""
         request_headers = dict(headers or {})
@@ -161,10 +175,10 @@ class HttpApiBackend:
             total = 0
             async for chunk in response.aiter_bytes():
                 total += len(chunk)
-                if total > self._max_response_bytes:
+                if total > max_response_bytes:
                     raise ApiBackendError(
                         f"API response from {url} exceeded the "
-                        f"{self._max_response_bytes}-byte response limit."
+                        f"{max_response_bytes}-byte response limit."
                     )
                 chunks.append(chunk)
             return ApiResponse(
