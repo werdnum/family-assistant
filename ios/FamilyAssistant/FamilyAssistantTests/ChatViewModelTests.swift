@@ -13375,6 +13375,126 @@ final class ChatViewModelTests: XCTestCase {
         )
     }
 
+    func testPersistedRepliesCarryWhatServedThem() async throws {
+        ChatMockBackendURLProtocol.respond { request in
+            switch request.url?.path ?? "" {
+            case "/api/v1/chat/conversations/web_conv_served_by/messages":
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_served_by",
+                      "messages":[
+                        {"internal_id":1,"role":"assistant","content":"Experiment reply",
+                         "timestamp":"2026-09-06T12:00:01Z","turn_id":"turn-exp",
+                         "reasoning_info":{"model":"alias-model","resolved_model":"model-2026-10",
+                                           "provider":"anthropic","model_tier":"deep",
+                                           "model_tier_source":"experiment",
+                                           "model_tier_requested":"standard",
+                                           "experiment_id":"deep-vs-frontier",
+                                           "experiment_arm":"deep"}},
+                        {"internal_id":2,"role":"assistant","content":"Plain reply",
+                         "timestamp":"2026-09-06T12:00:02Z",
+                         "reasoning_info":{"model":"gpt-test","prompt_tokens":10}}
+                      ],
+                      "count":2,
+                      "total_messages":2,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+        let model = makeViewModel(conversationID: "web_conv_served_by")
+
+        await model.loadMessages()
+
+        let experiment = try XCTUnwrap(model.messages.first)
+        XCTAssertEqual(experiment.servedModel, "model-2026-10", "The provider-reported model wins over the alias.")
+        XCTAssertEqual(experiment.servedProvider, "anthropic")
+        XCTAssertEqual(experiment.experimentID, "deep-vs-frontier")
+        XCTAssertEqual(experiment.experimentArm, "deep")
+        XCTAssertEqual(model.messages.last?.servedModel, "gpt-test")
+        XCTAssertNil(model.messages.last?.experimentID)
+    }
+
+    func testExperimentReplyRevealsWhatServedItOnlyOnceRated() {
+        var reply = ChatMessage(
+            id: "msg_1",
+            role: .assistant,
+            text: "Answer",
+            createdAt: Date(),
+            toolCalls: [],
+            attachments: [],
+            isLoading: false,
+            status: .complete,
+            processingProfileID: "default_assistant",
+            errorTraceback: nil,
+            turnID: "turn-exp",
+            modelTier: "deep",
+            modelTierSource: "experiment",
+            servedModel: "model-a",
+            experimentID: "exp-1",
+            experimentArm: "deep"
+        )
+
+        XCTAssertFalse(reply.canRevealServedBy, "An unrated experiment reply stays blind.")
+        reply.feedback = .down
+        XCTAssertTrue(reply.canRevealServedBy)
+        reply.feedback = nil
+        XCTAssertFalse(reply.canRevealServedBy, "Withdrawing the rating hides it again.")
+
+        reply.modelTierSource = "user"
+        reply.experimentID = nil
+        reply.experimentArm = nil
+        XCTAssertTrue(reply.canRevealServedBy, "Outside an experiment there is no rating to protect.")
+
+        reply.modelTier = nil
+        reply.modelTierSource = nil
+        reply.servedModel = nil
+        XCTAssertFalse(reply.canRevealServedBy, "Nothing recorded, nothing to reveal.")
+    }
+
+    func testServedByRowsSpellOutTheTurn() {
+        let reply = ChatMessage(
+            id: "msg_1",
+            role: .assistant,
+            text: "Answer",
+            createdAt: Date(),
+            toolCalls: [],
+            attachments: [],
+            isLoading: false,
+            status: .complete,
+            processingProfileID: "default_assistant",
+            errorTraceback: nil,
+            turnID: "turn-exp",
+            modelTier: "deep",
+            modelTierSource: "experiment",
+            modelTierRequested: "standard",
+            servedModel: "model-a",
+            servedProvider: "anthropic",
+            experimentID: "exp-1",
+            experimentArm: "deep",
+            feedback: .up
+        )
+
+        let rows = reply.servedByRows(
+            profileLabel: "Default assistant",
+            tierLabels: ["deep": "Deep", "standard": "Standard"]
+        )
+
+        XCTAssertEqual(rows, [
+            ServedByRow(label: "Profile", value: "Default assistant"),
+            ServedByRow(label: "Intelligence", value: "Deep (assigned by an experiment)"),
+            ServedByRow(label: "Requested", value: "Standard"),
+            ServedByRow(label: "Model", value: "model-a via anthropic"),
+            ServedByRow(label: "Experiment", value: "exp-1"),
+            ServedByRow(label: "Arm", value: "Deep"),
+        ])
+    }
+
     func testGroupedTurnKeepsTheFinalReplyTier() {
         let toolStep = ChatMessage(
             id: "msg_1",

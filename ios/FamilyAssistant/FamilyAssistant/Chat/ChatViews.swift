@@ -583,6 +583,38 @@ protocol ChatAttachmentLoading: AnyObject {
 
 extension ChatViewModel: ChatAttachmentLoading {}
 
+/// What served a reply, spelled out under its thumbs.
+private struct ServedByDetailsView: View {
+    let rows: [ServedByRow]
+
+    var body: some View {
+        Group {
+            if rows.isEmpty {
+                Text("No model details were recorded.")
+                    .foregroundStyle(.secondary)
+            } else {
+                Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 2) {
+                    ForEach(rows, id: \.label) { row in
+                        GridRow {
+                            Text(row.label)
+                                .foregroundStyle(.secondary)
+                            Text(row.value)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .accessibilityElement(children: .combine)
+                    }
+                }
+            }
+        }
+        .font(.caption)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.tertiarySystemBackground), in: RoundedRectangle(cornerRadius: 6))
+        .accessibilityIdentifier("served-by-details")
+    }
+}
+
 struct MessageBubble: View {
     @Environment(\.homeThreads) private var homeThreads
     let message: ChatMessage
@@ -595,6 +627,7 @@ struct MessageBubble: View {
     @State private var isAskingWhatWasWrong = false
     @State private var feedbackComment = ""
     @State private var feedbackSaveFailed = false
+    @State private var showsServedBy = false
 
     init(
         message: ChatMessage,
@@ -796,7 +829,23 @@ struct MessageBubble: View {
                 .accessibilityIdentifier("chat-retry-\(message.id)")
             }
             if let retryViewModel, retryViewModel.canRate(message) {
-                feedbackButtons
+                // Re-derived on every render, so withdrawing an experiment
+                // turn's rating hides details that were open.
+                let canReveal = message.canRevealServedBy
+                HStack(spacing: 4) {
+                    feedbackButtons
+                    if canReveal {
+                        servedByButton
+                    }
+                }
+                if canReveal && showsServedBy {
+                    ServedByDetailsView(rows: message.servedByRows(
+                        profileLabel: message.processingProfileID.map { id in
+                            retryViewModel.profiles.first { $0.id == id }?.description ?? id
+                        },
+                        tierLabels: modelTierLabels
+                    ))
+                }
             }
         }
         // One textSelection for the whole bubble. It applies to every Text in the
@@ -862,6 +911,23 @@ struct MessageBubble: View {
         }
         .font(.caption)
         .foregroundStyle(.secondary)
+    }
+
+    /// "Which model answered": opens the summary of what served the reply.
+    private var servedByButton: some View {
+        Button {
+            showsServedBy.toggle()
+        } label: {
+            Image(systemName: showsServedBy ? "eye.slash" : "eye")
+                .foregroundStyle(showsServedBy ? Color.accentColor : Color.secondary)
+                .frame(minWidth: 32, minHeight: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .font(.caption)
+        .accessibilityLabel("Which model answered")
+        .accessibilityValue(showsServedBy ? "Shown" : "Hidden")
+        .accessibilityIdentifier("reveal-served-by")
     }
 
     private func feedbackButton(_ rating: ChatTurnRating, label: String, systemImage: String) -> some View {
