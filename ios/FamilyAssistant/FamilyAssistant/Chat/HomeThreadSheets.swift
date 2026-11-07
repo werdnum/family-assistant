@@ -60,13 +60,12 @@ struct StartThreadSheet: View {
     }
 
     /// The tier the thread starts at; nil for its profile's default. Until
-    /// the user picks, send-as-thread keeps the choice made in Home's composer
-    /// where this profile offers it.
+    /// the user picks, send-as-thread follows `threadTierDefault`.
     private var modelTier: String? {
         if let tierPick, tierPick.profileID == profileID {
             return tierPick.tier
         }
-        return mode == .sendAsThread ? homeModel.modelTierCarried(to: profileID) : nil
+        return mode == .sendAsThread ? homeModel.threadTierDefault(for: profileID) : nil
     }
 
     private var anchorMessageID: Int? {

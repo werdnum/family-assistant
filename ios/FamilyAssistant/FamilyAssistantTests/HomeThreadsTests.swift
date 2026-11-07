@@ -1824,6 +1824,21 @@ final class HomeThreadsTests: XCTestCase {
         XCTAssertNil(model.modelTierChoice, "Home's choice was still for that message.")
     }
 
+    func testAFailedSendAsThreadIsOfferedAgainAtTheTierItWasSentWith() async throws {
+        let model = try await makeHomeModelWithProfiles()
+        model.draftText = "Research heat pumps"
+        model.selectModelTier("deep")
+        var starts: [HomeThreadStart] = []
+
+        await model.sendDraftAsThread(profileID: "research", modelTier: nil) { starts.append($0); return false }
+        XCTAssertNil(model.threadTierDefault(for: "research"), "The retry is offered as it was sent.")
+        await model.sendDraftAsThread(profileID: "research") { starts.append($0); return false }
+
+        XCTAssertEqual(starts.count, 2)
+        XCTAssertEqual(starts[1].turnID, starts[0].turnID, "An unchanged retry is the same start.")
+        XCTAssertEqual(model.threadTierDefault(for: "default_assistant"), "deep", "Another profile still gets Home's choice.")
+    }
+
     func testThreadStartSendsATierOnlyWithAnOpeningMessage() {
         let options = ThreadStartOptions(anchorMessageID: 7, profileID: "research", householdContextProfileIDs: ["research"])
 
