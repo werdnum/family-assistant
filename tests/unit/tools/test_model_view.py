@@ -45,6 +45,26 @@ def test_small_png_is_shown_at_full_size_without_a_note() -> None:
     assert not view.note
 
 
+def test_transparent_line_art_is_composited_onto_white() -> None:
+    image = Image.new("RGBA", (100, 100), (0, 0, 0, 0))
+    for x in range(40, 60):
+        image.putpixel((x, 50), (0, 0, 0, 255))
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+
+    view = model_view_of(buffer.getvalue(), "image/png")
+
+    assert view is not None
+    with Image.open(io.BytesIO(view.content)) as shown:
+        rgb = shown.convert("RGB")
+        background = rgb.getpixel((5, 5))
+        line = rgb.getpixel((50, 50))
+    assert isinstance(background, tuple)
+    assert isinstance(line, tuple)
+    assert min(background) > 240
+    assert max(line) < 30
+
+
 def test_heic_becomes_a_jpeg_every_provider_reads() -> None:
     view = model_view_of(_encode((3024, 4032), "HEIF"), "image/heic")
 

@@ -51,7 +51,13 @@ def _downscaled_jpeg(content: bytes) -> tuple[bytes, tuple[int, int], tuple[int,
         image.thumbnail(
             (MODEL_VIEW_MAX_EDGE, MODEL_VIEW_MAX_EDGE), Image.Resampling.LANCZOS
         )
-        if image.mode != "RGB":
+        if image.mode in {"RGBA", "LA", "PA"} or "transparency" in image.info:
+            # JPEG has no alpha; dropping it would show whatever colour the
+            # transparent pixels carry, often black under black line art.
+            rgba = image.convert("RGBA")
+            image = Image.new("RGB", rgba.size, "white")
+            image.paste(rgba, mask=rgba.getchannel("A"))
+        elif image.mode != "RGB":
             image = image.convert("RGB")
         buffer = io.BytesIO()
         image.save(buffer, format="JPEG", quality=MODEL_VIEW_JPEG_QUALITY)
