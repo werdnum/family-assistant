@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 import {
   AttachmentPrimitive,
@@ -6,14 +6,25 @@ import {
   MessagePrimitive,
   useAui,
   useAuiState,
-} from '@assistant-ui/react';
-import { Slot } from '@radix-ui/react-slot';
-import { CircleXIcon, FileIcon, PaperclipIcon } from 'lucide-react';
-import { type FC, PropsWithChildren, useEffect, useMemo, useState } from 'react';
-import { TooltipIconButton } from '@/components/assistant-ui/tooltip-icon-button';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { ImageLightbox } from '@/components/ui/image-lightbox';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+} from "@assistant-ui/react";
+import { Slot } from "@radix-ui/react-slot";
+import { CircleXIcon, FileIcon, PaperclipIcon } from "lucide-react";
+import {
+  type FC,
+  PropsWithChildren,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { ImageLightbox } from "@/components/ui/image-lightbox";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 const useFileSrc = (file: File | undefined) => {
   const [src, setSrc] = useState<string | undefined>(undefined);
@@ -36,19 +47,21 @@ const useFileSrc = (file: File | undefined) => {
 };
 
 const useAttachmentSrc = () => {
-  const file = useAuiState((s) => (s.attachment.type === 'image' ? s.attachment.file : undefined));
+  const file = useAuiState((s) =>
+    s.attachment.type === "image" ? s.attachment.file : undefined,
+  );
   const src = useAuiState((s) => {
     const a = s.attachment;
-    if (a.type !== 'image' || a.file) {
+    if (a.type !== "image" || a.file) {
       return undefined;
     }
     // Handle both string content (base64) and array content formats
-    if (typeof a.content === 'string') {
+    if (typeof a.content === "string") {
       // If content is a string (base64 data URL), use it directly
       return a.content;
     } else if (Array.isArray(a.content)) {
       // If content is an array, look for image content
-      const imageSrc = a.content.filter((c) => c.type === 'image')[0]?.image;
+      const imageSrc = a.content.filter((c) => c.type === "image")[0]?.image;
       return imageSrc ?? undefined;
     }
     return undefined;
@@ -66,8 +79,9 @@ const AttachmentPreviewTrigger: FC<PropsWithChildren> = ({ children }) => {
   const name = useAuiState((s) => s.attachment.name);
   const [isOpen, setIsOpen] = useState(false);
   const images = useMemo(
-    () => (src ? [{ key: src, url: src, name: name || 'Image attachment' }] : []),
-    [src, name]
+    () =>
+      src ? [{ key: src, url: src, name: name || "Image attachment" }] : [],
+    [src, name],
   );
 
   if (!src) {
@@ -82,12 +96,12 @@ const AttachmentPreviewTrigger: FC<PropsWithChildren> = ({ children }) => {
         className="hover:bg-accent/50 cursor-zoom-in transition-colors focus-visible:ring-2 focus-visible:ring-ring"
         onClick={() => setIsOpen(true)}
         onKeyDown={(event: React.KeyboardEvent) => {
-          if (event.key === 'Enter' || event.key === ' ') {
+          if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
             setIsOpen(true);
           }
         }}
-        aria-label={`View ${name || 'image attachment'}`}
+        aria-label={`View ${name || "image attachment"}`}
         data-testid="attachment-preview-trigger"
       >
         {children}
@@ -103,7 +117,7 @@ const AttachmentPreviewTrigger: FC<PropsWithChildren> = ({ children }) => {
 };
 
 const AttachmentThumb: FC = () => {
-  const isImage = useAuiState((s) => s.attachment.type === 'image');
+  const isImage = useAuiState((s) => s.attachment.type === "image");
   const src = useAttachmentSrc();
   return (
     <Avatar className="bg-muted flex size-10 items-center justify-center rounded-sm border text-sm">
@@ -117,28 +131,31 @@ const AttachmentThumb: FC = () => {
 
 const AttachmentUI: FC = () => {
   const aui = useAui();
-  const canRemove = aui.attachment.source !== 'message';
+  const canRemove = aui.attachment.source !== "message";
   const status = useAuiState((s) => s.attachment.status);
   const typeLabel = useAuiState((s) => {
     const type = s.attachment.type;
     switch (type) {
-      case 'image':
-        return 'Image';
-      case 'document':
-        return 'Document';
-      case 'file':
-        return 'File';
+      case "image":
+        return "Image";
+      case "document":
+        return "Document";
+      case "file":
+        return "File";
     }
   });
 
   // Validation and upload failures land here: the runtime's terminal state for
   // an attachment that will not complete.
-  const hasError = status?.type === 'incomplete' && status.reason === 'error';
+  const hasError = status?.type === "incomplete" && status.reason === "error";
   const errorMessage = hasError ? status.message : undefined;
 
   return (
     <Tooltip>
-      <AttachmentPrimitive.Root className="relative mt-3" data-testid="attachment-preview">
+      <AttachmentPrimitive.Root
+        className="relative mt-3"
+        data-testid="attachment-preview"
+      >
         {hasError ? (
           // Show error state prominently
           <div className="flex flex-col gap-1">
@@ -154,7 +171,10 @@ const AttachmentUI: FC = () => {
                 <p className="text-red-600 text-xs font-medium">Error</p>
               </div>
             </div>
-            <p className="text-red-600 text-xs px-1" data-testid="attachment-error-message">
+            <p
+              className="text-red-600 text-xs px-1"
+              data-testid="attachment-error-message"
+            >
               {errorMessage}
             </p>
           </div>
@@ -219,13 +239,18 @@ export const AssistantMessageAttachments: FC = () => {
 export const ComposerAttachments: FC = () => {
   return (
     <div className="flex w-full flex-row gap-3 overflow-x-auto">
-      <ComposerPrimitive.Attachments components={{ Attachment: AttachmentUI }} />
+      <ComposerPrimitive.Attachments
+        components={{ Attachment: AttachmentUI }}
+      />
     </div>
   );
 };
 
 export const ComposerAddAttachment: FC = () => {
   const aui = useAui();
+  // Home and an open thread panel each render a composer, so the button must
+  // reach its own input rather than look one up by a page-wide id.
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
@@ -235,7 +260,7 @@ export const ComposerAddAttachment: FC = () => {
         aui.composer.addAttachment(file);
       });
       // Clear the input so the same file can be selected again
-      event.target.value = '';
+      event.target.value = "";
     }
   };
 
@@ -244,8 +269,8 @@ export const ComposerAddAttachment: FC = () => {
       <input
         type="file"
         multiple
+        ref={fileInputRef}
         className="hidden"
-        id="composer-file-input"
         data-testid="file-input"
         onChange={handleFileSelect}
       />
@@ -255,12 +280,7 @@ export const ComposerAddAttachment: FC = () => {
         variant="ghost"
         type="button"
         data-testid="add-attachment-button"
-        onClick={() => {
-          const fileInput = document.getElementById('composer-file-input') as HTMLInputElement;
-          if (fileInput) {
-            fileInput.click();
-          }
-        }}
+        onClick={() => fileInputRef.current?.click()}
       >
         <PaperclipIcon />
       </TooltipIconButton>
