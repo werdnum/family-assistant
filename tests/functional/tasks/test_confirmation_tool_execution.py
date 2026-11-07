@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo
 
 import pytest
+from fastapi import FastAPI
 from pydantic import BaseModel
 from sqlalchemy import select, update
 
@@ -82,6 +83,7 @@ from family_assistant.tools.types import (
     ToolExecutionContext,
     ToolResult,
 )
+from family_assistant.web.app_creator import lifespan as app_lifespan
 from tests.helpers import wait_for_condition, wait_for_tasks_to_complete
 
 if TYPE_CHECKING:
@@ -664,6 +666,7 @@ async def _run_worker_until_task_finishes(
     allow_failures: bool = False,
     confirmation_result_waiters: ConfirmationResultWaiterRegistry | None = None,
     handler_timeout: float = 5.0,
+    chat_interfaces: dict[str, ChatInterface] | None = None,
 ) -> None:
     shutdown_event = asyncio.Event()
     wake_event = asyncio.Event()
@@ -675,7 +678,11 @@ async def _run_worker_until_task_finishes(
         embedding_generator=MockEmbeddingGenerator(dimensions=10),
         shutdown_event_instance=shutdown_event,
         engine=db_engine,
-        chat_interfaces={"web": cast("ChatInterface", chat_interface)},
+        chat_interfaces=(
+            chat_interfaces
+            if chat_interfaces is not None
+            else {"web": cast("ChatInterface", chat_interface)}
+        ),
         handler_timeout=handler_timeout,
         confirmation_result_waiters=confirmation_result_waiters,
     )
@@ -819,6 +826,156 @@ async def test_deferred_review_confirmation_persists_call_authorization(
     assert request["taint_policy_reason"] == (
         "Unknown external content reached an artifact write."
     )
+
+
+def _deferred_context(
+    db: Database,
+    *,
+    conversation_id: str = "automation-1",
+    subconversation_id: str | None = None,
+) -> ToolExecutionContext:
+    return ToolExecutionContext(
+        interface_type="automation",
+        conversation_id=conversation_id,
+        user_name="Automation Owner",
+        turn_id=None,
+        db_context=db,
+        processing_service=None,
+        clock=None,
+        plugins=None,
+        event_sources=None,
+        attachment_registry=None,
+        credential_resolvers=None,
+        api_backend=None,
+        timezone=ZoneInfo("UTC"),
+        processing_profile_id="test-profile",
+        subconversation_id=subconversation_id,
+    )
+
+
+async def _defer(
+    context: ToolExecutionContext,
+    *,
+    call_id: str,
+    tool_args: ToolArguments,
+) -> str:
+    outcome = await create_deferred_tool_confirmation(
+        context=context,
+        tool_name="record_tool",
+        call_id=call_id,
+        tool_args=tool_args,
+        timeout_seconds=60,
+        target_user_id="user-1",
+        source_prefix="Automation requested approval.",
+    )
+    assert outcome.kind == "completed"
+    assert outcome.action_attempted is False
+    assert outcome.result is not None
+    return str(outcome.result)
+
+
+@pytest.mark.asyncio
+async def test_retried_deferred_confirmation_reuses_pending_request(
+    db_engine: AsyncEngine,
+) -> None:
+    """A retried turn asking for the same action again gets the pending request
+    back, with a fresh call id, so approving cannot run the action twice."""
+    db = Database(engine=db_engine)
+    context = _deferred_context(db)
+
+    await _defer(context, call_id="first-run-call", tool_args={"value": "payload"})
+    retried = await _defer(
+        context, call_id="retried-run-call", tool_args={"value": "payload"}
+    )
+
+    pending = await db.confirmation_requests.list_pending_for_user("user-1")
+    assert len(pending) == 1
+    assert pending[0]["tool_call_id"] == "first-run-call"
+    assert pending[0]["id"] in retried
+    assert "already waiting" in retried
+
+
+@pytest.mark.asyncio
+async def test_deferred_confirmation_for_different_action_is_not_reused(
+    db_engine: AsyncEngine,
+) -> None:
+    db = Database(engine=db_engine)
+
+    await _defer(
+        _deferred_context(db), call_id="call-1", tool_args={"value": "payload"}
+    )
+    await _defer(_deferred_context(db), call_id="call-2", tool_args={"value": "other"})
+    await _defer(
+        _deferred_context(db, conversation_id="automation-2"),
+        call_id="call-3",
+        tool_args={"value": "payload"},
+    )
+    await _defer(
+        _deferred_context(db, subconversation_id="thread-1"),
+        call_id="call-4",
+        tool_args={"value": "payload"},
+    )
+
+    pending = await db.confirmation_requests.list_pending_for_user("user-1")
+    assert sorted(str(row["tool_call_id"]) for row in pending) == [
+        "call-1",
+        "call-2",
+        "call-3",
+        "call-4",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_resolved_deferred_confirmation_is_not_reused(
+    db_engine: AsyncEngine,
+) -> None:
+    """Once the first request is decided, asking again needs a new decision."""
+    db = Database(engine=db_engine)
+    context = _deferred_context(db)
+    await _defer(context, call_id="call-1", tool_args={"value": "payload"})
+    [first] = await db.confirmation_requests.list_pending_for_user("user-1")
+    await _confirmation_service(db_engine).reject(
+        request_id=first["id"],
+        rejecting_user_id="user-1",
+        rejecting_interface="web",
+    )
+
+    await _defer(context, call_id="call-2", tool_args={"value": "payload"})
+
+    pending = await db.confirmation_requests.list_pending_for_user("user-1")
+    assert [row["tool_call_id"] for row in pending] == ["call-2"]
+
+
+@pytest.mark.asyncio
+async def test_approved_deferred_confirmation_runs_in_origin_subconversation(
+    db_engine: AsyncEngine,
+) -> None:
+    """A deferred confirmation requested inside a thread (a delegation wakeup in
+    a subconversation, say) executes in that thread, not the main conversation."""
+    db = Database(engine=db_engine)
+    await _defer(
+        _deferred_context(
+            db, conversation_id="origin-conversation-1", subconversation_id="thread-1"
+        ),
+        call_id="call-1",
+        tool_args={"value": "payload"},
+    )
+    [request] = await db.confirmation_requests.list_pending_for_user("user-1")
+    assert request["origin_subconversation_id"] == "thread-1"
+    task_id = await _approve_request(db_engine, request["id"])
+    provider = RecordingToolsProvider()
+
+    await _run_worker_until_task_finishes(
+        db_engine,
+        processing_service=_processing_service(provider),
+        chat_interface=RecordingChatInterface(),
+        task_id=task_id,
+    )
+
+    assert [
+        (context.conversation_id, context.subconversation_id)
+        for context in provider.contexts
+    ] == [("origin-conversation-1", "thread-1")]
 
 
 @pytest.mark.asyncio
@@ -1496,6 +1653,45 @@ async def test_source_less_confirmation_delivers_to_origin_conversation(
             "Result:\nexecuted:payload",
             None,
         )
+    ]
+    assert await _task_status(db_engine, task_id) == ("done", None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("origin_interface_type", ["api", "ios"])
+async def test_source_less_confirmation_delivers_to_history_only_origin(
+    db_engine: AsyncEngine,
+    origin_interface_type: str,
+) -> None:
+    """The chat API's ``api`` and ``ios`` conversations have no live channel; an
+    approved result is written into that conversation's history instead of
+    falling back to Telegram."""
+    app = FastAPI()
+    app.state.database_engine = db_engine
+    request_id = await _create_request(
+        db_engine,
+        source_message_internal_id=None,
+        origin_interface_type=origin_interface_type,
+        origin_conversation_id="history-only-conversation",
+    )
+    task_id = await _approve_request(db_engine, request_id)
+
+    async with app_lifespan(app):
+        await _run_worker_until_task_finishes(
+            db_engine,
+            processing_service=_processing_service(RecordingToolsProvider()),
+            chat_interface=RecordingChatInterface(),
+            task_id=task_id,
+            chat_interfaces=app.state.chat_interfaces,
+        )
+
+    history = await Database(engine=db_engine).message_history.get_recent(
+        interface_type=origin_interface_type,
+        conversation_id="history-only-conversation",
+        limit=5,
+    )
+    assert [message.content for message in history] == [
+        "Approved action completed.\n\nTool: record_tool\n\nResult:\nexecuted:payload"
     ]
     assert await _task_status(db_engine, task_id) == ("done", None)
 

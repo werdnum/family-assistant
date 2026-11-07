@@ -238,6 +238,15 @@ confirmation callback call that service outside the ambient turn transaction. A 
 phase-scoped conversational transactions may still be useful, but it is not required just to make
 durable confirmations visible.
 
+Because a confirmation commits independently of the turn that asked for it, it outlives that turn
+when the turn fails and is retried. A deferred confirmation (one with no live waiter) therefore
+reuses an unexpired pending request for the same tool, arguments, profile, origin conversation and
+subconversation instead of creating a second one, so a retried turn cannot leave two approvals for
+one side effect. The model's call id is not part of that key, since it changes on every run. Two
+residuals are accepted rather than adding contingent-commit machinery: a request left behind by a
+turn that was discarded and never retried stays approvable, and approving it runs an action the user
+can see and chose; and two concurrent turns racing the lookup can each create one.
+
 SQLite tests should not rely on nested contexts sharing an outer transaction. PostgreSQL tests
 should prove the created confirmation and approval task are visible from a separate context before
 the live turn completes.

@@ -47,6 +47,9 @@ confirmation_requests_table = Table(
     # row (automation scripts) instead of falling back to worker defaults.
     Column("origin_interface_type", String(50), nullable=True),
     Column("origin_conversation_id", String(255), nullable=True),
+    # Subconversation (thread) the requesting turn ran in, so an approved tool
+    # reads and writes that thread's history rather than the main conversation.
+    Column("origin_subconversation_id", String(36), nullable=True),
     Column("expires_at", DateTime(timezone=True), nullable=False, index=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),

@@ -203,13 +203,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # The MCP adapter's conversations live in their own history partition.
         # Registering an interface for it gives deferred work (approved
         # confirmations, reminders) a delivery path into that partition.
-        app.state.chat_interfaces[MCP_INTERFACE_TYPE] = WebChatInterface(
-            app.state.database_engine,
-            notifier=notifier,
-            stream_hub=getattr(app.state, "conversation_stream_hub", None),
-            identity_resolver=identity_resolver,
-            interface_type=MCP_INTERFACE_TYPE,
-        )
+        # The chat API's ``api`` and ``ios`` conversations are history-only in
+        # the same way, so they get one too.
+        for history_interface_type in (MCP_INTERFACE_TYPE, "api", "ios"):
+            app.state.chat_interfaces[history_interface_type] = WebChatInterface(
+                app.state.database_engine,
+                notifier=notifier,
+                stream_hub=getattr(app.state, "conversation_stream_hub", None),
+                identity_resolver=identity_resolver,
+                interface_type=history_interface_type,
+            )
         logger.info("WebChatInterface initialized with database engine")
     else:
         # For development or when database is not yet initialized
