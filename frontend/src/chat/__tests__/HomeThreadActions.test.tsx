@@ -625,6 +625,27 @@ describe('Starting and moving threads from Home', () => {
     expect(intelligence).toHaveTextContent('Standard');
   });
 
+  it("opens the thread panel's own file picker from its attach button", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    serveHome();
+    await renderChatApp({ waitForReady: true });
+    const homePane = await findPane(HOME);
+    await homeReply(GUTTER_REPLY);
+    await user.type(within(homePane).getByTestId('chat-input'), 'Compare solar quotes');
+    await user.click(within(homePane).getByTestId('send-button'));
+    const panel = await findPane(NEW_THREAD);
+    await within(panel).findByText(`Reply in ${NEW_THREAD}`);
+
+    const clickSpy = vi.spyOn(HTMLInputElement.prototype, 'click');
+    try {
+      await user.click(within(panel).getByTestId('add-attachment-button'));
+      expect(clickSpy).toHaveBeenCalledTimes(1);
+      expect(clickSpy.mock.contexts[0]).toBe(within(panel).getByTestId('file-input'));
+    } finally {
+      clickSpy.mockRestore();
+    }
+  });
+
   it("offers every assistant but Home's own for one message", async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     serveHome();

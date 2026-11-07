@@ -9,7 +9,7 @@ import {
 } from '@assistant-ui/react';
 import { Slot } from '@radix-ui/react-slot';
 import { CircleXIcon, FileIcon, PaperclipIcon } from 'lucide-react';
-import { type FC, PropsWithChildren, useEffect, useMemo, useState } from 'react';
+import { type FC, PropsWithChildren, useEffect, useMemo, useRef, useState } from 'react';
 import { TooltipIconButton } from '@/components/assistant-ui/tooltip-icon-button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { ImageLightbox } from '@/components/ui/image-lightbox';
@@ -226,6 +226,9 @@ export const ComposerAttachments: FC = () => {
 
 export const ComposerAddAttachment: FC = () => {
   const aui = useAui();
+  // Home and an open thread panel each render a composer, so the button must
+  // reach its own input rather than look one up by a page-wide id.
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
@@ -244,8 +247,8 @@ export const ComposerAddAttachment: FC = () => {
       <input
         type="file"
         multiple
+        ref={fileInputRef}
         className="hidden"
-        id="composer-file-input"
         data-testid="file-input"
         onChange={handleFileSelect}
       />
@@ -255,12 +258,7 @@ export const ComposerAddAttachment: FC = () => {
         variant="ghost"
         type="button"
         data-testid="add-attachment-button"
-        onClick={() => {
-          const fileInput = document.getElementById('composer-file-input') as HTMLInputElement;
-          if (fileInput) {
-            fileInput.click();
-          }
-        }}
+        onClick={() => fileInputRef.current?.click()}
       >
         <PaperclipIcon />
       </TooltipIconButton>
