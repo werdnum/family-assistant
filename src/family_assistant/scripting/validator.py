@@ -186,10 +186,8 @@ def _generate_builtin_api_stubs(
         lines.append(
             "def attachment_get(attachment_id: str) -> dict[str, Any] | None: ..."
         )
-        lines.append("def attachment_read(attachment_id: str) -> str | None: ...")
-        lines.append(
-            "def attachment_read_bytes(attachment_id: str) -> bytes | None: ..."
-        )
+        lines.append("def attachment_read(attachment_id: str) -> str: ...")
+        lines.append("def attachment_read_bytes(attachment_id: str) -> bytes: ...")
         lines.append(
             "def attachment_create(content: bytes | str, filename: str, description: str = ..., mime_type: str = ...) -> dict[str, Any]: ..."
         )
