@@ -433,6 +433,14 @@ struct ChatMessage: Identifiable, Equatable {
     // The tier the person chose when an experiment served the turn on another:
     // it is still the conversation's choice, and the server continues it.
     var modelTierRequested: String? = nil
+    // What served the reply: the model the provider reported (or the
+    // configured one when it reported none) and the provider behind it.
+    var servedModel: String? = nil
+    var servedProvider: String? = nil
+    // The live experiment that drew this turn, and the arm (tier) it drew.
+    // Hidden until the turn is rated; see `canRevealServedBy`.
+    var experimentID: String? = nil
+    var experimentArm: String? = nil
     /// On a Home message echoing a finished thread's outcome: the thread's
     /// conversation id, so the message is shown as coming from it.
     var echoedFromThread: String? = nil
@@ -463,18 +471,93 @@ enum TurnFeedbackOutcome: Equatable {
 /// The longest comment the server keeps with a rating.
 let maxTurnFeedbackCommentLength = 2000
 
-/// The intelligence level a persisted reply ran at, as reported on the message's
-/// `reasoning_info`. Only the tier fields are decoded: the token counts and
-/// request id in the same blob have no surface on iOS.
+/// What served a persisted reply, as reported on the message's
+/// `reasoning_info`: the tier and who chose it, the model and provider, and any
+/// experiment arm. The token counts and request id in the same blob have no
+/// surface on iOS.
 struct ChatMessageReasoningInfo: Decodable, Equatable {
+    let model: String?
+    let resolvedModel: String?
+    let provider: String?
     let modelTier: String?
     let modelTierSource: String?
     let modelTierRequested: String?
+    let experimentID: String?
+    let experimentArm: String?
 
     enum CodingKeys: String, CodingKey {
+        case model
+        case resolvedModel = "resolved_model"
+        case provider
         case modelTier = "model_tier"
         case modelTierSource = "model_tier_source"
         case modelTierRequested = "model_tier_requested"
+        case experimentID = "experiment_id"
+        case experimentArm = "experiment_arm"
+    }
+}
+
+/// One labelled line of "Which model answered".
+struct ServedByRow: Equatable {
+    let label: String
+    let value: String
+}
+
+extension ChatMessage {
+    private static let tierSourceLabels: [String: String] = [
+        "user": "chosen by you",
+        "model": "chosen by the assistant",
+        "auto": "chosen by Auto",
+        "experiment": "assigned by an experiment",
+        "default": "profile default",
+    ]
+
+    /// Whether anything about what served this reply was recorded.
+    var hasServedByDetails: Bool {
+        role == .assistant
+            && (servedModel != nil || modelTier != nil || modelTierSource != nil || experimentID != nil)
+    }
+
+    /// Whether "Which model answered" may be offered beside this reply's
+    /// thumbs. A live experiment's reply stays blind until it is rated, so the
+    /// reveal cannot bias the rating, and withdrawing the rating hides it again.
+    var canRevealServedBy: Bool {
+        hasServedByDetails && (modelTierSource != "experiment" || feedback != nil)
+    }
+
+    /// The reveal's lines: profile, tier and who chose it, the tier asked for
+    /// when another ran, the model and provider, and the experiment and arm.
+    func servedByRows(profileLabel: String?, tierLabels: [String: String]) -> [ServedByRow] {
+        func tierName(_ tier: String) -> String {
+            tierLabels[tier] ?? tier
+        }
+        var rows: [ServedByRow] = []
+        if let profileLabel {
+            rows.append(ServedByRow(label: "Profile", value: profileLabel))
+        }
+        if let modelTier {
+            let source = modelTierSource.flatMap { Self.tierSourceLabels[$0] }
+            rows.append(ServedByRow(
+                label: "Intelligence",
+                value: source.map { "\(tierName(modelTier)) (\($0))" } ?? tierName(modelTier)
+            ))
+        }
+        if let modelTierRequested, modelTierRequested != modelTier {
+            rows.append(ServedByRow(label: "Requested", value: tierName(modelTierRequested)))
+        }
+        if let servedModel {
+            rows.append(ServedByRow(
+                label: "Model",
+                value: servedProvider.map { "\(servedModel) via \($0)" } ?? servedModel
+            ))
+        }
+        if let experimentID {
+            rows.append(ServedByRow(label: "Experiment", value: experimentID))
+            if let experimentArm {
+                rows.append(ServedByRow(label: "Arm", value: tierName(experimentArm)))
+            }
+        }
+        return rows
     }
 }
 

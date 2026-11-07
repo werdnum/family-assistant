@@ -100,9 +100,9 @@ council instead: see [council.md](council.md).
 ## Seeing what a reply ran at
 
 In the web app and the iOS app, a reply carries the level it ran at beside the name of the assistant
-that produced it. Web message details add what was asked for and the model that actually served it.
-If you are wondering whether a disappointing answer was worth re-asking at a higher level, that is
-where to look first.
+that produced it. **Which model answered** (the eye button next to the thumbs) adds what was asked
+for and the model that actually served it. If you are wondering whether a disappointing answer was
+worth re-asking at a higher level, that is where to look first.
 
 Sometimes a reply is labelled **Experiment** instead. That conversation is part of a comparison
 between models, and which one answered is hidden on purpose so your thumbs up or down is a fair
