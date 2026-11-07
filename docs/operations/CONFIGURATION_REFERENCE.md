@@ -862,6 +862,29 @@ llm_parameters:
     use_responses_api: false # opt a model back out; the default is on
 ```
 
+#### Custom instructions per model
+
+The reserved key `custom_instructions` holds text appended to the system prompt of every request
+sent to a matching model, whichever profile, tier, fallback or experiment arm sent it. It is for
+correcting a model's habits rather than shaping a profile, which is what the profile's own prompt is
+for. The key is removed before the request is built, so no provider sees it as a parameter.
+
+```yaml
+llm_parameters:
+  "gpt-":
+    custom_instructions: |
+      Avoid drafting communications unless specifically asked to.
+```
+
+- Every pattern that matches the model contributes, in map order, separated by a blank line, so a
+  broad entry (`"gpt-"`) and a specific one (`"gpt-6.1-sol"`) combine. Identical text is included
+  once.
+- The text goes at the end of the first system message, inside its prompt-cache prefix; a request
+  with no system message gets one. It therefore reaches background calls on that model too
+  (summaries, classifiers, tool-call review), not only conversation turns.
+- To confine it to one tier, set it on that tier's chain entry instead: `chain[].llm_parameters`
+  overlays the global map for that entry only (see [model_tiers](#model_tiers)).
+
 #### Reasoning propagation, by provider
 
 Reasoning state has to be replayed on each turn of a tool loop or the model restarts its reasoning

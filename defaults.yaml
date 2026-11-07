@@ -89,6 +89,13 @@ llm_parameters:
   # other base_url backends implement Chat Completions, not Responses.
   # "some-openai-model":
   #   use_responses_api: false
+  # `custom_instructions` is appended to the system prompt of every request to
+  # a matching model, for correcting a model's habits wherever it runs. It is
+  # stripped before the request is built. Every matching pattern contributes,
+  # in map order; a chain entry's own llm_parameters can scope it to one tier.
+  # "gpt-":
+  #   custom_instructions: |
+  #     Avoid drafting messages unless asked to.
   # Example for Gemini models via OpenRouter
   "openrouter/google/gemini-":
     reasoning: # Nest OpenRouter-specific reasoning params here
