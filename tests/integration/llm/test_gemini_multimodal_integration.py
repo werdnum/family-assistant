@@ -1,4 +1,4 @@
-"""Integration tests for tool image attachments with Gemini 3 models.
+"""Integration tests for tool image attachments with Gemini models.
 
 Regression coverage for a production bug: a tool result that carried an image
 attachment was serialized as a multimodal ``FunctionResponse`` inside a legacy
