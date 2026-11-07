@@ -4279,6 +4279,13 @@ Operator merge note for service profiles:
 - Profiles with new IDs are added alongside the built-in defaults.
 - Profiles whose ID matches a default override that default.
 - You do not need to re-list all default profiles to add a new one.
+- An override is deep-merged onto the shipped profile, so it states only what it changes. Lists are
+  replaced wholesale, with one exception: `tools_policy.rules` in an override is **added to** the
+  shipped profile's rules rather than replacing them, so granting a confined profile one more tool
+  does not mean restating its shipped policy. The added rules sit in the same layer as the shipped
+  ones; to withdraw a shipped grant, add a `deny` at a higher priority. A rule identical to a
+  shipped one is not added twice. `tools_policy.default_decision` still overrides the shipped value
+  when set.
 
 Operator merge note for tool policy:
 
@@ -4292,7 +4299,8 @@ Operator merge note for tool policy:
   `tools_policy` replaces the default and the operator's additions with it, which is what keeps a
   deployment-wide grant such as a web-search or code-execution MCP server out of confined profiles
   like `memory_curator`, `media_analyst`, `coder` and `email_intake`. To grant a tool to one of
-  those, override that profile's `tools_policy`; to grant or deny one everywhere, use
+  those, add a rule to that profile's `tools_policy` with a `service_profiles` entry of the same
+  `id` (see the merge note above); to grant or deny one everywhere, use
   `global_tools_policy`, which a profile can still refuse through `excluded_global_tools`.
 
 ### Remote A2A profiles

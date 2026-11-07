@@ -2168,6 +2168,75 @@ class TestLoadConfig:
             ["redundant_overview"],
         ]
 
+    def test_operator_profile_override_tools_policy_rules_add_to_shipped_ones(
+        self, tmp_path: Path
+    ) -> None:
+        """Granting a confined profile one tool must not delete its shipped rules."""
+        shipped_rules = [
+            {
+                "match": {"tags_any": ["destructive"]},
+                "decision": "deny",
+                "priority": 90,
+            },
+            {
+                "match": {"names": ["read_error_logs"]},
+                "decision": "allow",
+                "priority": 10,
+            },
+        ]
+        operator_rule = {
+            "match": {"names": ["tuit_create_task"]},
+            "decision": "review",
+            "priority": 20,
+        }
+        defaults_file = tmp_path / "defaults.yaml"
+        defaults_file.write_text(
+            yaml.dump({
+                "service_profiles": [
+                    {
+                        "id": "engineer",
+                        "tools_policy": {
+                            "default_decision": "deny",
+                            "rules": shipped_rules,
+                        },
+                    }
+                ]
+            })
+        )
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            yaml.dump({
+                "service_profiles": [
+                    {
+                        "id": "engineer",
+                        # A full restatement of the shipped rules, as overrides
+                        # were written before rules were additive, plus one new.
+                        "tools_policy": {"rules": [*shipped_rules, operator_rule]},
+                    }
+                ]
+            })
+        )
+
+        config = load_config(
+            defaults_file_path=str(defaults_file),
+            config_file_path=str(config_file),
+            prompts_file_path=str(tmp_path / "nonexistent_prompts.yaml"),
+            load_dotenv_file=False,
+        )
+
+        (engineer,) = [p for p in config.service_profiles if p.id == "engineer"]
+        assert engineer.tools_policy is not None
+        assert engineer.tools_policy.default_decision is ToolPolicyDecision.DENY
+        assert [
+            (rule.match.names, rule.match.tags_any, rule.decision)
+            for rule in engineer.tools_policy.rules
+        ] == [
+            (None, ["destructive"], ToolPolicyDecision.DENY),
+            (["read_error_logs"], None, ToolPolicyDecision.ALLOW),
+            (["tuit_create_task"], None, ToolPolicyDecision.REVIEW),
+        ]
+        assert engineer.operator_tools_policy is None
+
     def test_operator_default_profile_tools_policy_overrides_defaults(
         self, tmp_path: Path
     ) -> None:

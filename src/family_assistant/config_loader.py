@@ -1328,6 +1328,35 @@ def _drop_explicitly_nulled_retry_config(merged: dict[str, Any]) -> dict[str, An
     return merged
 
 
+def _append_operator_profile_tools_policy_rules(
+    # ast-grep-ignore: no-dict-any - raw YAML profile dicts before validation
+    merged: dict[str, Any],
+    # ast-grep-ignore: no-dict-any - raw YAML profile dicts before validation
+    shipped: dict[str, Any],
+    # ast-grep-ignore: no-dict-any - raw YAML profile dicts before validation
+    operator: dict[str, Any],
+) -> None:
+    """Add an operator override's tool-policy rules to the shipped profile's.
+
+    Deep-merge replaces lists wholesale, so an override that grants one tool
+    would otherwise delete every shipped rule of the profile it overrides, and
+    has to restate them all to keep them -- a copy that silently drifts as the
+    shipped policy changes. The rules stay in the profile's own layer, as with
+    ``global_tools_policy``, so withdrawing a shipped grant takes a deny at a
+    higher priority. A rule that repeats a shipped one exactly is not added
+    twice, so an override written as a full restatement still resolves to the
+    same rule list.
+    """
+    operator_rules = (operator.get("tools_policy") or {}).get("rules")
+    shipped_rules = (shipped.get("tools_policy") or {}).get("rules")
+    if not isinstance(operator_rules, list) or not isinstance(shipped_rules, list):
+        return
+    merged["tools_policy"]["rules"] = [
+        *copy.deepcopy(shipped_rules),
+        *(copy.deepcopy(rule) for rule in operator_rules if rule not in shipped_rules),
+    ]
+
+
 def _merge_service_profiles_by_id(
     defaults_profiles: list[Any],
     merged_profiles: list[Any],
@@ -1394,16 +1423,16 @@ def _merge_service_profiles_by_id(
                 if pid in defaults_by_id:
                     # Override: deep-merge operator's partial definition on
                     # top of the default so unmentioned fields are preserved.
-                    result.append(
-                        _drop_explicitly_nulled_retry_config(
-                            deep_merge_dicts(
-                                _shipped_base_for_operator_override(
-                                    defaults_by_id[pid], operator_by_id[pid]
-                                ),
-                                operator_by_id[pid],
-                            )
-                        )
+                    merged = deep_merge_dicts(
+                        _shipped_base_for_operator_override(
+                            defaults_by_id[pid], operator_by_id[pid]
+                        ),
+                        operator_by_id[pid],
                     )
+                    _append_operator_profile_tools_policy_rules(
+                        merged, defaults_by_id[pid], operator_by_id[pid]
+                    )
+                    result.append(_drop_explicitly_nulled_retry_config(merged))
                 else:
                     result.append(
                         _drop_explicitly_nulled_retry_config(operator_by_id[pid])
