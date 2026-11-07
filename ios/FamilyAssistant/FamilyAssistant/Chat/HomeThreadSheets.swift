@@ -197,7 +197,10 @@ struct StartThreadSheet: View {
                 "Profile",
                 selection: Binding(
                     get: { profileID },
-                    set: { chosenProfileID = $0 }
+                    set: {
+                        chosenProfileID = $0
+                        tierPick = nil
+                    }
                 )
             ) {
                 ForEach(profiles) { profile in
