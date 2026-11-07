@@ -7,7 +7,7 @@ from typing import Any, cast
 
 import pytest
 
-from family_assistant.llm import BaseLLMClient
+from family_assistant.llm import BaseLLMClient, describe_attachment_for_fallback
 from family_assistant.llm.base import InvalidRequestError
 from family_assistant.llm.messages import (
     AssistantMessage,
@@ -19,6 +19,20 @@ from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.llm.providers.openai_client import OpenAIClient
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.tools.types import ToolAttachment
+
+
+def test_fallback_description_omits_size_of_a_reference_without_bytes() -> None:
+    reference = ToolAttachment(mime_type="image/jpeg", attachment_id="att-1")
+
+    assert describe_attachment_for_fallback(reference) == (
+        "[System: File from previous tool response: image/jpeg, attachment_id=att-1]"
+    )
+
+
+def test_fallback_description_reports_the_size_of_the_bytes_carried() -> None:
+    attachment = ToolAttachment(mime_type="image/jpeg", content=b"0" * 3 * 1024 * 1024)
+
+    assert "image/jpeg, 3.0MB" in describe_attachment_for_fallback(attachment)
 
 
 class TestBaseLLMClient:
