@@ -23,6 +23,10 @@ struct StartThreadSheet: View {
     /// Nil until the user picks: the default then follows the profile list,
     /// which may arrive after the sheet opens.
     @State private var chosenProfileID: String?
+    /// The intelligence the user picked, for the profile it was picked on.
+    /// Nil until they pick; another profile offers its own tiers, so a pick
+    /// lapses when the profile changes.
+    @State private var tierPick: TierPick?
     @State private var prompt = ""
     @State private var includeContext = true
     /// The last start sent, so retrying it unchanged after a failure is the
@@ -53,6 +57,15 @@ struct StartThreadSheet: View {
 
     private var selectedProfile: ChatProfile? {
         profiles.first { $0.id == profileID }
+    }
+
+    /// The tier the thread starts at; nil for its profile's default. Until
+    /// the user picks, send-as-thread follows `threadTierDefault`.
+    private var modelTier: String? {
+        if let tierPick, tierPick.profileID == profileID {
+            return tierPick.tier
+        }
+        return mode == .sendAsThread ? homeModel.threadTierDefault(for: profileID) : nil
     }
 
     private var anchorMessageID: Int? {
@@ -111,6 +124,9 @@ struct StartThreadSheet: View {
                 }
                 Section {
                     profileRow
+                    if let selectedProfile, selectedProfile.offersModelTierChoice {
+                        tierRow(selectedProfile)
+                    }
                 } footer: {
                     if let selectedProfile, !selectedProfile.description.isEmpty {
                         Text(verbatim: selectedProfile.description)
@@ -128,6 +144,11 @@ struct StartThreadSheet: View {
                         )
                         .lineLimit(3...8)
                         .accessibilityIdentifier("start-thread-prompt")
+                    } footer: {
+                        if carriesContext, selectedProfile?.offersModelTierChoice == true,
+                           prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Text("Intelligence applies with an opening message. Without one, choose it in the thread.")
+                        }
                     }
                 }
             }
@@ -176,7 +197,10 @@ struct StartThreadSheet: View {
                 "Profile",
                 selection: Binding(
                     get: { profileID },
-                    set: { chosenProfileID = $0 }
+                    set: {
+                        chosenProfileID = $0
+                        tierPick = nil
+                    }
                 )
             ) {
                 ForEach(profiles) { profile in
@@ -203,6 +227,28 @@ struct StartThreadSheet: View {
                 .accessibilityIdentifier("start-thread-profiles-retry")
             }
         }
+    }
+
+    private func tierRow(_ profile: ChatProfile) -> some View {
+        Picker(
+            "Intelligence",
+            selection: Binding(
+                get: { modelTier ?? profile.defaultModelTier ?? "" },
+                set: { tier in
+                    // Choosing the default is choosing nothing.
+                    tierPick = TierPick(
+                        profileID: profile.id,
+                        tier: tier == profile.defaultModelTier ? nil : tier
+                    )
+                }
+            )
+        ) {
+            ForEach(profile.modelTiers) { tier in
+                Text(verbatim: tier.id == profile.defaultModelTier ? "\(tier.label) (Default)" : tier.label)
+                    .tag(tier.id)
+            }
+        }
+        .accessibilityIdentifier("start-thread-tier")
     }
 
     @ViewBuilder
@@ -241,15 +287,21 @@ struct StartThreadSheet: View {
             let profileID = profileID
             let homeModel = homeModel
             let store = store
+            let modelTier = modelTier
             dismiss()
-            await homeModel.sendDraftAsThread(profileID: profileID) { start in
+            await homeModel.sendDraftAsThread(profileID: profileID, modelTier: modelTier) { start in
                 await store.startThreadAndOpen(start)
             }
             return
         }
         isStarting = true
         defer { isStarting = false }
-        let start = options.start(turnID: UUID().uuidString, prompt: prompt, includeContext: includeContext)
+        let start = options.start(
+            turnID: UUID().uuidString,
+            prompt: prompt,
+            includeContext: includeContext,
+            modelTier: modelTier
+        )
             .retrying(lastAttempt)
         lastAttempt = start
         switch await store.startThread(start) {
@@ -261,6 +313,11 @@ struct StartThreadSheet: View {
             break
         }
     }
+}
+
+private struct TierPick {
+    let profileID: String
+    let tier: String?
 }
 
 /// "Move to thread…": picks the thread a Home turn moves into. Threads that

@@ -2359,7 +2359,9 @@ final class ChatViewModel {
 
     /// The start a send-as-thread of the composer's contents is retried under,
     /// so a retry of the same draft to the same profile reuses its turn id.
-    @ObservationIgnored private var pendingThreadSend: (draft: ChatDraft, start: HomeThreadStart)?
+    @ObservationIgnored private var pendingThreadSend: (
+        draft: ChatDraft, homeTierChoice: String?, start: HomeThreadStart
+    )?
 
     /// Send the composer's message, with its attachments and the intelligence
     /// chosen for it, as the opening turn of a new thread on `profileID`.
@@ -2370,13 +2372,27 @@ final class ChatViewModel {
         profileID: String,
         using startThread: @MainActor (HomeThreadStart) async -> Bool
     ) async {
+        await sendDraftAsThread(
+            profileID: profileID,
+            modelTier: threadTierDefault(for: profileID),
+            using: startThread
+        )
+    }
+
+    /// As above, at `modelTier` (nil for the profile's default), which the
+    /// user chose beside the profile.
+    func sendDraftAsThread(
+        profileID: String,
+        modelTier: String?,
+        using startThread: @MainActor (HomeThreadStart) async -> Bool
+    ) async {
         guard canSendDraftAsThread, let id = conversationID else {
             return
         }
         let draft = currentDraft
         let submittedTierChoice = modelTierChoice
-        let start = threadStart(for: draft, profileID: profileID)
-        pendingThreadSend = (draft, start)
+        let start = threadStart(for: draft, profileID: profileID, modelTier: modelTier)
+        pendingThreadSend = (draft, submittedTierChoice, start)
         submittingDraftConversationID = id
         defer {
             if submittingDraftConversationID == id {
@@ -2400,13 +2416,23 @@ final class ChatViewModel {
         draftAttachments = []
     }
 
-    private func threadStart(for draft: ChatDraft, profileID: String) -> HomeThreadStart {
-        // Home's choice is for the profile Home runs on; it carries over only
-        // where the thread's profile offers the same tier.
+    /// The tier a send-as-thread of the composer's contents to `profileID`
+    /// starts at unless the user picks another. A failed send of this same
+    /// draft is retried at the tier it was sent with, so the retry is the same
+    /// start, unless Home's choice has changed since. Otherwise Home's choice, which is for the profile Home runs on,
+    /// carries over only where the thread's profile offers the same tier.
+    func threadTierDefault(for profileID: String) -> String? {
+        if let pending = pendingThreadSend, pending.draft == currentDraft,
+           pending.homeTierChoice == modelTierChoice, pending.start.profileID == profileID {
+            return pending.start.modelTier
+        }
         let targetTiers = profiles.first { $0.id == profileID }?.modelTiers ?? []
-        let tier = modelTierChoice.flatMap { choice in
+        return modelTierChoice.flatMap { choice in
             targetTiers.contains { $0.id == choice } ? choice : nil
         }
+    }
+
+    private func threadStart(for draft: ChatDraft, profileID: String, modelTier tier: String?) -> HomeThreadStart {
         // A retry is the same start only while the draft, profile and tier
         // are what was sent; anything changed is a new start.
         if let pending = pendingThreadSend, pending.draft == draft,

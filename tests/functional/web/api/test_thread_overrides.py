@@ -442,6 +442,25 @@ async def test_a_new_thread_needs_an_opening_message(
     assert response.status_code == 422
 
 
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("profiles")
+async def test_a_tier_needs_an_opening_message_to_run(
+    api_test_client: AsyncClient,
+) -> None:
+    response = await api_test_client.post(
+        "/api/v1/chat/home/threads",
+        json={
+            "profile_id": CONTEXT_PROFILE,
+            "anchor_message_id": 1,
+            "include_context": True,
+            "model_tier": "deep",
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "A model tier is sent with an opening message."
+
+
 # ---------------------------------------------------------------------------
 # Continue in a thread
 # ---------------------------------------------------------------------------

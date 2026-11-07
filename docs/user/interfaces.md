@@ -225,7 +225,9 @@ To close a thread yourself, select **Mark done** in the bar above it. It's there
 Nothing is added to Home when you do, because the thread's last message may be a question rather
 than an outcome. If the thread can't be marked done, the bar says so and the thread stays as it was.
 
-**Other ways to start a thread.** Besides sending a message in Home, you can start one in two ways:
+**Other ways to start a thread.** Besides sending a message in Home, you can start one in two ways.
+Both ask which assistant runs the thread and, where that assistant offers a choice, its intelligence
+level; leave it alone to use the usual level:
 
 - **New thread**, in the sidebar under Home. Choose which assistant runs it and write what it should
   do. The thread opens (in the panel on a wide screen) and the assistant starts on your message
