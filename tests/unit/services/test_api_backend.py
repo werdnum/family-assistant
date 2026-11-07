@@ -179,6 +179,33 @@ async def test_response_body_over_cap_raises_google_api_error() -> None:
 
 
 @pytest.mark.asyncio
+async def test_per_request_cap_overrides_backend_default() -> None:
+    body = b"x" * (64 * 1024)
+
+    def _handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=body)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(_handler))
+    backend = HttpApiBackend(client, max_response_bytes=1024)
+
+    response = await backend.request(
+        method="GET",
+        url="https://www.googleapis.com/drive/v3/files/big?alt=media",
+        access_token="tok",
+        max_response_bytes=len(body),
+    )
+    assert response.content == body
+
+    with pytest.raises(ApiBackendError, match=f"{len(body) - 1}-byte"):
+        await backend.request(
+            method="GET",
+            url="https://www.googleapis.com/drive/v3/files/big?alt=media",
+            access_token="tok",
+            max_response_bytes=len(body) - 1,
+        )
+
+
+@pytest.mark.asyncio
 async def test_response_body_within_cap_is_returned() -> None:
     body = b"small-body"
 
