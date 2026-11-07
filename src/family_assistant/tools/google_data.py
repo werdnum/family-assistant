@@ -36,6 +36,7 @@ from family_assistant.services.oauth_credentials import (
     OAuthNoActingUserError,
     OAuthScopeNotGrantedError,
 )
+from family_assistant.tools.model_view import model_view_of
 from family_assistant.tools.taint_helpers import tool_attachment_taint_state
 from family_assistant.tools.types import ToolAttachment, ToolResult
 
@@ -189,7 +190,8 @@ GOOGLE_DATA_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "mailbox and store it as an attachment you can then attach to your "
                 "reply or read back. Provide the message_id, the attachment_id and "
                 "the part_id from gmail_get_message. The stored file is private to "
-                "the requesting user."
+                "the requesting user. Images (a downscaled copy) and PDFs up to 8 MB "
+                "are also shown to you in the result, so you can look at them directly."
             ),
             "parameters": {
                 "type": "object",
@@ -321,7 +323,9 @@ GOOGLE_DATA_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "drive_search). Google Docs/Sheets/Slides are exported to text; small "
                 "text files are returned inline (truncated with a marker if long); "
                 "binary or large files are stored as a private attachment you can "
-                "attach to your reply or read back."
+                "attach to your reply or read back. Images (a downscaled copy) and "
+                "PDFs up to 8 MB are also shown to you in the result, so you can "
+                "look at them directly."
             ),
             "parameters": {
                 "type": "object",
@@ -1111,14 +1115,17 @@ async def _register_attachment(
     except ValueError as exc:
         # The registry rejects disallowed mime types / oversized files.
         return ToolResult(text=f"Error: could not store the file — {exc}")
+    # The registry holds the original; the model is shown a copy sized for it.
+    view = await asyncio.to_thread(model_view_of, content, metadata.mime_type)
+    text = f"Stored {filename} ({len(content)} bytes) as attachment {metadata.attachment_id}."
+    if view is not None and view.note:
+        text += f" {view.note}"
     return ToolResult(
-        text=(
-            f"Stored {filename} ({len(content)} bytes) as attachment"
-            f" {metadata.attachment_id}."
-        ),
+        text=text,
         attachments=[
             ToolAttachment(
-                mime_type=metadata.mime_type,
+                mime_type=view.mime_type if view else metadata.mime_type,
+                content=view.content if view else None,
                 attachment_id=metadata.attachment_id,
                 description=description,
             )

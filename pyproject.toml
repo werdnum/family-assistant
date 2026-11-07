@@ -159,6 +159,7 @@ dependencies = [
     "prometheus-client>=0.21.0",
     "jsonschema>=4.24.0",
     "typing-extensions>=4.15.0",
+    "pillow-heif>=1.8.1",
 ]
 
 [project.optional-dependencies]

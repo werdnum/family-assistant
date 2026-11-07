@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import io
 import json
 import tempfile
 from dataclasses import dataclass, field
@@ -19,6 +20,7 @@ from typing import TYPE_CHECKING, cast
 from zoneinfo import ZoneInfo
 
 import pytest
+from PIL import Image
 
 from family_assistant.security.taint import (
     InMemoryTurnTaintTracker,
@@ -1104,6 +1106,55 @@ async def test_drive_get_file_large_binary_goes_to_attachment(
         await registry.get_attachment_content(db, attachment_id, acting_user_id=None)
         is None
     )
+
+
+@pytest.mark.asyncio
+async def test_drive_get_file_shows_the_model_a_downscaled_photo(
+    db_engine: AsyncEngine,
+) -> None:
+    """The model sees the photo; the registry keeps the original."""
+    buffer = io.BytesIO()
+    Image.new("RGB", (4000, 3000), "blue").save(buffer, format="JPEG")
+    photo = buffer.getvalue()
+    resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
+    backend = FakeApiBackend(
+        scripted=[
+            (
+                200,
+                json.dumps({
+                    "id": "img-1",
+                    "name": "drone.jpg",
+                    "mimeType": "image/jpeg",
+                    "size": str(len(photo)),
+                }).encode("utf-8"),
+            ),
+            (200, photo),
+        ]
+    )
+    registry = _registry(db_engine)
+    db = Database(engine=db_engine)
+    context = _make_context(
+        db,
+        user_id="user-a",
+        resolver=resolver,
+        backend=backend,
+        attachment_registry=registry,
+    )
+
+    result = await drive_get_file_tool(context, file_id="img-1")
+
+    assert result.attachments is not None
+    shown = result.attachments[0]
+    assert shown.mime_type == "image/jpeg"
+    assert shown.content is not None
+    with Image.open(io.BytesIO(shown.content)) as image:
+        assert image.size == (1568, 1176)
+    assert "downscaled from 4000x3000 to 1568x1176" in result.get_text()
+    assert shown.attachment_id is not None
+    stored = await registry.get_attachment_content(
+        db, shown.attachment_id, acting_user_id="user-a"
+    )
+    assert stored == photo
 
 
 @pytest.mark.asyncio
