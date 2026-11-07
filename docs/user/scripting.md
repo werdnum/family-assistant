@@ -234,6 +234,26 @@ metadata fields:
 
 You can access fields directly: `attachment["id"]`, `attachment["filename"]`, etc.
 
+#### Reading Attachments
+
+Scripts can read the content of an attachment they have the ID of:
+
+```python
+text = attachment_read(attachment_id)        # content decoded as UTF-8 text
+raw = attachment_read_bytes(attachment_id)   # raw bytes, for images and other binary files
+info = attachment_get(attachment_id)         # metadata dict, or None if it doesn't exist
+```
+
+`attachment_read` and `attachment_read_bytes` stop the script with an error if the attachment
+doesn't exist or isn't accessible, so their results can be used directly. To copy an attachment into
+a code-execution workspace, pass its bytes straight to a tool that takes base64 content:
+
+```python
+write_file(cwd=workspace, path="model.glb", content=base64_encode(attachment_read_bytes(attachment_id)))
+```
+
+The file content never passes through the conversation, so this works for large files too.
+
 #### Creating Attachments
 
 Use `attachment_create()` to create new attachments from script-generated content:

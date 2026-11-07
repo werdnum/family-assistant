@@ -279,6 +279,30 @@ class TestScriptValidatorWithTools:
         assert not result.is_valid
         assert any("search_notes" in d.message for d in result.errors)
 
+    def test_attachment_bytes_pass_to_base64_tool_argument(self) -> None:
+        write_file = {
+            "type": "function",
+            "function": {
+                "name": "write_file",
+                "description": "Write a base64-encoded file to a workspace",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "content": {"type": "string"},
+                        "cwd": {"type": "string"},
+                    },
+                    "required": ["path", "content"],
+                },
+            },
+        }
+        v = ScriptValidator(tool_definitions=[write_file])
+        result = v.validate(
+            'write_file(cwd="/tmp/workspaces/w", path="model.glb", '
+            'content=base64_encode(attachment_read_bytes("id")))'
+        )
+        assert result.is_valid, result.error_message
+
     def test_multi_tool_script(self, sample_tool_definitions: list) -> None:
         v = ScriptValidator(tool_definitions=sample_tool_definitions)
         script = """
@@ -371,6 +395,18 @@ class TestScriptValidatorConfig:
 
     @pytest.mark.parametrize("script", ATTACHMENT_API_SCRIPTS)
     def test_include_attachment_api_by_default(self, script: str) -> None:
+        v = ScriptValidator()
+        result = v.validate(script)
+        assert result.is_valid, result.error_message
+
+    @pytest.mark.parametrize(
+        "script",
+        [
+            'base64_encode(attachment_read_bytes("id"))',
+            'attachment_read("id").upper()',
+        ],
+    )
+    def test_attachment_reads_are_not_optional(self, script: str) -> None:
         v = ScriptValidator()
         result = v.validate(script)
         assert result.is_valid, result.error_message
