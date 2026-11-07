@@ -2370,12 +2370,26 @@ final class ChatViewModel {
         profileID: String,
         using startThread: @MainActor (HomeThreadStart) async -> Bool
     ) async {
+        await sendDraftAsThread(
+            profileID: profileID,
+            modelTier: modelTierCarried(to: profileID),
+            using: startThread
+        )
+    }
+
+    /// As above, at `modelTier` (nil for the profile's default), which the
+    /// user chose beside the profile.
+    func sendDraftAsThread(
+        profileID: String,
+        modelTier: String?,
+        using startThread: @MainActor (HomeThreadStart) async -> Bool
+    ) async {
         guard canSendDraftAsThread, let id = conversationID else {
             return
         }
         let draft = currentDraft
         let submittedTierChoice = modelTierChoice
-        let start = threadStart(for: draft, profileID: profileID)
+        let start = threadStart(for: draft, profileID: profileID, modelTier: modelTier)
         pendingThreadSend = (draft, start)
         submittingDraftConversationID = id
         defer {
@@ -2400,13 +2414,17 @@ final class ChatViewModel {
         draftAttachments = []
     }
 
-    private func threadStart(for draft: ChatDraft, profileID: String) -> HomeThreadStart {
-        // Home's choice is for the profile Home runs on; it carries over only
-        // where the thread's profile offers the same tier.
+    /// Home's intelligence choice as it applies to a thread on `profileID`.
+    /// The choice is for the profile Home runs on; it carries over only where
+    /// the thread's profile offers the same tier.
+    func modelTierCarried(to profileID: String) -> String? {
         let targetTiers = profiles.first { $0.id == profileID }?.modelTiers ?? []
-        let tier = modelTierChoice.flatMap { choice in
+        return modelTierChoice.flatMap { choice in
             targetTiers.contains { $0.id == choice } ? choice : nil
         }
+    }
+
+    private func threadStart(for draft: ChatDraft, profileID: String, modelTier tier: String?) -> HomeThreadStart {
         // A retry is the same start only while the draft, profile and tier
         // are what was sent; anything changed is a new start.
         if let pending = pendingThreadSend, pending.draft == draft,

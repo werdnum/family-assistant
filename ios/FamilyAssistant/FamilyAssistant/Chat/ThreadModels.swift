@@ -538,14 +538,17 @@ struct ThreadStartOptions: Equatable {
             || !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    func start(turnID: String, prompt: String, includeContext: Bool) -> HomeThreadStart {
+    /// `modelTier` rides on the opening turn, so a start without a message
+    /// sends none.
+    func start(turnID: String, prompt: String, includeContext: Bool, modelTier: String? = nil) -> HomeThreadStart {
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         return HomeThreadStart(
             turnID: turnID,
             profileID: profileID,
             prompt: trimmed.isEmpty ? nil : trimmed,
             anchorMessageID: anchorMessageID,
-            includeContext: anchorMessageID == nil || carriesContext(includeContext: includeContext)
+            includeContext: anchorMessageID == nil || carriesContext(includeContext: includeContext),
+            modelTier: trimmed.isEmpty ? nil : modelTier
         )
     }
 }

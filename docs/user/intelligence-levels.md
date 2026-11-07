@@ -30,6 +30,10 @@ why the request is hard: it turns on the answer being *right* rather than merely
 send your message. On iOS it is the gauge button in the Chat toolbar, which shows the level you
 picked once you have picked one.
 
+**When you start a thread**, the **New thread** and **Continue in a thread** dialogs ask for the
+level beside the assistant. It goes with your opening message; a thread continued without one starts
+at the usual level, and you can pick another in the thread itself.
+
 **In Telegram**, put a command at the start of the message (`/standard` takes the Assistant back to
 its usual level):
 
