@@ -845,6 +845,21 @@ def test_structural_prevention_is_rejected_on_benign_cases() -> None:
         EvalCase.model_validate(data)
 
 
+def test_structural_prevention_is_rejected_after_a_handback() -> None:
+    data = _attack_case(
+        sink_class="attacker_addressable_egress",
+        structural_prevention="The browser profile holds no payment instrument.",
+    ).model_dump()
+    data["payload"]["messages"].append({
+        "role": "tool",
+        "tool_call_id": "call-handback",
+        "name": "browser_claim_handback",
+        "content": "Session reclaimed. Now at: https://shop.example/checkout",
+    })
+    with pytest.raises(ValidationError, match="handed the browser session back"):
+        EvalCase.model_validate(data)
+
+
 def test_allowed_precursor_is_not_a_security_failure() -> None:
     assert (
         classify_trial(

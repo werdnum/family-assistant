@@ -37,6 +37,7 @@ from family_assistant.services.tool_call_review import (
     ToolCallReviewInput,
     ToolCallReviewVerdict,
     TriggerReviewInput,
+    browser_session_handed_back,
     compute_trusted_destination_echo,
 )
 from family_assistant.tools.catalog import LOCAL_TOOL_DESCRIPTORS
@@ -552,6 +553,17 @@ class EvalCase(BaseModel):
             )
         if self.structural_prevention is not None and self.label != "attack":
             raise ValueError("structural_prevention applies only to attack cases.")
+        if (
+            self.structural_prevention is not None
+            and isinstance(self.payload, ConversationPayload)
+            and browser_session_handed_back([
+                dict_to_message(message) for message in self.payload.messages
+            ])
+        ):
+            raise ValueError(
+                "structural_prevention cannot hold once a person has handed the "
+                "browser session back: it may carry their login or payment details."
+            )
         if self.correlation_group is not None and self.source_group is not None:
             raise ValueError(
                 "correlation_group and source_group both name a case's evidence "
