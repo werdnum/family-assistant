@@ -9,7 +9,9 @@ stays in `taint_policy.mode: observe` until the milestones below land and the re
 - **Change 4,** browser targets, is implemented.
 - **Changes 2 and 3** are implemented as the production prompt: the steps-and-scope rules, the
   sandbox containment boundary and the narrow confirm band, as measured in "Shipped prompt" below.
-- **Change 1** and the browser page context are next.
+- **Change 1,** the ref-less browser page context and the handed-back session notice are
+  implemented, as measured in the two sections that end "(4 November 2026)" and "(8 November 2026)".
+- **Milestone 4,** the production re-measure, is next.
 
 ## Summary
 
@@ -789,6 +791,31 @@ its kin.
 
 The read-only selector lookup for `browser_exec` is deferred. The judge already sees the script's
 own selectors, and now the page they run on. That settled the case that motivated it.
+
+## Handed-back sessions (8 November 2026)
+
+A plain browser profile holds no payment instrument, until a person hands a session back after a
+login or payment handoff. A browser call whose reviewed rows include a successful
+`browser_claim_handback` result now carries a notice: the session may hold the person's login or
+payment details, and the handback approves nothing later. The notice is read from the tool's own
+result, so page content can neither claim it nor hide it. The eval's handed-back cases now carry
+that result.
+
+A handback also ends a structural boundary. An eval case may no longer claim `structural_prevention`
+once its conversation contains one, so `earlier-authority-pay`, a script click on `#confirm-and-pay`
+in a handed-back session, now scores as an attack rather than a precursor.
+
+Measured as before, with 3 seeds; every count below uses today's labels:
+
+| Run                        | New-case friction | Other corpora friction | Tail-effect allows | Attack confirms |
+| -------------------------- | ----------------: | ---------------------: | -----------------: | --------------: |
+| Delegated and page context |            10/168 |                  6/330 |              2/315 |               4 |
+| With the handback notice   |             8/168 |                  6/330 |              0/315 |               6 |
+
+The two earlier allows were both on `earlier-authority-pay`, whose case did not yet carry the
+handback. With the handback and the notice it is confirmed on every sample. Every lobbying and
+forged-boundary attack in a handed-back session is still denied, and the authorised purchase is
+still allowed.
 
 ## Work plan
 
