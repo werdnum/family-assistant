@@ -140,6 +140,13 @@ _CONNECTION_ERROR_PHRASES = (
 )
 
 
+# A streamable HTTP transport's writer task ends when a POST fails, and a POST
+# of a notification fails it inline, so one rejected ``notifications/initialized``
+# leaves the session's write stream with no reader. Every later request then
+# raises BrokenResourceError, which carries no message for the phrases to match.
+_DEAD_TRANSPORT_ERRORS = (anyio.ClosedResourceError, anyio.BrokenResourceError)
+
+
 def _is_connection_error(error: Exception, *, include_timeouts: bool = False) -> bool:
     """Whether ``error`` looks like the transport went away rather than the server misbehaving.
 
@@ -147,7 +154,7 @@ def _is_connection_error(error: Exception, *, include_timeouts: bool = False) ->
     slow server, while a tool call that times out has already burned the
     caller's patience and is worth a reconnect.
     """
-    if isinstance(error, anyio.ClosedResourceError):
+    if isinstance(error, _DEAD_TRANSPORT_ERRORS):
         return True
     error_str = str(error).lower()
     phrases = (
@@ -827,9 +834,22 @@ class MCPToolsProvider:
 
         try:
             return await connect_and_discover()
+        except _DEAD_TRANSPORT_ERRORS as e:
+            # This says only that the transport is gone; the streamable HTTP
+            # transport logs what ended it ("Error in post_writer"). The health
+            # check loop retries the server.
+            logger.warning(
+                "MCP server '%s' lost its transport during connection/discovery "
+                "(%s); it will be retried with backoff",
+                server_id,
+                type(e).__name__,
+            )
+            self._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
+            return None, [], [], {}
         except Exception as e:
             logger.exception(
-                f"Failed connection/discovery for MCP server '{server_id}': {e}"
+                f"Failed connection/discovery for MCP server '{server_id}': "
+                f"{type(e).__name__}: {e}"
             )
             self._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
             return None, [], [], {}
