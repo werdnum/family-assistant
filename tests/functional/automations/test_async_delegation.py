@@ -5627,6 +5627,38 @@ async def test_follow_up_delegation_is_reviewed_with_the_earlier_request(
 
 
 @pytest.mark.asyncio
+async def test_a_busy_earlier_turn_still_contributes_its_request(
+    db_engine: AsyncEngine,
+) -> None:
+    """An earlier turn's tool activity cannot crowd its request out of the bound."""
+    db_context = Database(engine=db_engine)
+    started = SystemClock().now() - timedelta(hours=1)
+    await _add_trusted_turn(
+        db_context,
+        "Find accommodation in Porto for 28-30 December.",
+        turn_id="turn_earlier",
+        ago=timedelta(hours=1),
+    )
+    for step in range(150):
+        await db_context.message_history.add_message(
+            AssistantMessage(content=f"Searching listing {step}."),
+            interface_type=TEST_INTERFACE_TYPE,
+            conversation_id=TEST_CONVERSATION_ID,
+            timestamp=started + timedelta(seconds=step + 1),
+            turn_id="turn_earlier",
+            user_id="async-delegation-user",
+        )
+    target_service = FakeDelegatableService()
+    await _delegate_follow_up_in_background(db_engine, target_service)
+
+    trigger = target_service.calls[0]["tool_call_review_trigger"]
+    assert trigger is not None
+    assert trigger.trusted_earlier_requests == (
+        "Find accommodation in Porto for 28-30 December.",
+    )
+
+
+@pytest.mark.asyncio
 async def test_unattended_and_untrusted_earlier_turns_contribute_nothing(
     db_engine: AsyncEngine,
 ) -> None:

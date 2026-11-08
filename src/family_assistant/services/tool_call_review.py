@@ -1993,7 +1993,7 @@ async def collect_earlier_requests(
     by age, turns and size, as the history window an interactive review reads
     is: a reference older than that gets today's behaviour, not a wrong allow.
     """
-    turns = await db.message_history.get_earlier_visible_turns(
+    turns = await db.message_history.get_earlier_user_turns(
         interface_type=interface_type,
         conversation_id=conversation_id,
         subconversation_id=subconversation_id,
