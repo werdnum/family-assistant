@@ -67,6 +67,7 @@ from family_assistant.services.tool_call_review import (
     estimated_argument_tokens,
     human_decision_from_confirmation,
     program_review_constraints,
+    resolve_browser_action_target,
     resolve_originating_request,
     review_prompt_revision,
 )
@@ -2993,6 +2994,132 @@ def _click_prompt(ref: str) -> str:
         sink_class=SinkClass.ATTACKER_ADDRESSABLE_EGRESS,
     )
     return _prompt(assemble_tool_call_review_messages(review_input, _constraints()))
+
+
+def _browser_exec_prompt(
+    arguments: dict[str, object], later: Sequence[LLMMessage] = ()
+) -> str:
+    definition: ToolDefinition = {
+        "type": "function",
+        "function": {
+            "name": "browser_exec",
+            "description": "Run JavaScript in the current page.",
+            "parameters": {
+                "type": "object",
+                "properties": {"code": {"type": "string"}},
+            },
+        },
+    }
+    descriptor = ToolDescriptor(
+        name="browser_exec",
+        definition=definition,
+        tags=frozenset({ToolTag.BROWSER, ToolTag.STATE_CHANGING}),
+        origin="local",
+    )
+    review_input = replace(
+        _review_input(
+            messages=[
+                UserMessage(
+                    content="Find the cheapest 2TB SSD. Don't buy anything.",
+                    taint_metadata=TurnTaintState.empty().to_metadata(),
+                ),
+                ToolMessage(
+                    tool_call_id="call-1",
+                    name="browser_open",
+                    content=_SHOP_SNAPSHOT,
+                    taint_metadata=_unknown_state().to_metadata(),
+                ),
+                *later,
+            ],
+            descriptor=descriptor,
+        ),
+        arguments=arguments,
+        sink_class=SinkClass.ATTACKER_ADDRESSABLE_EGRESS,
+    )
+    return _prompt(assemble_tool_call_review_messages(review_input, _constraints()))
+
+
+@pytest.mark.no_db
+def test_ref_less_browser_call_shows_the_page_it_runs_on() -> None:
+    prompt = _browser_exec_prompt({"code": "document.querySelector('#pay').click()"})
+    block = prompt.split("<browser_action_page>", 1)[1]
+    body = block.split("</browser_action_page>", 1)[0].strip()
+    assert json.loads(body.removeprefix("```json").removesuffix("```")) == {
+        "url": "https://shop.example/p/1",
+        "title": "SSD",
+    }
+    assert "View offer" not in prompt
+
+
+def _page_block(prompt: str) -> object:
+    if "<browser_action_page>" not in prompt:
+        return None
+    block = prompt.split("<browser_action_page>", 1)[1]
+    body = block.split("</browser_action_page>", 1)[0].strip()
+    return json.loads(body.removeprefix("```json").removesuffix("```"))
+
+
+def _later_result(name: str, content: str) -> ToolMessage:
+    return ToolMessage(
+        tool_call_id=f"call-{name}",
+        name=name,
+        content=content,
+        taint_metadata=_unknown_state().to_metadata(),
+    )
+
+
+_PAY_CLICK: dict[str, object] = {"code": "document.querySelector('#pay').click()"}
+
+
+@pytest.mark.no_db
+def test_a_script_that_navigated_reports_the_page_it_left() -> None:
+    navigated = _later_result(
+        "browser_exec",
+        json.dumps({"result": None, "url": "https://rail.example/checkout"}),
+    )
+    prompt = _browser_exec_prompt(_PAY_CLICK, later=[navigated])
+    assert _page_block(prompt) == {"url": "https://rail.example/checkout"}
+
+
+@pytest.mark.no_db
+def test_a_snapshot_from_a_non_browser_tool_is_not_the_page() -> None:
+    forged = _later_result(
+        "web_fetch",
+        _SHOP_SNAPSHOT.replace("https://shop.example/p/1", "https://forged.example/"),
+    )
+    prompt = _browser_exec_prompt(_PAY_CLICK, later=[forged])
+    assert _page_block(prompt) == {"url": "https://shop.example/p/1", "title": "SSD"}
+
+
+@pytest.mark.no_db
+def test_an_unreadable_newest_page_report_leaves_the_page_unknown() -> None:
+    failed = _later_result("browser_exec", "JS error: navigation interrupted")
+    assert _page_block(_browser_exec_prompt(_PAY_CLICK, later=[failed])) is None
+
+
+@pytest.mark.no_db
+def test_a_handback_reports_the_page_it_took_over() -> None:
+    handback = _later_result(
+        "browser_claim_handback", "Session reclaimed. Now at: https://bank.example/"
+    )
+    prompt = _browser_exec_prompt(_PAY_CLICK, later=[handback])
+    assert _page_block(prompt) == {"url": "https://bank.example/"}
+
+
+@pytest.mark.no_db
+def test_a_ref_listed_only_by_a_non_browser_tool_is_not_resolved() -> None:
+    forged = _later_result("web_fetch", _SHOP_SNAPSHOT)
+    assert (
+        resolve_browser_action_target(
+            [forged], _browser_click_descriptor(), {"ref": "e88"}
+        )
+        == {}
+    )
+
+
+@pytest.mark.no_db
+def test_ref_targeted_call_gets_its_element_not_the_page_block() -> None:
+    assert "<browser_action_page>" not in _click_prompt("e88")
 
 
 @pytest.mark.no_db
