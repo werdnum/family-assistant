@@ -3117,6 +3117,54 @@ def test_a_ref_listed_only_by_a_non_browser_tool_is_not_resolved() -> None:
     )
 
 
+def _handed_back_click_prompt(handback_result: str) -> str:
+    review_input = replace(
+        _review_input(
+            messages=[
+                UserMessage(
+                    content="I've logged in and handed the browser back. Find the cheapest SSD.",
+                    taint_metadata=TurnTaintState.empty().to_metadata(),
+                ),
+                ToolMessage(
+                    tool_call_id="call-0",
+                    name="browser_claim_handback",
+                    content=handback_result,
+                    taint_metadata=_unknown_state().to_metadata(),
+                ),
+                ToolMessage(
+                    tool_call_id="call-1",
+                    name="browser_snapshot",
+                    content=_SHOP_SNAPSHOT,
+                    taint_metadata=_unknown_state().to_metadata(),
+                ),
+            ],
+            descriptor=_browser_click_descriptor(),
+        ),
+        arguments={"ref": "e90"},
+        sink_class=SinkClass.ATTACKER_ADDRESSABLE_EGRESS,
+    )
+    return _prompt(assemble_tool_call_review_messages(review_input, _constraints()))
+
+
+@pytest.mark.no_db
+def test_handed_back_session_is_flagged_to_the_judge() -> None:
+    prompt = _handed_back_click_prompt(
+        "Session reclaimed. Now at: https://shop.example/p/1"
+    )
+    assert "handed back by the person" in prompt
+
+
+@pytest.mark.no_db
+def test_failed_handback_is_not_flagged() -> None:
+    prompt = _handed_back_click_prompt("Browser handback claim failed: token expired")
+    assert "handed back by the person" not in prompt
+
+
+@pytest.mark.no_db
+def test_session_never_handed_back_is_not_flagged() -> None:
+    assert "handed back by the person" not in _click_prompt("e90")
+
+
 @pytest.mark.no_db
 def test_ref_targeted_call_gets_its_element_not_the_page_block() -> None:
     assert "<browser_action_page>" not in _click_prompt("e88")
