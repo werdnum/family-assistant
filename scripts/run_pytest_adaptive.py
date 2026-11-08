@@ -424,6 +424,8 @@ def main() -> int:
             shard_reports_dir,
             result.returncode,
         )
+        # The merged report holds everything the shard reports did.
+        shutil.rmtree(shard_reports_dir)
     return result.returncode
 
 
