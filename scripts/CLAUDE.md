@@ -31,6 +31,25 @@ process has gone, rather than waiting five minutes and failing. The start time s
 from passing for the holder. Never delete `~/.poe-test.lock.dir` by hand: a live run's lock looks
 the same.
 
+### `link-local-deps.sh` and `prune-worktrees.sh`
+
+On the macOS dev VM, checkouts live on a virtiofs share while uv's cache sits on the VM's APFS disk.
+uv cannot clone across that boundary, so a worktree's `.venv` was a full ~1.9GB copy and `npm ci`
+added ~540MB more. `link-local-deps.sh` creates both on the APFS side under
+`~/.cache/fa-worktree-deps/checkouts/<checkout>/` and symlinks them in: the venv is cloned from uv's
+cache (~20MB real), and `node_modules` is cloned with `cp -c` from a template built once per
+`package-lock.json` hash (~15MB real). Every checkout still gets its own copy, since a shared venv's
+editable install follows whichever checkout synced last. The symlink target must be named
+`node_modules`, because Node finds a package's dependencies by walking up to a directory of that
+name. The SessionStart hook runs it for local sessions and `setup-workspace.sh` runs it first; it
+does nothing off macOS, on a checkout already on the local disk, or for deps that already exist.
+
+`prune-worktrees.sh` (dry run unless `--apply`) removes worktrees that are unlocked, clean, idle for
+`--min-idle-hours` (default 12) and whose PR is merged or closed (or, without a PR, whose HEAD is in
+`origin/main`). HEAD is kept as `refs/worktree-backups/<name>` when it is not in main, so deleting
+the branch loses no commits. It then deletes the local-disk deps of checkouts that no longer exist
+and npm templates no checkout uses.
+
 ### `check_suppression_budget.py`
 
 Enforces the shrink-only lint suppression budgets in `.lint-budget.toml`. For each budgeted rule it
