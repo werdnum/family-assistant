@@ -40,31 +40,31 @@ run() {
     if [ "$apply" = true ]; then "$@"; else echo "    would run: $*"; fi
 }
 
-file_mtime() {
-    if [ "$(uname)" = "Darwin" ]; then stat -f %m "$1"; else stat -c %Y "$1"; fi
-}
-
 git -C "$main_root" worktree list --porcelain | awk '
 /^worktree /{sub(/^worktree /, ""); path = $0}
+BEGIN{branch = "-"; locked = "no"}
 /^branch /{branch = $2; sub("refs/heads/", "", branch)}
-/^locked/{locked = 1}
-/^$/{print path "\t" branch "\t" locked; branch = ""; locked = 0}' |
+/^locked/{locked = "yes"}
+/^$/{print path "\t" branch "\t" locked; branch = "-"; locked = "no"}' |
     while IFS=$'\t' read -r path branch locked; do
         [ "$path" = "$main_root" ] && continue
+        [ "$branch" = "-" ] && branch=""
         name="$(basename "$path")"
         if [ ! -d "$path" ]; then
             echo "gone:  $path"
             continue
         fi
-        if [ "$locked" = 1 ]; then
+        if [ "$locked" = "yes" ]; then
             echo "keep:  $name (locked)"
             continue
         fi
-        if [ -n "$(git -C "$path" status --porcelain)" ]; then
+        if [ -n "$(git -C "$path" --no-optional-locks status --porcelain)" ]; then
             echo "keep:  $name (uncommitted changes)"
             continue
         fi
-        idle_hours=$(((now - $(file_mtime "$(git -C "$path" rev-parse --git-dir)/index")) / 3600))
+        # The HEAD reflog records this worktree's last checkout, commit or
+        # reset; the index is no signal, since any `git status` rewrites it.
+        idle_hours=$(((now - $(git -C "$path" log -g -1 --format=%ct HEAD)) / 3600))
         if [ "$idle_hours" -lt "$min_idle_hours" ]; then
             echo "keep:  $name (active ${idle_hours}h ago)"
             continue
