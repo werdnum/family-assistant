@@ -36,6 +36,13 @@ repo="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
 git -C "$main_root" fetch -q origin main
 now="$(date +%s)"
 
+# git's recursive delete sometimes fails on the macOS VM's virtiofs share with
+# "Directory not empty"; finish the job with rm and drop git's record of it.
+remove_worktree() {
+    git -C "$main_root" worktree remove --force "$1" && return 0
+    rm -rf "$1" && git -C "$main_root" worktree prune
+}
+
 run() {
     if [ "$apply" = true ]; then "$@"; else echo "    would run: $*"; fi
 }
@@ -92,7 +99,10 @@ BEGIN{branch = "-"; locked = "no"}
         if [ "$in_main" = false ]; then
             run git -C "$main_root" update-ref "refs/worktree-backups/$name" "$head"
         fi
-        run git -C "$main_root" worktree remove --force "$path"
+        if ! run remove_worktree "$path"; then
+            echo "    failed to remove $path; leaving its branch" >&2
+            continue
+        fi
         if [ -n "$branch" ]; then
             run git -C "$main_root" branch -q -D "$branch"
         fi
