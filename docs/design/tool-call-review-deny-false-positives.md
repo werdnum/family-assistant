@@ -332,8 +332,16 @@ applies to interactive reviews too, which already render the whole window.
 
 The set is recorded on the run when it is created, alongside `originating_request` from
 [#1525](https://github.com/werdnum/family-assistant/pull/1525). Worker-claimed, woken and resumed
-runs then see the same context as the first review. The band is capped by size; the oldest rows go
-first.
+runs then see the same context as the first review. The band is bounded the way the history window
+an interactive review reads is bounded: the last 24 hours, at most six turns, capped by size, oldest
+first out. A delegation from an unattended turn carries forward the set its own trigger inherited,
+rather than reading history.
+
+*Implemented:*
+
+- `collect_earlier_requests` collects the set at delegation time.
+- `delegation_runs.earlier_requests_json` records it on the run.
+- It renders as `earlier_trusted_request` blocks after the originating request.
 
 This keeps the docstring's concern. An old request never stands in for the one that caused the
 delegation, because the two are rendered and named differently.

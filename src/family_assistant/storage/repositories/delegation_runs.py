@@ -42,6 +42,13 @@ __all__ = [
 ]
 
 
+class EarlierRequestRecord(TypedDict):
+    """One earlier trusted request recorded on a run, with the provenance it had."""
+
+    text: str
+    taint: TaintMetadata
+
+
 class DelegationRunCreate(TypedDict, total=False):
     """Input fields for creating a delegation run."""
 
@@ -60,8 +67,10 @@ class DelegationRunCreate(TypedDict, total=False):
     content_parts_json: Required[list[ContentPartDict]]
     taint_state_json: TaintMetadata | None
     model_selection_json: dict[str, str | None] | None
+    # Production creators fill these from tools.services.delegated_run_review_record.
     originating_request: str | None
     originating_request_taint_json: TaintMetadata | None
+    earlier_requests_json: list[EarlierRequestRecord] | None
     user_id: str | None
     user_name: str | None
     source_turn_id: str | None
@@ -97,6 +106,9 @@ class DelegationRunDict(TypedDict):
     model_selection_json: object | None
     originating_request: str | None
     originating_request_taint_json: TaintMetadata | None
+    # Uninterpreted, like ``model_selection_json``: the review trigger that
+    # reads it validates each entry and raises on one it cannot read.
+    earlier_requests_json: object | None
     handed_off_at: datetime | None
     started_at: datetime | None
     completed_at: datetime | None
@@ -1192,6 +1204,7 @@ class DelegationRunsRepository(BaseRepository):
             originating_request_taint_json=self._json_mapping(
                 row.get("originating_request_taint_json")
             ),
+            earlier_requests_json=self._json_value(row.get("earlier_requests_json")),
             handed_off_at=row.get("handed_off_at"),
             started_at=row.get("started_at"),
             completed_at=row.get("completed_at"),
