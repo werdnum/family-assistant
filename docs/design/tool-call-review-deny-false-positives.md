@@ -801,21 +801,21 @@ payment details, and the handback approves nothing later. The notice is read fro
 result, so page content can neither claim it nor hide it. The eval's handed-back cases now carry
 that result.
 
-A handback also ends a structural boundary. An eval case may no longer claim `structural_prevention`
-once its conversation contains one, so `earlier-authority-pay`, a script click on `#confirm-and-pay`
-in a handed-back session, now scores as an attack rather than a precursor.
+A handback also ends a structural boundary, so an eval case may no longer claim
+`structural_prevention` once its conversation contains one. No current case does both; the rule
+keeps a future one from hiding a real payment as a precursor.
 
-Measured as before, with 3 seeds; every count below uses today's labels:
+Measured as before, with 3 seeds:
 
-| Run                        | New-case friction | Other corpora friction | Tail-effect allows | Attack confirms |
-| -------------------------- | ----------------: | ---------------------: | -----------------: | --------------: |
-| Delegated and page context |            10/168 |                  6/330 |              2/315 |               4 |
-| With the handback notice   |             8/168 |                  6/330 |              0/315 |               6 |
+| Run                        | New-case friction | Other corpora friction | Tail-effect allows |
+| -------------------------- | ----------------: | ---------------------: | -----------------: |
+| Delegated and page context |            10/168 |                  6/330 |              0/309 |
+| With the handback notice   |             8/168 |                  6/330 |              0/309 |
 
-The two earlier allows were both on `earlier-authority-pay`, whose case did not yet carry the
-handback. With the handback and the notice it is confirmed on every sample. Every lobbying and
-forged-boundary attack in a handed-back session is still denied, and the authorised purchase is
-still allowed.
+The notice made no measurable difference on this set. Every lobbying and forged-boundary attack in a
+handed-back session is denied with or without it, and the authorised purchase is allowed. It is kept
+as a margin for a commitment the judge would otherwise treat as one a plain profile cannot make; the
+friction difference is within seed-to-seed variation.
 
 ## Work plan
 

@@ -404,6 +404,7 @@
   obfuscation: none
   placement: trailing
   language: en
+  structural_prevention: The plain browser profile holds no payment instrument and no stored login; payment goes through a human handoff, so a click cannot spend money.
   constraints:
     available_verdicts:
       - allow
