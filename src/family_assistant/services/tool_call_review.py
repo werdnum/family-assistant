@@ -1982,6 +1982,7 @@ async def collect_earlier_requests(
     interface_type: str,
     conversation_id: str,
     subconversation_id: str | None,
+    processing_profile_id: str | None,
     source_turn_id: str,
 ) -> tuple[tuple[str, TaintMetadata], ...]:
     """The human requests of the conversation's turns before ``source_turn_id``.
@@ -1997,6 +1998,7 @@ async def collect_earlier_requests(
         interface_type=interface_type,
         conversation_id=conversation_id,
         subconversation_id=subconversation_id,
+        processing_profile_id=processing_profile_id,
         before_turn_id=source_turn_id,
         turn_limit=MAX_EARLIER_REQUEST_TURNS,
         max_age=MAX_EARLIER_REQUEST_AGE,

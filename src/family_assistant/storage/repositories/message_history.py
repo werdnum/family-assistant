@@ -2867,13 +2867,16 @@ class MessageHistoryRepository(BaseRepository):
         interface_type: str,
         conversation_id: str,
         subconversation_id: str | None,
+        processing_profile_id: str | None,
         before_turn_id: str,
         turn_limit: int,
         max_age: timedelta,
     ) -> list[list[LLMMessage]]:
         """The visible user rows of the newest ``turn_limit`` turns before a turn.
 
-        Scoped to one conversation and subconversation, and to rows written in
+        Scoped to one conversation, subconversation and processing profile --
+        the same partition the history window reads, so the reviewer gets no
+        context the delegating model could not see -- and to rows written in
         the ``max_age`` before ``before_turn_id`` began. Only user rows are read,
         so a turn's tool activity cannot crowd its request out of the row bound.
         Internal rows -- material a turn was given rather than anything a person
@@ -2891,6 +2894,12 @@ class MessageHistoryRepository(BaseRepository):
                 _exact_subconversation_condition(subconversation_id),
                 _visible_message_condition(),
                 message_history_table.c.role == "user",
+                (
+                    message_history_table.c.processing_profile_id.is_(None)
+                    if processing_profile_id is None
+                    else message_history_table.c.processing_profile_id
+                    == processing_profile_id
+                ),
                 message_history_table.c.turn_id.is_not(None),
                 message_history_table.c.turn_id != before_turn_id,
                 message_history_table.c.timestamp < first["timestamp"],

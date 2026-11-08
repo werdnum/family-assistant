@@ -67,6 +67,7 @@ class DelegationRunCreate(TypedDict, total=False):
     content_parts_json: Required[list[ContentPartDict]]
     taint_state_json: TaintMetadata | None
     model_selection_json: dict[str, str | None] | None
+    # Production creators fill these from tools.services.delegated_run_review_record.
     originating_request: str | None
     originating_request_taint_json: TaintMetadata | None
     earlier_requests_json: list[EarlierRequestRecord] | None

@@ -40,6 +40,7 @@ from family_assistant.threads.listing import summarize_threads
 from family_assistant.tools.services import (
     DELEGATED_PROFILE_RUN_TASK_TYPE,
     current_taint_metadata,
+    delegated_run_review_record,
     delegation_content_parts,
     delegation_interface_type,
     delegation_tools_config,
@@ -674,6 +675,8 @@ async def start_thread_tool(
         if part["type"] == "attachment"
     ]
 
+    review_record = await delegated_run_review_record(exec_context, request=request)
+
     async def _create(txn: DatabaseTransaction) -> None:
         await create_thread(
             txn,
@@ -716,6 +719,7 @@ async def start_thread_tool(
             "content_parts_json": content_parts,
             "taint_state_json": taint,
             "model_selection_json": model_selection.to_json(),
+            **review_record,
         })
         await txn.tasks.enqueue(
             task_id=task_id,

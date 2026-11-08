@@ -12,7 +12,7 @@ import logging
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 
 from sqlalchemy.exc import IntegrityError
 
@@ -72,6 +72,7 @@ if TYPE_CHECKING:
     from family_assistant.storage.repositories.delegation_runs import (
         DelegationRunDict,
         DelegationRunSummary,
+        EarlierRequestRecord,
     )
     from family_assistant.tools.types import (
         ToolConfirmationAuthorization,
@@ -195,6 +196,7 @@ async def _delegation_review_trigger(
             interface_type=exec_context.interface_type,
             conversation_id=exec_context.conversation_id,
             subconversation_id=exec_context.subconversation_id,
+            processing_profile_id=exec_context.processing_profile_id,
             source_turn_id=exec_context.turn_id,
         )
         if started_by_human and exec_context.turn_id is not None
@@ -235,6 +237,38 @@ async def _run_review_context(
         exec_context, trigger=trigger, resume_delegation_id=resume_delegation_id
     )
     return originating, trigger.earlier_requests
+
+
+class DelegatedRunReviewRecord(TypedDict):
+    """What a queued run's review answers to, as recorded on the run."""
+
+    originating_request: str | None
+    originating_request_taint_json: TaintMetadata | None
+    earlier_requests_json: list[EarlierRequestRecord] | None
+
+
+async def delegated_run_review_record(
+    exec_context: ToolExecutionContext,
+    *,
+    request: str,
+    resume_delegation_id: str | None = None,
+) -> DelegatedRunReviewRecord:
+    """The review context every worker-run delegation records when it is created.
+
+    Every creator of a delegation run spreads this into ``create_run``, so a
+    run queued by ``start_thread`` or ``post_to_conversation`` is reviewed
+    against the same requests as one queued by ``delegate_to_service``.
+    """
+    originating, earlier_requests = await _run_review_context(
+        exec_context,
+        user_request=request,
+        resume_delegation_id=resume_delegation_id,
+    )
+    return {
+        "originating_request": originating[0] if originating else None,
+        "originating_request_taint_json": originating[1] if originating else None,
+        "earlier_requests_json": earlier_requests_to_json(earlier_requests),
+    }
 
 
 async def _run_originating_request(
@@ -1386,9 +1420,9 @@ async def _enqueue_delegation(
         delivery_hint,
     )
     taint_state_json = current_taint_metadata(exec_context)
-    originating, earlier_requests = await _run_review_context(
+    review_record = await delegated_run_review_record(
         exec_context,
-        user_request=user_request,
+        request=user_request,
         resume_delegation_id=resume_delegation_id,
     )
 
@@ -1423,9 +1457,7 @@ async def _enqueue_delegation(
             # configuration deployment between enqueue and execution must not
             # change the models of a run that was already authorized.
             "model_selection_json": model_selection.to_json(),
-            "originating_request": originating[0] if originating else None,
-            "originating_request_taint_json": originating[1] if originating else None,
-            "earlier_requests_json": earlier_requests_to_json(earlier_requests),
+            **review_record,
         })
         if prepare_run is not None:
             await prepare_run(txn, delegation_id, subconversation_id)

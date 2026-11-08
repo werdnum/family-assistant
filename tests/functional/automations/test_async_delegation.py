@@ -5537,7 +5537,12 @@ async def test_synchronous_delegation_ignores_earlier_turns(
 
 
 async def _add_trusted_turn(
-    db_context: Database, content: str, *, turn_id: str, ago: timedelta
+    db_context: Database,
+    content: str,
+    *,
+    turn_id: str,
+    ago: timedelta,
+    processing_profile_id: str | None = None,
 ) -> None:
     await db_context.message_history.add_message(
         UserMessage.from_trusted_user(content=content),
@@ -5546,6 +5551,7 @@ async def _add_trusted_turn(
         timestamp=SystemClock().now() - ago,
         turn_id=turn_id,
         user_id="async-delegation-user",
+        processing_profile_id=processing_profile_id,
     )
 
 
@@ -5656,6 +5662,31 @@ async def test_a_busy_earlier_turn_still_contributes_its_request(
     assert trigger.trusted_earlier_requests == (
         "Find accommodation in Porto for 28-30 December.",
     )
+
+
+@pytest.mark.asyncio
+async def test_an_earlier_turn_under_another_profile_contributes_nothing(
+    db_engine: AsyncEngine,
+) -> None:
+    """The reviewer gets no earlier request the delegating model could not see.
+
+    History is partitioned by processing profile, so a turn run under another
+    profile is outside the delegating model's window and stays outside its
+    reviewer's.
+    """
+    await _add_trusted_turn(
+        Database(engine=db_engine),
+        "Find accommodation in Porto for 28-30 December.",
+        turn_id="turn_earlier",
+        ago=timedelta(hours=1),
+        processing_profile_id="another_profile",
+    )
+    target_service = FakeDelegatableService()
+    await _delegate_follow_up_in_background(db_engine, target_service)
+
+    trigger = target_service.calls[0]["tool_call_review_trigger"]
+    assert trigger is not None
+    assert trigger.trusted_earlier_requests == ()
 
 
 @pytest.mark.asyncio
