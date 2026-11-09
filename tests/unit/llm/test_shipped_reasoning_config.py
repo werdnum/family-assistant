@@ -101,11 +101,11 @@ def test_shipped_defaults_leave_thinking_off_for_unconfigured_anthropic_models(
 ) -> None:
     """Enabling thinking is per model, so it must not leak to other families.
 
-    `claude-fable-5-1` rejects an explicit disabled thinking config, so it has
+    `claude-fable-5-2` rejects an explicit disabled thinking config, so it has
     to inherit nothing at all here.
     """
     params = _anthropic_client_for(
-        shipped_config, "claude-fable-5-1"
-    )._get_model_specific_params("claude-fable-5-1")
+        shipped_config, "claude-fable-5-2"
+    )._get_model_specific_params("claude-fable-5-2")
 
     assert "thinking" not in params

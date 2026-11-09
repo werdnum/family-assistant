@@ -58,7 +58,7 @@ llm_parameters:
   #   top_k: 50
   # Extended thinking on Claude. The shape differs by model generation and is
   # NOT interchangeable -- claude-sonnet-4-6 takes `enabled` + `budget_tokens`,
-  # while claude-fable-5-1 rejects that and wants `adaptive` + output_config
+  # while claude-fable-5-2 rejects that and wants `adaptive` + output_config
   # effort. budget_tokens must be less than max_tokens (64000 on a streamed
   # request, 16000 otherwise).
   # Thinking blocks are captured and replayed automatically once enabled.
@@ -66,7 +66,7 @@ llm_parameters:
   #   thinking:
   #     type: enabled
   #     budget_tokens: 4096
-  # "claude-fable-5-1":
+  # "claude-fable-5-2":
   #   thinking:
   #     type: adaptive
   #   output_config:
@@ -138,7 +138,7 @@ llm_parameters:
   # -- it has to survive someone lowering Opus 5's effort. And thinking cannot
   # be disabled at all, which the client never tries to do.
   #
-  # Like Fable 5.1, it rejects a forced tool choice. The client never sends
+  # Like Fable 5.2, it rejects a forced tool choice. The client never sends
   # one to Anthropic: calls that need a particular tool (attachment selection,
   # structured output) ask for it with an instruction closing the last turn.
   "claude-opus-5-5":
@@ -234,10 +234,10 @@ model_tiers:
       # previous generation's `enabled` + `budget_tokens`. This entry is the
       # only place it is configured -- the global map deliberately has no
       # claude-fable- key (it matches by substring), so the
-      # `claude_fable_5_1` preset below inherits nothing and runs at the
+      # `claude_fable_5_2` preset below inherits nothing and runs at the
       # model's own default effort.
       - provider: "anthropic"
-        model: "claude-fable-5-1"
+        model: "claude-fable-5-2"
         llm_parameters:
           thinking:
             type: "adaptive"
@@ -321,12 +321,12 @@ model_tiers:
     chain:
       - provider: "anthropic"
         model: "claude-haiku-5-5"
-  claude_fable_5_1:
-    label: "Claude Fable 5.1"
+  claude_fable_5_2:
+    label: "Claude Fable 5.2"
     description: "Anthropic's strongest model, at its default effort."
     chain:
       - provider: "anthropic"
-        model: "claude-fable-5-1"
+        model: "claude-fable-5-2"
   kimi_k3:
     label: "Kimi K3"
     description: "Moonshot AI's open-weight model, served through OpenRouter."
@@ -964,7 +964,7 @@ default_profile_settings:
   # ("run complex_tasks on Gemini 4 Argon"). Auto never routes to these and the
   # tier picker does not list them. A profile that names an inline model drops
   # this list, and one that declares its own replaces it.
-  delegation_model_tiers: ["gpt_6_astra", "gpt_6_1_sol", "gpt_6_1_terra", "claude_opus_5_5", "claude_sonnet_5_5", "claude_haiku_5_5", "claude_fable_5_1", "kimi_k3", "gemini_4_argon"]
+  delegation_model_tiers: ["gpt_6_astra", "gpt_6_1_sol", "gpt_6_1_terra", "claude_opus_5_5", "claude_sonnet_5_5", "claude_haiku_5_5", "claude_fable_5_2", "kimi_k3", "gemini_4_argon"]
   processing_config:
     # Inherited by every profile that does not select its own tier or name an
     # inline model.
@@ -1498,7 +1498,7 @@ service_profiles:
   # taint policy gates as it does everywhere else.
   - id: "council"
     user_selectable: true
-    description: "Use for an explicit multi-model council, broad exploratory work, or a difficult design or speculative question where independent proposals and critical review are valuable. Several strong models (GPT-6 Astra, Claude Fable 5.1, Kimi K3 and Gemini 4 Argon) each research the question independently, review and revise against each other over two rounds, and the council returns a synthesis with evidence, alternatives and remaining uncertainties. Slow and expensive. Not the default for routine lookups, straightforward coding or implementation. It can read the household's notes, documents, calendar and conversation history, so describe the question fully and pass relevant attachments."
+    description: "Use for an explicit multi-model council, broad exploratory work, or a difficult design or speculative question where independent proposals and critical review are valuable. Several strong models (GPT-6 Astra, Claude Fable 5.2, Kimi K3 and Gemini 4 Argon) each research the question independently, review and revise against each other over two rounds, and the council returns a synthesis with evidence, alternatives and remaining uncertainties. Slow and expensive. Not the default for routine lookups, straightforward coding or implementation. It can read the household's notes, documents, calendar and conversation history, so describe the question fully and pass relevant attachments."
     # Household notes as the assistant sees them, plus the council's own
     # skill: no other profile holds the `council` grant.
     visibility_grants: ["default", "council"]
@@ -1528,7 +1528,7 @@ service_profiles:
 
           Council roster -- use exactly these, each through the council_member profile with its model_tier:
           - Member A: model_tier "gpt_6_astra" (GPT-6 Astra)
-          - Member B: model_tier "claude_fable_5_1" (Claude Fable 5.1)
+          - Member B: model_tier "claude_fable_5_2" (Claude Fable 5.2)
           - Member C: model_tier "kimi_k3" (Kimi K3)
           - Member D: model_tier "gemini_4_argon" (Gemini 4 Argon)
           "claude_opus_5_5" (Claude Opus 5.5) is an alternative Anthropic seat, used in place of Fable only when the request asks for it -- never as an extra seat. Never substitute another model for a member, and never describe a member as a model it is not.
@@ -2667,7 +2667,7 @@ service_profiles:
     # The seats. A profile admits presets for itself -- default_assistant's
     # list does not reach here -- and every one is a single model with no
     # fallback, so a seat answers as the model it names or fails visibly.
-    delegation_model_tiers: ["gpt_6_astra", "gpt_6_1_sol", "claude_opus_5_5", "claude_fable_5_1", "kimi_k3", "gemini_4_argon"]
+    delegation_model_tiers: ["gpt_6_astra", "gpt_6_1_sol", "claude_opus_5_5", "claude_fable_5_2", "kimi_k3", "gemini_4_argon"]
     tools_policy:
       default_decision: "deny"
       rules:

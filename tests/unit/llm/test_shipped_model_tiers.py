@@ -241,7 +241,7 @@ def test_frontier_thinking_config_reaches_the_anthropic_client(
     client = LLMClientFactory.create_client({**resolved, "api_key": "test-key"})
 
     assert isinstance(client, AnthropicClient)
-    assert client.model == "claude-fable-5-1"
+    assert client.model == "claude-fable-5-2"
     assert client._get_model_specific_params(client.model) == {
         "thinking": {"type": "adaptive"},
         "output_config": {"effort": "xhigh"},
@@ -251,7 +251,7 @@ def test_frontier_thinking_config_reaches_the_anthropic_client(
 def test_the_global_map_still_configures_nothing_for_fable(
     shipped_config: AppConfig,
 ) -> None:
-    """Fable 5.1 must inherit no thinking config wherever a deployment names it.
+    """Fable 5.2 must inherit no thinking config wherever a deployment names it.
 
     The `frontier` overlay is per entry precisely so enabling thinking for the
     tier that exists for it does not reach other models in the same family.
