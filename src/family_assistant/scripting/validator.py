@@ -468,6 +468,15 @@ class ScriptValidator:
 
 
 def _expect_halt(progress: pydantic_monty.SyncSnapshot) -> None:
+    # With type checking on, Monty asks the host for stubs of each imported
+    # module before it checks. The host supplies none, so declining leaves the
+    # checker to report an unresolved import as a typing error.
+    while (
+        isinstance(progress, pydantic_monty.FunctionSnapshot)
+        and progress.is_os_function
+        and progress.function_name == "import_stubs"
+    ):
+        progress = progress.resume_not_handled()
     # Anything else means the script ran past the checks, so fail loudly rather
     # than treating it as valid.
     if not (
