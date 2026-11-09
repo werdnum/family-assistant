@@ -139,6 +139,19 @@ class DelegationRunDict(TypedDict):
     created_at: datetime
 
 
+# Bounds on the request and result text a summary repeats. A council's member
+# requests carry the whole question plus context, so a listing that echoed them
+# in full ran to six figures of characters and was re-read on every later turn.
+DELEGATION_REQUEST_PREVIEW_CHARS = 200
+DELEGATION_RESULT_PREVIEW_CHARS = 300
+
+
+def _preview(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + "…"
+
+
 class DelegationRunSummary(TypedDict):
     """Compact delegation run summary returned by status tools."""
 
@@ -148,7 +161,10 @@ class DelegationRunSummary(TypedDict):
     source_profile_id: str
     interface_type: str
     conversation_id: str
-    request_text: str
+    # The start of the request, enough to tell runs apart; the caller wrote
+    # the request itself and does not need it echoed back.
+    request_preview: str
+    request_chars: int
     created_at: str
     started_at: str | None
     completed_at: str | None
@@ -157,7 +173,12 @@ class DelegationRunSummary(TypedDict):
     # fanned one question out at several specific models can tell which
     # answer came from which.
     model_tier: NotRequired[str]
+    # The full result, on a summary asked for with ``include_result``.
     result_text: NotRequired[str | None]
+    # Otherwise the start of the result and its length, so a listing stays
+    # bounded however many completed runs it covers.
+    result_preview: NotRequired[str]
+    result_chars: NotRequired[int]
     error: NotRequired[str | None]
     # Present only on a run recovered from a late provider success, so a
     # caller asking after a delegation it was told had failed can see why the
@@ -1142,8 +1163,15 @@ class DelegationRunsRepository(BaseRepository):
         except ValueError:
             return None
 
-    def summarize_run(self, run: DelegationRunDict) -> DelegationRunSummary:
-        """Return a compact summary suitable for tool callers."""
+    def summarize_run(
+        self, run: DelegationRunDict, *, include_result: bool
+    ) -> DelegationRunSummary:
+        """Return a compact summary suitable for tool callers.
+
+        ``include_result`` carries a completed run's full result; without it
+        the summary holds only a preview of the result.
+        """
+        request_text = run["request_text"]
         summary = DelegationRunSummary(
             delegation_id=run["delegation_id"],
             status=run["status"],
@@ -1151,7 +1179,8 @@ class DelegationRunsRepository(BaseRepository):
             source_profile_id=run["source_profile_id"],
             interface_type=run["interface_type"],
             conversation_id=run["conversation_id"],
-            request_text=run["request_text"],
+            request_preview=_preview(request_text, DELEGATION_REQUEST_PREVIEW_CHARS),
+            request_chars=len(request_text),
             created_at=run["created_at"].isoformat(),
             started_at=self._to_iso(run["started_at"]),
             completed_at=self._to_iso(run["completed_at"]),
@@ -1160,7 +1189,14 @@ class DelegationRunsRepository(BaseRepository):
         if (tier := self._summary_model_tier(run)) is not None:
             summary["model_tier"] = tier
         if run["status"] == "completed":
-            summary["result_text"] = run["result_text"]
+            result_text = run["result_text"]
+            if include_result or result_text is None:
+                summary["result_text"] = result_text
+            else:
+                summary["result_preview"] = _preview(
+                    result_text, DELEGATION_RESULT_PREVIEW_CHARS
+                )
+                summary["result_chars"] = len(result_text)
             late_recovered_at = self._to_iso(run["late_recovered_at"])
             if late_recovered_at is not None:
                 summary["late_recovered_at"] = late_recovered_at

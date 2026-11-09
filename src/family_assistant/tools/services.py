@@ -1691,7 +1691,9 @@ SERVICE_TOOLS_DEFINITION: list[ToolDefinition] = [
         "function": {
             "name": "list_delegations",
             "description": (
-                "Lists recent asynchronous profile delegations for the current conversation. "
+                "Lists recent asynchronous profile delegations for the current conversation, "
+                "with a short preview of each request and of each completed result. "
+                "Call get_delegation_status for a completed run's full result. "
                 "This is distinct from list_worker_tasks, which lists spawn_worker jobs."
             ),
             "parameters": {
@@ -2086,7 +2088,9 @@ async def get_delegation_status_tool(
         )
 
     await _merge_delegation_runs_taint(exec_context, [run])
-    summary = exec_context.db_context.delegation_runs.summarize_run(run)
+    summary = exec_context.db_context.delegation_runs.summarize_run(
+        run, include_result=True
+    )
     text = _format_delegation_summary(summary)
     if peek:
         text = (
@@ -2122,7 +2126,8 @@ async def list_delegations_tool(
     )
     await _merge_delegation_runs_taint(exec_context, runs)
     summaries = [
-        exec_context.db_context.delegation_runs.summarize_run(run) for run in runs
+        exec_context.db_context.delegation_runs.summarize_run(run, include_result=False)
+        for run in runs
     ]
     if not summaries:
         status_text = f" with status '{status}'" if status else ""
@@ -2131,6 +2136,11 @@ async def list_delegations_tool(
             data=[],
         )
     text = json.dumps(summaries, indent=2, default=str)
+    if any("result_preview" in summary for summary in summaries):
+        text = (
+            f"{text}\n\nCompleted results are shown as previews; call "
+            "get_delegation_status with a delegation_id for the full result."
+        )
     if _has_pending_delegation(summaries):
         text = f"{text}\n\n{_pending_delegation_nudge(run['origin_interface_type'] for run in runs if run['status'] not in TERMINAL_DELEGATION_STATUSES)}"
     return ToolResult(
