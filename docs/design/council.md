@@ -38,34 +38,35 @@ it, never as an extra seat. The coordinator runs on the `deep` tier.
 
 ### Access
 
-The coordinator reads what the assistant reads, and changes nothing. It holds read-only household
-tools -- notes (including memory), documents, conversation history, calendar, Home Assistant state
-and weather -- and the globally granted attachment readers, but not the connected Google accounts
-(Gmail, Drive) or the message archive. Its only tools that are not read-only are the ones that run
-the council: delegating to a member, cancelling a delegation, reporting a technical problem and
-closing a thread. A shipped-config test holds that set. Its conversations are not reviewed into
-memory (`memory_contribute: false`).
+Both profiles read what the assistant reads, and change nothing. Each holds the same read-only
+household tools -- notes (including memory), documents, conversation history, calendar, Home
+Assistant state and weather -- and the globally granted attachment readers, but not the connected
+Google accounts (Gmail, Drive) or the message archive. Their only tools that are not read-only are
+the ones that run the council: delegating (the coordinator to a member, a member to `coder`), the
+coordinator's cancelling a delegation, reporting a technical problem and closing a thread. A
+shipped-config test holds those sets. Council conversations are not reviewed into memory
+(`memory_contribute: false`).
 
-It is held to no more than the assistant because it has no more than the assistant: both read the
-open web, and the assistant also writes household state and messages people. A member's one outward
-action is a sandboxed computation through `coder`, gated by the taint policy as it is everywhere
-else, so the coordinator reading household data opens no path the assistant does not already have.
-Members are unchanged: they hold no household tools and see only what the coordinator passes them.
+They are held to no more than the assistant because they have no more than the assistant: all three
+read the open web, and the assistant also writes household state and messages people. A member's one
+outward action is a sandboxed computation through `coder`, gated by the taint policy as it is
+everywhere else, so the council reading household data opens no path the assistant does not already
+have.
 
 `get_message_history` also matters for a second reason: history compaction only reduces a turn with
-tool calls for a profile that can look those calls back up, and a phase turn is mostly tool calls.
-Without it, the phase turns of a long council were kept verbatim until the request outgrew the
-model's context. The coordinator does not hold `get_delegation_status`: each wake brings the
-finished members' results into history, and the only use a coordinator found for a status lookup was
-polling members still running.
+tool calls for a profile that can look those calls back up, and a phase turn, or a member's research
+turn, is mostly tool calls. Without it, the phase turns of a long council were kept verbatim until
+the request outgrew the model's context. The coordinator does not hold `get_delegation_status`: each
+wake brings the finished members' results into history, and the only use a coordinator found for a
+status lookup was polling members still running.
 
 The skill carries the `council` label, which only the coordinator is granted, so no other profile --
 the members included -- can load it; the members are told not to coordinate, and the label is what
-makes that hold. The member withholds the globally granted tools through `excluded_global_tools`,
-because `global_tools_policy` outranks a profile's own policy. Every profile may delegate to itself
-above its own policy, so recursion is closed by `allowed_delegation_sources`: only
-`default_assistant` and `complex_tasks` may convene a council, and only `council` may seat a member.
-Council invocation authorises investigation and advice, not changes.
+makes that hold: a member is granted the household's `default` notes but not `council`. Every
+profile may delegate to itself above its own policy, so recursion is closed by
+`allowed_delegation_sources`: only `default_assistant` and `complex_tasks` may convene a council,
+and only `council` may seat a member. Council invocation authorises investigation and advice, not
+changes.
 
 ## The runtime gap, and the fix
 

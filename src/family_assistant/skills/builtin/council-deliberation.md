@@ -37,9 +37,9 @@ and the requested output. Separate established facts, preferences and tentative 
 an existing proposal as something to evaluate, not an endorsed answer. Do not put a preferred
 solution of your own into the brief.
 
-You can read the household's notes, documents, calendar, conversation history and Home Assistant
-state; members cannot. When the question depends on household context the request did not include,
-look it up and put the relevant facts into the brief.
+You and the members can read the household's notes, documents, calendar, conversation history and
+Home Assistant state. Put the household facts the question turns on into the brief anyway, so every
+member starts from the same facts, and pass attachments by id.
 
 Give every member the same brief and the same relevant attachments, passed as `attachment_ids`
 rather than filenames. Members may find different sources on their own. Use the stable labels A, B,

@@ -2,8 +2,8 @@
 
 See docs/design/council.md. The council's promises that configuration has to
 keep: every seat on its roster is a real single-model preset its member profile
-admits, the procedure is readable by the coordinator and nobody else, the
-coordinator's household access is read-only, and delegation runs one way only
+admits, the procedure is readable by the coordinator and nobody else, both
+profiles' household access is read-only, and delegation runs one way only
 -- coordinator to member, member to the coding sandbox.
 """
 
@@ -33,6 +33,30 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.no_db
 
 SKILL_NAME = "Council Deliberation"
+# Read-only household context both profiles hold, and the globally granted
+# tools neither withholds.
+HOUSEHOLD_READS = {
+    "get_note",
+    "list_notes",
+    "search_documents",
+    "get_full_document_content",
+    "get_user_documentation_content",
+    "get_attachment_info",
+    "get_message_history",
+    "list_threads",
+    "read_home_messages",
+    "list_calendars",
+    "search_calendar_events",
+    "get_weather_forecast",
+    "get_home_status",
+    "list_home_assistant_entities",
+    "render_home_assistant_template",
+    "download_state_history",
+    "read_text_attachment",
+    "jq_query",
+    "report_technical_problem",
+    "finish_thread",
+}
 DELEGATE = next(d for d in LOCAL_TOOL_DESCRIPTORS if d.name == "delegate_to_service")
 
 
@@ -114,22 +138,26 @@ def test_only_the_coordinator_can_read_the_procedure(shipped_config: AppConfig) 
     assert not _reads_skill(shipped_profile(shipped_config, "default_assistant"))
 
 
-def test_the_coordinator_reads_household_notes_but_not_private_ones(
-    shipped_config: AppConfig,
+@pytest.mark.parametrize(
+    ("profile_id", "reads_council_label"),
+    [("council", True), ("council_member", False)],
+)
+def test_both_read_household_notes_but_not_restricted_ones(
+    shipped_config: AppConfig, profile_id: str, reads_council_label: bool
 ) -> None:
-    """It reads notes as the assistant does, plus its own skill."""
-    council = shipped_profile(shipped_config, "council")
+    """They read notes as the assistant does; only the coordinator its skill."""
+    profile = shipped_profile(shipped_config, profile_id)
     policy = NoteReadPolicy.for_profile(
-        visibility_grants=council.visibility_grants,
-        required_labels=council.processing_config.required_note_read_labels,
-        memory_read=council.processing_config.memory_read,
+        visibility_grants=profile.visibility_grants,
+        required_labels=profile.processing_config.required_note_read_labels,
+        memory_read=profile.processing_config.memory_read,
     )
 
     assert policy.admits_labels([]) is True
     assert policy.admits_labels(["default"]) is True
-    assert policy.admits_labels(["council"]) is True
+    assert policy.admits_labels(["council"]) is reads_council_label
     assert policy.admits_labels(["external_facing"]) is False
-    assert council.processing_config.memory_contribute is False
+    assert profile.processing_config.memory_contribute is False
 
 
 @pytest.mark.parametrize("profile_id", ["council", "council_member"])
@@ -181,35 +209,16 @@ def test_the_council_is_reached_only_by_delegation(shipped_config: AppConfig) ->
                 "list_delegations",
                 "cancel_delegation",
                 "delegate_to_service",
-                "get_note",
-                "list_notes",
-                "search_documents",
-                "get_full_document_content",
-                "get_user_documentation_content",
-                "get_attachment_info",
-                "get_message_history",
-                "list_threads",
-                "read_home_messages",
-                "list_calendars",
-                "search_calendar_events",
-                "get_weather_forecast",
-                "get_home_status",
-                "list_home_assistant_entities",
-                "render_home_assistant_template",
-                "download_state_history",
-                "read_text_attachment",
-                "jq_query",
-                "report_technical_problem",
-                "finish_thread",
+                *HOUSEHOLD_READS,
             },
         ),
         (
             "council_member",
             {
-                "get_attachment_info",
                 "get_delegation_status",
                 "list_delegations",
                 "delegate_to_service",
+                *HOUSEHOLD_READS,
             },
         ),
     ],
@@ -217,12 +226,7 @@ def test_the_council_is_reached_only_by_delegation(shipped_config: AppConfig) ->
 def test_each_profile_holds_exactly_its_local_tools(
     shipped_config: AppConfig, profile_id: str, expected: set[str]
 ) -> None:
-    """Deny-by-default is not enough on its own for the member.
-
-    `global_tools_policy` outranks a profile's own policy, so the globally
-    granted tools -- which reach any attachment the user owns, or persist
-    model-supplied text -- have to be withheld explicitly.
-    """
+    """Each profile reaches the household read-only, plus what runs the council."""
     engine = _engine(shipped_config, shipped_profile(shipped_config, profile_id))
     advertised = {
         descriptor.name
@@ -234,11 +238,15 @@ def test_each_profile_holds_exactly_its_local_tools(
     assert advertised == expected
 
 
-def test_the_coordinator_changes_nothing_in_the_household(
-    shipped_config: AppConfig,
+@pytest.mark.parametrize(
+    ("profile_id", "delegation"),
+    [("council", "cancel_delegation"), ("council_member", None)],
+)
+def test_neither_profile_changes_anything_in_the_household(
+    shipped_config: AppConfig, profile_id: str, delegation: str | None
 ) -> None:
-    """Its household access is read-only; what else it holds runs the council."""
-    engine = _engine(shipped_config, shipped_profile(shipped_config, "council"))
+    """Household access is read-only; what else they hold runs the council."""
+    engine = _engine(shipped_config, shipped_profile(shipped_config, profile_id))
     writers = {
         descriptor.name
         for descriptor in LOCAL_TOOL_DESCRIPTORS
@@ -247,9 +255,7 @@ def test_the_coordinator_changes_nothing_in_the_household(
         is ToolPolicyDecision.ALLOW
     }
 
-    assert writers == {
-        "delegate_to_service",
-        "cancel_delegation",
-        "report_technical_problem",
-        "finish_thread",
-    }
+    expected = {"delegate_to_service", "report_technical_problem", "finish_thread"}
+    if delegation is not None:
+        expected.add(delegation)
+    assert writers == expected

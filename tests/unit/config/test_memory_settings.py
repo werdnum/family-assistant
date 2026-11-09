@@ -124,7 +124,7 @@ def test_the_shipped_memory_readers_are_the_household_profiles_and_the_curator(
     shipped_config: AppConfig,
 ) -> None:
     """Contribution implies reading, the curator reads to curate, and the
-    council reads what the assistant reads."""
+    council and its members read what the assistant reads."""
     reading = sorted(
         profile.id
         for profile in shipped_config.service_profiles
@@ -134,6 +134,7 @@ def test_the_shipped_memory_readers_are_the_household_profiles_and_the_curator(
     assert reading == [
         "complex_tasks",
         "council",
+        "council_member",
         "default_assistant",
         "memory_curator",
     ]
