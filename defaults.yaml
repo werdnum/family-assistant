@@ -1491,21 +1491,23 @@ service_profiles:
   # machinery that already exists: `council` coordinates, `council_member` does
   # the research, and the procedure lives in the "Council Deliberation" skill.
   #
-  # Rule of Two: both profiles read the open web and each other's reports [A],
-  # and neither is given the household's data [B] -- no aggregated context, and
-  # note reads confined to the council label. Neither can change household state
-  # or message anyone; a member's only outward action is a sandboxed coding run
-  # through `coder`, which the taint policy gates as it does everywhere else.
+  # Both profiles read the open web and each other's reports, and read the
+  # household's data the way the assistant does, through read-only tools.
+  # Neither changes anything in the household or messages anyone; a member's
+  # only outward action is a sandboxed coding run through `coder`, which the
+  # taint policy gates as it does everywhere else.
   - id: "council"
     user_selectable: true
-    description: "Use for an explicit multi-model council, broad exploratory work, or a difficult design or speculative question where independent proposals and critical review are valuable. Several strong models (GPT-6 Astra, Claude Fable 5.1, Kimi K3 and Gemini 4 Argon) each research the question independently, review and revise against each other over two rounds, and the council returns a synthesis with evidence, alternatives and remaining uncertainties. Slow and expensive. Not the default for routine lookups, straightforward coding or implementation. It sees none of the household's notes, calendar or documents, so put everything the question depends on in the request, and pass relevant attachments."
-    # The coordinator reads only the council's own skill: the label floor keeps
-    # household notes out of get_note, and the grant is what lets it see the
-    # skill at all -- no other profile holds it.
-    visibility_grants: ["council"]
+    description: "Use for an explicit multi-model council, broad exploratory work, or a difficult design or speculative question where independent proposals and critical review are valuable. Several strong models (GPT-6 Astra, Claude Fable 5.1, Kimi K3 and Gemini 4 Argon) each research the question independently, review and revise against each other over two rounds, and the council returns a synthesis with evidence, alternatives and remaining uncertainties. Slow and expensive. Not the default for routine lookups, straightforward coding or implementation. It can read the household's notes, documents, calendar and conversation history, so describe the question fully and pass relevant attachments."
+    # Household notes as the assistant sees them, plus the council's own
+    # skill: no other profile holds the `council` grant.
+    visibility_grants: ["default", "council"]
     processing_config:
       model_tier: "deep"
-      required_note_read_labels: ["council"]
+      # Reads the household's memory; a council's own conversations are not
+      # reviewed into it.
+      memory_read: true
+      memory_contribute: false
       # Who may convene one. Every profile may delegate to itself, so without
       # this a council could convene a council; the member profile is closed
       # the same way.
@@ -1535,7 +1537,7 @@ service_profiles:
 
           Do not formulate a preferred answer before collecting the independent proposals. You are the facilitator and synthesiser, not an additional voting member. Preserve the original question, real constraints and accepted trade-offs. Do not invent requirements to make the problem harder.
 
-          Member completions are intermediate results, not the final council answer. Reconcile them with the current phase and continue the procedure. Do not busy-poll, manufacture disagreement, force consensus, or combine incompatible proposals merely to acknowledge every member.
+          Member completions are intermediate results, not the final council answer. Reconcile them with the current phase and continue the procedure. Members take many minutes, and you are woken once a whole phase has finished: after the response that starts a phase's members, end the turn at once, with no further tool calls -- never check on members you have started. Do not manufacture disagreement, force consensus, or combine incompatible proposals merely to acknowledge every member.
 
           Return the strongest supported answer, useful alternatives, and uncertainties that could change the conclusion. For engineering work, seek coherent designs with justified complexity -- not maximal machinery or minimalism at any cost.
     allowed_model_tiers: ["deep", "frontier"]
@@ -1545,11 +1547,35 @@ service_profiles:
       rules:
         - match:
             names:
-              - "get_note"
-              - "get_delegation_status"
+              # No get_delegation_status: each wake brings the finished
+              # members' results into history, so the only use the
+              # coordinator ever found for it was polling running members.
               - "list_delegations"
               - "cancel_delegation"
+          decision: "allow"
+          priority: 10
+        # Household context, read-only. get_message_history is also what lets
+        # history compaction shrink the coordinator's tool-heavy phase turns.
+        # Connected Google accounts (Gmail, Drive) and the message archive are
+        # left out.
+        - match:
+            names:
+              - "get_note"
+              - "list_notes"
+              - "search_documents"
+              - "get_full_document_content"
+              - "get_user_documentation_content"
               - "get_attachment_info"
+              - "get_message_history"
+              - "list_threads"
+              - "read_home_messages"
+              - "list_calendars"
+              - "search_calendar_events"
+              - "get_weather_forecast"
+              - "get_home_status"
+              - "list_home_assistant_entities"
+              - "render_home_assistant_template"
+              - "download_state_history"
           decision: "allow"
           priority: 10
         # Evidence inspection: checking a member's source, not doing the
@@ -1568,11 +1594,6 @@ service_profiles:
               target_service_id: "council_member"
           decision: "allow"
           priority: 20
-    excluded_global_tools:
-      - "read_text_attachment"
-      - "jq_query"
-      - "report_technical_problem"
-      - "finish_thread"
     # Reached only by delegation: a delegated run is what holds the council's
     # turn open until a whole phase of members has finished.
     slash_commands: []
@@ -2612,7 +2633,12 @@ service_profiles:
     slash_commands: []
   - id: "council_member"
     description: "Internal research seat for the council profile. Not for direct use: only the council delegates here, choosing the member's model with model_tier."
+    # Household notes as the assistant sees them, but not the `council`
+    # label: the coordination procedure is the coordinator's alone.
+    visibility_grants: ["default"]
     processing_config:
+      memory_read: true
+      memory_contribute: false
       # Only the council seats members; the council names a preset for every
       # call, so the default tier is what a call that forgot to would get.
       allowed_delegation_sources: ["council"]
@@ -2628,7 +2654,7 @@ service_profiles:
 
           Investigate the original question, not the answer you think the coordinator wants. Respect the user's actual constraints while examining assumptions in the question, existing proposals and your own approach. Do not infer a personality or viewpoint from model identity.
 
-          Use research and computation when they can resolve a decision-changing uncertainty: search the web, read the actual sources, and delegate a self-contained computation to the coder profile when running code would settle a question. Distinguish independently checked facts, evidence reported by peers, inferences and speculation. Do not invent quotations, API behaviour, experimental results or citations. Novel hypotheses are welcome when labelled and accompanied by reasoning and possible tests.
+          Use research and computation when they can resolve a decision-changing uncertainty: search the web, read the actual sources, look up the household's own notes, documents, calendar and history when the question depends on them, and delegate a self-contained computation to the coder profile when running code would settle a question. Distinguish independently checked facts, evidence reported by peers, inferences and speculation. Do not invent quotations, API behaviour, experimental results or citations. Novel hypotheses are welcome when labelled and accompanied by reasoning and possible tests.
 
           For engineering questions, connect complexity to the requirements that justify it. Consider reuse, smaller changes and deletion where useful. Do not invent scale, guarantees or threat models to justify infrastructure, and do not reject necessary complexity merely because a smaller patch exists. Explain why a failure matters and why the remedy is proportionate; an accepted bounded trade-off need not become another subsystem.
 
@@ -2647,9 +2673,29 @@ service_profiles:
       rules:
         - match:
             names:
-              - "get_attachment_info"
               - "get_delegation_status"
               - "list_delegations"
+          decision: "allow"
+          priority: 10
+        # Household context, read-only, as the coordinator has it.
+        - match:
+            names:
+              - "get_note"
+              - "list_notes"
+              - "search_documents"
+              - "get_full_document_content"
+              - "get_user_documentation_content"
+              - "get_attachment_info"
+              - "get_message_history"
+              - "list_threads"
+              - "read_home_messages"
+              - "list_calendars"
+              - "search_calendar_events"
+              - "get_weather_forecast"
+              - "get_home_status"
+              - "list_home_assistant_entities"
+              - "render_home_assistant_template"
+              - "download_state_history"
           decision: "allow"
           priority: 10
         - match:
@@ -2668,11 +2714,6 @@ service_profiles:
               target_service_id: "coder"
           decision: "allow"
           priority: 20
-    excluded_global_tools:
-      - "read_text_attachment"
-      - "jq_query"
-      - "report_technical_problem"
-      - "finish_thread"
     slash_commands: []
   - id: "ops_automation"
     description: "Unattended operational diagnostics automation. Reads bounded error logs, triages them, and records a confined summary note. Script actions only; cannot send messages, delegate, or write unrestricted notes."
