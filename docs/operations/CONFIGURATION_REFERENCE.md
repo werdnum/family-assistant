@@ -1576,15 +1576,18 @@ the latest message. A background sweep summarizes a conversation once it has bee
 `idle_seconds`, and again after new messages; until then, and wherever summarizing failed, the list
 shows the latest message.
 
-| Key                      | Default (shipped)  | Meaning                                                                  |
-| ------------------------ | ------------------ | ------------------------------------------------------------------------ |
-| `enabled`                | `true`             | `false` stops new summaries; stored ones keep being shown.               |
-| `model`                  | `gemini-3.8-flash` | `provider` / `model` (and optional `llm_parameters`) of the summarizer.  |
-| `sweep_interval_minutes` | `2`                | How often the sweep runs.                                                |
-| `idle_seconds`           | `60`               | Quiet time before a conversation is summarized.                          |
-| `lookback_days`          | `30`               | Conversations quiet for longer than this are not summarized.             |
-| `batch_size`             | `10`               | Summaries generated per sweep.                                           |
-| `timeout_seconds`        | `60`               | Per attempt. A timed-out attempt is retried once, then counts as failed. |
+| Key                      | Default (shipped)  | Meaning                                                                               |
+| ------------------------ | ------------------ | ------------------------------------------------------------------------------------- |
+| `enabled`                | `true`             | `false` stops new summaries; stored ones keep being shown.                            |
+| `model`                  | `gemini-3.8-flash` | `provider` / `model` (and optional `llm_parameters`) of the summarizer.               |
+| `sweep_interval_minutes` | `2`                | How often the sweep runs.                                                             |
+| `idle_seconds`           | `60`               | Quiet time before a conversation is summarized.                                       |
+| `lookback_days`          | `30`               | Conversations quiet for longer than this are not summarized.                          |
+| `batch_size`             | `10`               | Summaries generated per sweep.                                                        |
+| `timeout_seconds`        | `60`               | Per attempt, at most 120. A timed-out attempt is retried once, then counts as failed. |
+
+A sweep stops starting new summaries once it could not finish one more within four minutes, even if
+every attempt timed out; the rest wait for the next sweep.
 
 The instructions are `conversation_summary_prompt` in `prompts.yaml`; enabling summaries without it
 is a startup error, as is a `model` whose provider has no credentials — a deployment without

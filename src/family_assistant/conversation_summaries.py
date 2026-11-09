@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -55,6 +56,12 @@ _TIMEOUT_ATTEMPTS = 2
 """Attempts per conversation when the model times out. A timeout is usually a
 slow tail on the provider's side, so one immediate retry recovers most; more
 would hold the sweep up behind a provider that is down."""
+
+SWEEP_BUDGET_SECONDS = 240.0
+"""How long one sweep may spend summarizing. It runs as a task, and must finish
+inside the task worker's 300s handler timeout: a sweep cut off there loses its
+progress and is logged as a failure. Conversations it has no time left for stay
+due for the next sweep."""
 
 _TRANSCRIPT_HEAD = 2
 _TRANSCRIPT_TAIL = 20
@@ -95,6 +102,11 @@ class ConversationSummarizer:
         self._llm_client = llm_client
         self._prompt = prompt
         self._timeout_seconds = timeout_seconds
+
+    @property
+    def worst_case_seconds(self) -> float:
+        """The longest one ``summarize`` call can take, every attempt timing out."""
+        return self._timeout_seconds * _TIMEOUT_ATTEMPTS
 
     async def summarize(
         self, transcript: Sequence[SummaryTranscriptMessage]
@@ -161,6 +173,7 @@ async def run_conversation_summary_sweep(
     config: ConversationSummaryConfig,
     now_fn: Callable[[], datetime] | None = None,
     on_summary_changed: Callable[[str], Awaitable[None]] | None = None,
+    budget_seconds: float = SWEEP_BUDGET_SECONDS,
 ) -> int:
     """Summarize every due conversation, up to the batch size. Returns how many
     summaries changed.
@@ -170,6 +183,10 @@ async def run_conversation_summary_sweep(
     summarizer): retrying on every sweep would spend a model call per
     sweep on a conversation that cannot be summarized, and the next message in
     it makes it due again anyway.
+
+    A conversation is started only if a summary that times out on every
+    attempt would still finish within ``budget_seconds``; the rest wait,
+    still due, for the next sweep.
     """
     now = (now_fn or SystemClock().now)()
     due = await db.conversation_summaries.select_due(
@@ -179,7 +196,12 @@ async def run_conversation_summary_sweep(
         exclude_conversation_ids=await _conversations_with_live_turns(db),
     )
     changed = 0
+    attempted = 0
+    deadline = time.monotonic() + budget_seconds
     for conversation in due:
+        if time.monotonic() + summarizer.worst_case_seconds > deadline:
+            break
+        attempted += 1
         transcript = await db.conversation_summaries.transcript(
             conversation.conversation_id,
             through_id=conversation.latest_message_id,
@@ -219,8 +241,9 @@ async def run_conversation_summary_sweep(
                 await on_summary_changed(conversation.conversation_id)
     if due:
         logger.info(
-            "Conversation summary sweep: %d due, %d summary(ies) changed.",
+            "Conversation summary sweep: %d due, %d attempted, %d summary(ies) changed.",
             len(due),
+            attempted,
             changed,
         )
     return changed

@@ -369,6 +369,44 @@ async def test_repeated_timeouts_keep_the_previous_summary_with_a_warning(
 
 
 @pytest.mark.asyncio
+async def test_a_sweep_leaves_conversations_it_has_no_time_for_due(
+    db_engine: AsyncEngine,
+) -> None:
+    db = Database(engine=db_engine)
+    await _add_exchange(
+        db, "conv-old", "Book the dentist", "Booked.", at=NOW - timedelta(minutes=10)
+    )
+    await _add_exchange(
+        db, "conv-new", "Plan the party", "Planned.", at=NOW - timedelta(minutes=5)
+    )
+    stalled = _StallingLLMClient(
+        stalls=2, default_response=LLMOutput(content="Never reached")
+    )
+    summarizer = _impatient_summarizer(stalled)
+
+    await run_conversation_summary_sweep(
+        db,
+        summarizer=summarizer,
+        config=CONFIG,
+        now_fn=lambda: NOW,
+        budget_seconds=summarizer.worst_case_seconds * 1.5,
+    )
+
+    assert stalled.attempts == 2
+    llm = RuleBasedMockLLMClient(
+        rules=[], default_response=LLMOutput(content="Dentist booking")
+    )
+    await run_conversation_summary_sweep(
+        db,
+        summarizer=_summarizer(llm),
+        config=CONFIG,
+        now_fn=lambda: NOW + timedelta(minutes=2),
+    )
+    assert len(llm.get_calls()) == 1
+    assert (await _listed_summaries(db))["conv-old"] == "Dentist booking"
+
+
+@pytest.mark.asyncio
 async def test_conversations_outside_the_lookback_are_left_unsummarized(
     db_engine: AsyncEngine,
 ) -> None:
