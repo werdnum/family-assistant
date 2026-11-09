@@ -82,7 +82,8 @@ else:
 The response is a dictionary containing `status_code` (an integer), `headers` (a dictionary whose
 values are lists), and `body` (bytes). `json_decode()` accepts the byte body directly. Optional
 arguments include `headers`, `body`, `ttl_seconds`, `max_uses`, `approval_timeout_seconds`, and
-`request_timeout_seconds`.
+`request_timeout_seconds`. `body` must be a string or bytes; to send JSON, encode it first with
+`body=json_encode(data)` and set a `Content-Type: application/json` header.
 
 If you do not know what the secret is called in Keychute, pick a plausible, descriptive name from
 the service (`weather-api-token`, `github-token`, `octoprint`) and make the call rather than asking

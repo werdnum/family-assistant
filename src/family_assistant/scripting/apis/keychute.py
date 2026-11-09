@@ -637,6 +637,12 @@ class KeychuteScriptHttpClient:
         request_timeout_seconds: float = 120.0,
     ) -> KeychuteHttpResponse:
         """Make one credential-injected HTTP call through Keychute."""
+        if body is not None and not isinstance(body, str | bytes):
+            raise TypeError(
+                "keychute_http_request body must be str or bytes, not "
+                f"{type(body).__name__}; encode structured data first, "
+                "e.g. body=json_encode(data)"
+            )
         request_body = body.encode() if isinstance(body, str) else body
         if self._http_client is not None:
             return await self._request_with_client(
