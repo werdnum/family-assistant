@@ -33,8 +33,10 @@ first deployment does not summarize years of old conversations; those keep their
 preview.
 
 **A failed attempt advances the watermark.** Retrying on every sweep would spend a model call per
-sweep on a conversation that cannot be summarized. The previous summary, if any, is kept; the next
-message makes the conversation due again.
+sweep on a conversation that cannot be summarized. A timeout, usually a slow provider tail, is the
+exception within an attempt: it is retried once straight away, and logged as a warning rather than
+an error if that times out too. The previous summary, if any, is kept; the next message makes the
+conversation due again.
 
 **A changed summary pings the owner's activity stream**, which is what open web and iOS lists
 already refetch on, so a new label appears without a manual refresh.

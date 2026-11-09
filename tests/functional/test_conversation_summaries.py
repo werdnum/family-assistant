@@ -7,6 +7,8 @@ summary beside the latest-message preview.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -33,6 +35,8 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncEngine
 
+    from family_assistant.llm.messages import LLMMessage
+    from family_assistant.tools.types import ToolDefinition
     from tests.mocks.mock_llm import MatcherArgs
 
 NOW = datetime(2026, 10, 8, 9, 0, tzinfo=UTC)
@@ -80,6 +84,31 @@ def _transcript_contains(text: str) -> Callable[[MatcherArgs], bool]:
 
 def _summarizer(llm: RuleBasedMockLLMClient) -> ConversationSummarizer:
     return ConversationSummarizer(llm, prompt="Label it.", timeout_seconds=5)
+
+
+class _StallingLLMClient(RuleBasedMockLLMClient):
+    """Never answers its first ``stalls`` calls, then answers normally."""
+
+    def __init__(self, *, stalls: int, default_response: LLMOutput) -> None:
+        super().__init__(rules=[], default_response=default_response)
+        self._stalls_left = stalls
+        self.attempts = 0
+
+    async def generate_response(
+        self,
+        messages: list[LLMMessage],
+        tools: list[ToolDefinition] | None = None,
+        tool_choice: str | None = "auto",
+    ) -> LLMOutput:
+        self.attempts += 1
+        if self._stalls_left > 0:
+            self._stalls_left -= 1
+            await asyncio.Event().wait()
+        return await super().generate_response(messages, tools, tool_choice)
+
+
+def _impatient_summarizer(llm: RuleBasedMockLLMClient) -> ConversationSummarizer:
+    return ConversationSummarizer(llm, prompt="Label it.", timeout_seconds=0.05)
 
 
 async def _listed_summaries(db: Database) -> dict[str, str | None]:
@@ -270,6 +299,73 @@ async def test_a_failed_attempt_keeps_the_previous_summary_and_is_not_retried(
 
     assert len(failing.get_calls()) == 1
     assert await _listed_summaries(db) == {"conv-a": "Dentist booking"}
+
+
+@pytest.mark.asyncio
+async def test_a_timed_out_attempt_is_retried_once(db_engine: AsyncEngine) -> None:
+    db = Database(engine=db_engine)
+    await _add_exchange(
+        db, "conv-a", "Book the dentist", "Booked.", at=NOW - timedelta(minutes=5)
+    )
+    llm = _StallingLLMClient(
+        stalls=1, default_response=LLMOutput(content="Dentist booking")
+    )
+
+    await run_conversation_summary_sweep(
+        db, summarizer=_impatient_summarizer(llm), config=CONFIG, now_fn=lambda: NOW
+    )
+
+    assert llm.attempts == 2
+    assert await _listed_summaries(db) == {"conv-a": "Dentist booking"}
+
+
+@pytest.mark.asyncio
+async def test_repeated_timeouts_keep_the_previous_summary_with_a_warning(
+    db_engine: AsyncEngine, caplog: pytest.LogCaptureFixture
+) -> None:
+    db = Database(engine=db_engine)
+    await _add_exchange(
+        db, "conv-a", "Book the dentist", "Booked.", at=NOW - timedelta(minutes=10)
+    )
+    await run_conversation_summary_sweep(
+        db,
+        summarizer=_summarizer(
+            RuleBasedMockLLMClient(
+                rules=[], default_response=LLMOutput(content="Dentist booking")
+            )
+        ),
+        config=CONFIG,
+        now_fn=lambda: NOW - timedelta(minutes=8),
+    )
+    await _add_exchange(
+        db, "conv-a", "Thanks", "You're welcome.", at=NOW - timedelta(minutes=5)
+    )
+    stalled = _StallingLLMClient(
+        stalls=2, default_response=LLMOutput(content="Never reached")
+    )
+
+    with caplog.at_level(
+        logging.INFO, logger="family_assistant.conversation_summaries"
+    ):
+        await run_conversation_summary_sweep(
+            db,
+            summarizer=_impatient_summarizer(stalled),
+            config=CONFIG,
+            now_fn=lambda: NOW,
+        )
+
+    assert stalled.attempts == 2
+    assert await _listed_summaries(db) == {"conv-a": "Dentist booking"}
+    summary_records = [
+        record
+        for record in caplog.records
+        if record.name == "family_assistant.conversation_summaries"
+    ]
+    assert not [r for r in summary_records if r.levelno >= logging.ERROR]
+    assert any(
+        r.levelno == logging.WARNING and "timed out" in r.getMessage()
+        for r in summary_records
+    )
 
 
 @pytest.mark.asyncio

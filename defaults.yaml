@@ -397,7 +397,8 @@ conversation_summaries:
   # stops a first deployment from summarizing the whole history at once.
   lookback_days: 30
   batch_size: 10
-  timeout_seconds: 20
+  # Per attempt; a timed-out attempt is retried once.
+  timeout_seconds: 60
 
 # Threads: the assistant spins long-running or multi-step work off a user's Home
 # conversation into a thread of its own, on the profile best suited to it. See

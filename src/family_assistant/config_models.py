@@ -376,7 +376,9 @@ class ConversationSummaryConfig(BaseModel):
     keep showing their latest message."""
     batch_size: int = Field(default=10, ge=1)
     """Summaries generated per sweep, bounding the sweep's run time."""
-    timeout_seconds: float = Field(default=20.0, gt=0)
+    timeout_seconds: float = Field(default=60.0, gt=0)
+    """Per attempt; a timed-out attempt is retried once. Generous because the
+    sweep runs in the background and a timeout costs the summary."""
 
 
 class ConversationThreadsConfig(BaseModel):

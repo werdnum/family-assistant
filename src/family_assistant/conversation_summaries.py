@@ -51,6 +51,11 @@ MAX_SUMMARY_CHARS = 120
 """Longest summary stored. Both lists clamp to two lines; this is the backstop
 for a model that ignores the length it was asked for."""
 
+_TIMEOUT_ATTEMPTS = 2
+"""Attempts per conversation when the model times out. A timeout is usually a
+slow tail on the provider's side, so one immediate retry recovers most; more
+would hold the sweep up behind a provider that is down."""
+
 _TRANSCRIPT_HEAD = 2
 _TRANSCRIPT_TAIL = 20
 _CHARS_PER_MESSAGE = 600
@@ -96,7 +101,8 @@ class ConversationSummarizer:
     ) -> str | None:
         """A summary of *transcript*, or ``None`` if the model gave nothing usable.
 
-        Raises whatever the provider raised, and ``TimeoutError``; the sweep
+        A timed-out attempt is retried once. Raises whatever the provider
+        raised, and ``TimeoutError`` if every attempt timed out; the sweep
         decides what a failure means for the conversation.
         """
         rendered = "\n".join(
@@ -106,17 +112,26 @@ class ConversationSummarizer:
         )
         if not rendered:
             return None
-        output = await asyncio.wait_for(
-            self._llm_client.generate_response(
-                [
-                    SystemMessage(content=self._prompt),
-                    UserMessage(content=f"<conversation>\n{rendered}\n</conversation>"),
-                ],
-                tools=None,
-            ),
-            timeout=self._timeout_seconds,
-        )
-        return clean_summary(output.content)
+        messages = [
+            SystemMessage(content=self._prompt),
+            UserMessage(content=f"<conversation>\n{rendered}\n</conversation>"),
+        ]
+        for attempt in range(1, _TIMEOUT_ATTEMPTS + 1):
+            try:
+                output = await asyncio.wait_for(
+                    self._llm_client.generate_response(messages, tools=None),
+                    timeout=self._timeout_seconds,
+                )
+            except TimeoutError:
+                if attempt == _TIMEOUT_ATTEMPTS:
+                    raise
+                logger.info(
+                    "Conversation summary timed out after %ss; retrying.",
+                    self._timeout_seconds,
+                )
+            else:
+                return clean_summary(output.content)
+        raise AssertionError("unreachable: the last attempt returns or raises")
 
 
 async def _conversations_with_live_turns(db: Database) -> set[str]:
@@ -151,7 +166,8 @@ async def run_conversation_summary_sweep(
     summaries changed.
 
     A failed attempt still advances the conversation's watermark, keeping any
-    earlier summary: retrying on every sweep would spend a model call per
+    earlier summary (a timeout has already been retried once by the
+    summarizer): retrying on every sweep would spend a model call per
     sweep on a conversation that cannot be summarized, and the next message in
     it makes it due again anyway.
     """
@@ -173,6 +189,14 @@ async def run_conversation_summary_sweep(
         summary: str | None
         try:
             summary = await summarizer.summarize(transcript)
+        except TimeoutError:
+            # A slow provider, not a defect: it recovers by itself, and the
+            # conversation's next message makes it due again.
+            logger.warning(
+                "Conversation summary timed out for %s; keeping the previous one.",
+                conversation.conversation_id,
+            )
+            summary = None
         except Exception:
             # Broad on purpose: one conversation the provider will not
             # summarize must not stop the rest of the batch.
