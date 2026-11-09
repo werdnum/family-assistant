@@ -18,14 +18,6 @@ import requests
 
 from tests.integration.home_assistant.bulk_entities import BULK_ENTITY_ID_PREFIX
 
-# Import VCR compatibility patch (autouse fixture activates automatically)
-from tests.integration.home_assistant.vcr_patches import (
-    patch_vcr_mock_client_response,
-)
-
-# Prevent unused import warning
-_ = patch_vcr_mock_client_response
-
 logger = logging.getLogger(__name__)
 
 # Home Assistant pins SQLAlchemy exactly, so it runs from its own environment

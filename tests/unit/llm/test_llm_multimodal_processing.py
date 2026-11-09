@@ -7,7 +7,7 @@ from typing import Any, cast
 
 import pytest
 
-from family_assistant.llm import BaseLLMClient
+from family_assistant.llm import BaseLLMClient, describe_attachment_for_fallback
 from family_assistant.llm.base import InvalidRequestError
 from family_assistant.llm.messages import (
     AssistantMessage,
@@ -19,6 +19,20 @@ from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.llm.providers.openai_client import OpenAIClient
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.tools.types import ToolAttachment
+
+
+def test_fallback_description_omits_size_of_a_reference_without_bytes() -> None:
+    reference = ToolAttachment(mime_type="image/jpeg", attachment_id="att-1")
+
+    assert describe_attachment_for_fallback(reference) == (
+        "[System: File from previous tool response: image/jpeg, attachment_id=att-1]"
+    )
+
+
+def test_fallback_description_reports_the_size_of_the_bytes_carried() -> None:
+    attachment = ToolAttachment(mime_type="image/jpeg", content=b"0" * 3 * 1024 * 1024)
+
+    assert "image/jpeg, 3.0MB" in describe_attachment_for_fallback(attachment)
 
 
 class TestBaseLLMClient:
@@ -124,34 +138,10 @@ class TestBaseLLMClient:
 class TestGoogleGenAIClient:
     """Test Google GenAI client multimodal handling"""
 
-    def test_older_model_injects_tool_attachment(self) -> None:
-        """Older Gemini models receive tool images in a following user message."""
-        client = GoogleGenAIClient(api_key="test", model="gemini-pro")
-
-        attachment = ToolAttachment(
-            mime_type="image/png", content=b"image bytes", description="Chart"
-        )
-        tool_message = ToolMessage(
-            tool_call_id="call_123",
-            content="Chart ready",
-            name="create_chart",
-            _attachments=[attachment],
-        )
-
-        result = client._process_tool_messages([tool_message])
-
-        assert len(result) == 2
-        assert isinstance(result[0], ToolMessage)
-        assert result[0].tool_call_id == "call_123"
-        assert result[0].transient_attachments is None
-        assert isinstance(result[1], UserMessage)
-        assert result[1].parts is not None
-        assert result[1].parts[1].inline_data.mime_type == "image/png"
-        assert result[1].parts[1].inline_data.data == b"image bytes"
-
-    def test_gemini_3_keeps_tool_attachment_inline(self) -> None:
-        """Gemini 3 receives tool images with the tool response."""
-        client = GoogleGenAIClient(api_key="test", model="gemini-3.8-flash")
+    @pytest.mark.parametrize("model", ["gemini-4-argon", "gemini-3.8-flash"])
+    def test_keeps_tool_attachment_inline(self, model: str) -> None:
+        """Gemini receives tool images with the tool response, whatever the model."""
+        client = GoogleGenAIClient(api_key="test", model=model)
 
         attachment = ToolAttachment(mime_type="image/png", content=b"image bytes")
         tool_message = ToolMessage(

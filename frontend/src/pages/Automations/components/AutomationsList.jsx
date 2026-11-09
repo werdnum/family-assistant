@@ -108,7 +108,7 @@ const AutomationCard = ({ automation, onToggle, toggling }) => {
                   {scheduleSummary}
                 </span>
               ) : (
-                <code className="break-all rounded bg-muted px-1.5 py-0.5 text-xs">
+                <code className="break-all rounded-sm bg-muted px-1.5 py-0.5 text-xs">
                   {automation.recurrence_rule}
                 </code>
               )

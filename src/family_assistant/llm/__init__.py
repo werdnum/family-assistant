@@ -117,8 +117,9 @@ def describe_attachment_for_fallback(attachment: "ToolAttachment") -> str:
     from the primary's adapter and hands it to the fallback unchanged, so
     whichever adapter is primary owns what the other one gets to see.
     """
-    size_mb = len(attachment.content or b"") / (1024 * 1024)
-    described = f"{attachment.mime_type}, {size_mb:.1f}MB"
+    described = attachment.mime_type
+    if attachment.content is not None:
+        described += f", {len(attachment.content) / (1024 * 1024):.1f}MB"
     if attachment.attachment_id:
         described += f", attachment_id={attachment.attachment_id}"
     return f"[System: File from previous tool response: {described}]"

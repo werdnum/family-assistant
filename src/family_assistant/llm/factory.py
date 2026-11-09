@@ -7,6 +7,11 @@ import logging
 import os
 from typing import TYPE_CHECKING, Any
 
+from family_assistant.llm.custom_instructions import (
+    CustomInstructionsClient,
+    split_custom_instructions,
+)
+
 if TYPE_CHECKING:
     from family_assistant.llm import LLMInterface
     from family_assistant.llm.connections import ProviderConnections
@@ -168,8 +173,11 @@ class LLMClientFactory:
         if "api_base" in provider_params:
             provider_params["base_url"] = provider_params.pop("api_base")
 
-        # Get model_parameters from llm_parameters config
-        model_parameters = config.get("model_parameters", {})
+        # Custom instructions ride in the llm_parameters map but are not a
+        # request parameter, so the provider client never sees them.
+        custom_instructions, model_parameters = split_custom_instructions(
+            model, config.get("model_parameters") or {}
+        )
         flex = bool(config.get("flex"))
         if flex:
             cls._validate_flex(provider, model, model_parameters, provider_params)
@@ -191,6 +199,8 @@ class LLMClientFactory:
             connections=connections,
             **provider_params,
         )
+        if custom_instructions:
+            client = CustomInstructionsClient(client, instructions=custom_instructions)
         if not flex:
             return client
         from .flex import FlexClient  # noqa: PLC0415 - flex imports this package

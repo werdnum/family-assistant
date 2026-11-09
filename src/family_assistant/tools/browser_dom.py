@@ -41,6 +41,7 @@ from family_assistant.tools.browser_backend import (
     StaleRefError,
     get_browser_backend,
 )
+from family_assistant.tools.browser_page_tools import SNAPSHOT_RETURNING_TOOLS
 from family_assistant.tools.browser_session import (
     BrowserSession,
     browser_operation,
@@ -60,18 +61,6 @@ _MAX_HINT_CAPABILITIES = 12
 # Client-side ref check: syntax only. Whether a ref still names its node is
 # decided in the page, by the same predicate the snapshot walker uses.
 _REF_SYNTAX = re.compile(r"e[0-9]+")
-# Tools whose result carries a snapshot of the page as they left it. When a
-# batch holds more than one, only the last hands back refs — the earlier pages
-# have moved on, so their refs would fail.
-_SNAPSHOT_RETURNING_TOOLS = frozenset({
-    "browser_claim_handback",
-    "browser_click",
-    "browser_fill",
-    "browser_open",
-    "browser_select",
-    "browser_snapshot",
-    "browser_wait",
-})
 
 
 class SnapshotNode(TypedDict):
@@ -423,7 +412,7 @@ def _a_later_sibling_returns_a_snapshot(exec_context: ToolExecutionContext) -> b
     if batch is None or call_id is None:
         return False
     return any(
-        tool_name in _SNAPSHOT_RETURNING_TOOLS for _, tool_name in batch.later(call_id)
+        tool_name in SNAPSHOT_RETURNING_TOOLS for _, tool_name in batch.later(call_id)
     )
 
 

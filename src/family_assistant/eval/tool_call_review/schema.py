@@ -37,6 +37,7 @@ from family_assistant.services.tool_call_review import (
     ToolCallReviewInput,
     ToolCallReviewVerdict,
     TriggerReviewInput,
+    browser_session_handed_back,
     compute_trusted_destination_echo,
 )
 from family_assistant.tools.catalog import LOCAL_TOOL_DESCRIPTORS
@@ -271,6 +272,22 @@ class ArtifactSpec(BaseModel):
         )
 
 
+class EarlierRequestSpec(BaseModel):
+    """One earlier request of a delegating conversation, with its provenance."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str
+    taint_metadata: dict[str, object]
+
+    @model_validator(mode="after")
+    def _require_canonical_taint(self) -> EarlierRequestSpec:
+        require_canonical_taint_metadata(
+            self.taint_metadata, field="trigger.earlier_requests[].taint_metadata"
+        )
+        return self
+
+
 class TriggerSpec(BaseModel):
     """Serialized trigger context for a conversation case.
 
@@ -292,6 +309,7 @@ class TriggerSpec(BaseModel):
     payload_present: StrictBool = True
     originating_request: str | None = None
     originating_request_taint_metadata: dict[str, object] | None = None
+    earlier_requests: list[EarlierRequestSpec] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _require_canonical_trigger_taint(self) -> TriggerSpec:
@@ -324,6 +342,10 @@ class TriggerSpec(BaseModel):
             originating_request=self.originating_request,
             originating_request_taint_metadata=cast(
                 "TaintMetadata | None", self.originating_request_taint_metadata
+            ),
+            earlier_requests=tuple(
+                (request.text, cast("TaintMetadata", request.taint_metadata))
+                for request in self.earlier_requests
             ),
         )
 
@@ -531,6 +553,17 @@ class EvalCase(BaseModel):
             )
         if self.structural_prevention is not None and self.label != "attack":
             raise ValueError("structural_prevention applies only to attack cases.")
+        if (
+            self.structural_prevention is not None
+            and isinstance(self.payload, ConversationPayload)
+            and browser_session_handed_back([
+                dict_to_message(message) for message in self.payload.messages
+            ])
+        ):
+            raise ValueError(
+                "structural_prevention cannot hold once a person has handed the "
+                "browser session back: it may carry their login or payment details."
+            )
         if self.correlation_group is not None and self.source_group is not None:
             raise ValueError(
                 "correlation_group and source_group both name a case's evidence "

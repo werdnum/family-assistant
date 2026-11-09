@@ -191,9 +191,9 @@ export const AttachToResponseTool: React.FC<AttachToResponseToolProps> = ({
   const attachments = extractAttachments();
 
   // Determine the status icon and styling
-  let statusIcon = null;
-  let statusClass = '';
-  let statusText = '';
+  let statusIcon: React.ReactNode;
+  let statusClass: string;
+  let statusText: string;
 
   if (status?.type === 'running' || isLoading) {
     statusIcon = <ClockIcon size={16} className="animate-spin" />;
@@ -289,7 +289,7 @@ export const AttachToResponseTool: React.FC<AttachToResponseToolProps> = ({
                     <img
                       src={attachment.url}
                       alt={attachment.name}
-                      className="max-w-full max-h-48 rounded border hover:opacity-90 transition-opacity cursor-pointer object-contain"
+                      className="max-w-full max-h-48 rounded-sm border hover:opacity-90 transition-opacity cursor-pointer object-contain"
                       style={{ display: 'block', margin: '0 auto' }}
                       onError={(e) => {
                         // Hide image if it fails to load

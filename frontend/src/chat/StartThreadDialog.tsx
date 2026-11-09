@@ -113,6 +113,9 @@ export const StartThreadDialog: React.FC<StartThreadDialogProps> = ({
   const { profiles, profilesById, defaultProfileId } = useProfiles();
   const choices = threadProfiles(profiles);
   const [profileId, setProfileId] = useState('');
+  // Null runs the thread at its profile's default tier. Reset with the
+  // profile, since each profile offers its own tiers.
+  const [tierId, setTierId] = useState<string | null>(null);
   const [prompt, setPrompt] = useState('');
   const [withContext, setWithContext] = useState(true);
   const [preview, setPreview] = useState<PreviewState>({ status: 'idle' });
@@ -130,6 +133,7 @@ export const StartThreadDialog: React.FC<StartThreadDialogProps> = ({
   useEffect(() => {
     if (open) {
       setProfileId('');
+      setTierId(null);
       setPrompt('');
       setWithContext(true);
       setPreview({ status: 'idle' });
@@ -147,6 +151,10 @@ export const StartThreadDialog: React.FC<StartThreadDialogProps> = ({
   const receivesContext = profile?.receives_household_context === true;
   const carriesContext = anchor !== null && receivesContext && withContext;
   const trimmedPrompt = prompt.trim();
+  const tiers = profile?.model_tiers ?? [];
+  const defaultTierId = profile?.default_model_tier ?? null;
+  // A tier rides on the opening turn, so a start without a message has none to give.
+  const modelTier = trimmedPrompt !== '' ? tierId : null;
   const previewLoading = carriesContext && preview.status === 'loading';
   const canSubmit =
     Boolean(selectedId) &&
@@ -209,7 +217,13 @@ export const StartThreadDialog: React.FC<StartThreadDialogProps> = ({
     if (!canSubmit) {
       return;
     }
-    const key = JSON.stringify([selectedId, trimmedPrompt, carriesContext, carriedTurnIds]);
+    const key = JSON.stringify([
+      selectedId,
+      trimmedPrompt,
+      carriesContext,
+      carriedTurnIds,
+      modelTier,
+    ]);
     const turnId = lastStart?.key === key ? lastStart.turnId : generateUUID();
     setLastStart({ key, turnId });
     setSubmitting(true);
@@ -219,6 +233,7 @@ export const StartThreadDialog: React.FC<StartThreadDialogProps> = ({
         profile_id: selectedId,
         turn_id: turnId,
         ...(trimmedPrompt ? { prompt: trimmedPrompt } : {}),
+        ...(modelTier ? { model_tier: modelTier } : {}),
         ...(anchor
           ? {
               anchor_message_id: await anchor.resolveMessageId(),
@@ -262,7 +277,10 @@ export const StartThreadDialog: React.FC<StartThreadDialogProps> = ({
             <NativeSelect
               id="start-thread-profile"
               value={selectedId}
-              onChange={(event) => setProfileId(event.target.value)}
+              onChange={(event) => {
+                setProfileId(event.target.value);
+                setTierId(null);
+              }}
               disabled={submitting}
               data-testid="start-thread-profile"
             >
@@ -274,6 +292,32 @@ export const StartThreadDialog: React.FC<StartThreadDialogProps> = ({
               ))}
             </NativeSelect>
           </div>
+          {tiers.length > 1 && (
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="start-thread-tier">Intelligence</Label>
+              <NativeSelect
+                id="start-thread-tier"
+                value={tierId ?? defaultTierId ?? ''}
+                onChange={(event) =>
+                  setTierId(event.target.value === defaultTierId ? null : event.target.value)
+                }
+                disabled={submitting}
+                data-testid="start-thread-tier"
+              >
+                {tiers.map((tier) => (
+                  <option key={tier.id} value={tier.id}>
+                    {tier.label}
+                    {tier.id === defaultTierId ? ' (default)' : ''}
+                  </option>
+                ))}
+              </NativeSelect>
+              {trimmedPrompt === '' && carriesContext && (
+                <p className="text-xs text-muted-foreground" data-testid="start-thread-tier-hint">
+                  Applies with an opening message. Without one, choose it in the thread.
+                </p>
+              )}
+            </div>
+          )}
           {anchor &&
             (receivesContext ? (
               <label className="flex items-start gap-2 text-sm">

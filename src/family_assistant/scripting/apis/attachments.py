@@ -317,35 +317,25 @@ class AttachmentAPI:
             )
         return self.db_engine
 
-    async def _read_async(self, attachment_id: str) -> str | None:
-        """Read attachment content as a string."""
+    async def _read_async(self, attachment_id: str) -> str:
+        """Read attachment content as a string.
 
-        async def _do_read(db_ctx: Database) -> str | None:
-            content = await self.attachment_registry.get_attachment_content(
-                db_ctx, attachment_id, acting_user_id=self._acting_user_id
-            )
-            if content is not None:
-                await self._merge_read_provenance(db_ctx, attachment_id)
+        Raises:
+            ValueError: If the attachment does not exist or is not accessible.
+        """
+        content = await self._read_bytes_async(attachment_id)
+        try:
+            return content.decode("utf-8")
+        except UnicodeDecodeError:
+            # Fallback to replace for binary files if requested as text
+            return content.decode("utf-8", errors="replace")
 
-            if content is None:
-                return None
+    async def _read_bytes_async(self, attachment_id: str) -> bytes:
+        """Read attachment content as raw bytes without UTF-8 decoding.
 
-            try:
-                return content.decode("utf-8")
-            except UnicodeDecodeError:
-                # Fallback to replace for binary files if requested as text
-                return content.decode("utf-8", errors="replace")
-
-        # Use existing db_context if available (allows reading uncommitted attachments)
-        if self.db_context:
-            return await _do_read(self.db_context)
-
-        # Fallback: create new context (for standalone use cases)
-        db_context = Database(engine=self._require_db_engine())
-        return await _do_read(db_context)
-
-    async def _read_bytes_async(self, attachment_id: str) -> bytes | None:
-        """Read attachment content as raw bytes without UTF-8 decoding."""
+        Raises:
+            ValueError: If the attachment does not exist or is not accessible.
+        """
 
         async def _do_read(db_ctx: Database) -> bytes | None:
             content = await self.attachment_registry.get_attachment_content(
@@ -357,11 +347,14 @@ class AttachmentAPI:
 
         # Use existing db_context if available (allows reading uncommitted attachments)
         if self.db_context:
-            return await _do_read(self.db_context)
+            content = await _do_read(self.db_context)
+        else:
+            # Fallback: create new context (for standalone use cases)
+            content = await _do_read(Database(engine=self._require_db_engine()))
 
-        # Fallback: create new context (for standalone use cases)
-        db_context = Database(engine=self._require_db_engine())
-        return await _do_read(db_context)
+        if content is None:
+            raise ValueError(f"Attachment not found or not accessible: {attachment_id}")
+        return content
 
     async def _get_async(self, attachment_id: str) -> AttachmentInfoDict | None:
         """Get attachment metadata by ID."""

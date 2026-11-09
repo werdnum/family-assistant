@@ -17,60 +17,13 @@ class TestMultimodalFunctionResponses:
     """Tests for multimodal function response handling in GoogleGenAIClient."""
 
     @pytest.fixture
-    def client_v2(self) -> GoogleGenAIClient:
-        """Create a GoogleGenAIClient instance for Gemini 2.0 (no multimodal tool support)."""
-        return GoogleGenAIClient(api_key="test_key", model="gemini-2.0-flash-exp")
+    def client(self) -> GoogleGenAIClient:
+        return GoogleGenAIClient(api_key="test_key", model="gemini-4-argon")
 
-    @pytest.fixture
-    def client_v3(self) -> GoogleGenAIClient:
-        """Create a GoogleGenAIClient instance for Gemini 3.0 (multimodal tool support)."""
-        return GoogleGenAIClient(api_key="test_key", model="gemini-3.8-flash")
-
-    def test_convert_tool_message_with_attachment_v2(
-        self, client_v2: GoogleGenAIClient
+    def test_convert_tool_message_with_attachment(
+        self, client: GoogleGenAIClient
     ) -> None:
-        """Gemini 2.0 receives the image after its text-only function response."""
-        attachment = ToolAttachment(
-            mime_type="image/png",
-            content=b"fake_image_bytes",
-            description="A fake image",
-        )
-        tool_msg = ToolMessage(
-            tool_call_id="call_123",
-            content="Image generated",
-            name="generate_image",
-            _attachments=[attachment],
-        )
-
-        contents = client_v2._convert_messages_to_genai_format(
-            client_v2._process_tool_messages([tool_msg])
-        )
-
-        assert len(contents) == 2
-        content = cast("types.Content", contents[0])
-        assert content.role == "user"
-        assert content.parts is not None
-        assert len(content.parts) == 1
-        part = cast("types.Part", content.parts[0])
-        assert part.function_response is not None
-
-        # Verify no multimodal parts are attached to function_response
-        fr = part.function_response
-        assert fr.parts is None or len(fr.parts) == 0
-
-        image_content = cast("types.Content", contents[1])
-        assert image_content.role == "user"
-        assert image_content.parts is not None
-        assert len(image_content.parts) == 2
-        image_part = cast("types.Part", image_content.parts[1])
-        assert image_part.inline_data is not None
-        assert image_part.inline_data.mime_type == "image/png"
-        assert image_part.inline_data.data == b"fake_image_bytes"
-
-    def test_convert_tool_message_with_attachment_v3(
-        self, client_v3: GoogleGenAIClient
-    ) -> None:
-        """Test conversion of tool message with attachment for Gemini 3.0."""
+        """Test conversion of tool message with attachment."""
         attachment = ToolAttachment(
             mime_type="image/png",
             content=b"fake_image_bytes",
@@ -84,7 +37,7 @@ class TestMultimodalFunctionResponses:
             _attachments=[attachment],
         )
 
-        contents = client_v3._convert_messages_to_genai_format([tool_msg])
+        contents = client._convert_messages_to_genai_format([tool_msg])
 
         assert len(contents) == 1
         content = cast("types.Content", contents[0])
@@ -110,10 +63,10 @@ class TestMultimodalFunctionResponses:
         # We used description or attachment_id for display_name
         assert fr_part.inline_data.display_name == "A fake image"
 
-    def test_convert_tool_message_with_multiple_attachments_v3(
-        self, client_v3: GoogleGenAIClient
+    def test_convert_tool_message_with_multiple_attachments(
+        self, client: GoogleGenAIClient
     ) -> None:
-        """Test conversion of tool message with multiple attachments for Gemini 3.0."""
+        """Test conversion of tool message with multiple attachments."""
         att1 = ToolAttachment(
             mime_type="image/png", content=b"img1", description="Image 1"
         )
@@ -127,7 +80,7 @@ class TestMultimodalFunctionResponses:
             _attachments=[att1, att2],
         )
 
-        contents = client_v3._convert_messages_to_genai_format([tool_msg])
+        contents = client._convert_messages_to_genai_format([tool_msg])
 
         assert len(contents) == 1
         # Need to safely access parts for type checking
@@ -150,8 +103,8 @@ class TestMultimodalFunctionResponses:
         assert fr.parts[1].inline_data.data == b"pdf1"
         assert fr.parts[1].inline_data.mime_type == "application/pdf"
 
-    def test_mixed_parallel_tool_responses_use_user_role_v3(
-        self, client_v3: GoogleGenAIClient
+    def test_mixed_parallel_tool_responses_use_user_role(
+        self, client: GoogleGenAIClient
     ) -> None:
         """Parallel tool calls deliver every function response as a user turn.
 
@@ -190,7 +143,7 @@ class TestMultimodalFunctionResponses:
             image_tool,
         ]
 
-        contents = client_v3._convert_messages_to_genai_format(messages)
+        contents = client._convert_messages_to_genai_format(messages)
 
         roles = [cast("types.Content", c).role for c in contents]
         assert roles == ["model", "user", "user"]

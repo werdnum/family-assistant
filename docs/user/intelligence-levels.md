@@ -30,6 +30,10 @@ why the request is hard: it turns on the answer being *right* rather than merely
 send your message. On iOS it is the gauge button in the Chat toolbar, which shows the level you
 picked once you have picked one.
 
+**When you start a thread**, the **New thread** and **Continue in a thread** dialogs ask for the
+level beside the assistant. It goes with your opening message; a thread continued without one starts
+at the usual level, and you can pick another in the thread itself.
+
 **In Telegram**, put a command at the start of the message (`/standard` takes the Assistant back to
 its usual level):
 
@@ -100,9 +104,9 @@ council instead: see [council.md](council.md).
 ## Seeing what a reply ran at
 
 In the web app and the iOS app, a reply carries the level it ran at beside the name of the assistant
-that produced it. Web message details add what was asked for and the model that actually served it.
-If you are wondering whether a disappointing answer was worth re-asking at a higher level, that is
-where to look first.
+that produced it. **Which model answered** (the eye button next to the thumbs) adds what was asked
+for and the model that actually served it. If you are wondering whether a disappointing answer was
+worth re-asking at a higher level, that is where to look first.
 
 Sometimes a reply is labelled **Experiment** instead. That conversation is part of a comparison
 between models, and which one answered is hidden on purpose so your thumbs up or down is a fair

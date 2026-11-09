@@ -54,7 +54,7 @@ const ToolGroupShell: React.FC<ToolGroupShellProps> = ({
             'flex w-full items-center gap-2 py-2 px-3 text-sm',
             'text-muted-foreground hover:text-foreground',
             'transition-colors duration-150',
-            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+            'focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring',
             'focus-visible:ring-offset-2 rounded-lg'
           )}
           data-testid="tool-group-trigger"

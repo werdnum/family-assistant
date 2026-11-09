@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import io
 import json
 import tempfile
 from dataclasses import dataclass, field
@@ -19,6 +20,7 @@ from typing import TYPE_CHECKING, cast
 from zoneinfo import ZoneInfo
 
 import pytest
+from PIL import Image
 
 from family_assistant.security.taint import (
     InMemoryTurnTaintTracker,
@@ -52,7 +54,7 @@ from family_assistant.tools.google_data import (
     gmail_search_tool,
 )
 from family_assistant.tools.metadata import build_tool_descriptor
-from family_assistant.tools.types import ToolExecutionContext
+from family_assistant.tools.types import ToolExecutionContext, get_attachment_limits
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -93,6 +95,7 @@ class FakeApiBackend:
     request_params: list[Mapping[str, str] | None] = field(default_factory=list)
     request_bodies: list[tuple[bytes | None, str | None]] = field(default_factory=list)
     request_headers: list[Mapping[str, str] | None] = field(default_factory=list)
+    request_response_caps: list[int | None] = field(default_factory=list)
     transport_error: Exception | None = None
     _scripted_served: int = 0
 
@@ -106,11 +109,13 @@ class FakeApiBackend:
         content: bytes | None = None,
         content_type: str | None = None,
         headers: Mapping[str, str] | None = None,
+        max_response_bytes: int | None = None,
     ) -> ApiResponse:
         self.requests.append((method, url, access_token))
         self.request_params.append(params)
         self.request_bodies.append((content, content_type))
         self.request_headers.append(headers)
+        self.request_response_caps.append(max_response_bytes)
         if self.transport_error is not None:
             raise self.transport_error
         if self.scripted:
@@ -202,6 +207,7 @@ class ConcurrentDriveApiBackend(FakeApiBackend):
         content: bytes | None = None,
         content_type: str | None = None,
         headers: Mapping[str, str] | None = None,
+        max_response_bytes: int | None = None,
     ) -> ApiResponse:
         query = (params or {}).get("q", "")
         is_folder_search = method == "GET" and "google-apps.folder" in query
@@ -234,6 +240,7 @@ class ConcurrentDriveApiBackend(FakeApiBackend):
             content=content,
             content_type=content_type,
             headers=headers,
+            max_response_bytes=max_response_bytes,
         )
 
 
@@ -586,6 +593,12 @@ async def test_gmail_get_attachment_registers_with_owner(
         db, attachment_id, acting_user_id="user-a"
     )
     assert owned == content
+    # The download is bounded by the attachment limit (base64-inflated), not the
+    # backend's default response cap.
+    max_file_size, _ = get_attachment_limits(context)
+    attachment_cap = backend.request_response_caps[0]
+    assert attachment_cap is not None
+    assert attachment_cap > max_file_size * 4 // 3
     # Another actor (or no actor) cannot read the owned attachment.
     assert (
         await registry.get_attachment_content(
@@ -1107,11 +1120,60 @@ async def test_drive_get_file_large_binary_goes_to_attachment(
 
 
 @pytest.mark.asyncio
+async def test_drive_get_file_shows_the_model_a_downscaled_photo(
+    db_engine: AsyncEngine,
+) -> None:
+    """The model sees the photo; the registry keeps the original."""
+    buffer = io.BytesIO()
+    Image.new("RGB", (4000, 3000), "blue").save(buffer, format="JPEG")
+    photo = buffer.getvalue()
+    resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
+    backend = FakeApiBackend(
+        scripted=[
+            (
+                200,
+                json.dumps({
+                    "id": "img-1",
+                    "name": "drone.jpg",
+                    "mimeType": "image/jpeg",
+                    "size": str(len(photo)),
+                }).encode("utf-8"),
+            ),
+            (200, photo),
+        ]
+    )
+    registry = _registry(db_engine)
+    db = Database(engine=db_engine)
+    context = _make_context(
+        db,
+        user_id="user-a",
+        resolver=resolver,
+        backend=backend,
+        attachment_registry=registry,
+    )
+
+    result = await drive_get_file_tool(context, file_id="img-1")
+
+    assert result.attachments is not None
+    shown = result.attachments[0]
+    assert shown.mime_type == "image/jpeg"
+    assert shown.content is not None
+    with Image.open(io.BytesIO(shown.content)) as image:
+        assert image.size == (1568, 1176)
+    assert "downscaled from 4000x3000 to 1568x1176" in result.get_text()
+    assert shown.attachment_id is not None
+    stored = await registry.get_attachment_content(
+        db, shown.attachment_id, acting_user_id="user-a"
+    )
+    assert stored == photo
+
+
+@pytest.mark.asyncio
 async def test_drive_get_file_oversized_metadata_errors_without_media_request(
     db_engine: AsyncEngine,
 ) -> None:
     resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
-    oversized = 50 * 1024 * 1024
+    oversized = 150 * 1024 * 1024
     backend = FakeApiBackend(
         routes={
             "token-a": {
@@ -1134,6 +1196,48 @@ async def test_drive_get_file_oversized_metadata_errors_without_media_request(
     # Only the metadata GET was issued — the alt=media download never ran.
     assert len(backend.requests) == 1
     assert backend.requests[0][1].endswith("/files/huge-1")
+
+
+@pytest.mark.asyncio
+async def test_drive_get_file_stores_binary_above_25mb_in_one_call(
+    db_engine: AsyncEngine,
+) -> None:
+    """A registry-bound download is bounded by the attachment limit, not 25 MiB."""
+    resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
+    binary = b"glTF" + b"\x00" * (60 * 1024 * 1024)
+    backend = FakeApiBackend(
+        scripted=[
+            (
+                200,
+                json.dumps({
+                    "id": "glb-1",
+                    "name": "backyard_today.glb",
+                    "mimeType": "model/gltf-binary",
+                    "size": str(len(binary)),
+                }).encode("utf-8"),
+            ),
+            (200, binary),
+        ]
+    )
+    registry = _registry(db_engine)
+    db = Database(engine=db_engine)
+    context = _make_context(
+        db,
+        user_id="user-a",
+        resolver=resolver,
+        backend=backend,
+        attachment_registry=registry,
+    )
+    result = await drive_get_file_tool(context, file_id="glb-1")
+
+    data = result.get_data()
+    assert isinstance(data, dict), result.get_text()
+    owned = await registry.get_attachment_content(
+        db, data["attachment_id"], acting_user_id="user-a"
+    )
+    assert owned == binary
+    max_file_size, _ = get_attachment_limits(context)
+    assert backend.request_response_caps == [None, max_file_size]
 
 
 # --------------------------------------------------------------------------- #

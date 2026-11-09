@@ -1812,6 +1812,46 @@ final class HomeThreadsTests: XCTestCase {
         XCTAssertNotEqual(starts[0].turnID, starts[1].turnID, "A changed tier is a new start.")
     }
 
+    func testSendAsThreadSendsTheTierChosenBesideTheProfile() async throws {
+        let model = try await makeHomeModelWithProfiles()
+        model.draftText = "Research heat pumps"
+        model.selectModelTier("deep")
+        var starts: [HomeThreadStart] = []
+
+        await model.sendDraftAsThread(profileID: "research", modelTier: nil) { starts.append($0); return true }
+
+        XCTAssertNil(starts.first?.modelTier, "The sheet's pick overrides Home's choice.")
+        XCTAssertNil(model.modelTierChoice, "Home's choice was still for that message.")
+    }
+
+    func testAFailedSendAsThreadIsOfferedAgainAtTheTierItWasSentWith() async throws {
+        let model = try await makeHomeModelWithProfiles()
+        model.draftText = "Research heat pumps"
+        model.selectModelTier("deep")
+        var starts: [HomeThreadStart] = []
+
+        await model.sendDraftAsThread(profileID: "research", modelTier: nil) { starts.append($0); return false }
+        XCTAssertNil(model.threadTierDefault(for: "research"), "The retry is offered as it was sent.")
+        await model.sendDraftAsThread(profileID: "research") { starts.append($0); return false }
+
+        XCTAssertEqual(starts.count, 2)
+        XCTAssertEqual(starts[1].turnID, starts[0].turnID, "An unchanged retry is the same start.")
+        XCTAssertEqual(model.threadTierDefault(for: "default_assistant"), "deep", "Another profile still gets Home's choice.")
+    }
+
+    func testThreadStartSendsATierOnlyWithAnOpeningMessage() {
+        let options = ThreadStartOptions(anchorMessageID: 7, profileID: "research", householdContextProfileIDs: ["research"])
+
+        XCTAssertEqual(
+            options.start(turnID: "t", prompt: " Go ", includeContext: true, modelTier: "deep").modelTier,
+            "deep"
+        )
+        XCTAssertNil(
+            options.start(turnID: "t", prompt: "  ", includeContext: true, modelTier: "deep").modelTier,
+            "With no message there is no turn for the tier to run on."
+        )
+    }
+
     func testSendAsThreadDropsATierTheThreadsProfileDoesNotOffer() async throws {
         let model = try await makeHomeModelWithProfiles()
         model.draftText = "Quick one"

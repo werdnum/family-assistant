@@ -13,6 +13,10 @@ if [ ! -f "pyproject.toml" ]; then
     exit 1
 fi
 
+# On macOS checkouts that live on a share, keep .venv and node_modules on the
+# local disk as copy-on-write clones instead of full copies.
+./scripts/link-local-deps.sh
+
 # Step 1: Create virtual environment
 if [ ! -d ".venv" ] || [ ! -f ".venv/bin/python" ]; then
     echo "📦 Creating fresh virtual environment..."
@@ -52,7 +56,9 @@ else
 fi
 
 # Step 5: Install frontend dependencies
-if [ -f "frontend/package.json" ]; then
+if [ -L "frontend/node_modules" ]; then
+    echo "✓ Frontend dependencies linked by link-local-deps.sh"
+elif [ -f "frontend/package.json" ]; then
     echo "🎨 Installing frontend dependencies..."
     npm ci --prefix frontend || npm install --prefix frontend
 else

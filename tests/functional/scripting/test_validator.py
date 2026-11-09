@@ -7,6 +7,7 @@ from collections.abc import Callable
 import pytest
 
 from family_assistant.scripting.apis import time as time_api
+from family_assistant.scripting.apis.keychute import KeychuteScriptHttpClient
 from family_assistant.scripting.config import ScriptConfig
 from family_assistant.scripting.validator import (
     ScriptValidator,
@@ -279,6 +280,30 @@ class TestScriptValidatorWithTools:
         assert not result.is_valid
         assert any("search_notes" in d.message for d in result.errors)
 
+    def test_attachment_bytes_pass_to_base64_tool_argument(self) -> None:
+        write_file = {
+            "type": "function",
+            "function": {
+                "name": "write_file",
+                "description": "Write a base64-encoded file to a workspace",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "content": {"type": "string"},
+                        "cwd": {"type": "string"},
+                    },
+                    "required": ["path", "content"],
+                },
+            },
+        }
+        v = ScriptValidator(tool_definitions=[write_file])
+        result = v.validate(
+            'write_file(cwd="/tmp/workspaces/w", path="model.glb", '
+            'content=base64_encode(attachment_read_bytes("id")))'
+        )
+        assert result.is_valid, result.error_message
+
     def test_multi_tool_script(self, sample_tool_definitions: list) -> None:
         v = ScriptValidator(tool_definitions=sample_tool_definitions)
         script = """
@@ -371,6 +396,18 @@ class TestScriptValidatorConfig:
 
     @pytest.mark.parametrize("script", ATTACHMENT_API_SCRIPTS)
     def test_include_attachment_api_by_default(self, script: str) -> None:
+        v = ScriptValidator()
+        result = v.validate(script)
+        assert result.is_valid, result.error_message
+
+    @pytest.mark.parametrize(
+        "script",
+        [
+            'base64_encode(attachment_read_bytes("id"))',
+            'attachment_read("id").upper()',
+        ],
+    )
+    def test_attachment_reads_are_not_optional(self, script: str) -> None:
         v = ScriptValidator()
         result = v.validate(script)
         assert result.is_valid, result.error_message
@@ -689,6 +726,34 @@ class TestStubSignaturesMatchRuntime:
         v = ScriptValidator()
         result = v.validate(f"x: int = {name}")
         assert not result.is_valid
+
+    def test_keychute_stub_matches_runtime_signature(self) -> None:
+        stubs = _stub_functions(
+            generate_prefix_code(extra_external_functions=["keychute_http_request"])
+        )
+        runtime = [
+            param
+            for param in _runtime_parameters(KeychuteScriptHttpClient.request)
+            if param[0] != "self"
+        ]
+        assert _stub_parameters(stubs["keychute_http_request"]) == runtime
+
+    @pytest.mark.parametrize("body", ['"text"', 'b"bytes"', 'json_encode({"a": 1})'])
+    def test_keychute_accepts_str_or_bytes_body(self, body: str) -> None:
+        result = ScriptValidator().validate(
+            f'keychute_http_request("token", "https://example.test/x", body={body})',
+            extra_external_functions=["keychute_http_request"],
+        )
+        assert result.is_valid, result.error_message
+
+    def test_keychute_rejects_dict_body(self) -> None:
+        result = ScriptValidator().validate(
+            'keychute_http_request("token", "https://example.test/x", '
+            'method="POST", body={"key": "value"})',
+            extra_external_functions=["keychute_http_request"],
+        )
+        assert not result.is_valid
+        assert "keychute_http_request" in (result.error_message or "")
 
     def test_json_api_validates(self) -> None:
         v = ScriptValidator()

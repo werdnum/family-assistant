@@ -5,8 +5,11 @@
 
 set -e
 
-# Check if CLAUDE_CODE_REMOTE is set
+# Local sessions (including Remote Control worktrees on the macOS VM) only get
+# their deps placed on the local disk; agents run the full setup themselves.
 if [ "${CLAUDE_CODE_REMOTE:-false}" != "true" ]; then
+    cd "$(git rev-parse --show-toplevel)"
+    bash scripts/link-local-deps.sh >&2
     exit 0
 fi
 

@@ -176,7 +176,10 @@ class StartThreadRequest(BaseModel):
     )
     model_tier: str | None = Field(
         default=None,
-        description="Optional model tier for the thread, from the profile's model_tiers",
+        description=(
+            "Optional model tier for the thread, from the profile's model_tiers. "
+            "It runs the opening message, so it needs one (422 otherwise)"
+        ),
     )
     attachments: list[ChatAttachmentRequest] | None = Field(
         default=None, description="Attachments sent with the opening message"
@@ -639,6 +642,12 @@ async def start_home_thread(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Attachments are sent with an opening message.",
+        )
+    if prompt is None and payload.model_tier is not None:
+        # The tier runs the opening turn; with no turn, it would be dropped.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="A model tier is sent with an opening message.",
         )
     profile = _local_profile(request, payload.profile_id)
     resolve_requested_model_tier(profile, payload.model_tier)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal, TypedDict, cast
 
@@ -34,6 +35,7 @@ class ConfirmationRequestRow(TypedDict):
     processing_profile_id: str | None
     origin_interface_type: str | None
     origin_conversation_id: str | None
+    origin_subconversation_id: str | None
     expires_at: datetime
     created_at: datetime
     updated_at: datetime
@@ -66,6 +68,7 @@ class ConfirmationRequestsRepository(BaseRepository):
         processing_profile_id: str | None = None,
         origin_interface_type: str | None = None,
         origin_conversation_id: str | None = None,
+        origin_subconversation_id: str | None = None,
         taint_state_json: TaintMetadata | None = None,
         sink_class: str | None = None,
         static_policy_reason: str | None = None,
@@ -91,6 +94,7 @@ class ConfirmationRequestsRepository(BaseRepository):
                 processing_profile_id=processing_profile_id,
                 origin_interface_type=origin_interface_type,
                 origin_conversation_id=origin_conversation_id,
+                origin_subconversation_id=origin_subconversation_id,
                 taint_state_json=taint_state_json,
                 sink_class=sink_class,
                 static_policy_reason=static_policy_reason,
@@ -127,6 +131,55 @@ class ConfirmationRequestsRepository(BaseRepository):
         )
         rows = await self._db.fetch_all(stmt)
         return [self._row_to_typed(row) for row in rows]
+
+    async def find_pending_duplicate(
+        self,
+        *,
+        target_user_id: str,
+        tool_name: str,
+        tool_args: ToolArgumentsView,
+        processing_profile_id: str | None,
+        origin_interface_type: str | None,
+        origin_conversation_id: str | None,
+        origin_subconversation_id: str | None,
+        now: datetime,
+    ) -> ConfirmationRequestRow | None:
+        """Return an unexpired pending request for the same invocation, if any.
+
+        Tool arguments are compared after loading because JSON equality is not
+        portable across the SQLite and PostgreSQL column types; the expected
+        arguments go through the same JSON round trip as the stored ones.
+        """
+        table = confirmation_requests_table
+        stmt = (
+            select(table)
+            .where(
+                table.c.target_user_id == target_user_id,
+                table.c.status == "pending",
+                table.c.expires_at > now,
+                table.c.tool_name == tool_name,
+                table.c.decision_only.is_(False),
+                table.c.processing_profile_id.is_not_distinct_from(
+                    processing_profile_id
+                ),
+                table.c.origin_interface_type.is_not_distinct_from(
+                    origin_interface_type
+                ),
+                table.c.origin_conversation_id.is_not_distinct_from(
+                    origin_conversation_id
+                ),
+                table.c.origin_subconversation_id.is_not_distinct_from(
+                    origin_subconversation_id
+                ),
+            )
+            .order_by(table.c.created_at.asc())
+        )
+        expected_args = json.loads(json.dumps(dict(tool_args)))
+        for row in await self._db.fetch_all(stmt):
+            candidate = self._row_to_typed(row)
+            if candidate["tool_args_json"] == expected_args:
+                return candidate
+        return None
 
     async def approve_pending(
         self,

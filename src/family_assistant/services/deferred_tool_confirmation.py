@@ -139,7 +139,7 @@ async def create_deferred_tool_confirmation(
         if context.taint_tracker is not None
         else None
     )
-    request = await create_durable_confirmation(
+    durable = await create_durable_confirmation(
         confirmation_service=confirmation_service,
         db_context=context.db_context,
         target_user_id=target_user_id,
@@ -153,10 +153,27 @@ async def create_deferred_tool_confirmation(
         processing_profile_id=context.processing_profile_id,
         origin_interface_type=context.interface_type,
         origin_conversation_id=context.conversation_id,
+        origin_subconversation_id=context.subconversation_id,
         taint_state_json=taint_state_json,
         tool_call_review_authorization=context.tool_call_review_authorization,
     )
-    request_id = str(request["id"])
+    request_id = str(durable.request["id"])
+    if durable.reused:
+        # A retried turn asking for the same action again: the user was already
+        # notified about this request, and approving it runs the action once.
+        logger.info(
+            "Reusing pending confirmation %s for deferred tool %s",
+            request_id,
+            tool_name,
+        )
+        return ConfirmationOutcome(
+            kind="completed",
+            result=(
+                f"This exact action is already waiting on the user's approval "
+                f"(request {request_id}). {NOT_RUN_YET_NOTE}."
+            ),
+            action_attempted=False,
+        )
     logger.info(
         "Created durable confirmation %s for deferred tool %s", request_id, tool_name
     )

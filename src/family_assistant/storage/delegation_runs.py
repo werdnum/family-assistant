@@ -35,9 +35,10 @@ DelegationRunKind = Literal["delegation", "thread"]
 """What a run is for.
 
 A ``delegation`` runs in a subconversation of its source and reports its result
-back to it. A ``thread`` runs the first turn of a conversation thread at the top
-level of the thread's own conversation, and records completion without waking
-anyone: the user talks to the thread directly.
+back to it. A ``thread`` runs one turn at the top level of a conversation and
+records completion without waking anyone, since the user talks to that
+conversation directly: a thread's first turn, or the turn a note posted with
+``post_to_conversation`` wakes in another of the user's conversations.
 """
 
 TERMINAL_DELEGATION_STATUSES: frozenset[DelegationRunStatus] = frozenset({
@@ -216,6 +217,14 @@ delegation_runs_table = Table(
         "originating_request_taint_json",
         JSON().with_variant(JSONB, "postgresql"),
         nullable=True,
+    ),
+    # The trusted human requests of the delegating conversation's earlier
+    # turns, resolved the same way and recorded at creation, as a list of
+    # ``{"text", "taint"}``. They let the run's review resolve references like
+    # "to and from"; they add no authority. Null for runs created before they
+    # were recorded.
+    Column(
+        "earlier_requests_json", JSON().with_variant(JSONB, "postgresql"), nullable=True
     ),
     Column("handed_off_at", DateTime(timezone=True), nullable=True),
     Column("started_at", DateTime(timezone=True), nullable=True),

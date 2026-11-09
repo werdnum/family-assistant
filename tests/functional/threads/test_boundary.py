@@ -23,6 +23,14 @@ from family_assistant.llm.messages import (
 from family_assistant.memory.due import select_due_conversations
 from family_assistant.memory.review_settings import MemoryReviewSettings
 from family_assistant.processing.types import ProcessingServiceConfig
+from family_assistant.security.taint import (
+    SourceTrustTier,
+    TaintSource,
+    TaintSourceType,
+    TurnTaintState,
+    as_inherited,
+    prompt_window_taint,
+)
 from family_assistant.storage.base import attachment_metadata_table
 from family_assistant.storage.database import Database
 from family_assistant.storage.message_history import (
@@ -229,10 +237,52 @@ async def test_an_assistant_request_is_not_stored_as_the_users_words(
     )
 
     rows = await _thread_rows(db)
-    assert [
-        (row["role"], row["is_internal"], row["user_id"], row["taint_metadata_json"])
-        for row in rows
-    ] == [("user", True, "alice", UNTRUSTED)]
+    assert [(row["role"], row["is_internal"], row["user_id"]) for row in rows] == [
+        ("user", True, "alice")
+    ]
+    assert (
+        TurnTaintState.from_metadata(rows[0]["taint_metadata_json"]).max_tier
+        is SourceTrustTier.UNKNOWN_EXTERNAL
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_assistant_request_introduces_what_its_writer_inherited(
+    db_engine: AsyncEngine,
+) -> None:
+    """The writer's own window does not come along, so its carry-in must."""
+    db = Database(engine=db_engine)
+    inherited = (
+        TurnTaintState
+        .empty()
+        .add_source(
+            as_inherited(
+                TaintSource(
+                    source_type=TaintSourceType.BROWSER_SNAPSHOT,
+                    source_id="plumber-site",
+                    tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+                    labels=frozenset(),
+                    reason="A plumber's website.",
+                )
+            )
+        )
+        .to_metadata()
+    )
+
+    await copy_across_boundary(
+        db,
+        destination=_destination(_profile("complex_tasks", household=True)),
+        payload=AssistantRequest(text="Plan the Japan trip.", taint=inherited),
+        turn_id="seed-turn",
+        now=NOW,
+    )
+
+    window = await db.message_history.get_recent(
+        interface_type="web",
+        conversation_id=THREAD,
+        processing_profile_id="complex_tasks",
+    )
+    assert prompt_window_taint(window).max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
 
 
 @pytest.mark.asyncio

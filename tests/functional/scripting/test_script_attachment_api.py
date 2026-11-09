@@ -703,12 +703,14 @@ raw
         assert isinstance(result, bytes)
         assert result == binary_payload
 
-    async def test_script_read_bytes_returns_none_for_missing(
+    @pytest.mark.parametrize("function", ["attachment_read", "attachment_read_bytes"])
+    async def test_script_read_raises_for_missing(
         self,
         db_engine: AsyncEngine,
         attachment_registry: AttachmentRegistry,
+        function: str,
     ) -> None:
-        """Test that attachment_read_bytes returns None for non-existent attachment."""
+        """A missing attachment stops the script instead of yielding None."""
         db_context = Database(engine=db_engine)
         execution_context = ToolExecutionContext(
             interface_type="test",
@@ -731,18 +733,59 @@ raw
             config=config, default_timezone=ZoneInfo("Australia/Sydney")
         )
 
-        script = """
-fake_id = "00000000-0000-0000-0000-000000000000"
-result = attachment_read_bytes(fake_id)
-result == None
+        script = f"""
+{function}("00000000-0000-0000-0000-000000000000")
 """
 
+        with pytest.raises(ScriptExecutionError, match="not found or not accessible"):
+            await engine.evaluate_async(
+                script=script,
+                execution_context=execution_context,
+            )
+
+    async def test_script_bytes_to_base64_round_trip(
+        self,
+        db_engine: AsyncEngine,
+        attachment_registry: AttachmentRegistry,
+    ) -> None:
+        """Binary attachment bytes feed base64_encode directly, as a workspace upload does."""
+        binary_payload = b"glTF\x02\x00\x00\x00\xff\xfe\x80\x81"
+        db_context = Database(engine=db_engine)
+        attachment_record = await attachment_registry.register_user_attachment(
+            db_context=db_context,
+            content=binary_payload,
+            mime_type="model/gltf-binary",
+            filename="model.glb",
+            conversation_id="test_conversation",
+            user_id="test_user",
+            description="Binary GLB attachment",
+        )
+        execution_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test_conversation",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=db_context,
+            processing_service=None,
+            clock=None,
+            plugins=None,
+            event_sources=None,
+            attachment_registry=attachment_registry,
+            timezone=ZoneInfo("UTC"),
+            credential_resolvers=None,
+            api_backend=None,
+        )
+        engine = MontyEngine(
+            config=ScriptConfig(enable_print=True),
+            default_timezone=ZoneInfo("Australia/Sydney"),
+        )
+
         result = await engine.evaluate_async(
-            script=script,
+            script=f'base64_decode_bytes(base64_encode(attachment_read_bytes("{attachment_record.attachment_id}")))',
             execution_context=execution_context,
         )
 
-        assert result is True
+        assert result == binary_payload
 
 
 _CREATE_DERIVED_ATTACHMENT = """

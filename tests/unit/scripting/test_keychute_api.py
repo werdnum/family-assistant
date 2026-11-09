@@ -443,6 +443,33 @@ async def test_request_enforces_response_body_limit() -> None:
             await client.request("weather", "https://example.test/x")
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", [{"key": "value"}, ["a"], 3])
+async def test_request_rejects_non_bytes_body_before_contacting_keychute(
+    body: object,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError(f"Keychute contacted: {request.url}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = KeychuteScriptHttpClient(
+            KeychuteConfig(
+                enabled=True,
+                url="https://keychute.test",
+                token=SecretStr("client-token"),
+            ),
+            "keychute_http_request(...)",
+            http_client=http_client,
+        )
+        with pytest.raises(TypeError, match=r"body must be str or bytes.*json_encode"):
+            await client.request(
+                "weather",
+                "https://example.test/x",
+                method="POST",
+                body=body,  # type: ignore[arg-type]
+            )
+
+
 def test_api_is_added_only_when_enabled() -> None:
     original: dict[str, object] = {"value": 1}
 
