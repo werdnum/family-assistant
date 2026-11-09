@@ -10,7 +10,7 @@ from datetime import UTC, timedelta
 import aiofiles
 from pydantic import TypeAdapter
 
-from family_assistant.config_models import AppConfig
+from family_assistant.config_models import AppConfig, AttachmentConfig
 from family_assistant.llm import LLMInterface
 from family_assistant.llm.messages import (
     ContentPart,
@@ -620,7 +620,7 @@ Call attach_to_response with your selected attachment IDs."""
             threshold_kb = (
                 self.app_config.attachment_config.large_tool_result_threshold_kb
                 if self.app_config and self.app_config.attachment_config
-                else 100
+                else AttachmentConfig().large_tool_result_threshold_kb
             )
 
         THRESHOLD_BYTES = threshold_kb * 1024
