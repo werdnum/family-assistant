@@ -788,6 +788,7 @@ async def _create_run(
     taint_state_json: TaintMetadata | None = None,
     model_selection: ResolvedModelSelection | None = None,
     model_selection_json: object | None = None,
+    request_text: str = "do the thing",
 ) -> str:
     """Create a queued delegation run and return its delegation_id.
 
@@ -807,7 +808,7 @@ async def _create_run(
         "source_turn_id": "turn_async_delegation",
         "subconversation_id": f"sub_{delegation_id}",
         "source_subconversation_id": source_subconversation_id,
-        "request_text": "do the thing",
+        "request_text": request_text,
         "content_parts_json": [],
         "taint_state_json": taint_state_json,
         "model_selection_json": (
@@ -900,7 +901,12 @@ async def test_the_worker_runs_a_queued_delegation_at_its_persisted_tier(
     assert run is not None
     # Shown to the caller, so answers fanned out at several models can be told
     # apart.
-    assert db_context.delegation_runs.summarize_run(run).get("model_tier") == "deep"
+    assert (
+        db_context.delegation_runs.summarize_run(run, include_result=True).get(
+            "model_tier"
+        )
+        == "deep"
+    )
 
 
 @pytest.mark.asyncio
@@ -1022,7 +1028,9 @@ async def test_a_malformed_persisted_envelope_fails_the_run(
     assert run["status"] == "failed"
     assert run["error"] is not None
     # A listing still renders the run, without a tier it cannot name.
-    assert "model_tier" not in db_context.delegation_runs.summarize_run(run)
+    assert "model_tier" not in db_context.delegation_runs.summarize_run(
+        run, include_result=True
+    )
 
 
 @pytest.mark.asyncio
@@ -2701,6 +2709,71 @@ async def test_status_tools_omit_nudge_once_terminal(
     assert status_result.data["status"] == "completed"
     assert "do not poll in a loop" not in (status_result.text or "").lower()
     assert "do not poll in a loop" not in (list_result.text or "").lower()
+
+
+@pytest.mark.asyncio
+async def test_status_tools_bound_request_and_listing_result_text(
+    db_engine: AsyncEngine,
+) -> None:
+    """Status tools echo a preview of the request; only status gives a full result."""
+    target_service = FakeDelegatableService()
+    processing_service = _source_processing_service(target_service)
+    clock = SystemClock()
+    db_context = Database(engine=db_engine)
+    context = _tool_context(db_context, processing_service)
+    long_request = "council question " * 2000
+    long_result = "member answer " * 2000
+
+    for index in range(4):
+        await _create_run(
+            db_context,
+            delegation_id=f"delegation_running_{index}",
+            request_text=long_request,
+        )
+    await _create_run(
+        db_context, delegation_id="delegation_finished", request_text=long_request
+    )
+    await db_context.delegation_runs.mark_completed(
+        delegation_id="delegation_finished",
+        result_text=long_result,
+        result_attachment_ids=[],
+        completed_at=clock.now(),
+    )
+
+    listing = await list_delegations_tool(context)
+    assert isinstance(listing.data, list)
+    assert len(listing.data) == 5
+    assert listing.text is not None
+    assert len(listing.text) < 5000
+    assert long_request not in listing.text
+    for summary in listing.data:
+        assert "request_text" not in summary
+        assert "result_text" not in summary
+        assert summary["request_chars"] == len(long_request)
+        assert len(summary["request_preview"]) <= 201
+    [finished] = [
+        summary
+        for summary in listing.data
+        if summary["delegation_id"] == "delegation_finished"
+    ]
+    assert long_result.startswith(finished["result_preview"].rstrip("…"))
+    assert finished["result_chars"] == len(long_result)
+    assert "get_delegation_status" in listing.text
+
+    running = await get_delegation_status_tool(
+        context, delegation_id="delegation_running_0"
+    )
+    assert running.text is not None
+    assert len(running.text) < 2000
+    assert isinstance(running.data, dict)
+    assert "request_text" not in running.data
+
+    finished_status = await get_delegation_status_tool(
+        context, delegation_id="delegation_finished"
+    )
+    assert isinstance(finished_status.data, dict)
+    assert finished_status.data["result_text"] == long_result
+    assert long_request not in (finished_status.text or "")
 
 
 _STATUS_TOOLS = {
