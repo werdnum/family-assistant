@@ -862,6 +862,29 @@ llm_parameters:
     use_responses_api: false # opt a model back out; the default is on
 ```
 
+#### Custom instructions per model
+
+The reserved key `custom_instructions` holds text appended to the system prompt of every request
+sent to a matching model, whichever profile, tier, fallback or experiment arm sent it. It is for
+correcting a model's habits rather than shaping a profile, which is what the profile's own prompt is
+for. The key is removed before the request is built, so no provider sees it as a parameter.
+
+```yaml
+llm_parameters:
+  "gpt-":
+    custom_instructions: |
+      Avoid drafting communications unless specifically asked to.
+```
+
+- Every pattern that matches the model contributes, in map order, separated by a blank line, so a
+  broad entry (`"gpt-"`) and a specific one (`"gpt-6.1-sol"`) combine. Identical text is included
+  once.
+- The text goes at the end of the first system message, inside its prompt-cache prefix; a request
+  with no system message gets one. It therefore reaches background calls on that model too
+  (summaries, classifiers, tool-call review), not only conversation turns.
+- To confine it to one tier, set it on that tier's chain entry instead: `chain[].llm_parameters`
+  overlays the global map for that entry only (see [model_tiers](#model_tiers)).
+
 #### Reasoning propagation, by provider
 
 Reasoning state has to be replayed on each turn of a tool loop or the model restarts its reasoning
@@ -1074,14 +1097,14 @@ request *is* the authorization. A model choosing it is not, which is why the shi
 `default_assistant` allows `standard`, `deep` and `frontier` but admits only `standard` and `deep`
 automatically.
 
-The shipped presets — `gpt_6_astra`, `gpt_6_1_sol`, `claude_opus_5_5`, `claude_sonnet_5_5`,
-`claude_haiku_5_5`, `claude_fable_5_1`, `kimi_k3` and `gemini_4_argon` — are listed once, in
-`default_profile_settings.delegation_model_tiers`, so a delegating model may pin any profile that
-has a tier to any of them without a confirmation ("run complex_tasks on Gemini 4 Argon"). A profile
-that names an inline model drops the inherited list, and a profile that declares its own replaces
-it, so `delegation_model_tiers: []` keeps a profile off presets entirely. Adding a preset is a
-`model_tiers` entry plus a name in that list. The profile catalog lists the presets most profiles
-share once, rather than under each profile.
+The shipped presets — `gpt_6_astra`, `gpt_6_1_sol`, `gpt_6_1_terra`, `claude_opus_5_5`,
+`claude_sonnet_5_5`, `claude_haiku_5_5`, `claude_fable_5_1`, `kimi_k3` and `gemini_4_argon` — are
+listed once, in `default_profile_settings.delegation_model_tiers`, so a delegating model may pin any
+profile that has a tier to any of them without a confirmation ("run complex_tasks on Gemini 4
+Argon"). A profile that names an inline model drops the inherited list, and a profile that declares
+its own replaces it, so `delegation_model_tiers: []` keeps a profile off presets entirely. Adding a
+preset is a `model_tiers` entry plus a name in that list. The profile catalog lists the presets most
+profiles share once, rather than under each profile.
 
 #### The council's seats
 
@@ -1553,15 +1576,18 @@ the latest message. A background sweep summarizes a conversation once it has bee
 `idle_seconds`, and again after new messages; until then, and wherever summarizing failed, the list
 shows the latest message.
 
-| Key                      | Default (shipped)  | Meaning                                                                 |
-| ------------------------ | ------------------ | ----------------------------------------------------------------------- |
-| `enabled`                | `true`             | `false` stops new summaries; stored ones keep being shown.              |
-| `model`                  | `gemini-3.8-flash` | `provider` / `model` (and optional `llm_parameters`) of the summarizer. |
-| `sweep_interval_minutes` | `2`                | How often the sweep runs.                                               |
-| `idle_seconds`           | `60`               | Quiet time before a conversation is summarized.                         |
-| `lookback_days`          | `30`               | Conversations quiet for longer than this are not summarized.            |
-| `batch_size`             | `10`               | Summaries generated per sweep.                                          |
-| `timeout_seconds`        | `20`               | A summary not returned by then counts as failed.                        |
+| Key                      | Default (shipped)  | Meaning                                                                               |
+| ------------------------ | ------------------ | ------------------------------------------------------------------------------------- |
+| `enabled`                | `true`             | `false` stops new summaries; stored ones keep being shown.                            |
+| `model`                  | `gemini-3.8-flash` | `provider` / `model` (and optional `llm_parameters`) of the summarizer.               |
+| `sweep_interval_minutes` | `2`                | How often the sweep runs.                                                             |
+| `idle_seconds`           | `60`               | Quiet time before a conversation is summarized.                                       |
+| `lookback_days`          | `30`               | Conversations quiet for longer than this are not summarized.                          |
+| `batch_size`             | `10`               | Summaries generated per sweep.                                                        |
+| `timeout_seconds`        | `60`               | Per attempt, at most 120. A timed-out attempt is retried once, then counts as failed. |
+
+A sweep stops starting new summaries once it could not finish one more within four minutes, even if
+every attempt timed out; the rest wait for the next sweep.
 
 The instructions are `conversation_summary_prompt` in `prompts.yaml`; enabling summaries without it
 is a startup error, as is a `model` whose provider has no credentials — a deployment without
@@ -3300,7 +3326,7 @@ gemini_live_config:
 A Live model takes in the whole function response before it says anything, so a large one is heard
 as dead air. A tool result at least this many KiB is saved as an attachment, and the voice model
 gets the same pointer the chat assistant gets for results past
-`attachment_config.large_tool_result_threshold_kb` (default 100): the attachment ID and a hint to
+`attachment_config.large_tool_result_threshold_kb` (default 48): the attachment ID and a hint to
 read it with `jq_query` or `read_text_attachment`. It applies to every voice entry point (browser,
 iOS, watch and Asterisk calls). In an app session the attachment belongs to the caller. A profile
 that can reach neither `jq_query` nor `read_text_attachment` gets the whole result instead, since it
@@ -4279,6 +4305,13 @@ Operator merge note for service profiles:
 - Profiles with new IDs are added alongside the built-in defaults.
 - Profiles whose ID matches a default override that default.
 - You do not need to re-list all default profiles to add a new one.
+- An override is deep-merged onto the shipped profile, so it states only what it changes. Lists are
+  replaced wholesale, with one exception: `tools_policy.rules` in an override is **added to** the
+  shipped profile's rules rather than replacing them, so granting a confined profile one more tool
+  does not mean restating its shipped policy. The added rules sit in the same layer as the shipped
+  ones; to withdraw a shipped grant, add a `deny` at a higher priority. A rule identical to a
+  shipped one is not added twice. `tools_policy.default_decision` still overrides the shipped value
+  when set.
 
 Operator merge note for tool policy:
 
@@ -4292,8 +4325,9 @@ Operator merge note for tool policy:
   `tools_policy` replaces the default and the operator's additions with it, which is what keeps a
   deployment-wide grant such as a web-search or code-execution MCP server out of confined profiles
   like `memory_curator`, `media_analyst`, `coder` and `email_intake`. To grant a tool to one of
-  those, override that profile's `tools_policy`; to grant or deny one everywhere, use
-  `global_tools_policy`, which a profile can still refuse through `excluded_global_tools`.
+  those, add a rule to that profile's `tools_policy` with a `service_profiles` entry of the same
+  `id` (see the merge note above); to grant or deny one everywhere, use `global_tools_policy`, which
+  a profile can still refuse through `excluded_global_tools`.
 
 ### Remote A2A profiles
 

@@ -441,3 +441,21 @@ async def test_a_thread_records_the_tool_call_that_started_it(
     ]
     assert thread is not None
     assert [thread.source_tool_call_id] == tool_call_ids
+
+
+@pytest.mark.asyncio
+async def test_a_thread_run_records_the_requests_its_review_answers_to(
+    world: ThreadWorld,
+) -> None:
+    await world.say_in(HOME, "Our hot water system died; budget is about $3000.")
+    await world.say_in(HOME, "please start a thread for the quotes")
+
+    [run] = await world.db.fetch_all(
+        select(delegation_runs_table).where(
+            delegation_runs_table.c.run_kind == "thread"
+        )
+    )
+    assert run["originating_request"] == "please start a thread for the quotes"
+    assert [entry["text"] for entry in run["earlier_requests_json"]] == [
+        "Our hot water system died; budget is about $3000."
+    ]

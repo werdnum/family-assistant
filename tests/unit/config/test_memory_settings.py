@@ -123,14 +123,21 @@ def test_only_the_household_profiles_contribute_to_memory(
 def test_the_shipped_memory_readers_are_the_household_profiles_and_the_curator(
     shipped_config: AppConfig,
 ) -> None:
-    """Contribution implies reading, and the curator reads to curate."""
+    """Contribution implies reading, the curator reads to curate, and the
+    council and its members read what the assistant reads."""
     reading = sorted(
         profile.id
         for profile in shipped_config.service_profiles
         if profile.processing_config.memory_read
     )
 
-    assert reading == ["complex_tasks", "default_assistant", "memory_curator"]
+    assert reading == [
+        "complex_tasks",
+        "council",
+        "council_member",
+        "default_assistant",
+        "memory_curator",
+    ]
 
 
 @pytest.mark.parametrize("profile_id", ["default_assistant", "complex_tasks"])

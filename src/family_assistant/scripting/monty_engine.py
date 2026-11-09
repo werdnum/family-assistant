@@ -617,10 +617,10 @@ class MontyEngine:
         ) -> AttachmentInfoDict | None:
             return await api._get_async(attachment_id)
 
-        async def attachment_read(attachment_id: str) -> str | None:
+        async def attachment_read(attachment_id: str) -> str:
             return await api._read_async(attachment_id)
 
-        async def attachment_read_bytes(attachment_id: str) -> bytes | None:
+        async def attachment_read_bytes(attachment_id: str) -> bytes:
             return await api._read_bytes_async(attachment_id)
 
         async def attachment_create(

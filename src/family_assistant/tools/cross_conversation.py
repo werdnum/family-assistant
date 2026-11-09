@@ -45,6 +45,7 @@ from family_assistant.tools.communication import (
 from family_assistant.tools.services import (
     DELEGATED_PROFILE_RUN_TASK_TYPE,
     current_taint_metadata,
+    delegated_run_review_record,
     delegation_content_parts,
     delegation_tools_config,
     resolve_delegation_target,
@@ -325,6 +326,8 @@ async def post_to_conversation_tool(
         ],
     )
 
+    review_record = await delegated_run_review_record(exec_context, request=prompt)
+
     async def _post(txn: DatabaseTransaction) -> None:
         await copy_across_boundary(
             txn,
@@ -359,6 +362,7 @@ async def post_to_conversation_tool(
             "content_parts_json": content_parts,
             "taint_state_json": taint,
             "model_selection_json": model_selection.to_json(),
+            **review_record,
         })
         await txn.tasks.enqueue(
             task_id=task_id,

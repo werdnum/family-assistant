@@ -103,7 +103,14 @@ def _breakpoints(params: dict[str, object]) -> list[dict[str, object]]:
 class TestWhichModelsTakeCacheControls:
     @pytest.mark.parametrize(
         "model",
-        ["gpt-5.6-terra", "gpt-6-sol", "gpt-6.1-sol", "gpt-6-astra", "gpt-5.10"],
+        [
+            "gpt-5.6-terra",
+            "gpt-6-sol",
+            "gpt-6.1-sol",
+            "gpt-6.1-terra",
+            "gpt-6-astra",
+            "gpt-5.10",
+        ],
     )
     def test_gpt_5_6_and_later_on_the_responses_api(self, model: str) -> None:
         assert OpenAIClient(api_key="k", model=model)._supports_cache_controls()

@@ -231,6 +231,30 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
             item.add_marker(pytest.mark.flaky(reruns=3))
 
 
+@pytest.hookimpl(optionalhook=True)
+def pytest_json_modifyreport(json_report: dict[str, object]) -> None:
+    """Keep captured output in the JSON report only for tests that did not pass.
+
+    Captured logs and stdout of passing tests are ~99% of a full run's report
+    (~370MB for ~7,800 tests), and every reader of the report looks only at the
+    summary and at failures.
+    """
+    tests = json_report.get("tests")
+    if not isinstance(tests, list):
+        return
+    for test in tests:
+        if not isinstance(test, dict) or test.get("outcome") not in {
+            "passed",
+            "skipped",
+        }:
+            continue
+        for phase in ("setup", "call", "teardown"):
+            stage = test.get(phase)
+            if isinstance(stage, dict):
+                for captured in ("log", "stdout", "stderr"):
+                    stage.pop(captured, None)
+
+
 @pytest.fixture(autouse=True)
 def reset_task_event() -> Generator[None]:
     """Reset the global task event for each test to ensure isolation."""

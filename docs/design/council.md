@@ -36,21 +36,37 @@ The shipped panel is **GPT-6 Astra, Claude Fable 5.1, Kimi K3 and Gemini 4 Argon
 5.5** is admitted as an alternative Anthropic seat, used in place of Fable when a request asks for
 it, never as an extra seat. The coordinator runs on the `deep` tier.
 
-### Confinement
+### Access
 
-Both profiles read the open web and each other's reports, so neither is given household data: no
-aggregated context, and the coordinator's note reads are confined to the `council` label (grant plus
-read floor), which admits the skill and nothing of the household's. Deny-by-default tool policies
-are not enough on their own, because `global_tools_policy` outranks a profile's policy, so both
-profiles withhold the globally granted tools through `excluded_global_tools`, as `media_analyst` and
-`coder` do: `read_text_attachment` and `jq_query` resolve any attachment the user owns, and
-`report_technical_problem` persists model-supplied text. The skill carries that label, so no other
-profile — the members included — can load it; the members are told not to coordinate, and the label
-is what makes that hold. Every profile may delegate to itself above its own policy, so recursion is
-closed by `allowed_delegation_sources`: only `default_assistant` and `complex_tasks` may convene a
-council, and only `council` may seat a member. A member's one outward action is a sandboxed
-computation through `coder`, gated by the taint policy as everywhere else. Council invocation
-authorises investigation and advice, not changes.
+Both profiles read what the assistant reads, and change nothing. Each holds the same read-only
+household tools -- notes (including memory), documents, conversation history, calendar, Home
+Assistant state and weather -- and the globally granted attachment readers, but not the connected
+Google accounts (Gmail, Drive) or the message archive. Their only tools that are not read-only are
+the ones that run the council: delegating (the coordinator to a member, a member to `coder`), the
+coordinator's cancelling a delegation, reporting a technical problem and closing a thread. A
+shipped-config test holds those sets. Council conversations are not reviewed into memory
+(`memory_contribute: false`).
+
+They are held to no more than the assistant because they have no more than the assistant: all three
+read the open web, and the assistant also writes household state and messages people. A member's one
+outward action is a sandboxed computation through `coder`, gated by the taint policy as it is
+everywhere else, so the council reading household data opens no path the assistant does not already
+have.
+
+`get_message_history` also matters for a second reason: history compaction only reduces a turn with
+tool calls for a profile that can look those calls back up, and a phase turn, or a member's research
+turn, is mostly tool calls. Without it, the phase turns of a long council were kept verbatim until
+the request outgrew the model's context. The coordinator does not hold `get_delegation_status`: each
+wake brings the finished members' results into history, and the only use a coordinator found for a
+status lookup was polling members still running.
+
+The skill carries the `council` label, which only the coordinator is granted, so no other profile --
+the members included -- can load it; the members are told not to coordinate, and the label is what
+makes that hold: a member is granted the household's `default` notes but not `council`. Every
+profile may delegate to itself above its own policy, so recursion is closed by
+`allowed_delegation_sources`: only `default_assistant` and `complex_tasks` may convene a council,
+and only `council` may seat a member. Council invocation authorises investigation and advice, not
+changes.
 
 ## The runtime gap, and the fix
 
@@ -114,7 +130,8 @@ for how long its children took.
   waiting for its slowest member with no early answer; and a failed member reaching the coordinator
   alongside the others.
 - `tests/unit/config/test_shipped_council_profiles.py` checks the shipped roster against the
-  member's admissions, the skill's visibility, the confinement, and one-way delegation.
+  member's admissions, the skill's visibility, the coordinator's read-only tool set, and one-way
+  delegation.
 - The quality check the issue lists (an overcomplicated design, a false premise, a sound proposal
   that should survive, new evidence that should change the answer) needs real models and is left to
   a manual run against a deployment.

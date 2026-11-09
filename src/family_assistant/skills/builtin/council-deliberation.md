@@ -16,16 +16,19 @@ system prompt.
 - Start every member of a phase **in one response**, as parallel `delegate_to_service` calls to
   `council_member`, each with its own `model_tier` and `delivery_hint: "background"`. Then end your
   turn with one line saying which phase is under way. That line is not the council's answer.
+- **The response that starts a phase is the last tool use of that turn.** Do not check on the
+  members you just started, with `list_delegations` or anything else: they take many minutes, and
+  nothing you do in this turn makes them finish sooner. Ending the turn is how you wait.
 - You are woken **once**, when every delegation you started has finished. The wake lists each
-  finished delegation with its status, and each result is in your history as data. Do not call
-  `get_delegation_status` in a loop, and do not end a turn waiting for a member you have not
-  started.
+  finished delegation with its status, and each result is in your history as data. Do not end a turn
+  waiting for a member you have not started.
 - A turn that starts no delegation is your final answer: it is returned to whoever convened the
   council. Write the synthesis only in that turn, and never write it in a turn that also starts
   members.
-- A member's reference and preset appear in `list_delegations` (its `model_tier`), so you can always
-  recover which label a delegation belongs to. Keep a short table of label, preset and latest
-  reference in your own turn text as you go.
+- Keep a short table of label, preset and latest reference in your own turn text as you go, and
+  update it from each wake: that table, not a lookup, is how you know which reference to resume.
+  Call `list_delegations` only to recover a reference your table is missing, at the start of a turn,
+  never to see whether members have finished.
 
 ## 1. Prepare a shared brief
 
@@ -33,6 +36,10 @@ Preserve the original request, the user's constraints, relevant supplied materia
 and the requested output. Separate established facts, preferences and tentative assumptions. Treat
 an existing proposal as something to evaluate, not an endorsed answer. Do not put a preferred
 solution of your own into the brief.
+
+You and the members can read the household's notes, documents, calendar, conversation history and
+Home Assistant state. Put the household facts the question turns on into the brief anyway, so every
+member starts from the same facts, and pass attachments by id.
 
 Give every member the same brief and the same relevant attachments, passed as `attachment_ids`
 rather than filenames. Members may find different sources on their own. Use the stable labels A, B,
@@ -55,9 +62,10 @@ No member sees a peer's proposal in this phase.
 ## 3. Collect a complete phase
 
 When you are woken, match each result to its label. Advance only when every member has either
-reported or failed. If `list_delegations` shows a member of the phase still running, which happens
-only when the council was chosen directly rather than convened by the Assistant, end the turn with
-one line naming who is still working, and start nothing.
+reported or failed. If a member of the phase has not reported, which happens only when the council
+was chosen directly rather than convened by the Assistant, end the turn with one line naming who is
+still working, and start nothing. That line is a status, not your final answer, and you will be
+woken again when the member finishes.
 
 - A failed member is reported honestly. With at least two successful members, continue with a
   reduced panel and say so in the synthesis. With only one, stop and return a partial investigation,

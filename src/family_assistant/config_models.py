@@ -376,7 +376,10 @@ class ConversationSummaryConfig(BaseModel):
     keep showing their latest message."""
     batch_size: int = Field(default=10, ge=1)
     """Summaries generated per sweep, bounding the sweep's run time."""
-    timeout_seconds: float = Field(default=20.0, gt=0)
+    timeout_seconds: float = Field(default=60.0, gt=0, le=120)
+    """Per attempt; a timed-out attempt is retried once. Generous because the
+    sweep runs in the background and a timeout costs the summary. Capped so two
+    attempts fit in one sweep's time budget."""
 
 
 class ConversationThreadsConfig(BaseModel):
@@ -1325,9 +1328,13 @@ class AttachmentConfig(BaseModel):
     max_file_size: int = 104857600  # 100MB
     max_multimodal_size: int = 20971520  # 20MB
     storage_path: str = "/tmp/chat_attachments"
-    large_tool_result_threshold_kb: int = (
-        100  # Auto-convert to attachment if > this size (in KiB)
-    )
+    large_tool_result_threshold_kb: int = 48
+    """Tool results at least this size (KiB) reach the chat model as an attachment.
+
+    Inline results replay on every later turn, so a 50 KiB one costs about 40% of
+    the history compaction budget. 48 KiB sits just above the largest user guide
+    (``scripting.md``, about 43 KiB), which the assistant should read inline.
+    """
 
 
 def _normalize_string_set(values: object, label: str) -> set[str]:

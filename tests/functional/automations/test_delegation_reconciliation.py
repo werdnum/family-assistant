@@ -294,7 +294,7 @@ async def test_a_late_result_says_that_it_is_late(
         "delegation_marked_late"
     )
     assert run is not None
-    summary = db_context.delegation_runs.summarize_run(run)
+    summary = db_context.delegation_runs.summarize_run(run, include_result=True)
     assert summary["status"] == "completed"
     assert summary.get("late_recovered_at") is not None
     assert summary.get("original_error") == "The target_profile run cancelled."

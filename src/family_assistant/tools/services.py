@@ -12,7 +12,7 @@ import logging
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 
 from sqlalchemy.exc import IntegrityError
 
@@ -37,6 +37,8 @@ from family_assistant.security.taint import (
 from family_assistant.services.tool_call_review import (
     TriggerReviewInput,
     build_delegation_review_trigger,
+    collect_earlier_requests,
+    earlier_requests_to_json,
 )
 from family_assistant.storage.delegation_runs import (
     CANCELLABLE_DELEGATION_STATUSES,
@@ -70,6 +72,7 @@ if TYPE_CHECKING:
     from family_assistant.storage.repositories.delegation_runs import (
         DelegationRunDict,
         DelegationRunSummary,
+        EarlierRequestRecord,
     )
     from family_assistant.tools.types import (
         ToolConfirmationAuthorization,
@@ -186,6 +189,19 @@ async def _delegation_review_trigger(
     ``tool_call_review_messages``, which carries prior turns as well: an earlier
     request must not arrive labelled as the one that authorized this delegation.
     """
+    started_by_human = exec_context.tool_call_review_trigger is None
+    earlier = (
+        await collect_earlier_requests(
+            exec_context.db_context,
+            interface_type=exec_context.interface_type,
+            conversation_id=exec_context.conversation_id,
+            subconversation_id=exec_context.subconversation_id,
+            processing_profile_id=exec_context.processing_profile_id,
+            source_turn_id=exec_context.turn_id,
+        )
+        if started_by_human and exec_context.turn_id is not None
+        else None
+    )
     return await build_delegation_review_trigger(
         exec_context.db_context,
         trigger_type="delegation_request",
@@ -198,15 +214,67 @@ async def _delegation_review_trigger(
         # event, a schedule, a script -- is exactly one carrying a review
         # trigger. An interactive turn carries none, and only it holds a human
         # message.
-        source_started_by_human=exec_context.tool_call_review_trigger is None,
+        source_started_by_human=started_by_human,
         inherited=exec_context.tool_call_review_trigger,
+        earlier_requests=earlier,
     )
+
+
+async def _run_review_context(
+    exec_context: ToolExecutionContext,
+    *,
+    user_request: str,
+    resume_delegation_id: str | None,
+) -> tuple[tuple[str, TaintMetadata] | None, tuple[tuple[str, TaintMetadata], ...]]:
+    """What a queued run's review answers to, resolved while its turn runs.
+
+    The originating request (see :func:`_run_originating_request`) and the
+    conversation's earlier requests, both recorded on the run so the worker
+    reviews against what this turn could see.
+    """
+    trigger = await _delegation_review_trigger(exec_context, definition=user_request)
+    originating = await _run_originating_request(
+        exec_context, trigger=trigger, resume_delegation_id=resume_delegation_id
+    )
+    return originating, trigger.earlier_requests
+
+
+class DelegatedRunReviewRecord(TypedDict):
+    """What a queued run's review answers to, as recorded on the run."""
+
+    originating_request: str | None
+    originating_request_taint_json: TaintMetadata | None
+    earlier_requests_json: list[EarlierRequestRecord] | None
+
+
+async def delegated_run_review_record(
+    exec_context: ToolExecutionContext,
+    *,
+    request: str,
+    resume_delegation_id: str | None = None,
+) -> DelegatedRunReviewRecord:
+    """The review context every worker-run delegation records when it is created.
+
+    Every creator of a delegation run spreads this into ``create_run``, so a
+    run queued by ``start_thread`` or ``post_to_conversation`` is reviewed
+    against the same requests as one queued by ``delegate_to_service``.
+    """
+    originating, earlier_requests = await _run_review_context(
+        exec_context,
+        user_request=request,
+        resume_delegation_id=resume_delegation_id,
+    )
+    return {
+        "originating_request": originating[0] if originating else None,
+        "originating_request_taint_json": originating[1] if originating else None,
+        "earlier_requests_json": earlier_requests_to_json(earlier_requests),
+    }
 
 
 async def _run_originating_request(
     exec_context: ToolExecutionContext,
     *,
-    user_request: str,
+    trigger: TriggerReviewInput,
     resume_delegation_id: str | None,
 ) -> tuple[str, TaintMetadata] | None:
     """The human request a queued run will answer, resolved while its turn runs.
@@ -219,7 +287,6 @@ async def _run_originating_request(
     comes first -- but only when the resuming turn's own request qualifies, so a
     resume from an untrusted turn cannot borrow the earlier run's standing.
     """
-    trigger = await _delegation_review_trigger(exec_context, definition=user_request)
     text = trigger.originating_request
     metadata = trigger.originating_request_taint_metadata
     if text is None or metadata is None:
@@ -1353,9 +1420,9 @@ async def _enqueue_delegation(
         delivery_hint,
     )
     taint_state_json = current_taint_metadata(exec_context)
-    originating = await _run_originating_request(
+    review_record = await delegated_run_review_record(
         exec_context,
-        user_request=user_request,
+        request=user_request,
         resume_delegation_id=resume_delegation_id,
     )
 
@@ -1390,8 +1457,7 @@ async def _enqueue_delegation(
             # configuration deployment between enqueue and execution must not
             # change the models of a run that was already authorized.
             "model_selection_json": model_selection.to_json(),
-            "originating_request": originating[0] if originating else None,
-            "originating_request_taint_json": originating[1] if originating else None,
+            **review_record,
         })
         if prepare_run is not None:
             await prepare_run(txn, delegation_id, subconversation_id)
@@ -1625,7 +1691,9 @@ SERVICE_TOOLS_DEFINITION: list[ToolDefinition] = [
         "function": {
             "name": "list_delegations",
             "description": (
-                "Lists recent asynchronous profile delegations for the current conversation. "
+                "Lists recent asynchronous profile delegations for the current conversation, "
+                "with a short preview of each request and of each completed result. "
+                "Call get_delegation_status for a completed run's full result. "
                 "This is distinct from list_worker_tasks, which lists spawn_worker jobs."
             ),
             "parameters": {
@@ -2020,7 +2088,9 @@ async def get_delegation_status_tool(
         )
 
     await _merge_delegation_runs_taint(exec_context, [run])
-    summary = exec_context.db_context.delegation_runs.summarize_run(run)
+    summary = exec_context.db_context.delegation_runs.summarize_run(
+        run, include_result=True
+    )
     text = _format_delegation_summary(summary)
     if peek:
         text = (
@@ -2056,7 +2126,8 @@ async def list_delegations_tool(
     )
     await _merge_delegation_runs_taint(exec_context, runs)
     summaries = [
-        exec_context.db_context.delegation_runs.summarize_run(run) for run in runs
+        exec_context.db_context.delegation_runs.summarize_run(run, include_result=False)
+        for run in runs
     ]
     if not summaries:
         status_text = f" with status '{status}'" if status else ""
@@ -2065,6 +2136,11 @@ async def list_delegations_tool(
             data=[],
         )
     text = json.dumps(summaries, indent=2, default=str)
+    if any("result_preview" in summary for summary in summaries):
+        text = (
+            f"{text}\n\nCompleted results are shown as previews; call "
+            "get_delegation_status with a delegation_id for the full result."
+        )
     if _has_pending_delegation(summaries):
         text = f"{text}\n\n{_pending_delegation_nudge(run['origin_interface_type'] for run in runs if run['status'] not in TERMINAL_DELEGATION_STATUSES)}"
     return ToolResult(
