@@ -421,12 +421,14 @@ def extract_content(msg):
     except Exception:
         return None  # Video silently dropped!
 
+
 # BAD: Catch-and-return-null masks bugs
 def get_user(id):
     try:
         return db.query(User).get(id)
     except Exception:
         return None  # Was it not found, or did DB crash?
+
 
 # BAD: Overly broad exception handling
 try:
@@ -443,6 +445,7 @@ def get_user(id) -> User | None:
     except NoResultFound:
         return None  # Expected case
     # Other exceptions propagate - infrastructure or bug
+
 
 # GOOD: Preserve error context
 try:

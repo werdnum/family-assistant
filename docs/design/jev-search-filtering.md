@@ -28,11 +28,11 @@ needed.
 
 ## Surfaces
 
-| Surface                           | Question                                          | Default threshold |
-| --------------------------------- | ------------------------------------------------- | ----------------- |
-| Calendar duplicate check          | Is the new event the same real-world occurrence?  | 0.6               |
-| `search_calendar_events` (text)   | Is this event what the search is looking for?     | 0.5               |
-| `search_documents`                | Does this result help answer the query?           | 0.5               |
+| Surface                         | Question                                         | Default threshold |
+| ------------------------------- | ------------------------------------------------ | ----------------- |
+| Calendar duplicate check        | Is the new event the same real-world occurrence? | 0.6               |
+| `search_calendar_events` (text) | Is this event what the search is looking for?    | 0.5               |
+| `search_documents`              | Does this result help answer the query?          | 0.5               |
 
 The duplicate threshold is above an even chance because a match blocks the write until the model
 retries; a miss only costs a duplicate the user can delete.

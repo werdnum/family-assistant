@@ -643,7 +643,7 @@ placement, auth, and the error-vs-telemetry reporting lanes.
   from family_assistant.storage.database import Database
 
   db = Database(engine)
-  await db.notes.add_or_update(title, content)   # committed
+  await db.notes.add_or_update(title, content)  # committed
   tasks = await db.tasks.get_pending_tasks()
   ```
 

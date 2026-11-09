@@ -194,11 +194,12 @@ Everything else about the firing is unchanged:
 - **The trigger payload stays untrusted, always.** Event data, script failure output, and wake
   contexts contribute their own taint sources; the cure applies to the definition only. A script
   automation's firing is seeded the same way as a woken LLM turn — its definition's resolved tier
-  and its event payload enter the script run's tracker before the first tool call — so a script
-  is not a way to reach a sink with less provenance than the equivalent `wake_llm` turn. A trusted definition with a payload present enters the turn tainted *by the payload* while
-  still rendering its intent — which is the correct split, and the one that stops `confirm` and
-  `deny` collapsing: the judge finally has something to judge alignment against. (Per-source payload
-  tiering — e.g. Home Assistant events at `recognized_machine` — is orthogonal and unchanged.)
+  and its event payload enter the script run's tracker before the first tool call — so a script is
+  not a way to reach a sink with less provenance than the equivalent `wake_llm` turn. A trusted
+  definition with a payload present enters the turn tainted *by the payload* while still rendering
+  its intent — which is the correct split, and the one that stops `confirm` and `deny` collapsing:
+  the judge finally has something to judge alignment against. (Per-source payload tiering — e.g.
+  Home Assistant events at `recognized_machine` — is orthogonal and unchanged.)
 - **Downstream taint is unchanged.** A cured firing that reads fresh untrusted content re-taints
   normally; every gated sink in the firing still gates per its own cell. The cure restores the
   baseline the definition would have had if authored clean; it exempts nothing after that.

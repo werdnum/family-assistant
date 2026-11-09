@@ -30,6 +30,8 @@ violation breaks it.
 async def mock_slow_network_call():
     await asyncio.sleep(0.5)
     return {"status": "ok"}
+
+
 # ast-grep-ignore-end
 ```
 
