@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -50,6 +51,17 @@ CONVERSATION_SUMMARY_PROMPT_KEY = "conversation_summary_prompt"
 MAX_SUMMARY_CHARS = 120
 """Longest summary stored. Both lists clamp to two lines; this is the backstop
 for a model that ignores the length it was asked for."""
+
+_TIMEOUT_ATTEMPTS = 2
+"""Attempts per conversation when the model times out. A timeout is usually a
+slow tail on the provider's side, so one immediate retry recovers most; more
+would hold the sweep up behind a provider that is down."""
+
+SWEEP_BUDGET_SECONDS = 240.0
+"""How long one sweep may spend summarizing. It runs as a task, and must finish
+inside the task worker's 300s handler timeout: a sweep cut off there loses its
+progress and is logged as a failure. Conversations it has no time left for stay
+due for the next sweep."""
 
 _TRANSCRIPT_HEAD = 2
 _TRANSCRIPT_TAIL = 20
@@ -91,12 +103,18 @@ class ConversationSummarizer:
         self._prompt = prompt
         self._timeout_seconds = timeout_seconds
 
+    @property
+    def worst_case_seconds(self) -> float:
+        """The longest one ``summarize`` call can take, every attempt timing out."""
+        return self._timeout_seconds * _TIMEOUT_ATTEMPTS
+
     async def summarize(
         self, transcript: Sequence[SummaryTranscriptMessage]
     ) -> str | None:
         """A summary of *transcript*, or ``None`` if the model gave nothing usable.
 
-        Raises whatever the provider raised, and ``TimeoutError``; the sweep
+        A timed-out attempt is retried once. Raises whatever the provider
+        raised, and ``TimeoutError`` if every attempt timed out; the sweep
         decides what a failure means for the conversation.
         """
         rendered = "\n".join(
@@ -106,17 +124,26 @@ class ConversationSummarizer:
         )
         if not rendered:
             return None
-        output = await asyncio.wait_for(
-            self._llm_client.generate_response(
-                [
-                    SystemMessage(content=self._prompt),
-                    UserMessage(content=f"<conversation>\n{rendered}\n</conversation>"),
-                ],
-                tools=None,
-            ),
-            timeout=self._timeout_seconds,
-        )
-        return clean_summary(output.content)
+        messages = [
+            SystemMessage(content=self._prompt),
+            UserMessage(content=f"<conversation>\n{rendered}\n</conversation>"),
+        ]
+        for attempt in range(1, _TIMEOUT_ATTEMPTS + 1):
+            try:
+                output = await asyncio.wait_for(
+                    self._llm_client.generate_response(messages, tools=None),
+                    timeout=self._timeout_seconds,
+                )
+            except TimeoutError:
+                if attempt == _TIMEOUT_ATTEMPTS:
+                    raise
+                logger.info(
+                    "Conversation summary timed out after %ss; retrying.",
+                    self._timeout_seconds,
+                )
+            else:
+                return clean_summary(output.content)
+        raise AssertionError("unreachable: the last attempt returns or raises")
 
 
 async def _conversations_with_live_turns(db: Database) -> set[str]:
@@ -146,14 +173,20 @@ async def run_conversation_summary_sweep(
     config: ConversationSummaryConfig,
     now_fn: Callable[[], datetime] | None = None,
     on_summary_changed: Callable[[str], Awaitable[None]] | None = None,
+    budget_seconds: float = SWEEP_BUDGET_SECONDS,
 ) -> int:
     """Summarize every due conversation, up to the batch size. Returns how many
     summaries changed.
 
     A failed attempt still advances the conversation's watermark, keeping any
-    earlier summary: retrying on every sweep would spend a model call per
+    earlier summary (a timeout has already been retried once by the
+    summarizer): retrying on every sweep would spend a model call per
     sweep on a conversation that cannot be summarized, and the next message in
     it makes it due again anyway.
+
+    A conversation is started only if a summary that times out on every
+    attempt would still finish within ``budget_seconds``; the rest wait,
+    still due, for the next sweep.
     """
     now = (now_fn or SystemClock().now)()
     due = await db.conversation_summaries.select_due(
@@ -163,7 +196,12 @@ async def run_conversation_summary_sweep(
         exclude_conversation_ids=await _conversations_with_live_turns(db),
     )
     changed = 0
+    attempted = 0
+    deadline = time.monotonic() + budget_seconds
     for conversation in due:
+        if time.monotonic() + summarizer.worst_case_seconds > deadline:
+            break
+        attempted += 1
         transcript = await db.conversation_summaries.transcript(
             conversation.conversation_id,
             through_id=conversation.latest_message_id,
@@ -173,6 +211,14 @@ async def run_conversation_summary_sweep(
         summary: str | None
         try:
             summary = await summarizer.summarize(transcript)
+        except TimeoutError:
+            # A slow provider, not a defect: it recovers by itself, and the
+            # conversation's next message makes it due again.
+            logger.warning(
+                "Conversation summary timed out for %s; keeping the previous one.",
+                conversation.conversation_id,
+            )
+            summary = None
         except Exception:
             # Broad on purpose: one conversation the provider will not
             # summarize must not stop the rest of the batch.
@@ -195,8 +241,9 @@ async def run_conversation_summary_sweep(
                 await on_summary_changed(conversation.conversation_id)
     if due:
         logger.info(
-            "Conversation summary sweep: %d due, %d summary(ies) changed.",
+            "Conversation summary sweep: %d due, %d attempted, %d summary(ies) changed.",
             len(due),
+            attempted,
             changed,
         )
     return changed

@@ -1099,13 +1099,12 @@ automatically.
 
 The shipped presets — `gpt_6_astra`, `gpt_6_1_sol`, `gpt_6_1_terra`, `claude_opus_5_5`,
 `claude_sonnet_5_5`, `claude_haiku_5_5`, `claude_fable_5_1`, `kimi_k3` and `gemini_4_argon` — are
-listed once, in
-`default_profile_settings.delegation_model_tiers`, so a delegating model may pin any profile that
-has a tier to any of them without a confirmation ("run complex_tasks on Gemini 4 Argon"). A profile
-that names an inline model drops the inherited list, and a profile that declares its own replaces
-it, so `delegation_model_tiers: []` keeps a profile off presets entirely. Adding a preset is a
-`model_tiers` entry plus a name in that list. The profile catalog lists the presets most profiles
-share once, rather than under each profile.
+listed once, in `default_profile_settings.delegation_model_tiers`, so a delegating model may pin any
+profile that has a tier to any of them without a confirmation ("run complex_tasks on Gemini 4
+Argon"). A profile that names an inline model drops the inherited list, and a profile that declares
+its own replaces it, so `delegation_model_tiers: []` keeps a profile off presets entirely. Adding a
+preset is a `model_tiers` entry plus a name in that list. The profile catalog lists the presets most
+profiles share once, rather than under each profile.
 
 #### The council's seats
 
@@ -1577,15 +1576,18 @@ the latest message. A background sweep summarizes a conversation once it has bee
 `idle_seconds`, and again after new messages; until then, and wherever summarizing failed, the list
 shows the latest message.
 
-| Key                      | Default (shipped)  | Meaning                                                                 |
-| ------------------------ | ------------------ | ----------------------------------------------------------------------- |
-| `enabled`                | `true`             | `false` stops new summaries; stored ones keep being shown.              |
-| `model`                  | `gemini-3.8-flash` | `provider` / `model` (and optional `llm_parameters`) of the summarizer. |
-| `sweep_interval_minutes` | `2`                | How often the sweep runs.                                               |
-| `idle_seconds`           | `60`               | Quiet time before a conversation is summarized.                         |
-| `lookback_days`          | `30`               | Conversations quiet for longer than this are not summarized.            |
-| `batch_size`             | `10`               | Summaries generated per sweep.                                          |
-| `timeout_seconds`        | `20`               | A summary not returned by then counts as failed.                        |
+| Key                      | Default (shipped)  | Meaning                                                                               |
+| ------------------------ | ------------------ | ------------------------------------------------------------------------------------- |
+| `enabled`                | `true`             | `false` stops new summaries; stored ones keep being shown.                            |
+| `model`                  | `gemini-3.8-flash` | `provider` / `model` (and optional `llm_parameters`) of the summarizer.               |
+| `sweep_interval_minutes` | `2`                | How often the sweep runs.                                                             |
+| `idle_seconds`           | `60`               | Quiet time before a conversation is summarized.                                       |
+| `lookback_days`          | `30`               | Conversations quiet for longer than this are not summarized.                          |
+| `batch_size`             | `10`               | Summaries generated per sweep.                                                        |
+| `timeout_seconds`        | `60`               | Per attempt, at most 120. A timed-out attempt is retried once, then counts as failed. |
+
+A sweep stops starting new summaries once it could not finish one more within four minutes, even if
+every attempt timed out; the rest wait for the next sweep.
 
 The instructions are `conversation_summary_prompt` in `prompts.yaml`; enabling summaries without it
 is a startup error, as is a `model` whose provider has no credentials — a deployment without
@@ -4324,8 +4326,8 @@ Operator merge note for tool policy:
   deployment-wide grant such as a web-search or code-execution MCP server out of confined profiles
   like `memory_curator`, `media_analyst`, `coder` and `email_intake`. To grant a tool to one of
   those, add a rule to that profile's `tools_policy` with a `service_profiles` entry of the same
-  `id` (see the merge note above); to grant or deny one everywhere, use
-  `global_tools_policy`, which a profile can still refuse through `excluded_global_tools`.
+  `id` (see the merge note above); to grant or deny one everywhere, use `global_tools_policy`, which
+  a profile can still refuse through `excluded_global_tools`.
 
 ### Remote A2A profiles
 
