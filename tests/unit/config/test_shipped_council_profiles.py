@@ -114,7 +114,7 @@ def test_every_seat_is_a_single_model_preset_the_member_admits(
 
     assert roster == [
         "gpt_6_astra",
-        "claude_fable_5_1",
+        "claude_fable_5_2",
         "kimi_k3",
         "gemini_4_argon",
         "claude_opus_5_5",

@@ -19,7 +19,7 @@ _MESSAGE = {
     "id": "msg_1",
     "type": "message",
     "role": "assistant",
-    "model": "claude-fable-5-1",
+    "model": "claude-fable-5-2",
     "content": [{"type": "text", "text": '{"answer": "42"}'}],
     "stop_reason": "end_turn",
     "stop_sequence": None,
@@ -86,7 +86,7 @@ def _client(
 ) -> AnthropicClient:
     client = AnthropicClient(
         api_key="test-key",
-        model="claude-fable-5-1",
+        model="claude-fable-5-2",
         model_parameters=model_parameters,
     )
     client.client = anthropic.AsyncAnthropic(
@@ -163,7 +163,7 @@ async def test_configured_max_tokens_overrides_either_default(
     *, streaming: bool
 ) -> None:
     endpoint = _FakeMessagesEndpoint()
-    client = _client(endpoint, {"claude-fable-5-1": {"max_tokens": 12_000}})
+    client = _client(endpoint, {"claude-fable-5-2": {"max_tokens": 12_000}})
 
     if streaming:
         await _stream(client)

@@ -23,7 +23,7 @@ question depends on into the request, or attach it.
 
 ## Who sits on it
 
-Four models each take a seat: **GPT-6 Astra**, **Claude Fable 5.1**, **Kimi K3** and **Gemini 4
+Four models each take a seat: **GPT-6 Astra**, **Claude Fable 5.2**, **Kimi K3** and **Gemini 4
 Argon**. You can ask for **Claude Opus 5.5** to sit in place of Fable. Each seat is always the model
 named: if one is unavailable, the council says so rather than quietly using a different model. A
 separate coordinator runs the process and writes the final answer; it does not vote.

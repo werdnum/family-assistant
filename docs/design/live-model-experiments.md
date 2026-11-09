@@ -44,7 +44,7 @@ experiments:
     profiles: [default_assistant]
     tiers: [frontier]
     arms:
-      claude_fable_5_1: 1
+      claude_fable_5_2: 1
       gemini_astra: 1
 ```
 

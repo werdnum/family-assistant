@@ -32,7 +32,7 @@ shipped-config test checks that every preset the roster names is admitted and is
 
 ### Roster
 
-The shipped panel is **GPT-6 Astra, Claude Fable 5.1, Kimi K3 and Gemini 4 Argon**. **Claude Opus
+The shipped panel is **GPT-6 Astra, Claude Fable 5.2, Kimi K3 and Gemini 4 Argon**. **Claude Opus
 5.5** is admitted as an alternative Anthropic seat, used in place of Fable when a request asks for
 it, never as an extra seat. The coordinator runs on the `deep` tier.
 

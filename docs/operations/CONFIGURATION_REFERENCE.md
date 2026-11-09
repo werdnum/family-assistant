@@ -912,10 +912,10 @@ from scratch on every step. How that works differs:
 The configuration shape differs by model generation and the two are **not** interchangeable — a
 single `"claude-"` prefix entry cannot serve both:
 
-| Model generation           | Shape                                                                  |
-| -------------------------- | ---------------------------------------------------------------------- |
-| `claude-sonnet-4-6`, `4-5` | `thinking: {type: enabled, budget_tokens: N}`                          |
-| `claude-fable-5`, `5-1`    | `thinking: {type: adaptive}` plus `output_config: {effort: low\|high}` |
+| Model generation               | Shape                                                                  |
+| ------------------------------ | ---------------------------------------------------------------------- |
+| `claude-sonnet-4-6`, `4-5`     | `thinking: {type: enabled, budget_tokens: N}`                          |
+| `claude-fable-5`, `5-1`, `5-2` | `thinking: {type: adaptive}` plus `output_config: {effort: low\|high}` |
 
 Applying the `enabled` shape to a model that wants `adaptive` is rejected by the API at request time
 with a message naming the alternative.
@@ -1033,7 +1033,7 @@ This exists because the global map is matched by *substring* in insertion order,
 same model at two efforts inexpressible there — the first matching pattern wins for every use of the
 model. Put the shared defaults in the global map and the tier-specific difference on the entry. In
 the example above, no `claude-fable-` entry exists in the global map at all — it matches by
-substring, so one would reach every model in the family — and Fable 5.1 therefore inherits no
+substring, so one would reach every model in the family — and Fable 5.2 therefore inherits no
 thinking configuration wherever a deployment names it, while Fable 5 gets adaptive thinking only in
 `frontier`.
 
@@ -1098,7 +1098,7 @@ request *is* the authorization. A model choosing it is not, which is why the shi
 automatically.
 
 The shipped presets — `gpt_6_astra`, `gpt_6_1_sol`, `gpt_6_1_terra`, `claude_opus_5_5`,
-`claude_sonnet_5_5`, `claude_haiku_5_5`, `claude_fable_5_1`, `kimi_k3` and `gemini_4_argon` — are
+`claude_sonnet_5_5`, `claude_haiku_5_5`, `claude_fable_5_2`, `kimi_k3` and `gemini_4_argon` — are
 listed once, in `default_profile_settings.delegation_model_tiers`, so a delegating model may pin any
 profile that has a tier to any of them without a confirmation ("run complex_tasks on Gemini 4
 Argon"). A profile that names an inline model drops the inherited list, and a profile that declares
@@ -1114,7 +1114,7 @@ exact-model preset per seat (see [the user guide](../user/council.md) and
 
 - **The roster** is in the `council` profile's system prompt: which preset sits in seats A, B, C and
   D, and which preset is the alternative Anthropic seat. The shipped roster is `gpt_6_astra`,
-  `claude_fable_5_1`, `kimi_k3` and `gemini_4_argon`, with `claude_opus_5_5` as the alternative.
+  `claude_fable_5_2`, `kimi_k3` and `gemini_4_argon`, with `claude_opus_5_5` as the alternative.
 - **The admissions** are `council_member`'s `delegation_model_tiers`. It declares its own list
   rather than inheriting the default one, so a change to the shared presets cannot unseat a member.
 
@@ -1233,7 +1233,7 @@ experiments:
     profiles: [default_assistant]
     tiers: [frontier]  # whoever chose Frontier
     arms:
-      claude_fable_5_1: 1
+      claude_fable_5_2: 1
       gemini_astra: 1
 ```
 
