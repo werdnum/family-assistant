@@ -288,6 +288,14 @@ model_tiers:
         # the default medium effort undersells it for a council seat.
         llm_parameters:
           reasoning_effort: "high"
+  # Runs at GPT-6's default medium effort, the same footing the other
+  # everyday-chat candidates get.
+  gpt_6_1_terra:
+    label: "GPT-6.1 Terra"
+    description: "OpenAI's mid-sized GPT-6.1 model, at its default medium reasoning effort."
+    chain:
+      - provider: "openai"
+        model: "gpt-6.1-terra"
   claude_opus_5_5:
     label: "Claude Opus 5.5"
     description: "Anthropic's Opus model, with adaptive thinking at high effort."
@@ -955,7 +963,7 @@ default_profile_settings:
   # ("run complex_tasks on Gemini 4 Argon"). Auto never routes to these and the
   # tier picker does not list them. A profile that names an inline model drops
   # this list, and one that declares its own replaces it.
-  delegation_model_tiers: ["gpt_6_astra", "gpt_6_1_sol", "claude_opus_5_5", "claude_sonnet_5_5", "claude_haiku_5_5", "claude_fable_5_1", "kimi_k3", "gemini_4_argon"]
+  delegation_model_tiers: ["gpt_6_astra", "gpt_6_1_sol", "gpt_6_1_terra", "claude_opus_5_5", "claude_sonnet_5_5", "claude_haiku_5_5", "claude_fable_5_1", "kimi_k3", "gemini_4_argon"]
   processing_config:
     # Inherited by every profile that does not select its own tier or name an
     # inline model.

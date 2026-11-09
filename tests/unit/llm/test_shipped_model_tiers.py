@@ -89,7 +89,9 @@ def test_sonnet_preset_runs_as_the_standard_fallback_does(
     ) == _standard_fallback_parameters(shipped_config)
 
 
-@pytest.mark.parametrize("preset", ["claude_sonnet_5_5", "claude_haiku_5_5"])
+@pytest.mark.parametrize(
+    "preset", ["claude_sonnet_5_5", "claude_haiku_5_5", "gpt_6_1_terra"]
+)
 def test_default_assistant_can_run_the_standard_candidate_presets(
     shipped_config: AppConfig, preset: str
 ) -> None:
