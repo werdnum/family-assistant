@@ -7,6 +7,7 @@ from collections.abc import Callable
 import pytest
 
 from family_assistant.scripting.apis import time as time_api
+from family_assistant.scripting.apis.keychute import KeychuteScriptHttpClient
 from family_assistant.scripting.config import ScriptConfig
 from family_assistant.scripting.validator import (
     ScriptValidator,
@@ -725,6 +726,34 @@ class TestStubSignaturesMatchRuntime:
         v = ScriptValidator()
         result = v.validate(f"x: int = {name}")
         assert not result.is_valid
+
+    def test_keychute_stub_matches_runtime_signature(self) -> None:
+        stubs = _stub_functions(
+            generate_prefix_code(extra_external_functions=["keychute_http_request"])
+        )
+        runtime = [
+            param
+            for param in _runtime_parameters(KeychuteScriptHttpClient.request)
+            if param[0] != "self"
+        ]
+        assert _stub_parameters(stubs["keychute_http_request"]) == runtime
+
+    @pytest.mark.parametrize("body", ['"text"', 'b"bytes"', 'json_encode({"a": 1})'])
+    def test_keychute_accepts_str_or_bytes_body(self, body: str) -> None:
+        result = ScriptValidator().validate(
+            f'keychute_http_request("token", "https://example.test/x", body={body})',
+            extra_external_functions=["keychute_http_request"],
+        )
+        assert result.is_valid, result.error_message
+
+    def test_keychute_rejects_dict_body(self) -> None:
+        result = ScriptValidator().validate(
+            'keychute_http_request("token", "https://example.test/x", '
+            'method="POST", body={"key": "value"})',
+            extra_external_functions=["keychute_http_request"],
+        )
+        assert not result.is_valid
+        assert "keychute_http_request" in (result.error_message or "")
 
     def test_json_api_validates(self) -> None:
         v = ScriptValidator()

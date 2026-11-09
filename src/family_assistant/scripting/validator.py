@@ -29,6 +29,18 @@ _JSON_TYPE_MAP: dict[str, str] = {
     "object": "dict",
 }
 
+# Typed stubs for host functions callers name in ``extra_external_functions``.
+# A name not listed here gets a permissive ``(*args, **kwargs) -> Any`` stub.
+_EXTERNAL_FUNCTION_STUBS: dict[str, str] = {
+    "keychute_http_request": (
+        "def keychute_http_request(secret_name: str, url: str, method: str = ..., "
+        "headers: dict[str, str] | None = ..., body: str | bytes | None = ..., "
+        "reason: str = ..., ttl_seconds: int = ..., max_uses: int = ..., "
+        "approval_timeout_seconds: int = ..., "
+        "request_timeout_seconds: float = ...) -> dict[str, Any]: ..."
+    ),
+}
+
 
 @dataclass
 class ValidationDiagnostic:
@@ -366,7 +378,9 @@ def generate_prefix_code(
     if extra_external_functions:
         parts.append("# Extra callable globals")
         for name in extra_external_functions:
-            if _is_valid_identifier(name):
+            if name in _EXTERNAL_FUNCTION_STUBS:
+                parts.append(_EXTERNAL_FUNCTION_STUBS[name])
+            elif _is_valid_identifier(name):
                 parts.append(f"def {name}(*args: Any, **kwargs: Any) -> Any: ...")
         parts.append("")
 
