@@ -327,6 +327,19 @@ async def get_message_history_tool(
         MessageHistoryQuery,
     )
 
+    if _own_history_only(exec_context):
+        refusal = _outside_own_history(
+            exec_context,
+            conversation_id=conversation_id,
+            processing_profile_id=processing_profile_id,
+            subconversation_id=subconversation_id,
+        )
+        if refusal is not None:
+            return ToolResult(
+                data={"error": "access_denied", "message": refusal, "results": []}
+            )
+        scope = "current_conversation"
+
     effective_embedding_generator = (
         embedding_generator or exec_context.embedding_generator
     )
@@ -649,6 +662,36 @@ def _message_history_metadata_filters(
             )
         )
     return filters
+
+
+def _own_history_only(exec_context: ToolExecutionContext) -> bool:
+    service = exec_context.processing_service
+    return service is not None and service.service_config.own_message_history_only
+
+
+def _outside_own_history(
+    exec_context: ToolExecutionContext,
+    *,
+    conversation_id: str | None,
+    processing_profile_id: str | None,
+    subconversation_id: str | None,
+) -> str | None:
+    """Why a lookup reaches past the profile's own history, or None if it does not."""
+    if conversation_id is not None and conversation_id != exec_context.conversation_id:
+        return "This profile can read only its own history in this conversation."
+    if (
+        processing_profile_id is not None
+        and processing_profile_id != exec_context.processing_profile_id
+    ):
+        return "This profile can read only its own history, not another profile's."
+    if (
+        subconversation_id is not None
+        and subconversation_id != exec_context.subconversation_id
+    ):
+        return (
+            "This profile can read only its own history, not another subconversation's."
+        )
+    return None
 
 
 def _parse_optional_datetime(value: str | None, field_name: str) -> datetime | None:

@@ -113,6 +113,17 @@ def test_only_the_coordinator_can_read_the_procedure(shipped_config: AppConfig) 
     assert not _reads_skill(shipped_profile(shipped_config, "default_assistant"))
 
 
+def test_the_coordinator_reads_only_its_own_history(shipped_config: AppConfig) -> None:
+    """It holds get_message_history so its tool-heavy turns can be compacted.
+
+    Confined, the grant follows the council's own turns back and reaches none
+    of the household's conversations.
+    """
+    council = shipped_profile(shipped_config, "council")
+
+    assert council.processing_config.own_message_history_only is True
+
+
 def test_the_coordinator_cannot_read_household_notes(shipped_config: AppConfig) -> None:
     council = shipped_profile(shipped_config, "council")
     policy = NoteReadPolicy.for_profile(
@@ -172,8 +183,8 @@ def test_the_council_is_reached_only_by_delegation(shipped_config: AppConfig) ->
             "council",
             {
                 "get_note",
+                "get_message_history",
                 "get_attachment_info",
-                "get_delegation_status",
                 "list_delegations",
                 "cancel_delegation",
                 "delegate_to_service",

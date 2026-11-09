@@ -10,6 +10,8 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
+from family_assistant.config_models import AppConfig, ToolsConfig
+from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.embeddings import (
     EmbeddingGenerator,
     EmbeddingResult,
@@ -27,6 +29,8 @@ from family_assistant.llm.messages import (
     UserMessage,
 )
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
+from family_assistant.processing.service import ProcessingService
+from family_assistant.processing.types import ProcessingServiceConfig
 from family_assistant.security.taint import (
     InMemoryTurnTaintTracker,
     SourceTrustTier,
@@ -52,6 +56,7 @@ from family_assistant.tools.communication import (
 from family_assistant.tools.documents import search_documents_tool
 from family_assistant.tools.infrastructure import LocalToolsProvider
 from family_assistant.tools.types import ToolExecutionContext, ToolResult
+from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -640,6 +645,104 @@ async def test_get_message_history_lookup_by_id_keeps_the_access_scope(
 
     assert cast("dict[str, Any]", by_turn.data)["results"] == []
     assert cast("dict[str, Any]", by_call.data)["results"] == []
+
+
+def _own_history_only_service() -> ProcessingService:
+    return ProcessingService(
+        llm_client=RuleBasedMockLLMClient(
+            rules=[], default_response=LLMOutput(content="N/A")
+        ),
+        tools_provider=LocalToolsProvider(definitions=[], implementations={}),
+        service_config=ProcessingServiceConfig(
+            id="default",
+            prompts={"system_prompt": "Coordinator"},
+            timezone=ZoneInfo("UTC"),
+            history_budget_chars=0,
+            history_max_age_hours=1,
+            tools_config=ToolsConfig(),
+            delegation_security_level=DelegationSecurityLevel.BLOCKED,
+            own_message_history_only=True,
+        ),
+        app_config=AppConfig(),
+        context_providers=[],
+        server_url=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_own_history_only_reads_its_own_turns_and_nothing_else(
+    db_engine: AsyncEngine,
+) -> None:
+    """A confined profile follows its own compacted turns, and no one else's.
+
+    The same user's other conversations, another profile's rows in this
+    conversation and the main conversation are all out of reach, and asking
+    for them explicitly is refused rather than quietly narrowed.
+    """
+    db = Database(engine=db_engine)
+    now = datetime.now(UTC)
+    await _store_tool_turn(
+        db,
+        conversation_id="elsewhere",
+        user_id="user-a",
+        turn_id="turn-elsewhere",
+        call_id="call-elsewhere",
+        result="Reminder task_7 scheduled",
+        timestamp=now - timedelta(minutes=2),
+    )
+    await _store_tool_turn(
+        db,
+        conversation_id="current",
+        user_id="user-a",
+        turn_id="turn-main",
+        call_id="call-main",
+        result="Reminder task_8 scheduled",
+        timestamp=now - timedelta(minutes=1),
+    )
+    await db.message_history.add_message(
+        AssistantMessage(content="Phase one under way."),
+        interface_type="test",
+        conversation_id="current",
+        timestamp=now,
+        turn_id="turn-own",
+        user_id="user-a",
+        processing_profile_id="default",
+        subconversation_id="council-sub",
+    )
+    context = _build_exec_context(
+        db,
+        processing_service=_own_history_only_service(),
+        subconversation_id="council-sub",
+    )
+
+    own = await get_message_history_tool(exec_context=context, turn_id="turn-own")
+    elsewhere = await get_message_history_tool(
+        exec_context=context, turn_id="turn-elsewhere"
+    )
+    main = await get_message_history_tool(exec_context=context, turn_id="turn-main")
+    everything = await get_message_history_tool(exec_context=context, limit=50)
+
+    assert [row["content"] for row in cast("dict[str, Any]", own.data)["results"]] == [
+        "Phase one under way."
+    ]
+    assert cast("dict[str, Any]", elsewhere.data)["results"] == []
+    assert cast("dict[str, Any]", main.data)["results"] == []
+    assert {
+        row["turn_id"] for row in cast("dict[str, Any]", everything.data)["results"]
+    } == {"turn-own"}
+
+    for widened in (
+        {"conversation_id": "elsewhere"},
+        {"processing_profile_id": "*"},
+        {"processing_profile_id": "default_assistant"},
+        {"subconversation_id": "*"},
+    ):
+        refused = await get_message_history_tool(
+            exec_context=context,
+            turn_id="turn-main",
+            **widened,  # pyright: ignore[reportArgumentType]
+        )
+        assert cast("dict[str, Any]", refused.data)["error"] == "access_denied"
 
 
 @pytest.mark.asyncio
@@ -1748,6 +1851,8 @@ def _build_exec_context(
     *,
     embedding_generator: EmbeddingGenerator | None = None,
     taint_tracker: InMemoryTurnTaintTracker | None = None,
+    processing_service: ProcessingService | None = None,
+    subconversation_id: str | None = None,
 ) -> ToolExecutionContext:
     return ToolExecutionContext(
         interface_type="test",
@@ -1759,13 +1864,14 @@ def _build_exec_context(
         # The message-history indexing handler runs under a background task; a
         # test calling it directly stands in for the worker that says so.
         task_priority=TaskPriority.BACKGROUND,
-        processing_service=None,
+        processing_service=processing_service,
         clock=None,
         plugins=None,
         event_sources=None,
         attachment_registry=None,
         timezone=ZoneInfo("UTC"),
         processing_profile_id="default",
+        subconversation_id=subconversation_id,
         embedding_generator=embedding_generator,
         taint_tracker=taint_tracker,
         credential_resolvers=None,

@@ -1506,6 +1506,11 @@ service_profiles:
     processing_config:
       model_tier: "deep"
       required_note_read_labels: ["council"]
+      # get_message_history is what lets history compaction shrink the
+      # council's tool-heavy phase turns (a turn with tool calls is compacted
+      # only for a profile that can look its calls back up). Confined to the
+      # council's own history, so the grant reads nothing of the household's.
+      own_message_history_only: true
       # Who may convene one. Every profile may delegate to itself, so without
       # this a council could convene a council; the member profile is closed
       # the same way.
@@ -1535,7 +1540,7 @@ service_profiles:
 
           Do not formulate a preferred answer before collecting the independent proposals. You are the facilitator and synthesiser, not an additional voting member. Preserve the original question, real constraints and accepted trade-offs. Do not invent requirements to make the problem harder.
 
-          Member completions are intermediate results, not the final council answer. Reconcile them with the current phase and continue the procedure. Do not busy-poll, manufacture disagreement, force consensus, or combine incompatible proposals merely to acknowledge every member.
+          Member completions are intermediate results, not the final council answer. Reconcile them with the current phase and continue the procedure. Members take many minutes, and you are woken once a whole phase has finished: after the response that starts a phase's members, end the turn at once, with no further tool calls -- never check on members you have started. Do not manufacture disagreement, force consensus, or combine incompatible proposals merely to acknowledge every member.
 
           Return the strongest supported answer, useful alternatives, and uncertainties that could change the conclusion. For engineering work, seek coherent designs with justified complexity -- not maximal machinery or minimalism at any cost.
     allowed_model_tiers: ["deep", "frontier"]
@@ -1545,8 +1550,11 @@ service_profiles:
       rules:
         - match:
             names:
+              # No get_delegation_status: each wake brings the finished
+              # members' results into history, so the only use the
+              # coordinator ever found for it was polling running members.
               - "get_note"
-              - "get_delegation_status"
+              - "get_message_history"
               - "list_delegations"
               - "cancel_delegation"
               - "get_attachment_info"

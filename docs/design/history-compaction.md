@@ -84,7 +84,9 @@ compaction events the history window makes no edits to the prompt, only appends.
   "09:12 asked about two plumber quotes" will look it up when asked "and the other one?"; a model
   that sees nothing will guess. Compaction only produces references the profile can follow: a tool
   stub needs `get_message_history`, an attachment reference needs a tool that reads attachments. For
-  a profile without them (such as `council`), those turns are kept verbatim or dropped whole.
+  a profile without them (such as `media_analyst`), those turns are kept verbatim or dropped whole.
+  A profile kept apart from household data can still hold the history tool confined to its own turns
+  (`own_message_history_only`, as `council` does).
 - **Provider constraints at an event.** On Claude, every thinking block after the first changed
   message loses its binding, in kept turns and in the active turn alike; the compaction strips them
   (text and tool calls stay) rather than leaving the API to drop them, so `prefix_binding_mismatch`

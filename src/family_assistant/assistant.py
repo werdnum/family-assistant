@@ -1660,6 +1660,7 @@ class Assistant:
             user_selectable=profile_conf.user_selectable,
             visibility_grants=profile_grants,
             required_note_read_labels=(profile_proc_conf.required_note_read_labels),
+            own_message_history_only=profile_proc_conf.own_message_history_only,
             default_note_visibility_labels=(
                 profile_proc_conf.default_note_visibility_labels
                 if profile_proc_conf.default_note_visibility_labels is not None

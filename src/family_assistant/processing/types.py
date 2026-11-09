@@ -292,6 +292,8 @@ class ProcessingServiceConfig:
     default_note_visibility_labels: list[str] | None = None
     required_note_visibility_labels: list[str] | None = None
     allowed_note_visibility_labels: list[str] | None = None
+    # See ProcessingConfig.own_message_history_only.
+    own_message_history_only: bool = False
     allow_wake_llm: bool = True
     # Whether this profile sees household memory notes. Fail-closed by default:
     # see ProcessingConfig.memory_read.

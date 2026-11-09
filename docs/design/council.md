@@ -52,6 +52,15 @@ council, and only `council` may seat a member. A member's one outward action is 
 computation through `coder`, gated by the taint policy as everywhere else. Council invocation
 authorises investigation and advice, not changes.
 
+The coordinator holds `get_message_history`, because history compaction only reduces a turn with
+tool calls for a profile that can look those calls back up, and a phase turn is mostly tool calls.
+Without it, the phase turns of a long council were kept verbatim until the request outgrew the
+model's context. The grant is confined by `own_message_history_only`: the coordinator reads its own
+turns in its own subconversation, and a lookup naming another conversation, profile or
+subconversation is refused, so it reads nothing of the household's. It does not hold
+`get_delegation_status`: each wake brings the finished members' results into history, and the only
+use a coordinator found for a status lookup was polling members still running.
+
 ## The runtime gap, and the fix
 
 A council is a delegated run (main assistant → council) that delegates in the background (council →
