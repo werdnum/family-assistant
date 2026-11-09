@@ -13,7 +13,6 @@ import tempfile  # Added for http_client fixture
 import uuid
 from collections.abc import (
     AsyncGenerator,  # Add missing typing imports & AsyncGenerator
-    AsyncIterator,
     Awaitable,
     Callable,
 )
@@ -85,7 +84,7 @@ logger = logging.getLogger(__name__)
 @contextlib.asynccontextmanager
 async def _cleanup_after_test(
     cleanup: Callable[[bool], Awaitable[None]],
-) -> AsyncIterator[None]:
+) -> AsyncGenerator[None]:
     test_failed = False
     try:
         yield

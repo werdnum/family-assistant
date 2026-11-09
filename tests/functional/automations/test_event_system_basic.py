@@ -1,7 +1,7 @@
 """Basic event handling tests for the event listener system."""
 
 import json
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from functools import partial
@@ -79,7 +79,7 @@ class FakeWebsocketClient:
         return None
 
     @contextmanager
-    def listen_events(self) -> Iterator[Iterator[MockFiredEvent]]:
+    def listen_events(self) -> Generator[Iterator[MockFiredEvent]]:
         yield iter(self.events)
 
 

@@ -5,7 +5,7 @@ Test Home Assistant event source reconnection and health checking.
 import asyncio
 import contextlib
 import logging
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator, Iterator
 from types import SimpleNamespace
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
@@ -38,7 +38,7 @@ class _SilentWebsocketClient:
         return None
 
     @contextlib.contextmanager
-    def listen_events(self) -> Iterator[Iterator[object]]:
+    def listen_events(self) -> Generator[Iterator[object]]:
         yield iter([])
 
 

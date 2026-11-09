@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING
 
 import anyio
@@ -23,8 +24,6 @@ from family_assistant.tools.mcp import (
 from tests.mocks.fake_mcp_session import FakeMcpSession
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
-
     from mcp import ClientSession
 
     from family_assistant.tools.metadata import ToolDescriptor
@@ -84,7 +83,7 @@ class _FakeTransport:
         self.exited = False
 
     @contextlib.asynccontextmanager
-    async def open(self) -> AsyncIterator[None]:
+    async def open(self) -> AsyncGenerator[None]:
         async def reader() -> None:
             await self.reader_fails.wait()
             raise ConnectionError("sse_reader: peer closed connection")

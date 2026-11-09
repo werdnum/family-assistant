@@ -4,7 +4,7 @@ import contextlib
 import io
 import json
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
@@ -98,7 +98,7 @@ def create_test_image(format_name: str, size: tuple[int, int] = (10, 10)) -> byt
 @contextlib.asynccontextmanager
 async def home_assistant_serving_snapshots(
     snapshots: dict[str, bytes],
-) -> AsyncIterator[SpeccedHomeAssistant]:
+) -> AsyncGenerator[SpeccedHomeAssistant]:
     """A Home Assistant client whose camera proxy endpoint is a local HTTP server.
 
     The server answers ``/api/camera_proxy/<entity_id>`` with the given image

@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import uuid
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
@@ -58,7 +59,7 @@ from family_assistant.tools.types import (
 from family_assistant.utils.clock import SystemClock
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
+    from collections.abc import Awaitable, Callable, Iterable
     from datetime import datetime
 
     from family_assistant.config_models import ToolsConfig
@@ -590,7 +591,7 @@ async def _synchronous_delegation_result(
 @asynccontextmanager
 async def _inherited_authenticated_binding(
     exec_context: ToolExecutionContext, subconversation_id: str
-) -> AsyncIterator[None]:
+) -> AsyncGenerator[None]:
     """Lend this turn's authenticated session to one inline child turn.
 
     Bound for the child's lifetime only, and released afterwards, so ownership

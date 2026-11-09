@@ -20,6 +20,7 @@ import contextlib
 import json
 import socket
 import uuid
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast
 
@@ -47,7 +48,7 @@ from tests.mocks.mock_llm import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Sequence
+    from collections.abc import Sequence
     from pathlib import Path
 
     import pytest
@@ -378,7 +379,7 @@ async def running_assistant(
     *,
     mode: TaintPolicyMode,
     reviewer_script: Sequence[ReviewScript] = (),
-) -> AsyncIterator[RunningAssistant]:
+) -> AsyncGenerator[RunningAssistant]:
     """Start the assistant on the shipped configuration and stop it afterwards."""
     # Building the shipped profiles constructs their provider clients, which
     # read keys from the environment; every request they could make is scripted.
