@@ -17,8 +17,9 @@ Ask the Assistant in any chat: "Ask the council whether we should replace the ho
 a heat pump or solar", or "Get a council of models to look at this design". Attach any files the
 question depends on. The Assistant convenes the council and brings its answer back to you.
 
-The council sees none of your household's notes, calendar, documents or email. Put everything the
-question depends on into the request, or attach it.
+The council can look things up in your notes, documents, calendar, past conversations and Home
+Assistant, but not your email or Google Drive, and the models on it see only what it passes them. It
+helps to put what the question depends on into the request, or attach it.
 
 ## Who sits on it
 

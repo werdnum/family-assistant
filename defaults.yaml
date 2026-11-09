@@ -1491,26 +1491,23 @@ service_profiles:
   # machinery that already exists: `council` coordinates, `council_member` does
   # the research, and the procedure lives in the "Council Deliberation" skill.
   #
-  # Rule of Two: both profiles read the open web and each other's reports [A],
-  # and neither is given the household's data [B] -- no aggregated context, and
-  # note reads confined to the council label. Neither can change household state
-  # or message anyone; a member's only outward action is a sandboxed coding run
-  # through `coder`, which the taint policy gates as it does everywhere else.
+  # The coordinator reads the open web and its members' reports, and reads the
+  # household's data the way the assistant does, through read-only tools. It
+  # changes nothing in the household and messages no one; a member's only
+  # outward action is a sandboxed coding run through `coder`, which the taint
+  # policy gates as it does everywhere else.
   - id: "council"
     user_selectable: true
-    description: "Use for an explicit multi-model council, broad exploratory work, or a difficult design or speculative question where independent proposals and critical review are valuable. Several strong models (GPT-6 Astra, Claude Fable 5.1, Kimi K3 and Gemini 4 Argon) each research the question independently, review and revise against each other over two rounds, and the council returns a synthesis with evidence, alternatives and remaining uncertainties. Slow and expensive. Not the default for routine lookups, straightforward coding or implementation. It sees none of the household's notes, calendar or documents, so put everything the question depends on in the request, and pass relevant attachments."
-    # The coordinator reads only the council's own skill: the label floor keeps
-    # household notes out of get_note, and the grant is what lets it see the
-    # skill at all -- no other profile holds it.
-    visibility_grants: ["council"]
+    description: "Use for an explicit multi-model council, broad exploratory work, or a difficult design or speculative question where independent proposals and critical review are valuable. Several strong models (GPT-6 Astra, Claude Fable 5.1, Kimi K3 and Gemini 4 Argon) each research the question independently, review and revise against each other over two rounds, and the council returns a synthesis with evidence, alternatives and remaining uncertainties. Slow and expensive. Not the default for routine lookups, straightforward coding or implementation. It can read the household's notes, documents, calendar and conversation history, but its members see only what it passes them, so put what the question depends on in the request, and pass relevant attachments."
+    # Household notes as the assistant sees them, plus the council's own
+    # skill: no other profile holds the `council` grant.
+    visibility_grants: ["default", "council"]
     processing_config:
       model_tier: "deep"
-      required_note_read_labels: ["council"]
-      # get_message_history is what lets history compaction shrink the
-      # council's tool-heavy phase turns (a turn with tool calls is compacted
-      # only for a profile that can look its calls back up). Confined to the
-      # council's own history, so the grant reads nothing of the household's.
-      own_message_history_only: true
+      # Reads the household's memory; a council's own conversations are not
+      # reviewed into it.
+      memory_read: true
+      memory_contribute: false
       # Who may convene one. Every profile may delegate to itself, so without
       # this a council could convene a council; the member profile is closed
       # the same way.
@@ -1553,11 +1550,32 @@ service_profiles:
               # No get_delegation_status: each wake brings the finished
               # members' results into history, so the only use the
               # coordinator ever found for it was polling running members.
-              - "get_note"
-              - "get_message_history"
               - "list_delegations"
               - "cancel_delegation"
+          decision: "allow"
+          priority: 10
+        # Household context, read-only. get_message_history is also what lets
+        # history compaction shrink the coordinator's tool-heavy phase turns.
+        # Connected Google accounts (Gmail, Drive) and the message archive are
+        # left out.
+        - match:
+            names:
+              - "get_note"
+              - "list_notes"
+              - "search_documents"
+              - "get_full_document_content"
+              - "get_user_documentation_content"
               - "get_attachment_info"
+              - "get_message_history"
+              - "list_threads"
+              - "read_home_messages"
+              - "list_calendars"
+              - "search_calendar_events"
+              - "get_weather_forecast"
+              - "get_home_status"
+              - "list_home_assistant_entities"
+              - "render_home_assistant_template"
+              - "download_state_history"
           decision: "allow"
           priority: 10
         # Evidence inspection: checking a member's source, not doing the
@@ -1576,11 +1594,6 @@ service_profiles:
               target_service_id: "council_member"
           decision: "allow"
           priority: 20
-    excluded_global_tools:
-      - "read_text_attachment"
-      - "jq_query"
-      - "report_technical_problem"
-      - "finish_thread"
     # Reached only by delegation: a delegated run is what holds the council's
     # turn open until a whole phase of members has finished.
     slash_commands: []

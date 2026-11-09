@@ -2714,12 +2714,6 @@ passes any grant set for the same reason. A profile granted only `memory` theref
 unlabelled household note until a read floor is set. Setting one confines the profile to notes
 labelled for it, at both boundaries that resolve notes: the notes repository and the skill registry.
 
-**own_message_history_only** (`processing_config`, default `false`) confines `get_message_history`
-to the profile's own turns: the current conversation, this profile and the current subconversation.
-A lookup naming another conversation, profile or subconversation is refused. Set it on a profile
-kept apart from household data that still needs the tool, which history compaction requires before
-it will shorten a turn with tool calls; `council` ships with it.
-
 Memory topic notes are never loaded into a prompt, so the memory contribution to a rendered prompt
 is the core note alone. They remain reachable by title through `get_note`, through search, and in
 `list_notes` output.

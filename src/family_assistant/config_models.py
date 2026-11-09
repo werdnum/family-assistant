@@ -705,11 +705,6 @@ class ProcessingConfig(BaseModel):
     # skill -- is visible to every reader. None (the default) is the ordinary
     # reader, confined by grants only.
     required_note_read_labels: list[str] | None = None
-    # Confines get_message_history to the profile's own history: the current
-    # conversation, this profile, and the current subconversation. For a
-    # profile kept apart from household data that still holds the tool so it
-    # can follow its own compacted turns back (history_compaction.can_compact).
-    own_message_history_only: bool = False
     # Whether this profile sees the household's conversation memory, and
     # whether its conversations are reviewed into it. Two settings because they
     # are two decisions: a specialised profile can benefit from the household's
