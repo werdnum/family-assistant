@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import shlex
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import cloudcoil.models.kubernetes.core.v1 as k8s
@@ -22,9 +22,6 @@ from kubernetes_asyncio.client import (
 from family_assistant.plugins.ai_workers.backend import WorkerStatus
 from family_assistant.plugins.ai_workers.backends.kubernetes import KubernetesBackend
 from family_assistant.plugins.ai_workers.config import KubernetesBackendConfig
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
 
 
 @pytest.fixture
@@ -125,7 +122,7 @@ class FakeCoreV1Api:
 @contextmanager
 def fake_kubernetes_apis(
     batch: FakeBatchV1Api | None = None, core: FakeCoreV1Api | None = None
-) -> Iterator[None]:
+) -> Generator[None]:
     """Route the backend's API objects to fakes; the ApiClient itself is real."""
     batch_api = batch or FakeBatchV1Api()
     core_api = core or FakeCoreV1Api()

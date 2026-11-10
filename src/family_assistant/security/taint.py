@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import math
+from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
@@ -21,7 +22,7 @@ from pydantic import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator, Mapping, Sequence
+    from collections.abc import Iterable, Mapping, Sequence
 
     from family_assistant.tools.metadata import ToolDescriptor
 
@@ -389,7 +390,7 @@ _executing_tool: ContextVar[_ExecutingTool | None] = ContextVar(
 
 
 @contextmanager
-def attributing_sources_to_tool(tool_name: str) -> Iterator[None]:
+def attributing_sources_to_tool(tool_name: str) -> Generator[None]:
     """Stamp ``tool_name`` on sources a tracker records while this is active.
 
     The tool-call chokepoint wraps execution in this, so a source a tool adds

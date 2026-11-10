@@ -135,8 +135,8 @@ The git rule therefore works like this:
 
 - the rotation task writes `base64("x-access-token:<token>")`, as an `environment_variable`
   credential trusted only for `github.com`, from the same mint as the REST credential;
-- the git rule's allowlist entry carries no `transform`, because the proxy overwrites a
-  sandbox-set `Authorization` on any domain that carries a header of its own;
+- the git rule's allowlist entry carries no `transform`, because the proxy overwrites a sandbox-set
+  `Authorization` on any domain that carries a header of its own;
 - the run binds the credential to `FA_GITHUB_GIT_AUTH`, and the agent's system instruction tells it
   to run
   `git config --global --replace-all 'http.https://github.com/.extraHeader' "Authorization: Basic $FA_GITHUB_GIT_AUTH"`
@@ -145,8 +145,8 @@ The git rule therefore works like this:
 After that, clone, fetch, pull and push are ordinary git for the whole run. LFS is expected to work
 as well, since LFS reuses git's `http.extraHeader`; that has not been tried live.
 
-Setup depends on the agent following one instruction. If it skips it, git answers 401 and nothing
-is sent anywhere it shouldn't be. So a lapse costs availability, not safety. The decision to bind the
+Setup depends on the agent following one instruction. If it skips it, git answers 401 and nothing is
+sent anywhere it shouldn't be. So a lapse costs availability, not safety. The decision to bind the
 variable and add the instruction comes from the resolved request, so the two only ever appear
 together.
 
@@ -158,10 +158,9 @@ Everything below starts from the two measured facts: a stored `bearer_token` onl
 - **A push helper over the REST API.** This was built first. GitHub's Git Data API (blobs, trees,
   commits, refs) lives on `api.github.com` and takes `Bearer`, so a helper mounted into the sandbox
   replayed each local commit through it, keeping authors, dates and commit ids. It worked for push,
-  but only push: a late `fetch` or `pull` still failed, it could not make the first push to an
-  empty repository, and LFS content could not go through it. It was also our own code in the git
-  path. The substituted credential gives plain git with none of those gaps, so the helper was
-  removed.
+  but only push: a late `fetch` or `pull` still failed, it could not make the first push to an empty
+  repository, and LFS content could not go through it. It was also our own code in the git path. The
+  substituted credential gives plain git with none of those gaps, so the helper was removed.
 - **An off-the-shelf git-to-API tool.** None fits. The known ones (PlanetScale's `ghcommit` and the
   Actions built on GraphQL `createCommitOnBranch`) write new commits authored by the App, one push
   at a time, with no merges. That loses history.
@@ -244,10 +243,10 @@ Each milestone stands alone and is verifiable without the next.
    sensitivity above; a correction to the superseded paragraph in the previous design doc.
 
 6. **Plain git for the whole run.** The substituted git credential, its binding and the agent's
-   instruction, as above. Verified by unit tests on the stored body, the binding and the request
-   the SDK accepts, and by the placeholder probe under "What was verified". Still to verify live:
-   one run against a private repository that fetches and pushes after the first token has expired,
-   and an LFS push.
+   instruction, as above. Verified by unit tests on the stored body, the binding and the request the
+   SDK accepts, and by the placeholder probe under "What was verified". Still to verify live: one
+   run against a private repository that fetches and pushes after the first token has expired, and
+   an LFS push.
 
 ## What was verified
 
@@ -277,10 +276,10 @@ future one should be.
 **The proxy overwrites an `Authorization` header the sandbox sets.** Measured 2026-09-24 the same
 way: calls from the sandbox to two header-echo services bound to a stored credential arrived
 carrying the stored `Bearer` value whether or not the sandbox had sent `Authorization` itself. On a
-credentialed domain, then, the store's value is the only credential that domain ever sees. That rules
-out keeping the App JWT in the store so the sandbox can mint its own installation tokens: the token
-endpoint lives on `api.github.com`, and every other call to that domain would carry the JWT too,
-which authenticates nothing outside `/app`.
+credentialed domain, then, the store's value is the only credential that domain ever sees. That
+rules out keeping the App JWT in the store so the sandbox can mint its own installation tokens: the
+token endpoint lives on `api.github.com`, and every other call to that domain would carry the JWT
+too, which authenticates nothing outside `/app`.
 
 **An `environment_variable` credential is substituted, not exposed.** Measured 2026-09-24 with a
 sentinel credential trusted for one header-echo service and bound to a sandbox variable:
@@ -311,8 +310,8 @@ credential.
   would add exactly the state the design is trying not to grow, to save a token exchange that costs
   one HTTP round trip.
 
-- **Rotation writes two ids from one mint, and does not reconcile them.** A tick mints one token
-  and writes it as the REST credential and then as the git one. If the second write fails, the two
+- **Rotation writes two ids from one mint, and does not reconcile them.** A tick mints one token and
+  writes it as the REST credential and then as the git one. If the second write fails, the two
   briefly hold different tokens; both are valid installation tokens for the same installation, so
   nothing breaks. The next tick overwrites both, and sustained failure is the "rotation stopped"
   case above arriving as a visible 401.

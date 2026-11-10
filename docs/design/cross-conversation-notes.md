@@ -20,9 +20,9 @@ another web conversation the acting user owns and **wakes that conversation's as
 it. `"home"` names the user's Home.
 
 - **Who can be reached.** The target must be a known conversation (`send_message_to_user`'s
-  `resolve_send_message_target`) whose every owner is the acting user, identities canonicalized.
-  The current conversation is refused, as is anything not on the web surface, where Home and
-  threads live. Other people are `send_message_to_user`'s job.
+  `resolve_send_message_target`) whose every owner is the acting user, identities canonicalized. The
+  current conversation is refused, as is anything not on the web surface, where Home and threads
+  live. Other people are `send_message_to_user`'s job.
 - **What crosses.** The note is an *assistant request* through the boundary module
   (`threads/boundary.py`): an internal, machine-authored user row in the target, framed by fixed
   text saying it came from another conversation. It is never stored as the user's words. Like any
@@ -51,8 +51,8 @@ it. `"home"` names the user's Home.
   each wake is a visible turn in the user's own conversation, and each carries the accumulated
   taint, so we accept it rather than add hop counters or rate limits.
 - **Per-target delegation rules do not apply.** Those rules match a `target_service_id` argument.
-  This tool has none: it wakes the profile the user already talks to in a conversation they own.
-  The target profile's own `allowed_delegation_sources` still applies.
+  This tool has none: it wakes the profile the user already talks to in a conversation they own. The
+  target profile's own `allowed_delegation_sources` still applies.
 - **Web only.** Telegram conversations are refused rather than given a second wake path.
 - **No reply routing.** The woken turn replies in its own conversation. The source learns nothing
   back unless the woken assistant posts a note of its own.

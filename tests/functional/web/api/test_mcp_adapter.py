@@ -5,7 +5,7 @@ mock LLM, so what is verified is what claude.ai or Claude Code would see.
 """
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import UTC, datetime, timedelta
 
@@ -75,7 +75,7 @@ def mcp_app(
 
 
 @asynccontextmanager
-async def mcp_session(app: FastAPI) -> AsyncIterator[ClientSession]:
+async def mcp_session(app: FastAPI) -> AsyncGenerator[ClientSession]:
     """An initialised MCP client session against ``app`` over ASGI."""
 
     def client_factory(

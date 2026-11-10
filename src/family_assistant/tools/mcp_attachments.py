@@ -26,7 +26,7 @@ import logging
 import mimetypes
 import shutil
 import tempfile
-from collections.abc import Container, Mapping
+from collections.abc import AsyncGenerator, Container, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -35,8 +35,6 @@ from family_assistant.scripting.apis.attachments import ScriptAttachment
 from family_assistant.tools.attachment_utils import is_attachment_id
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
-
     from family_assistant.json_schema import JsonSchemaObject
     from family_assistant.tools.types import ToolDefinition
 
@@ -554,7 +552,7 @@ async def materialised_attachment_arguments(
     arguments: dict[str, Any],
     parameters: Mapping[str, AttachmentParameter],
     # ast-grep-ignore: no-dict-any - MCP tool arguments are untyped per the MCP protocol
-) -> AsyncIterator[dict[str, Any]]:
+) -> AsyncGenerator[dict[str, Any]]:
     """Yield ``arguments`` with resolved attachments rendered for the server.
 
     Any temporary file written for ``file_path`` mode lives only for the
