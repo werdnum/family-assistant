@@ -47,21 +47,30 @@ def _coder_eligibility(shipped_config: AppConfig) -> ModelTierEligibility:
     )
 
 
-def test_the_tier_picker_offers_argon_on_coder(shipped_config: AppConfig) -> None:
+_STRONG_CODER_TIERS = ["gemini_4_argon", "gemini_4_carbon"]
+
+
+@pytest.mark.parametrize("tier", _STRONG_CODER_TIERS)
+def test_the_tier_picker_offers_strong_models_on_coder(
+    shipped_config: AppConfig, tier: str
+) -> None:
     """The web and iOS picker lists the profile's selectable tiers, and only those.
 
     A person's request for a delegation preset is admitted too, but nothing
     offers it to them, so admission alone would not show the choice exists.
     """
-    assert "gemini_4_argon" in _coder_eligibility(shipped_config).selectable_ids
+    assert tier in _coder_eligibility(shipped_config).selectable_ids
 
 
-def test_auto_routing_never_puts_coder_on_argon(shipped_config: AppConfig) -> None:
-    """Argon costs many times Flash, so only someone's explicit choice reaches it."""
+@pytest.mark.parametrize("tier", _STRONG_CODER_TIERS)
+def test_auto_routing_never_puts_coder_on_a_strong_model(
+    shipped_config: AppConfig, tier: str
+) -> None:
+    """These cost many times Flash, so only someone's explicit choice reaches them."""
     with pytest.raises(ModelTierNotPermitted):
         resolve_model_selection(
             _coder_eligibility(shipped_config),
-            ModelSelectionRequest(tier="gemini_4_argon", source="auto"),
+            ModelSelectionRequest(tier=tier, source="auto"),
             profile_id="coder",
         )
 

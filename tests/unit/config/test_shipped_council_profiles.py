@@ -116,7 +116,7 @@ def test_every_seat_is_a_single_model_preset_the_member_admits(
         "gpt_6_astra",
         "claude_fable_5_2",
         "kimi_k3",
-        "gemini_4_argon",
+        "gemini_4_carbon",
         "claude_opus_5_5",
     ]
     admitted = member.delegation_model_tiers or []
