@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import replace
 from datetime import timedelta
 from types import SimpleNamespace
@@ -87,6 +88,7 @@ from family_assistant.tools.types import (
     ToolExecutionContext,
 )
 from family_assistant.utils.clock import SystemClock
+from family_assistant.web.conversation_stream_hub import ConversationStreamHub
 from tests.helpers import (
     deliver_queued_delegations,
     run_delegated_profile_run,
@@ -361,6 +363,7 @@ class FakeWakeCapableSourceService:
         persist_assistant_message: bool = True,
         async_delegation_enabled: bool = True,
         wake_hangs: bool = False,
+        stream_hub: ConversationStreamHub | None = None,
     ) -> None:
         self.service_config = SimpleNamespace(
             id="source_profile",
@@ -382,6 +385,10 @@ class FakeWakeCapableSourceService:
         # Set to keep the wake turn working, after its first step, until its
         # budget cuts it off.
         self.wake_hangs = wake_hangs
+        # When set, records which of the conversation's turns the hub had
+        # running as each wake turn started.
+        self.stream_hub = stream_hub
+        self.running_turns_at_wake: list[list[str]] = []
         self.wake_call_count = 0
         self.wake_review_triggers: list[TriggerReviewInput | None] = []
         self.wake_assistant_message_ids: list[int] = []
@@ -389,6 +396,12 @@ class FakeWakeCapableSourceService:
     async def handle_chat_interaction(self, **kwargs: Any) -> ChatInteractionResult:  # noqa: ANN401 - test fake accepts the ProcessingService keyword surface
         self.wake_call_count += 1
         self.wake_review_triggers.append(kwargs.get("tool_call_review_trigger"))
+        if self.stream_hub is not None:
+            self.running_turns_at_wake.append([
+                turn.turn_id
+                for turn in self.stream_hub.active_turns(kwargs["conversation_id"])
+                if turn.status == "running"
+            ])
         db_context = cast("Database", kwargs["db_context"])
         turn_id = cast("str", kwargs["turn_id"])
         thread_root_id = cast("int | None", kwargs["thread_root_id"])
@@ -1697,6 +1710,105 @@ async def test_source_wake_that_runs_out_of_time_sends_a_short_notice(
         )
     )
     assert [row["content"] for row in assistant_rows] == [notice]
+
+
+async def _completed_web_run(db_engine: AsyncEngine, delegation_id: str) -> None:
+    db_context = Database(engine=db_engine)
+    await _create_run(db_context, delegation_id=delegation_id, interface_type="web")
+    await db_context.delegation_runs.mark_handed_off(delegation_id, SystemClock().now())
+    await db_context.delegation_runs.mark_completed(
+        delegation_id=delegation_id,
+        result_text="web result",
+        result_attachment_ids=[],
+        completed_at=SystemClock().now(),
+    )
+
+
+async def _deliver_web_run(
+    db_engine: AsyncEngine,
+    delegation_id: str,
+    processing_service: FakeWakeCapableSourceService,
+    hub: ConversationStreamHub,
+) -> None:
+    chat_interface = ScriptedChatInterface()
+    worker = _build_worker(
+        db_engine, cast("ProcessingService", processing_service), chat_interface
+    )
+    worker.stream_hub = hub
+    await run_delegated_profile_run(
+        worker,
+        _tool_context(
+            Database(engine=db_engine),
+            cast("ProcessingService", processing_service),
+            chat_interface,
+        ),
+        _payload(delegation_id),
+    )
+    await deliver_queued_delegations(
+        worker,
+        _tool_context(
+            Database(engine=db_engine),
+            cast("ProcessingService", processing_service),
+            chat_interface,
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_web_wake_turn_is_the_conversations_running_turn(
+    db_engine: AsyncEngine,
+) -> None:
+    """A web wake turn holds the conversation, so a user turn cannot start beside it."""
+    hub = ConversationStreamHub()
+    processing_service = FakeWakeCapableSourceService(
+        FakeDelegatableService(), stream_hub=hub
+    )
+    await _completed_web_run(db_engine, "delegation_web_wake_holds")
+
+    await _deliver_web_run(
+        db_engine, "delegation_web_wake_holds", processing_service, hub
+    )
+
+    # The one running turn is the wake turn itself.
+    assert [len(running) for running in processing_service.running_turns_at_wake] == [1]
+    assert not hub.has_running_turn(TEST_CONVERSATION_ID)
+
+
+@pytest.mark.asyncio
+async def test_web_wake_turn_waits_for_the_running_user_turn(
+    db_engine: AsyncEngine,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A result that arrives mid-turn is picked up after the user's turn, not beside it."""
+    caplog.set_level(logging.INFO, logger="family_assistant.task_worker")
+    hub = ConversationStreamHub()
+    processing_service = FakeWakeCapableSourceService(
+        FakeDelegatableService(), stream_hub=hub
+    )
+    await _completed_web_run(db_engine, "delegation_web_wake_waits")
+    await hub.start_turn(
+        TEST_CONVERSATION_ID,
+        turn_id="user-turn",
+        user_id="async-delegation-user",
+        started_at=SystemClock().now(),
+    )
+
+    delivery = asyncio.create_task(
+        _deliver_web_run(
+            db_engine, "delegation_web_wake_waits", processing_service, hub
+        )
+    )
+    await wait_for_condition(
+        lambda: "is waiting for the turn running" in caplog.text,
+        description="the wake turn to wait for the user turn",
+    )
+    await hub.end_turn(TEST_CONVERSATION_ID, turn_id="user-turn", status="complete")
+    await delivery
+
+    assert len(processing_service.running_turns_at_wake) == 1
+    running = processing_service.running_turns_at_wake[0]
+    assert len(running) == 1
+    assert "user-turn" not in running
 
 
 @pytest.mark.asyncio

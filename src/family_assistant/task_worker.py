@@ -116,7 +116,13 @@ from family_assistant.tools.services import (
 from family_assistant.tools.types import CalendarConfig, EventSourcesById
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Coroutine, Mapping
+    from collections.abc import (
+        AsyncGenerator,
+        Awaitable,
+        Callable,
+        Coroutine,
+        Mapping,
+    )
     from zoneinfo import ZoneInfo
 
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -148,7 +154,10 @@ if TYPE_CHECKING:
     from family_assistant.threads.turns import StartedThreadTurn, ThreadTurnRunner
     from family_assistant.tools.authenticated_sites import AuthenticatedRunSettlement
     from family_assistant.tools.infrastructure import ToolsProvider
-    from family_assistant.web.conversation_stream_hub import ConversationStreamHub
+    from family_assistant.web.conversation_stream_hub import (
+        ConversationStreamHub,
+        TurnStatus,
+    )
 
     # A handler may return a note recorded on the task when it finishes, for a
     # run that succeeded but hit problems worth surfacing in its history.
@@ -231,6 +240,10 @@ from family_assistant.tools.types import (
     ToolResult,
 )
 from family_assistant.utils.clock import Clock, SystemClock
+from family_assistant.web.conversation_stream_hub import (
+    ConversationTurnRunningError,
+    TurnAlreadyExistsError,
+)
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -1378,6 +1391,10 @@ CONFIRMATION_CANCELLATION_CLEANUP_TIMEOUT = 5.0
 # How long a delegated run waits before trying again for a background turn slot.
 BACKGROUND_TURN_DEFER_SECONDS = 15.0
 
+
+# How often a wake turn waiting for a conversation's running turn checks again,
+# should it miss the hub's wake-up when that turn ends.
+_WAKE_TURN_BUSY_RECHECK_SECONDS = 30.0
 
 # A delegated run's turn may take this long before the run is failed as timed
 # out: deep-tier work such as an engineer investigation routinely runs well past
@@ -5202,7 +5219,6 @@ class TaskWorker:
             if stage == "failed_forward"
             else self._delegation_wakeup_text(run)
         )
-        source_subconversation_id = run["source_subconversation_id"]
         wake_turn_id = _turn_id_for_delegation_wake(run, stage)
 
         # --- Delivery checkpoint ---
@@ -5246,6 +5262,91 @@ class TaskWorker:
                 stage=stage,
             )
 
+        async with self._wake_turn_holds_conversation(run, wake_turn_id):
+            return await self._run_wake_turn(
+                exec_context,
+                run,
+                source_service,
+                clock,
+                chat_interface,
+                trigger_text,
+                wake_turn_id,
+                stage=stage,
+                attempt=attempt,
+            )
+
+    @contextlib.asynccontextmanager
+    async def _wake_turn_holds_conversation(
+        self, run: DelegationRunDict, wake_turn_id: str
+    ) -> AsyncGenerator[None]:
+        """Run a web wake turn as the conversation's one running turn.
+
+        A web conversation takes one turn at a time: the stream hub refuses a
+        second, which is what keeps two turns from interleaving their rows in
+        history. A wake turn registers there like any other, so it waits for a
+        running user turn to finish first, and a message the user sends while
+        it runs is held by the client until it has finished, as it is behind a
+        non-streaming turn. The record exists only as that reservation: the
+        turn's output reaches the client through history, not the stream.
+        """
+        hub = self.stream_hub
+        conversation_id = run["conversation_id"]
+        if hub is None or run["interface_type"] != "web":
+            yield
+            return
+        while True:
+            generation = hub.changes.generation
+            try:
+                await hub.start_turn(
+                    conversation_id,
+                    turn_id=wake_turn_id,
+                    user_id=run["user_id"] or "",
+                    started_at=self.clock.now(),
+                    reject_if_running=True,
+                )
+                break
+            except ConversationTurnRunningError, TurnAlreadyExistsError:
+                logger.info(
+                    "Wake turn %s for delegation %s is waiting for the turn "
+                    "running in conversation %s.",
+                    wake_turn_id,
+                    run["delegation_id"],
+                    conversation_id,
+                )
+                await hub.changes.wait_beyond(
+                    generation, timeout=_WAKE_TURN_BUSY_RECHECK_SECONDS
+                )
+        status: TurnStatus = "failed"
+        try:
+            yield
+            status = "complete"
+        except asyncio.CancelledError:
+            status = "cancelled"
+            raise
+        finally:
+            # As for a non-streaming turn: ``discard_turn`` in its own
+            # ``finally`` so an interrupted ``end_turn`` still releases the
+            # conversation.
+            try:
+                await hub.end_turn(conversation_id, turn_id=wake_turn_id, status=status)
+            finally:
+                await hub.discard_turn(conversation_id, wake_turn_id)
+
+    async def _run_wake_turn(
+        self,
+        exec_context: ToolExecutionContext,
+        run: DelegationRunDict,
+        source_service: ProcessingService,
+        clock: Clock,
+        chat_interface: ChatInterface | None,
+        trigger_text: str,
+        wake_turn_id: str,
+        *,
+        stage: DelegationNotifyStage,
+        attempt: int,
+    ) -> int | None:
+        """Run the wake turn itself and deliver its response."""
+        source_subconversation_id = run["source_subconversation_id"]
         # A wake turn already started on an earlier attempt -- cut off by this
         # task's timeout, or by its process going away -- has its data row and
         # whatever its tools did in history. Under commit-as-you-go those tool
