@@ -174,7 +174,6 @@ from family_assistant.services.delegated_run_resumption import (
 )
 from family_assistant.services.delegation_delivery import (
     DELEGATION_WAKE_RESUMER,
-    DELEGATION_WAKE_TURN_BUDGET_SECONDS,
     DelegationDeliveryPayload,
     queue_delegation_delivery,
 )
@@ -1234,6 +1233,22 @@ class ConfirmationNotificationError(RuntimeError):
     """Raised when a confirmation result notification cannot be delivered."""
 
 
+class DelegationWakeTimedOutError(Exception):
+    """Raised when a delegation wake turn runs out of its budget.
+
+    The turn had started, so the result is already in the conversation as the
+    data behind its trigger, along with whatever the turn did with it. What is
+    left to deliver is a short notice, not the result again.
+    """
+
+    def __init__(self, delegation_id: str, budget_seconds: float) -> None:
+        super().__init__(
+            f"Wake turn for delegation {delegation_id} ran out of its "
+            f"{budget_seconds:.0f} s budget."
+        )
+        self.budget_seconds = budget_seconds
+
+
 class DelegationNotificationError(RuntimeError):
     """Raised when a terminal delegation notification cannot be delivered.
 
@@ -1367,7 +1382,10 @@ BACKGROUND_TURN_DEFER_SECONDS = 15.0
 # A delegated run's turn may take this long before the run is failed as timed
 # out: deep-tier work such as an engineer investigation routinely runs well past
 # ten minutes. The turn runs on the background turn runner, not in a task
-# handler, so no handler timeout applies to it.
+# handler, so no handler timeout applies to it. The wake turn that delivers a
+# delegation's result to the profile that asked for it gets the same budget: it
+# is a whole turn of that profile, and a deep-tier one picking up an
+# investigation's findings is as long as the investigation's own.
 DELEGATED_RUN_TURN_BUDGET_SECONDS = 1800.0
 
 # Task types whose handler is itself one LLM turn. A worker that claims one hands
@@ -4994,6 +5012,7 @@ class TaskWorker:
             return
 
         source_service = self._source_service_for_delegation(exec_context, run)
+        wake_timed_out = False
         # At canned_pending the model has already been asked and its answer was
         # refused too, so only the short standard notice is left to try.
         if source_service is not None and stage != "canned_pending":
@@ -5030,6 +5049,14 @@ class TaskWorker:
                     run["source_profile_id"],
                     run["delegation_id"],
                 )
+            except DelegationWakeTimedOutError:
+                logger.exception(
+                    "Wake turn of source profile '%s' for completed delegation %s "
+                    "ran out of time; sending a short notice instead of the result.",
+                    run["source_profile_id"],
+                    run["delegation_id"],
+                )
+                wake_timed_out = True
             except Exception:
                 logger.exception(
                     "Failed to wake source profile '%s' for completed delegation %s; "
@@ -5042,12 +5069,17 @@ class TaskWorker:
         # stage reached *because* the result would not fit: it would be refused
         # for the same reason. The last resort is a fixed short line with the
         # attachments left off.
+        #
+        # A wake turn that ran out of time has the result in the conversation
+        # already, and the turn itself was working through it, so sending the
+        # whole result again only repeats it into every later prompt.
         last_resort = stage == "canned_pending"
-        message_text = (
-            self._delegation_undeliverable_notice_text(run)
-            if last_resort
-            else self._delegation_notification_text(run)
-        )
+        if last_resort:
+            message_text = self._delegation_undeliverable_notice_text(run)
+        elif wake_timed_out:
+            message_text = self._delegation_wake_timed_out_notice_text(run)
+        else:
+            message_text = self._delegation_notification_text(run)
         attachments = (
             None if last_resort else self._delegation_notification_attachments(run)
         )
@@ -5256,49 +5288,60 @@ class TaskWorker:
             self._track_wake_turn_lease(exec_context, lease, controller)
 
             # Phase 2: Run the LLM turn untransacted.
-            async with asyncio.timeout(DELEGATION_WAKE_TURN_BUDGET_SECONDS):
-                result = await source_service.handle_chat_interaction(
-                    db_context=exec_context.db_context,
-                    interface_type=run["interface_type"],
-                    conversation_id=run["conversation_id"],
-                    trigger_content_parts=[{"type": "text", "text": trigger_text}],
-                    trigger_interface_message_id=None,
-                    user_name=run["user_name"] or exec_context.user_name,
-                    user_id=run["user_id"],
-                    replied_to_interface_id=None,
-                    chat_interface=chat_interface,
-                    chat_interfaces=exec_context.chat_interfaces,
-                    confirmation_ui_managers=exec_context.confirmation_ui_managers,
-                    request_confirmation_callback=build_deferred_confirmation_callback(
-                        target_user_id=run["user_id"],
-                        source_prefix=(
-                            "From a completed delegated task — approve to run:"
+            budget_seconds = self._delegated_turn_budget()
+            deadline = asyncio.timeout(budget_seconds)
+            try:
+                async with deadline:
+                    result = await source_service.handle_chat_interaction(
+                        db_context=exec_context.db_context,
+                        interface_type=run["interface_type"],
+                        conversation_id=run["conversation_id"],
+                        trigger_content_parts=[{"type": "text", "text": trigger_text}],
+                        trigger_interface_message_id=None,
+                        user_name=run["user_name"] or exec_context.user_name,
+                        user_id=run["user_id"],
+                        replied_to_interface_id=None,
+                        chat_interface=chat_interface,
+                        chat_interfaces=exec_context.chat_interfaces,
+                        confirmation_ui_managers=exec_context.confirmation_ui_managers,
+                        request_confirmation_callback=build_deferred_confirmation_callback(
+                            target_user_id=run["user_id"],
+                            source_prefix=(
+                                "From a completed delegated task — approve to run:"
+                            ),
+                            missing_owner_message=lambda tool_name: (
+                                "This delegated task has no recorded owner, so the "
+                                f"confirm-gated tool '{tool_name}' cannot be approved and "
+                                "was not run."
+                            ),
                         ),
-                        missing_owner_message=lambda tool_name: (
-                            "This delegated task has no recorded owner, so the "
-                            f"confirm-gated tool '{tool_name}' cannot be approved and "
-                            "was not run."
+                        trigger_attachments=self._delegation_notification_attachments(
+                            run
                         ),
-                    ),
-                    trigger_attachments=self._delegation_notification_attachments(run),
-                    subconversation_id=source_subconversation_id,
-                    thread_root_id=data_message_internal_id,
-                    trigger_is_internal=True,
-                    pinned_history_message_ids=[data_message_internal_id],
-                    trigger_role="system",
-                    turn_id=wake_turn_id,
-                    mid_turn_input_provider=controller,
-                    model_selection=model_selection,
-                    resume=resume,
-                    initial_taint_sources=_taint_sources_from_delegation_run(run),
-                    tool_call_review_trigger=await _delegation_run_review_trigger(
-                        exec_context,
-                        run,
-                        trigger_type="delegation_completion",
-                        active_request_role="system",
-                        payload_present=True,
-                    ),
-                )
+                        subconversation_id=source_subconversation_id,
+                        thread_root_id=data_message_internal_id,
+                        trigger_is_internal=True,
+                        pinned_history_message_ids=[data_message_internal_id],
+                        trigger_role="system",
+                        turn_id=wake_turn_id,
+                        mid_turn_input_provider=controller,
+                        model_selection=model_selection,
+                        resume=resume,
+                        initial_taint_sources=_taint_sources_from_delegation_run(run),
+                        tool_call_review_trigger=await _delegation_run_review_trigger(
+                            exec_context,
+                            run,
+                            trigger_type="delegation_completion",
+                            active_request_role="system",
+                            payload_present=True,
+                        ),
+                    )
+            except TimeoutError as timeout:
+                if not deadline.expired():
+                    raise
+                raise DelegationWakeTimedOutError(
+                    run["delegation_id"], budget_seconds
+                ) from timeout
 
             # Phase 3: deliver, then record the delivery and mark notified
             # atomically.
@@ -5769,6 +5812,16 @@ class TaskWorker:
             f"A delegated task ({run['delegation_id']}) finished, but its result "
             "could not be delivered here. Ask me about it and I will send it in "
             "a form this channel accepts."
+        )
+
+    def _delegation_wake_timed_out_notice_text(self, run: DelegationRunDict) -> str:
+        """Build the notice for a wake turn that ran out of time mid-way."""
+        minutes = round(self._delegated_turn_budget() / 60)
+        return (
+            f"A delegated task ({run['delegation_id']}) finished, but I ran out of "
+            f"time (about {minutes} minutes) while working through its result. "
+            "The result is saved in this conversation: ask me to carry on and I "
+            "will pick up from there."
         )
 
     def _delegation_notification_text(self, run: DelegationRunDict) -> str:

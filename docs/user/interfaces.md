@@ -606,7 +606,9 @@ assistant may hand off to another profile. Quick handoffs come back inline. Long
 `delegation_...` reference and leave the conversation free; when the specialist finishes it wakes
 the original assistant, which posts the follow-up in the same conversation. For voice calls, longer
 handoffs post their result directly in Chat. You can ask for the status of a delegation reference at
-any time.
+any time. If the assistant runs out of time (about 30 minutes) while working through a result, it
+posts a short note saying so instead; the result is kept in the conversation, so asking it to carry
+on picks up from there.
 
 While a longer handoff is running, the web and iOS chat show a small line above the message box for
 each one — which specialist is working, how it is going (queued, working, how many of a council's

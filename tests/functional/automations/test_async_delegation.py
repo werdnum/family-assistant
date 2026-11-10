@@ -360,6 +360,7 @@ class FakeWakeCapableSourceService:
         response_attachment_ids: list[str] | None = None,
         persist_assistant_message: bool = True,
         async_delegation_enabled: bool = True,
+        wake_hangs: bool = False,
     ) -> None:
         self.service_config = SimpleNamespace(
             id="source_profile",
@@ -378,6 +379,9 @@ class FakeWakeCapableSourceService:
         self.response_text = response_text
         self.response_attachment_ids = response_attachment_ids
         self.persist_assistant_message = persist_assistant_message
+        # Set to keep the wake turn working, after its first step, until its
+        # budget cuts it off.
+        self.wake_hangs = wake_hangs
         self.wake_call_count = 0
         self.wake_review_triggers: list[TriggerReviewInput | None] = []
         self.wake_assistant_message_ids: list[int] = []
@@ -400,6 +404,8 @@ class FakeWakeCapableSourceService:
             subconversation_id=subconversation_id,
             user_id="async-delegation-user",
         )
+        if self.wake_hangs:
+            await asyncio.Event().wait()
         if self.wake_result_status == "error":
             error_message_id = await db_context.message_history.add_message(
                 AssistantMessage(content="source wake error"),
@@ -1619,6 +1625,78 @@ async def test_source_wake_error_result_falls_back_to_direct_notification(
         and row["content"].startswith("Delegated task delegation_source_errors")
         for row in rows
     )
+
+
+@pytest.mark.asyncio
+async def test_source_wake_that_runs_out_of_time_sends_a_short_notice(
+    db_engine: AsyncEngine,
+) -> None:
+    """A wake turn cut off by its budget is not followed by the whole result.
+
+    The turn had started, so the result is already in the conversation behind
+    its trigger. Posting it again as the fallback put tens of thousands of
+    characters into the conversation, and into every prompt after it.
+    """
+    target_service = FakeDelegatableService()
+    processing_service = FakeWakeCapableSourceService(target_service, wake_hangs=True)
+    chat_interface = ScriptedChatInterface(otherwise="notice_external_message_id")
+
+    clock = SystemClock()
+    db_context = Database(engine=db_engine)
+    await _create_run(db_context, delegation_id="delegation_wake_times_out")
+    await db_context.delegation_runs.mark_handed_off(
+        "delegation_wake_times_out", clock.now()
+    )
+    await db_context.delegation_runs.mark_completed(
+        delegation_id="delegation_wake_times_out",
+        result_text="a very long investigation result",
+        result_attachment_ids=[],
+        completed_at=clock.now(),
+    )
+
+    worker = _build_worker(
+        db_engine,
+        cast("ProcessingService", processing_service),
+        chat_interface,
+        delegated_turn_budget=0.2,
+    )
+    await run_delegated_profile_run(
+        worker,
+        _tool_context(
+            Database(engine=db_engine),
+            cast("ProcessingService", processing_service),
+            chat_interface,
+        ),
+        _payload("delegation_wake_times_out"),
+    )
+    await deliver_queued_delegations(
+        worker,
+        _tool_context(
+            Database(engine=db_engine),
+            cast("ProcessingService", processing_service),
+            chat_interface,
+        ),
+    )
+
+    assert processing_service.wake_call_count == 1
+    assert len(chat_interface.sent) == 1
+    notice = chat_interface.last_sent.text
+    assert "delegation_wake_times_out" in notice
+    assert "a very long investigation result" not in notice
+
+    db_context = Database(engine=db_engine)
+    run = await db_context.delegation_runs.get_by_delegation_id(
+        "delegation_wake_times_out"
+    )
+    assert run is not None
+    assert run["notified_at"] is not None
+    assistant_rows = await db_context.fetch_all(
+        select(message_history_table).where(
+            message_history_table.c.conversation_id == TEST_CONVERSATION_ID,
+            message_history_table.c.role == "assistant",
+        )
+    )
+    assert [row["content"] for row in assistant_rows] == [notice]
 
 
 @pytest.mark.asyncio
