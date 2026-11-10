@@ -1,68 +1,89 @@
 # Family Assistant Scripting Guide
 
-This guide provides a reference for assistants to write Python scripts when responding to user
-requests for automation and complex operations.
-
-Scripts can be written by the assistant or edited directly in the web interface. Before writing
-scripts, understand the available APIs and sandbox constraints to write effective scripts.
+Reference for writing Python scripts with `execute_script` and automation scripts.
 
 ## Editing stored scripts
 
-Open **Automation → Scripts** in the web interface. Choose **New script** to create one, or **Edit
-script** to change a stored script's description, Python code, or parameter schema. The parameter
-schema is an optional JSON object describing the script's inputs. Existing script names stay fixed
-so automations can keep referring to them.
+In the web interface, open **Automation → Scripts**. Choose **New script** or **Edit script** to set
+the description, Python code, or optional JSON Schema parameter definition (existing script names
+stay fixed so automations keep working). **Save script** validates the schema and syntax, stamps the
+complete definition as your own edit, and updates all referencing automations without running the
+script. To approve an existing script without editing it, choose **Review and confirm** on the
+Scripts page (see
+[Reviewing saved artifacts](confirmations-and-safety.md#reviewing-saved-artifacts)).
 
-**Save script** checks the parameter schema and validates the code before saving. Validation errors
-leave your edits in the form. Saving stamps the complete definition as your own edit; changes apply
-to every automation that references the script. Saving does not run the script.
+## Sandbox and Language Rules
 
-To approve an existing script without changing its content, choose **Review and confirm** on the
-Scripts page. See
-[Reviewing saved artifacts](confirmations-and-safety.md#reviewing-saved-artifacts).
+Scripts run in the Monty Python sandbox:
 
-## Python Scripting Overview
+- **Allowed imports**: `re`, `math`, `json`, `datetime`, `collections`, `itertools`, `functools`,
+  `base64`, `random`, `dataclasses`, `typing` (any other import raises `ModuleNotFoundError`).
+- **No filesystem, network, or persistent state**: Use tools, notes, attachments, and
+  `keychute_http_request()` instead.
+- **Limits**: 256 MB memory, recursion depth 100, 10-minute timeout.
+- **Local time**: `datetime.now()` returns the household's local time.
+- **Monty syntax restrictions**:
+  - No generator functions (`yield`); generator expressions like `sum(x for x in items)` work.
+  - No `match`/`case` statements (use `if`/`elif`).
+  - No `del` statement (reassign or use `.pop()`).
+  - Exceptions accept 0 or 1 string argument (`raise ValueError("msg")`, not
+    `raise ValueError("msg", data)`).
 
-Scripts run real Python code in a sandboxed environment. Most everyday Python works, including:
+## Script Output and Return Value
 
-- **Exception handling**: `try`/`except`/`finally` blocks work normally
-- **All loop types**: `for` loops, `while` loops, comprehensions and generator expressions
-- **Functions, classes and decorators**: including `@dataclass`, lambdas and closures
-- **Context managers**: `with` statements work with classes that define `__enter__`/`__exit__`
-- **String formatting**: f-strings, `str.format()` and `%` formatting
-- **Builtins**: `map`, `filter`, `sorted`, `sum`, dict unpacking (`{**d1, **d2}`) and so on
-- **Standard modules**: `re`, `math`, `json`, `datetime`, `collections`, `itertools`, `functools`,
-  `base64`, `random`, `dataclasses` and `typing` can be imported
+A script returns its **last expression** (`Script result: ...`). Anything passed to `print()` is
+captured (up to 16 KiB in the tool result, truncated with `... [output truncated] ...`; full output
+is logged on the server) and returned above the result under `--- Script Output ---`. If the script
+raises an error, output printed before the failure is still returned above the error message.
 
-### Sandbox Constraints
+## Tools API and Globals
 
-While the scripting engine runs real Python, it operates in a restricted sandbox:
+Tools permitted by the active profile can be called directly as functions or via reflection helpers:
 
-1. **Limited imports**: Only the modules the sandbox implements can be imported. Anything else (for
-   example `statistics` or `requests`) fails with `ModuleNotFoundError`.
-2. **No file/network access**: Scripts are sandboxed with no filesystem or network access; use the
-   tool and API functions below instead
-3. **Resource limits**: Scripts have memory (256MB) and recursion depth (100) limits
-4. **Timeout**: Scripts timeout after 10 minutes
-5. **Local time**: `datetime.now()` returns the household's local time
+```python
+# Direct calls (recommended)
+add_or_update_note(title="Meeting Notes", content="...")
+events = get_calendar_events(days_ahead=7)
 
-### Sandbox Limitations
+# Dynamic inspection and execution
+tools = tools_list()  # [{"name": ..., "description": ...}, ...]
+tool_info = tools_get("send_email")  # {"name": ..., "parameters": {...}}
+tools_execute("add_or_update_note", title="Shopping List", content="Milk, Eggs")
+tools_execute_json("send_email", '{"to": "user@example.com", "subject": "Test"}')
+```
 
-A few Python features are **not available**:
+Tools return structured Python data (`dict`, `list`, etc.) directly. Check optional globals injected
+via `globals` or event triggers with `"var_name" in globals()`.
 
-- **No generator functions**: No `yield` (generator expressions like `sum(x for x in items)` work)
-- **No match/case statements**: Use `if`/`elif` instead
-- **No del statement**: Reassign or `pop()` instead
-- **Exception arguments**: Exceptions accept only 0 or 1 string arguments (`raise ValueError("msg")`
-  works, `raise ValueError("msg", data)` does not)
+## Automatic review of a script
 
-## Available APIs
+When a script needs approval, one approval can cover the whole script, including ordinary
+intermediate reads and saves. A script that can send data outside the household, run code in a
+sandbox, or save something that runs or loads later is reviewed before it starts — even before
+reading external content — because it may read such content while running. Approval binds the exact
+source, inputs, and (recursively) any saved child scripts called by literal name. If a saved script
+changes while approval is pending, the approved run uses the earlier source; if a child script
+changes or disappears before running, prepare and approve the script again.
+
+A review can also approve a script while watching specific step types per call (for example,
+checking each forwarded email with its actual recipient and body). Declined watched steps are
+skipped while the rest of the script continues; steps too large to check automatically ask you to
+confirm (or are declined when nobody can be asked).
+
+Scheduled or event-triggered scripts created from your own request, or approved when saved, run
+without re-review. Unapproved scripts saved from external content are reviewed once when they fire;
+if not approved, they do not run because nobody is present to confirm. Approval never grants extra
+tool permissions. It covers what the script does with what it reads (including `llm()` answers and
+commands built for a code sandbox); saving/running code outside the reviewed set, choosing a child
+script dynamically, creating future automations, delegating to another assistant, and judgment-based
+tools each follow their own approval rules.
+
+## Built-in Script APIs
 
 ### Brokered HTTP with Keychute
 
-When the operator has configured [Keychute](https://github.com/werdnum/keychute), scripts can make
-authenticated HTTPS calls without receiving or handling the credential. Use
-`keychute_http_request()` and identify the stored secret by name:
+When [Keychute](https://github.com/werdnum/keychute) is configured, `keychute_http_request()` makes
+authenticated HTTPS calls without exposing the credential to Family Assistant:
 
 ```python
 response = keychute_http_request(
@@ -71,1254 +92,104 @@ response = keychute_http_request(
     method="GET",
     reason="Fetch the forecast requested by the user",
 )
-
 if response["status_code"] == 200:
     forecast = json_decode(response["body"])
-    forecast["summary"]
-else:
-    print("Weather API returned", response["status_code"])
 ```
 
-The response is a dictionary containing `status_code` (an integer), `headers` (a dictionary whose
-values are lists), and `body` (bytes). `json_decode()` accepts the byte body directly. Optional
-arguments include `headers`, `body`, `ttl_seconds`, `max_uses`, `approval_timeout_seconds`, and
-`request_timeout_seconds`. `body` must be a string or bytes; to send JSON, encode it first with
-`body=json_encode(data)` and set a `Content-Type: application/json` header.
-
-If you do not know what the secret is called in Keychute, pick a plausible, descriptive name from
-the service (`weather-api-token`, `github-token`, `octoprint`) and make the call rather than asking
-first. When nothing is stored under that name, the approval page lets the user pick the stored
-secret the call actually needs, or enter a new one, so a wrong guess is redirected as part of
-approving.
-
-Keychute decides whether the call is allowed or needs operator approval. The approval includes the
-exact script source, destination, method, and requested access constraints. Redirects are not
-followed, and the credential is attached inside Keychute rather than handed to Family Assistant. The
-upstream response is untrusted and is returned verbatim, so only approved, trusted origins should
-receive a credential; a hostile upstream could reflect request data in its response.
-
-`test_script_with_simulated_tools` does not expose brokered HTTP. Test the surrounding script logic
-with ordinary simulated tools, then use `execute_script` when testing an actual Keychute request and
-approval flow.
-
-### Script Output (`print`)
-
-A script returns its **last expression** to the assistant. In addition, anything written with
-`print()` is captured during execution and returned under a `--- Script Output ---` section, ahead
-of the `Script result:` line:
-
-```python
-notes = search_notes(query="TODO")
-print("Found", len(notes), "notes")
-for note in notes:
-    print("-", note["title"])
-
-len(notes)  # last expression -> "Script result: 3"
-```
-
-The assistant receives:
-
-```
---- Script Output ---
-Found 3 notes
-- Buy milk
-- Call dentist
-- Renew passport
-
-Script result: 3
-```
-
-Notes:
-
-- `print()` is the easiest way to surface several intermediate values without packing them into the
-  return value.
-- If the script raises an error partway through, any output printed before the failure is still
-  returned, above the error message — useful for debugging.
-- Captured output is capped (16 KiB by default); a very chatty script has its returned output
-  truncated with a `... [output truncated] ...` marker. Every line is still written to the server
-  logs in full.
-- Output is also written to the server logs for operators.
-
-### Tools API
-
-**Note**: The available tools depend on your profile's permissions. To see all available tools and
-their parameters, ask the assistant to list them or check the tool reference documentation.
-
-All Family Assistant tools are available in scripts through two interfaces:
-
-#### 1. Direct Callable Interface (Recommended)
-
-```python
-
-# Call tools directly as functions
-result = add_or_update_note(title="Meeting Notes", content="...")
-emails = search_emails(query="project update")
-events = get_calendar_events(days_ahead=7)
-
-```
-
-#### 2. Functional Interface
-
-```python
-
-# List all available tools
-tools = tools_list()
-for tool in tools:
-    print(tool["name"] + ": " + tool["description"])
-
-# Get detailed info about a tool
-tool_info = tools_get("send_email")
-print(tool_info["parameters"])
-
-# Execute a tool by name
-result = tools_execute("add_or_update_note",
-    title="Shopping List",
-    content="Milk, Eggs, Bread")
-
-# Execute with JSON arguments
-args_json = '{"to": "user@example.com", "subject": "Test"}'
-result = tools_execute_json("send_email", args_json)
-
-```
-
-### Automatic review of a script
-
-When a script needs approval, one approval can cover the script as a whole, including ordinary
-intermediate steps such as reading information and saving the requested result. A script that can
-send something outside the household, run code in a sandbox, or save something that runs or loads
-later is reviewed before it starts, even if nothing it has read so far is from outside the
-household, because it may read such content as it runs. The approval is for the exact source and
-inputs that were shown. If a saved script changes while an approval is pending, the approved run
-still uses the earlier source. Calls to saved child scripts with literal names are included
-recursively in that review. If a child changes or disappears before it runs, prepare and approve the
-script again.
-
-A review can also approve a script on condition that one kind of step in it is checked each time it
-happens, for example every email it forwards when the recipient comes from the data it reads. Each
-of those steps is then checked with its actual contents while the rest of the script runs under the
-approval. If one is declined, that step does not happen and the script carries on. A step too large
-to check automatically, such as uploading a big file, asks you to confirm it, or is declined when
-nobody can be asked.
-
-A scheduled or event-triggered script that was set up from your own request, or that you or a review
-approved when it was saved, runs without being reviewed again. One that was saved from content
-outside the household and never approved is reviewed once when it fires, before it starts, if it can
-do any of the steps that need review. Nobody is there to confirm a step when a script fires on its
-own, so if that review does not approve it, the script does not run.
-
-Approval does not grant extra permissions: the tools a script can use and their normal safeguards
-still apply. The approval covers what the script does with what it reads, including the answers it
-gets from `llm()` and commands it builds for a code sandbox while it runs. Saving or running code
-outside that reviewed set, choosing a child dynamically, creating future automation, handing work to
-another assistant, and tools that act on their own judgment each follow their own approval rules.
+- **Response**: `{"status_code": int, "headers": dict[str, list[str]], "body": bytes}`
+  (`json_decode()` accepts `bytes` directly).
+- **Optional arguments**: `headers`, `body` (`str` or `bytes`; for JSON pass
+  `body=json_encode(data)` with `Content-Type: application/json`), `ttl_seconds`, `max_uses`,
+  `approval_timeout_seconds`, `request_timeout_seconds`.
+- **Secret names**: If the secret name is unknown, pick a plausible descriptive name
+  (`weather-api-token`, `github-token`, `octoprint`) and make the call rather than asking first; the
+  approval UI lets the user redirect to an existing secret or enter a new one.
+- **Security and testing**: Keychute attaches the credential server-side, does not follow redirects,
+  and binds approval to the script source, destination, method, and constraints. Upstream responses
+  are untrusted. `test_script_with_simulated_tools` does not expose brokered HTTP; use it for
+  surrounding logic, then `execute_script` for the real Keychute call.
 
 ### Attachment API
 
-Scripts can create and manipulate attachments (files, images, charts, etc.) that are automatically
-propagated back to the assistant and shown to the user.
+Attachments are represented as metadata dicts with keys `id`, `filename`, `mime_type`, `size`, and
+`description`. Tools taking attachment IDs accept either the ID string or the metadata dict.
 
-#### Understanding Attachment Objects
+- **Reading**:
+  - `attachment_read(attachment_id)` -> UTF-8 `str`
+  - `attachment_read_bytes(attachment_id)` -> `bytes`
+  - `attachment_get(attachment_id)` -> metadata `dict`, or `None` if not found
+  - `attachment_read` and `attachment_read_bytes` raise if missing/inaccessible. Copy binary
+    attachments to a workspace without entering conversation context via:
+    `write_file(cwd=workspace, path="model.glb", content=base64_encode(attachment_read_bytes(attachment_id)))`
+- **Creating**:
+  - `attachment_create(content, filename, description=None, mime_type="application/octet-stream")`
+    -> metadata `dict` (`content` may be `str` or `bytes`).
+- **Tool results and propagation**:
+  - Single-attachment tools return a metadata `dict`; text + attachment tools return
+    `{"text": "...", "attachments": [{...}, ...]}`.
+  - Returning an attachment dict (or a list/nested list like `[chart1, chart2]`) as the script's
+    last expression automatically attaches those files to the reply. See
+    [data_visualization.md](data_visualization.md) for `jq_query` and chart pipelines.
 
-When you create or receive attachments in scripts, they are represented as **dictionaries** with
-metadata fields:
+### JSON and Base64 Functions
 
-```python
-# Example attachment dict structure
-{
-    "id": "550e8400-e29b-41d4-a716-446655440000",  # UUID for referencing
-    "filename": "chart.png",                        # Original filename
-    "mime_type": "image/png",                       # Content type
-    "size": 1024,                                   # Size in bytes
-    "description": "Temperature chart"              # Human-readable description
-}
-```
+- `json_encode(obj)` -> JSON `str`
+- `json_decode(val)` -> parsed value (accepts `str` or `bytes`; passes already-decoded dicts, lists,
+  numbers, and booleans through unchanged)
+- `base64_encode(str_or_bytes)` -> base64 `str`
+- `base64_decode(encoded)` -> UTF-8 `str`
+- `base64_decode_bytes(encoded)` -> raw `bytes`
 
-You can access fields directly: `attachment["id"]`, `attachment["filename"]`, etc.
+### LLM and Classifier Functions
 
-#### Reading Attachments
+- **`llm(prompt, system=None, model=None)`** -> `str` response (default model: `gemini-3.8-flash`).
+- **`llm_json(prompt, schema=None, system=None, model=None)`** -> parsed JSON, optionally guided by
+  a JSON Schema `dict` (`schema={"type": "object", "properties": {...}}`).
+- **`classify(state, question, options)`** -> `{"label": str, "probabilities": dict[str, float]}`
+- **`classify_yes_no(state, question, yes=None, no=None)`** -> `float` probability (`0.0` to `1.0`)
+  that the answer is yes.
 
-Scripts can read the content of an attachment they have the ID of:
-
-```python
-text = attachment_read(attachment_id)        # content decoded as UTF-8 text
-raw = attachment_read_bytes(attachment_id)   # raw bytes, for images and other binary files
-info = attachment_get(attachment_id)         # metadata dict, or None if it doesn't exist
-```
-
-`attachment_read` and `attachment_read_bytes` stop the script with an error if the attachment
-doesn't exist or isn't accessible, so their results can be used directly. To copy an attachment into
-a code-execution workspace, pass its bytes straight to a tool that takes base64 content:
-
-```python
-write_file(cwd=workspace, path="model.glb", content=base64_encode(attachment_read_bytes(attachment_id)))
-```
-
-The file content never passes through the conversation, so this works for large files too.
-
-#### Creating Attachments
-
-Use `attachment_create()` to create new attachments from script-generated content:
+`classify` and `classify_yes_no` use the deterministic TypeSafe classifier (if unconfigured, they
+raise an error and `llm_json()` can be used instead). `state` is a text `str` or a `dict` of named
+text fields (`{"subject": ..., "body": ...}`) referenced in `question` (no images). `options` is a
+list of at least two labels, or a `dict` mapping each label to a description or `None`:
 
 ```python
-# Create a text file attachment
-data_file = attachment_create(
-    content="Temperature readings: 72, 75, 73, 71",
-    filename="temp_data.txt",
-    description="Temperature sensor data",
-    mime_type="text/plain"
-)
-
-# Last expression is returned, so this attachment is sent to the assistant
-data_file
-```
-
-```python
-# Create a CSV file attachment
-csv_content = "date,temperature,humidity\n2024-01-01,72,45\n2024-01-02,75,48"
-csv_file = attachment_create(
-    content=csv_content,
-    filename="sensor_data.csv",
-    description="Daily sensor readings",
-    mime_type="text/csv"
-)
-csv_file
-```
-
-**Parameters:**
-
-- `content` (bytes or str): File content (strings are UTF-8 encoded automatically)
-- `filename` (str): Filename for the attachment
-- `description` (str, optional): Human-readable description
-- `mime_type` (str, optional): MIME type (default: "application/octet-stream")
-
-**Returns:** Dictionary with attachment metadata (id, filename, mime_type, size, description)
-
-#### Working with Tool-Returned Attachments
-
-Many tools return attachments (charts, reports, images, etc.). These come in two forms:
-
-**Single attachment (no text):**
-
-```python
-# Tool that returns just an attachment
-chart = create_vega_chart(
-    spec='{"mark": "line", ...}',
-    data_attachments=[data_file]
-)
-
-# chart is a dict with: id, filename, mime_type, size, description
-print("Created chart: " + chart["filename"])
-chart  # Return it to make it visible to the assistant
-```
-
-**Attachment(s) with text:**
-
-```python
-# Tool that returns text and attachments
-result = process_documents(query="invoices")
-
-# result is a dict with: {"text": "...", "attachments": [{...}, {...}]}
-print(result["text"])  # "Found 2 invoices"
-
-# Access attachments
-for att in result["attachments"]:
-    print("- " + att["filename"] + " (" + att["mime_type"] + ")")
-```
-
-#### Returning Multiple Attachments
-
-Return a list to send multiple attachments to the assistant:
-
-```python
-# Create multiple charts
-chart1 = create_vega_chart(spec=temperature_spec, data_attachments=[temp_data])
-chart2 = create_vega_chart(spec=humidity_spec, data_attachments=[humidity_data])
-
-# Return both as a list
-[chart1, chart2]
-```
-
-```python
-# Mix manual and tool-created attachments
-data_file = attachment_create(
-    content="Raw data: 1,2,3",
-    filename="raw.txt",
-    mime_type="text/plain"
-)
-
-report = generate_report(title="Analysis Report")
-
-# Return both
-[data_file, report]
-```
-
-#### Functional Composition with Attachments
-
-One of the most powerful patterns is passing data from one tool to another:
-
-```python
-# Process data, then visualize - all in one expression
-# jq_query returns data directly, pass via data parameter
-chart = create_vega_chart(
-    spec='{"mark": "bar", "encoding": {...}}',
-    data=jq_query(raw_data_attachment, '.[] | select(.value > 10)')
-)
-chart
-```
-
-```python
-# Multi-step data pipeline
-# 1. Query and filter data
-filtered_data = jq_query(
-    source_attachment,
-    '.items[] | select(.category == "temperature")'
-)
-
-# 2. Transform the filtered data
-transformed = jq_query(
-    filtered_data,
-    'map({date: .timestamp, value: .reading})'
-)
-
-# 3. Create visualization - pass data directly
-chart = create_vega_chart(
-    spec='{"mark": "line", ...}',
-    data=transformed  # Use data parameter for computed results
-)
-
-chart  # Final chart is sent to assistant
-```
-
-#### Practical Examples
-
-##### Example 1: Generate CSV Report
-
-```python
-# Query notes and generate CSV report
-def create_task_report():
-    notes = search_notes(query="TODO")
-
-    if len(notes) == 0:
-        return "No tasks found"
-
-    # Build CSV content
-    csv = "title,created,status\n"
-    for note in notes:
-        csv += note["title"] + ","
-        csv += note.get("created_at", "unknown") + ","
-        csv += "pending\n"
-
-    # Create attachment
-    report = attachment_create(
-        content=csv,
-        filename="tasks.csv",
-        description="Task report with " + str(len(notes)) + " items",
-        mime_type="text/csv"
-    )
-
-    return report
-
-create_task_report()
-```
-
-##### Example 2: Data Visualization Pipeline
-
-```python
-# Fetch data, transform it, and create a chart
-def visualize_temperature_trend(days=7):
-    # Get calendar events (example data source)
-    events = get_calendar_events(days_ahead=days)
-
-    # Transform to JSON array for chart
-    data = []
-    for event in events:
-        if "temp" in event.get("summary", "").lower():
-            data.append({
-                "date": event["start"],
-                "temperature": 72  # Would extract from event
-            })
-
-    # Create data attachment
-    data_json = json_encode(data)
-    data_file = attachment_create(
-        content=data_json,
-        filename="temp_data.json",
-        description="Temperature data for past " + str(days) + " days",
-        mime_type="application/json"
-    )
-
-    # Create chart from data
-    chart_spec = json_encode({
-        "mark": "line",
-        "encoding": {
-            "x": {"field": "date", "type": "temporal"},
-            "y": {"field": "temperature", "type": "quantitative"}
-        }
-    })
-
-    chart = create_vega_chart(
-        spec=chart_spec,
-        data_attachments=[data_file]
-    )
-
-    # Return chart (data_file not returned, chart includes it)
-    return chart
-
-visualize_temperature_trend(7)
-```
-
-##### Example 3: Multiple Related Files
-
-```python
-# Generate multiple related reports
-def generate_weekly_reports():
-    # Create summary
-    summary = attachment_create(
-        content="Weekly Summary\nTotal events: 42\nCompleted: 38",
-        filename="summary.txt",
-        mime_type="text/plain"
-    )
-
-    # Create detailed CSV
-    csv_content = "day,events,completed\nMon,10,9\nTue,8,8\n..."
-    details = attachment_create(
-        content=csv_content,
-        filename="details.csv",
-        mime_type="text/csv"
-    )
-
-    # Return both files
-    return [summary, details]
-
-generate_weekly_reports()
-```
-
-##### Example 4: Data Processing and Visualization
-
-```python
-# Process data and create visualization using direct data flow
-def analyze_and_chart(source_attachment, query):
-    # Get data from jq_query - returns raw data, not an attachment
-    filtered_data = jq_query(source_attachment, query)
-
-    # Create chart spec
-    chart_spec = json_encode({
-        "mark": "bar",
-        "data": {"name": "data"},  # Use "data" for direct data parameter
-        "encoding": {
-            "x": {"field": "category", "type": "nominal"},
-            "y": {"field": "value", "type": "quantitative"}
-        }
-    })
-
-    # Pass filtered data directly - no intermediate attachment needed
-    chart = create_vega_chart(
-        spec=chart_spec,
-        data=filtered_data  # Use data parameter for computed results
-    )
-
-    return chart
-
-analyze_and_chart(source_data, '.[] | select(.value > 100)')
-```
-
-#### Best Practices
-
-1. **Always provide descriptive filenames**: Use meaningful names like "temperature_report.csv"
-   instead of "data.csv"
-
-2. **Set appropriate MIME types**: This helps tools and the assistant handle attachments correctly
-
-3. **Use functional composition**: When possible, chain tools together rather than creating
-   intermediate attachments
-
-4. **Return attachments as the last expression**: The last expression in your script is what gets
-   sent to the assistant
-
-5. **Access fields safely**: Use `.get()` when working with tool results:
-   `result.get("attachments", [])`
-
-#### Important Notes
-
-- **Automatic propagation**: Any attachment dict returned from your script (as the final expression)
-  is automatically sent to the assistant with the correct metadata
-- **Nested lists**: You can return `[[att1, att2], att3]` - all attachments are extracted
-  automatically
-- **Tool compatibility**: Tools that accept attachment IDs can receive attachment dicts directly -
-  they'll extract the ID automatically
-- **Storage**: Attachments are stored and tracked - the assistant can reference them in future
-  messages
-- **Size limits**: Check your configuration for attachment size limits (typically 100MB max)
-
-### JSON Functions
-
-```python
-# Encode Python objects to JSON
-data = {"tasks": ["review PR", "update docs"]}
-json_str = json_encode(data)
-
-# Decode JSON strings
-parsed = json_decode('{"name": "test", "value": 42}')
-```
-
-### Base64 Functions
-
-```python
-# Encode a string or bytes to base64
-encoded = base64_encode("Hello, World!")  # "SGVsbG8sIFdvcmxkIQ=="
-encoded = base64_encode(b"\xff\xfe")      # also accepts bytes
-
-# Decode base64 to a string (UTF-8)
-text = base64_decode(encoded)
-
-# Decode base64 to raw bytes (for non-UTF-8 binary data)
-raw = base64_decode_bytes(encoded)
-```
-
-### LLM API Functions
-
-Scripts can make one-shot LLM calls for summarisation, data extraction, classification, and similar
-tasks. The default model is `gemini-3.8-flash`.
-
-#### `llm(prompt, system=None, model=None)`
-
-Make a one-shot LLM call and return the text response.
-
-```python
-# Simple summarisation
-summary = llm("Summarise this text: " + long_text)
-
-# With system prompt
-sentiment = llm(
-    "What is the sentiment of this review?",
-    system="Respond with exactly one word: positive, negative, or neutral.",
-)
-
-# With custom model
-result = llm("Translate to French: Hello world", model="gpt-4o")
-```
-
-#### `llm_json(prompt, schema=None, system=None, model=None)`
-
-Make a one-shot LLM call and return parsed JSON.
-
-```python
-# Extract structured data
-data = llm_json("Extract the name and age from: John is 30 years old")
-# Returns: {"name": "John", "age": 30}
-
-# With JSON schema for guided extraction
-schema = {
-    "type": "object",
-    "properties": {
-        "title": {"type": "string"},
-        "tags": {"type": "array", "items": {"type": "string"}},
-    },
-}
-metadata = llm_json("Extract metadata from: " + article_text, schema=schema)
-```
-
-### Classifier Functions
-
-For sorting text into categories or asking a yes/no question about it, `classify()` and
-`classify_yes_no()` are faster and cheaper than `llm()`, give the same answer every time, and can
-only answer with the options you offer. They use the TypeSafe classifier, which has to be set up for
-your deployment; where it isn't, they raise an error, and `llm_json()` does the same job.
-
-The first argument is what to classify: a string, or a dict of named parts (for example
-`{"subject": ..., "body": ...}`) that the question can refer to by name. Text only — no images.
-
-#### `classify(state, question, options)`
-
-Choose the best of `options` and return `{"label": ..., "probabilities": {...}}`, with a probability
-for every option. `options` is a list of labels, or a dict of label to a description of when it
-applies (use `None` for a label that needs no description). At least two options.
-
-```python
-result = classify(
-    email_body,
-    "What is this email about?",
-    {
-        "bills": "Invoices, payments or account statements",
-        "school": "Messages from the children's school",
-        "other": None,
-    },
-)
-if result["label"] == "bills" and result["probabilities"]["bills"] > 0.8:
+res = classify(email_body, "What is this email about?", {"bills": "Invoices", "other": None})
+if res["label"] == "bills" and res["probabilities"]["bills"] > 0.8:
     wake_llm({"message": "A bill arrived", "email": email_body})
 ```
 
-#### `classify_yes_no(state, question, yes=None, no=None)`
-
-Return the probability, from 0 to 1, that the answer is yes. `yes` and `no` optionally describe what
-each answer means.
-
-```python
-urgency = classify_yes_no(
-    {"sender": sender, "message": text},
-    "Does `message` need a reply today?",
-    yes="It asks for something time-sensitive",
-)
-if urgency > 0.7:
-    wake_llm({"message": "Urgent message from " + sender, "text": text})
-```
-
-Pick thresholds from the probabilities rather than treating any answer as certain. Like `llm()`
-output, a classifier's answer is data derived from what it read.
-
-### Time API Functions
-
-A comprehensive time API is available for working with dates, times, and timezones:
-
-#### Creating Time Objects
-
-```python
-# Get current time
-now = time_now()  # Local timezone
-now_utc = time_now_utc()  # UTC timezone
-
-# Create specific time
-meeting_time = time_create(
-    year=2024, month=3, day=15,
-    hour=14, minute=30, second=0,
-    timezone_name="America/New_York"
-)
-
-# Parse from string
-date = time_parse("2024-03-15 14:30", "%Y-%m-%d %H:%M", "UTC")
-
-# From Unix timestamp
-timestamp_time = time_from_timestamp(1710515400, 0)
-```
-
-#### Formatting and Timezones
-
-```python
-# Format time as string
-formatted = time_format(now, "%Y-%m-%d %H:%M:%S")
-date_only = time_format(now, "%Y-%m-%d")
-
-# Convert timezone
-la_time = time_in_location(now, "America/Los_Angeles")
-
-# Check timezone validity
-if timezone_is_valid("Europe/London"):
-    london_time = time_in_location(now, "Europe/London")
-```
-
-#### Time Components
-
-```python
-# Extract components
-year = time_year(now)
-month = time_month(now)
-day = time_day(now)
-hour = time_hour(now)
-minute = time_minute(now)
-second = time_second(now)
-weekday = time_weekday(now)  # 0=Monday, 6=Sunday
-
-# Check conditions
-if is_weekend(now):
-    print("It's the weekend!")
-
-if is_between(9, 17, now):  # Between 9 AM and 5 PM
-    print("Business hours")
-```
-
-#### Time Arithmetic
-
-```python
-# Add seconds
-tomorrow = time_add(now, DAY)  # DAY = 86400 seconds
-next_hour = time_add(now, HOUR)  # HOUR = 3600 seconds
-
-# Add duration with units
-future = time_add_duration(now, 3, "days")
-meeting_end = time_add_duration(meeting_time, 90, "minutes")
-
-# Calculate difference
-diff_seconds = time_diff(future, now)
-```
-
-#### Time Comparisons
-
-```python
-# Compare times
-if time_before(now, meeting_time):
-    print("Meeting hasn't started yet")
-
-if time_after(now, deadline):
-    print("Deadline has passed")
-
-if time_equal(t1, t2):
-    print("Times are identical")
-```
-
-#### Duration Handling
-
-```python
-# Parse duration strings
-duration = duration_parse("2h30m")  # Returns seconds: 9000
-
-# Convert to human-readable
-human = duration_human(3665)  # Returns: "1h1m5s"
-
-# Duration constants available
-# SECOND = 1, MINUTE = 60, HOUR = 3600, DAY = 86400, WEEK = 604800
-```
-
-#### Practical Examples
-
-```python
-# Schedule something for next business day
-def next_business_day():
-    next_day = time_add(time_now(), DAY)
-    while is_weekend(next_day):
-        next_day = time_add(next_day, DAY)
-    return next_day
-
-# Check if event is soon
-def is_event_soon(event_time, threshold_minutes=30):
-    now = time_now()
-    if time_before(now, event_time):
-        diff = time_diff(event_time, now)
-        return diff <= threshold_minutes * MINUTE
-    return False
-
-# Format relative time
-def relative_time_str(target_time):
-    now = time_now()
-    diff = abs(time_diff(target_time, now))
-    
-    if diff < MINUTE:
-        return "just now"
-    elif diff < HOUR:
-        return str(int(diff / MINUTE)) + " minutes ago"
-    elif diff < DAY:
-        return str(int(diff / HOUR)) + " hours ago"
-    else:
-        return time_format(target_time, "%Y-%m-%d")
-```
-
-### Global Variables
-
-Scripts can receive global variables when executed:
-
-```python
-
-# These might be available depending on context
-# user_email, user_name, current_date, etc.
-if "user_email" in globals():
-    send_email(to=user_email, subject="Reminder", body="...")
-
-```
-
-## Security Model
-
-- **Tool Access**: Scripts only have access to tools allowed by the current profile
-- **Sandboxing**: No file system, network, or system access
-- **Timeout**: Scripts timeout after 10 minutes (to allow for external API calls)
-- **No Imports**: Cannot import external code
-
-## Common Patterns
-
-### 1. Search and Summarize Notes
-
-```python
-def summarize_project_notes(project_name):
-    notes = search_notes(query=project_name)
-
-    if len(notes) == 0:
-        return "No notes found for " + project_name
-
-    summary = "Found " + str(len(notes)) + " notes for " + project_name + ":\n\n"
-    for note in notes:
-        summary += "- " + note["title"] + "\n"
-
-    # Create summary note
-    add_or_update_note(
-        title=project_name + " Summary",
-        content=summary
-    )
-    return summary
-
-# Execute
-summarize_project_notes("Project Alpha")
-
-```
-
-### 2. Process TODOs
-
-```python
-def collect_todos():
-    # Search for TODO items
-    notes = search_notes(query="TODO")
-
-    todos = []
-    for note in notes:
-        if "TODO" in note.get("content", ""):
-            todos.append(note["title"])
-
-    if len(todos) > 0:
-        # Create consolidated TODO list
-        content = "# Active TODOs\n\n"
-        for todo in todos:
-            content += "- [ ] " + todo + "\n"
-
-        add_or_update_note(
-            title="TODO List - " + str(len(todos)) + " items",
-            content=content
-        )
-
-    return {"count": len(todos), "items": todos}
-
-collect_todos()
-
-```
-
-### 3. Calendar-Based Automation
-
-```python
-def create_meeting_prep_notes():
-    # Get upcoming events
-    events = get_calendar_events(days_ahead=1)
-
-    for event in events:
-        if "meeting" in event.get("summary", "").lower():
-            # Create prep note for each meeting
-            add_or_update_note(
-                title="Prep: " + event["summary"],
-                content="Meeting at " + event["start"] + "\n\nAgenda:\n- \n\nNotes:\n"
-            )
-
-    return "Created prep notes for " + str(len(events)) + " meetings"
-
-create_meeting_prep_notes()
-
-```
-
-### 4. Email Digest
-
-```python
-def create_email_digest(search_term):
-    # Search recent emails
-    emails = search_emails(query=search_term)
-
-    if len(emails) == 0:
-        return "No emails found"
-
-    digest = "# Email Digest: " + search_term + "\n\n"
-    for email in emails[:10]:  # Limit to 10 most recent
-        digest += "**From**: " + email.get("sender", "Unknown") + "\n"
-        digest += "**Subject**: " + email.get("subject", "No subject") + "\n"
-        digest += "---\n\n"
-
-    add_or_update_note(
-        title="Email Digest - " + search_term,
-        content=digest
-    )
-
-    return "Created digest with " + str(len(emails)) + " emails"
-
-create_email_digest("project update")
-
-```
-
-### 5. Conditional Actions
-
-```python
-def smart_reminder(title, check_calendar=True):
-    # Check if reminder already exists
-    notes = search_notes(query=title)
-
-    if len(notes) > 0:
-        print("Reminder already exists")
-        return
-
-    # Check calendar if requested
-    content = "Reminder: " + title
-    if check_calendar:
-        events = get_calendar_events(days_ahead=7)
-        related = [e for e in events if title.lower() in e.get("summary", "").lower()]
-        if len(related) > 0:
-            content += "\n\nRelated events:\n"
-            for event in related:
-                content += "- " + event["summary"] + " at " + event["start"] + "\n"
-
-    add_or_update_note(title="Reminder: " + title, content=content)
-    return "Reminder created"
-
-smart_reminder("Team standup", check_calendar=True)
-
-```
-
-## Event-Triggered Scripts
-
-Scripts can now be automatically triggered by events from Home Assistant, document indexing, and
-other sources. This enables powerful automation without the delay and cost of LLM processing.
-
-### Creating Event-Triggered Scripts
-
-Ask the assistant to create a script-based event automation:
-
-```
-"Create a script that logs all motion events when motion is detected in the living room"
-"Run a script to send me a Telegram message when the temperature exceeds 25°C"
-"Set up a script to track energy usage whenever the meter reading changes"
-```
-
-### Advanced Event Matching with Condition Scripts
-
-For complex event matching that can't be expressed as simple equality checks, use condition scripts:
-
-```
-"Create an automation that detects when someone arrives home (state changes from not 'home' to 'home')"
-"Alert me when temperature rises above 25°C but only if it was below 20°C before"
-"Watch for any sensor that starts with 'sensor.motion_' and turns on"
-```
-
-Condition scripts are Python expressions that:
-
-- Receive the full event data in the `event` variable
-- Must return a boolean value (True to trigger, False to ignore)
-- Can access nested fields with `.get()` to handle missing data safely
-- Support complex logic with `and`, `or`, and `not` operators
-
-Common patterns:
-
-- Zone entry:
-  `event.get('old_state', {}).get('state') != 'home' and event.get('new_state', {}).get('state') == 'home'`
-- Temperature threshold: `int(event.get('new_state', {}).get('state', '0').split('.')[0]) > 25`
-- Entity pattern matching: `event.get('entity_id', '').startswith('sensor.motion_')`
-- Attribute changes:
-  `event.get('old_state', {}).get('attributes', {}).get('battery') != event.get('new_state', {}).get('attributes', {}).get('battery')`
-
-Note: For decimal values like "25.5", you can use `float()` for precise comparisons:
-
-- `float(event.get('new_state', {}).get('state', '0'))` converts "25.5" to 25.5
-- You can also truncate to integer with `int()` if precision isn't needed
-
-### Event Script Context
-
-When triggered by an event, scripts receive special global variables:
-
-```python
-# Available global variables in event scripts:
-# event - Dictionary containing all event data
-# conversation_id - The conversation this automation belongs to
-# automation_id - ID of the event automation that triggered this script
-
-# Example: Log temperature changes
-temp = int(event.get("new_state", {}).get("state", "0").split('.')[0])  # Truncate decimals
-old_temp = int(event.get("old_state", {}).get("state", "0").split('.')[0]) if event.get("old_state") else 0
-
-add_or_update_note(
-    title="Temperature Log - " + time_format(time_now(), "%Y-%m-%d"),
-    content=time_format(time_now(), "%H:%M") + " - " + str(temp) + "°C (was " + str(old_temp) + "°C)\n",
-    append=True  # If available
-)
-```
-
-### Example Event Scripts
-
-#### Motion Logging
-
-```python
-# Log all motion events with timestamps
-def log_motion():
-    entity = event.get("entity_id", "unknown")
-    timestamp = event.get("timestamp", time_format(time_now(), "%Y-%m-%d %H:%M:%S"))
-    
-    add_or_update_note(
-        title="Motion Log - " + time_format(time_now(), "%Y-%m-%d"),
-        content="Motion detected: " + entity + " at " + timestamp + "\n",
-        append=True
-    )
-    return "Motion logged"
-
-log_motion()
-```
-
-#### Temperature Alerts
-
-```python
-# Alert on high temperature during business hours
-def check_temperature():
-    temp = int(event.get("new_state", {}).get("state", "0").split('.')[0])  # Truncate decimals
-    hour = time_hour(time_now())
-    
-    if temp > 25 and hour >= 9 and hour < 18:
-        send_telegram_message(
-            message="🌡️ High temperature alert: " + str(temp) + "°C in " + event.get("entity_id", "unknown")
-        )
-        return "Alert sent"
-    return "Temperature OK"
-
-check_temperature()
-```
-
-#### Document Processing
-
-```python
-# Process newly indexed documents
-def process_document():
-    if event.get("source_id") != "indexing":
-        return "Not an indexing event"
-    
-    metadata = event.get("metadata", {})
-    doc_type = metadata.get("type", "unknown")
-    
-    if doc_type == "email" and "invoice" in metadata.get("subject", "").lower():
-        # Extract and log invoice information
-        add_or_update_note(
-            title="Invoice Log",
-            content="New invoice from: " + metadata.get("sender", "Unknown") + "\n",
-            append=True
-        )
-        send_telegram_message(message="📧 New invoice received")
-    
-    return "Document processed"
-
-process_document()
-```
-
-#### Energy Usage Tracking
-
-```python
-# Track hourly energy usage
-def track_energy():
-    reading = int(event.get("new_state", {}).get("state", "0").split('.')[0])  # Truncate decimals
-    hour_str = time_format(time_now(), "%Y-%m-%d %H:00")
-    
-    # Log the reading
-    add_or_update_note(
-        title="Energy Log - " + time_format(time_now(), "%Y-%m-%d"),
-        content=hour_str + ": " + str(reading) + " kWh\n",
-        append=True
-    )
-    
-    # Alert on high usage
-    if reading > 5.0:
-        send_telegram_message(
-            message="⚡ High energy usage: " + str(reading) + " kWh"
-        )
-    
-    return "Energy tracked"
-
-track_energy()
-```
-
-### Security and Limitations
-
-Event scripts run with the `event_handler` profile which has restricted tools:
-
-- Can read/write notes
-- Can send Telegram messages (not emails, to prevent spam)
-- Can read documents and calendar events
-- Cannot delete data or control devices (to prevent automation loops)
-- Cannot delegate to other services
-
-Scripts have a 10-minute timeout to support long-running operations but should aim to complete
-quickly.
-
-### Testing Event Scripts
-
-Before creating an event listener, test your script:
-
-```
-"Test this event script with a sample temperature event: [paste your script]"
-"Validate this script syntax: [paste your script]"
-```
-
-### Managing Script Automations
-
-```
-"Show me all my script-based event automations"
-"Disable the temperature monitoring script"
-"Convert my motion automation from wake_llm to a script"
-"Create a script that uses wake_llm when the garage door opens"
-```
-
-## Important Notes
-
-### wake_llm Function
-
-The `wake_llm` function allows scripts to wake the LLM with custom context when certain conditions
-are met. This is particularly useful in event-triggered scripts where you want to provide the LLM
-with specific information about what happened.
-
-```python
-# Wake the LLM with custom context
-wake_llm(context, include_event=True)
-```
-
-**Parameters:**
-
-- `context` (str or dict): Either a simple string message or a dictionary of key-value pairs to
-  provide to the LLM as context
-  - **String (recommended for simple messages)**: When you just need to send a message, pass a
-    string directly
-  - **Dictionary**: For structured data with multiple fields
-- `include_event` (bool, optional): Whether to include the original event data in the wake context
-  (default: True)
-- `new_conversation` (bool, optional): Start afresh for the woken assistant instead of waking where
-  the script's automation replies — your Home, or the conversation it was created in (see
-  [automations.md](automations.md#where-the-assistant-replies)) (default: False). It starts a new
-  thread of your Home, or a new web conversation where threads aren't in use. Only works for scripts
-  that belong to a web conversation. The new thread or conversation has no history, so put
-  everything the assistant needs in `context`; its first line also names the thread. Within one run,
-  the calls that set it share one new thread or conversation and the rest wake the usual one.
-
-**Usage in Event Scripts:**
-
-```python
-# Example: Simple string message (recommended for straightforward alerts)
-temp = int(event.get("new_state", {}).get("state", "0").split('.')[0])  # Truncate decimals
-if temp > 30:
-    wake_llm("High temperature alert: " + str(temp) + "°C detected in " + event.get("entity_id", "unknown"))
-
-# Example: Using string for motion detection
-if event.get("new_state", {}).get("state") == "on":
-    wake_llm("Motion detected in " + event.get("entity_id", "unknown"))
-```
-
-```python
-# Example: Dictionary for complex context with multiple fields
-temp = int(event.get("new_state", {}).get("state", "0").split('.')[0])  # Truncate decimals
-if temp > 30:
-    wake_llm({
-        "alert": "High temperature detected",
-        "temperature": temp,
-        "location": event.get("entity_id", "unknown"),
-        "suggestion": "Consider turning on the AC"
-    })
-```
-
-```python
-# Example: Process important emails with structured data
-if event.get("source_id") == "indexing":
-    metadata = event.get("metadata", {})
-    if metadata.get("type") == "email" and "urgent" in metadata.get("subject", "").lower():
-        wake_llm({
-            "urgent_email": True,
-            "from": metadata.get("sender"),
-            "subject": metadata.get("subject"),
-            "action_needed": "Please review this urgent email"
-        }, include_event=False)  # Don't include full event details
-```
-
-**Important Notes:**
-
-- The wake_llm function can be called multiple times in a script
-- Each call adds to a queue of wake contexts that will be processed
-- The LLM will receive all contexts when the script completes
-- When passing a string, it's automatically converted to `{"message": "your string"}`
-- Use meaningful keys in your context dictionary for clarity when using dict format
-
-### Currently Not Available
-
-- **StateAPI**: No persistent storage between script runs
-- **File/Network Access**: Scripts are sandboxed with no filesystem or network access
-- **Module Imports**: Cannot import external code
-- **Random Numbers**: No random number generation for determinism
-
-### Working with Tool Results
-
-- Tools return structured data (dicts, lists) directly - use results immediately
-- `json_decode()` is safe to call on any value - it passes through dicts, lists, numbers, and
-  booleans unchanged
-- Check for empty results before processing
-
-### Error Handling
-
-```python
-# Check inputs carefully to handle missing data
-notes = search_notes(query="test")
-if len(notes) > 0:
-    # Process notes...
-    pass
-
-# Check for None values
-if event.get("new_state") and event.get("new_state", {}).get("state"):
-    value = int(event.get("new_state", {}).get("state", "0").split('.')[0])  # Truncate decimals
-else:
-    value = 0
-```
-
-### Failure Notifications
-
-When an automation script fails after exhausting all retry attempts, the assistant is automatically
-notified with details about the error, including the script code and triggering event data. The
-assistant will then summarize the failure and suggest fixes.
-
-To disable failure notifications for a specific automation, set `notify_on_failure: false` in the
-automation's `action_config`.
-
-### Performance Tips
-
-- Scripts timeout after 10 minutes (but try to keep them efficient)
-- Avoid processing very large datasets in memory
-- Limit search results when possible
-- Use specific queries to reduce result sets
-- Be mindful of external API rate limits when making many tool calls
-
-## Assistant Guidelines for Scripts
-
-### When to Use Scripts
-
-Use scripts when users request:
-
-- Complex automation with multiple steps
-- Data processing and transformation
-- Conditional logic based on search results
-- Scheduled or event-triggered automation
-- Batch operations across multiple items
-
-### Script Development Best Practices
-
-1. **Understand the request**: Clarify what the user wants to achieve
-2. **Check available tools**: Use `tools_list()` if unsure what's available
-3. **Handle edge cases**: Check for empty results, invalid data
-4. **Test first**: For complex scripts, test key operations separately
-5. **Provide feedback**: Use print() to show progress for long operations. Printed output is
-   captured and returned to the assistant under a `--- Script Output ---` section (and included
-   above the error message if the script fails partway through), so it's a convenient way to surface
-   intermediate values without returning them.
-
-### Common User Requests and Script Patterns
-
-#### Summarize my TODO notes
-
-```python
-# Search, process, and create summary
-notes = search_notes(query="TODO")
-if len(notes) > 0:
-    # Process and summarize...
-```
-
-#### Send me daily reminders
-
-```python
-# Check calendar and create contextual reminders
-events = get_calendar_events(days_ahead=1)
-for event in events:
-    # Create reminder logic...
-```
-
-#### Monitor temperature and alert me
-
-```python
-# For event-triggered scripts
-if int(event.get("new_state", {}).get("state", "0").split('.')[0]) > 25:  # Truncate decimals
-    send_telegram_message(message="High temperature alert!")
-```
-
-### Explaining Scripts to Users
-
-When presenting scripts to users:
-
-- Focus on what the script does, not how
-- Mention any limitations or requirements
-- Suggest testing before creating event automations
-- Offer to modify if it doesn't meet their needs
+### Time and Duration API
+
+- **Creation and parsing**: `time_now()` (household local tz), `time_now_utc()`,
+  `time_create(year, month, day, hour=0, minute=0, second=0, timezone_name="UTC")`,
+  `time_parse(time_str, fmt, timezone_name="UTC")`, `time_from_timestamp(seconds, nanoseconds=0)`
+- **Formatting and timezones**: `time_format(t, fmt)` (`strftime`), `time_in_location(t, tz_name)`,
+  `timezone_is_valid(tz_name)` -> `bool`
+- **Components and checks**: `time_year(t)`, `time_month(t)`, `time_day(t)`, `time_hour(t)`,
+  `time_minute(t)`, `time_second(t)`, `time_weekday(t)` (`0`=Mon .. `6`=Sun), `is_weekend(t)`,
+  `is_between(start_hour, end_hour, t)`
+- **Arithmetic, comparisons, and durations**:
+  - `time_add(t, seconds)`, `time_add_duration(t, amount, unit)` (`"seconds"`, `"minutes"`,
+    `"hours"`, `"days"`, `"weeks"`), `time_diff(t1, t2)` (`t1 - t2` in seconds)
+  - `time_before(t1, t2)`, `time_after(t1, t2)`, `time_equal(t1, t2)` -> `bool`
+  - `duration_parse("2h30m")` -> `9000`; `duration_human(3665)` -> `"1h1m5s"`
+  - Constants (seconds): `SECOND = 1`, `MINUTE = 60`, `HOUR = 3600`, `DAY = 86400`, `WEEK = 604800`
+
+## Event-Triggered Scripts and `wake_llm`
+
+Event-triggered scripts receive globals `event` (`dict`), `conversation_id`, and `automation_id`.
+Condition scripts receive `event` and must return a `bool` (screen out Home Assistant
+`"unavailable"`, `"unknown"`, and `None` states before calling `float(...)`). See
+[automations.md](automations.md).
+
+- **`wake_llm(context, include_event=True, new_conversation=False)`**: Queues a wake context (`str`
+  wrapped as `{"message": context}`, or `dict`) for the LLM after the script finishes (multiple
+  calls are batched). Setting `new_conversation=True` (web only) opens a fresh thread off your Home
+  (or a new web conversation when threads are off) with no prior history; put all needed context in
+  `context` (its first line names the thread). Multiple `new_conversation=True` calls in one run
+  share that new thread.
+- **Failure notifications**: When an automation script fails after exhausting retries, the assistant
+  is woken with the script code, error, and event unless `notify_on_failure: false` is set in
+  `action_config`.

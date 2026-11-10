@@ -9,13 +9,16 @@ just the part you need.
 
 ## Start here
 
-| Guide                                            | Read it when you want to…                                       |
-| ------------------------------------------------ | --------------------------------------------------------------- |
-| [QUICK_START.md](QUICK_START.md)                 | Get going in five minutes with a handful of example requests    |
-| [interfaces.md](interfaces.md)                   | Know what Telegram, the web app, and the iOS app each offer     |
-| [slash-commands.md](slash-commands.md)           | Look up `/browse`, `/research`, `/engineer` and the other modes |
-| [intelligence-levels.md](intelligence-levels.md) | Ask for more thinking on a request that deserves it             |
-| [connecting-claude.md](connecting-claude.md)     | Let Claude, Claude Code, or the Claude API ask your assistant   |
+| Guide                                            | Read it when you want to…                                           |
+| ------------------------------------------------ | ------------------------------------------------------------------- |
+| [QUICK_START.md](QUICK_START.md)                 | Get going in five minutes with a handful of example requests        |
+| [interfaces.md](interfaces.md)                   | Know what Telegram and the web app offer, push alerts, and handoffs |
+| [threads.md](threads.md)                         | Use **Home** and **threads** in the web and iOS apps                |
+| [ios.md](ios.md)                                 | Use the native iOS app, Apple Watch setup, and Siri / Shortcuts     |
+| [voice.md](voice.md)                             | Talk to the assistant by voice on web, iOS, Apple Watch, or CarPlay |
+| [slash-commands.md](slash-commands.md)           | Look up `/browse`, `/research`, `/engineer` and the other modes     |
+| [intelligence-levels.md](intelligence-levels.md) | Ask for more thinking on a request that deserves it                 |
+| [connecting-claude.md](connecting-claude.md)     | Let Claude, Claude Code, or the Claude API ask your assistant       |
 
 ## Everyday features
 

@@ -80,11 +80,11 @@ which are simpler than automations and often what you actually want.
 ## Where the assistant replies
 
 If your household has threads turned on (the web chat opens on **Home** — see
-[Home and threads](interfaces.md#home-and-threads)), an automation you create in the web or iOS app
-replies in your Home, whichever conversation you were in when you set it up. Reminders and callbacks
-work the same way, and so do a script's `wake_llm()` hand-offs and the note you get when a script
-automation fails. If you don't have a Home yet, the first reply creates one. You get a notification
-as with any other reply.
+[threads.md](threads.md)), an automation you create in the web or iOS app replies in your Home,
+whichever conversation you were in when you set it up. Reminders and callbacks work the same way,
+and so do a script's `wake_llm()` hand-offs and the note you get when a script automation fails. If
+you don't have a Home yet, the first reply creates one. You get a notification as with any other
+reply.
 
 There are two exceptions:
 
