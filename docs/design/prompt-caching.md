@@ -70,6 +70,15 @@ other request — a tool-call review, a structured or JSON output, a summary, an
 one-shot: its tail is unique and no later request extends it, so a breakpoint there writes a cache
 entry (at 1.25× the input price) that is never read, and skews the account's cache-hit metric.
 
+A streamed request carries two conversation breakpoints: one at the end, and one where the previous
+request's end was (the newest conversation message ahead of the newest assistant turn). A breakpoint
+finds an earlier entry only at its own position or within 20 content blocks behind it, and one step
+can append more than that — a `tool_addition` is a block per activated tool, so activating one MCP
+server's tools is enough. Past the window the read falls back to the system prompt and the whole
+history is written again, with no divergence for the cache diagnostics to report. Production calls
+with 25 or more blocks between consecutive breakpoints rewrote the history 83% of the time, against
+1% at 12 or fewer. The second marker costs nothing: it names a position already written.
+
 A prompt that is stable all the way to the end — what a template with no volatile placeholders
 produces — needs no split and is emitted as a single cacheable block. Only when there is no boundary
 at all does the client send the plain string as before, so requests that cannot benefit keep their
@@ -290,7 +299,7 @@ telemetry above to confirm rather than assume. It also interacts with the 20-blo
 telemetry shows activation is frequent, Anthropic's `defer_loading` plus tool search would let tool
 schemas be appended rather than swapped, preserving the prefix.
 
-**The 20-block lookback window.** A breakpoint searches back at most 20 content blocks for a prior
-cache entry. A single iteration emitting more than 20 blocks (many parallel tool calls) would
-silently miss. Not currently instrumented; the cache-read telemetry would show it as an unexplained
-miss.
+**The 20-block lookback window.** *Since done — see "Anthropic breakpoint placement" above.* A
+breakpoint searches back at most 20 content blocks for a prior cache entry, so a single iteration
+emitting more than 20 blocks silently missed. The second conversation breakpoint removes the
+dependence on the window.

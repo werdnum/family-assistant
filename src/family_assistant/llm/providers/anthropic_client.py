@@ -955,6 +955,11 @@ class AnthropicClient(BaseLLMClient):
         # trailing breakpoint goes at its end (see below).
         # ast-grep-ignore: no-dict-any - MessageParam TypedDict incompatible with dynamic content merging in _merge_consecutive_roles
         breakpoint_message: dict[str, Any] | None = None
+        # Where the previous request's trailing breakpoint sat: the newest
+        # conversation message ahead of the newest assistant turn, which is that
+        # request's response.
+        # ast-grep-ignore: no-dict-any - MessageParam TypedDict incompatible with dynamic content merging in _merge_consecutive_roles
+        previous_breakpoint_message: dict[str, Any] | None = None
 
         for msg in messages:
             converted_before = len(api_messages)
@@ -1021,6 +1026,7 @@ class AnthropicClient(BaseLLMClient):
                             )
                         )
                 if content_blocks:
+                    previous_breakpoint_message = breakpoint_message
                     api_messages.append({
                         "role": "assistant",
                         "content": content_blocks,
@@ -1044,7 +1050,7 @@ class AnthropicClient(BaseLLMClient):
         if activations:
             api_messages = self._insert_tool_additions(api_messages, activations)
 
-        # One breakpoint, at the end of the conversation. Each request is the
+        # A breakpoint at the end of the conversation. Each request is the
         # previous one plus appended messages, so the previous request's
         # breakpoint is a prefix of this one and is read back; this one is what
         # the next request reads. Trailing scaffolding -- an instruction meant
@@ -1053,7 +1059,20 @@ class AnthropicClient(BaseLLMClient):
         # tool-addition message is inserted after this point and never carries
         # one. Merging keeps the content blocks themselves, so a block marked on
         # a message merged into its neighbour stays marked.
+        #
+        # A second one stays where the previous request's was. The API finds an
+        # earlier entry only at a breakpoint or within 20 content blocks behind
+        # one, and what one step appends can exceed that: a tool addition is a
+        # block per activated tool, and a wide batch of parallel calls is two
+        # per call. Past the window the read falls back to the system prompt
+        # and the whole history is written again. Naming the previous position
+        # makes the read independent of how much was appended.
         if cache_conversation and breakpoint_message is not None:
+            if (
+                previous_breakpoint_message is not None
+                and previous_breakpoint_message is not breakpoint_message
+            ):
+                self._mark_cache_breakpoint(previous_breakpoint_message)
             self._mark_cache_breakpoint(breakpoint_message)
 
         system_blocks = self._build_system_blocks(system_parts, stable_prefix_len)
