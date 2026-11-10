@@ -21,10 +21,9 @@ produce a chart rather than only describing the numbers.
 ## Passing Data: `data` vs `data_attachments`
 
 1. **`data_attachments=[attachment_id, ...]`** — Use for uploaded CSV/JSON files and large tool
-   results already stored as attachments. The tool loads and injects the attachment content
-   automatically; reference it in the spec via `"data": {"name": "<filename_or_dataset_name>"}` (or
-   omit `data.name` when passing a single attachment). Never inline large attachment contents into
-   `spec`.
+   results already stored as attachments. The tool loads and injects each attachment's content keyed
+   by its filename; reference it in the spec via `"data": {"name": "<attachment_filename>"}`. Never
+   inline large attachment contents into `spec`.
 2. **`data=...`** — Use for computed or filtered results, such as the output of `jq_query()` in a
    script, or small inline datasets.
    - **Critical dataset-naming rule:** When `data` is a list (not a dict of named datasets),
