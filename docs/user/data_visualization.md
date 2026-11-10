@@ -1,652 +1,112 @@
 # Data Visualization Guide
 
-This document provides guidance for creating data visualizations using the `create_vega_chart` tool
-and scripts for advanced workflows.
+This guide covers creating charts with `create_vega_chart` and `execute_script`. For Vega-Lite
+encoding and transform syntax, see [vega_lite_reference.md](vega_lite_reference.md).
 
 ## Overview
 
-The `create_vega_chart` tool allows you to create professional data visualizations from Vega or
-Vega-Lite specifications. The tool generates high-quality PNG images that are automatically
-displayed to the user.
+`create_vega_chart` renders a Vega-Lite (`https://vega.github.io/schema/vega-lite/v5.json`,
+recommended) or Vega (`https://vega.github.io/schema/vega/v5.json`) JSON specification into a PNG
+attachment that is automatically displayed to the user. When asked for a visualization, always
+produce a chart rather than only describing the numbers.
 
-## Your Role: Fetch Data, Then Visualize
+**Tool parameters:**
 
-**IMPORTANT**: Your goal is to create data visualizations. You MUST create a visualization -
-returning without a chart is not acceptable.
+- `spec` (required): JSON string of the Vega-Lite or Vega specification
+- `data` (optional): Computed data (a list of records, or a `dict` mapping dataset names to data)
+- `data_attachments` (optional): List of CSV or JSON attachment IDs (or attachment dicts in scripts)
+- `title` (optional): Chart title (default: `"Data Visualization"`)
+- `scale` (optional): PNG scale factor (default: `2`)
 
-Data can come from multiple sources:
+## Passing Data: `data` vs `data_attachments`
 
-1. **Large tool results**: Large datasets may appear as JSON schema with an attachment ID rather
-   than full content (for files >10KB)
-2. **URLs**: Fetch data yourself if given a URL using available tools
-3. **Home Assistant**: Use `download_state_history` or other Home Assistant tools to fetch data
-4. **User-provided**: Small inline data from the user's message
+1. **`data_attachments=[attachment_id, ...]`** — Use for uploaded CSV/JSON files and large tool
+   results already stored as attachments. The tool loads and injects each attachment's content keyed
+   by its filename; reference it in the spec via `"data": {"name": "<attachment_filename>"}`. Never
+   inline large attachment contents into `spec`.
+2. **`data=...`** — Use for computed or filtered results, such as the output of `jq_query()` in a
+   script, or small inline datasets.
+   - **Critical dataset-naming rule:** When `data` is a list (not a dict of named datasets),
+     `create_vega_chart` binds it to the dataset name **`"data"`**. Your spec **must** reference
+     `"data": {"name": "data"}` — using any other name renders a blank chart.
+   - To pass multiple named computed datasets, pass a dictionary (`data={"summary": rows}`) and
+     reference `"data": {"name": "summary"}` in the spec.
+3. **Combining both** — You can pass both `data={"summary": computed}` and
+   `data_attachments=[raw_file]` for multi-layer charts.
 
-## Recommended Workflows
+## Large Attachments and `jq_query`
 
-### Script-Based Workflow (Recommended for Complex Visualizations)
+Large JSON tool results (such as `download_state_history`) arrive in context as an attachment ID
+with an inferred JSON schema rather than raw content:
 
-For data transformations, multi-step processing, or functional composition, use **scripts** that
-automatically propagate attachments:
+1. Inspect the schema, and if needed probe with `jq_query`:
+   - Record count: `jq_query(attachment_id, "length")`
+   - First item: `jq_query(attachment_id, ".[0]")`
+   - Date range: `jq_query(attachment_id, "[.[0].last_changed, .[-1].last_changed]")`
+2. Either pass `data_attachments=[attachment_id]` directly to `create_vega_chart`, or transform and
+   filter the data with `jq_query` inside `execute_script` and pass the result via `data=...`.
 
-```python
-# Script automatically returns attachments created by tools
-chart = create_vega_chart(
-    spec=spec_json,
-    data_attachments=[attachment_id]
-)
-# Attachment automatically appears to LLM - no manual attach_to_response needed!
-chart
-```
+## Cleaning Home Assistant Sensor History
 
-**Key benefits:**
-
-- **Attachment propagation**: Attachments created by tools or `attachment_create()` are
-  automatically returned
-- **Functional composition**: Chain tools naturally with typed objects
-- **Clean code**: No manual attachment tracking needed
-
-**Example: Transform and visualize with functional composition**
-
-```python
-# Process data with jq_query, pass result directly to create_vega_chart
-# No intermediate attachment needed - jq result flows directly as data
-filtered_data = jq_query(source_attachment, ".[] | select(.value > 10)")
-create_vega_chart(
-    spec=spec_json,
-    data=filtered_data  # Direct data parameter - no attachment overhead
-)
-```
-
-**Example: Create multiple related charts**
+Home Assistant sensors frequently record non-numeric states such as `"unavailable"`, `"unknown"`,
+`"None"`, `""`, or `null`, which break quantitative axes. Always convert with `tonumber?`, drop
+nulls, and sort by timestamp:
 
 ```python
-# All charts automatically available to LLM
-temp_chart = create_vega_chart(temp_spec, data_attachments=[sensor_data])
-humidity_chart = create_vega_chart(humidity_spec, data_attachments=[sensor_data])
-[temp_chart, humidity_chart]
-```
-
-### Direct Tool Call Workflow (For Simple Cases)
-
-For simple, single-chart visualizations, call `create_vega_chart` directly:
-
-```python
-create_vega_chart(
-    spec=spec_json,
-    data_attachments=[attachment_id],
-    title="Temperature Over Time"
-)
-```
-
-The attachment is auto-displayed. No need for `attach_to_response` unless you want to control which
-specific attachments are shown.
-
-## Choosing Between `data` and `data_attachments` Parameters
-
-The `create_vega_chart` tool accepts data in two ways:
-
-### Use `data` parameter for:
-
-- **Computed results** from `jq_query()` or other data transformations
-- **Inline data** from calculations or API responses
-- **Direct composition** where data flows through tool calls
-- **Ephemeral data** that doesn't need persistent storage
-
-```python
-# Example: Direct composition with jq_query
-result = jq_query(attachment_id, ".[] | select(.temp > 20)")
-create_vega_chart(spec=spec_json, data=result)
-```
-
-### Use `data_attachments` parameter for:
-
-- **File-based data** (CSV, JSON files uploaded by users)
-- **Large datasets** already stored as attachments
-- **Persistent data** that needs to be referenceable later
-- **Data from tools** that return attachment IDs
-
-```python
-# Example: CSV file from user upload
-create_vega_chart(spec=spec_json, data_attachments=[csv_attachment_id])
-```
-
-### Mixing both (when needed):
-
-You can combine both parameters for complex visualizations using multiple data sources:
-
-```python
-# Computed data + file data
-computed = jq_query(attachment, ".summary")
-create_vega_chart(
-    spec=multi_layer_spec,
-    data={"summary": computed},  # Named dataset from computation
-    data_attachments=[raw_data_file]  # File-based dataset
-)
-```
-
-### Important: Default Dataset Naming
-
-**CRITICAL**: When you pass raw data directly to the `data` parameter (as a list or non-dict
-structure), it is automatically assigned to a default dataset named **`"data"`**. Your Vega-Lite
-specification **must** reference it by that exact name.
-
-```python
-# Example: Direct data from jq_query
-filtered_data = jq_query(attachment_id, ".[] | select(.value > 10)")
-
-# Your spec MUST use {"name": "data"} to reference this data
-spec = {
-  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-  "data": {"name": "data"},  # MUST be "data" - this is the default name!
-  "mark": "line",
-  "encoding": {
-    "x": {"field": "timestamp", "type": "temporal"},
-    "y": {"field": "value", "type": "quantitative"}
-  }
-}
-
-create_vega_chart(spec=json_encode(spec), data=filtered_data)
-```
-
-**Common mistake**: Using a different name like `{"name": "filtered_data"}` will result in a blank
-chart because the tool cannot find the dataset you're referencing.
-
-## Recommended Pattern: Retrieve Data as Attachments
-
-**BEST PRACTICE**: When working with data from tools like `download_state_history`, retrieve the
-data as a separate step and pass the attachment to your visualization script. This provides several
-benefits:
-
-1. **Schema Inference**: JSON attachments are rendered to the LLM with an inferred JSON schema,
-   making it much easier to understand the data structure
-2. **Cleaner Code**: Separates data retrieval from visualization logic
-3. **Reusability**: The same data attachment can be used for multiple charts or analyses
-
-### Example: Two-Step Pattern
-
-```python
-# Step 1: Retrieve data as attachment (outside the script)
-# User or assistant calls: download_state_history(entity_ids=["sensor.pool_temp"], ...)
-# Result: Attachment with ID "abc123" containing state history JSON
-
-# Step 2: Your script receives the attachment with inferred schema
-# You can now easily understand the structure and create visualizations
-
-# Option A: Use attachment directly with data_attachments
-create_vega_chart(
-  spec=spec_json,
-  data_attachments=["abc123"]  # Reference by attachment ID
-)
-
-# Option B: Transform with jq_query first, then visualize
-cleaned_data = jq_query("abc123", ".entities[0].states | map({time: .last_changed, value: (.state | tonumber?)}) | map(select(.value != null))")
-create_vega_chart(
-  spec=spec_json,
-  data=cleaned_data  # Use transformed data
-)
-```
-
-This pattern is especially helpful when delegating from the main assistant to the data visualization
-profile - the data structure is clear from the inferred schema rather than buried in raw JSON.
-
-## Best Practices for Data Cleaning
-
-### Home Assistant State History Data
-
-When visualizing Home Assistant sensor data, **always clean non-numeric values**. Sensors can return
-states like `"unavailable"`, `"unknown"`, or `null` that will cause chart rendering errors.
-
-#### Recommended jq Pattern for Sensor Data
-
-```python
-# Robust cleaning pattern using tonumber? filter
-cleaned = jq_query(
-  attachment_id,
-  '.entities[0].states | map({last_changed: .last_changed, state: (.state | tonumber?)}) | map(select(.state != null))'
-)
-
-# Explanation:
-# 1. .entities[0].states - Extract states array from first entity
-# 2. tonumber? - Safely attempt conversion, returns null on failure
-# 3. select(.state != null) - Filter out null values
-```
-
-#### Common Data Issues to Handle
-
-- **Non-numeric states**: `"unavailable"`, `"unknown"`, `"None"`, `""` (empty string)
-- **Null values**: Missing data points
-- **Invalid timestamps**: Malformed date strings
-- **Mixed types**: Some sensors switch between numeric and string states
-
-#### Example: Complete Cleaning Workflow
-
-```python
-# Get sensor history (already retrieved as attachment "history_id")
-# Clean the data thoroughly
 cleaned_data = jq_query(
-  "history_id",
-  '''
-  .entities[0].states
-  | map({
-      time: .last_changed,
-      value: (.state | tonumber?)
-    })
-  | map(select(.value != null))
-  | sort_by(.time)
-  '''
+    history_attachment_id,
+    """
+    .entities[0].states
+    | map({time: .last_changed, value: (.state | tonumber?)})
+    | map(select(.value != null))
+    | sort_by(.time)
+    """,
 )
 
-# Create visualization with cleaned data
 spec = {
-  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-  "data": {"name": "data"},
-  "mark": {"type": "line", "point": true, "tooltip": true},
-  "encoding": {
-    "x": {
-      "field": "time",
-      "type": "temporal",
-      "title": "Time"
+    "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+    "data": {"name": "data"},  # Required when passing a list via `data=`
+    "mark": {"type": "line", "point": True, "tooltip": True},
+    "encoding": {
+        "x": {"field": "time", "type": "temporal", "title": "Time"},
+        "y": {"field": "value", "type": "quantitative", "title": "Temperature (°C)"},
     },
-    "y": {
-      "field": "value",
-      "type": "quantitative",
-      "title": "Temperature (°F)"
-    }
-  }
 }
 
 create_vega_chart(
-  spec=json_encode(spec),
-  data=cleaned_data,
-  title="Pool Temperature (Last 5 Days)"
+    spec=json_encode(spec),
+    data=cleaned_data,
+    title="Pool Temperature",
 )
 ```
 
-### General Data Cleaning Tips
+## Multi-Chart Scripts
 
-1. **Always validate data types**: Use type conversion filters like `tonumber?`, `tostring`, etc.
-2. **Filter invalid values**: Use `select()` to remove nulls, empty strings, or out-of-range values
-3. **Sort when needed**: Use `sort_by()` for time-series data to ensure correct ordering
-4. **Preview first**: Use `jq_query` to examine data structure before creating complex specs
-5. **Handle edge cases**: Check for empty datasets, single data points, or extreme values
-
-## Workflow for Large Data Attachments
-
-When you receive a large JSON dataset (>10KB), it will appear as:
-
-- A JSON schema showing the data structure
-- File size and attachment ID
-- A note to use the `jq_query` tool for exploration
-
-**Example workflow**:
-
-1. **Understand the data structure** from the provided schema
-2. **Explore the data** using `jq_query` tool:
-   - Count records: `jq_query(attachment_id, 'length')`
-   - View first item: `jq_query(attachment_id, '.[0]')`
-   - Get date range: `jq_query(attachment_id, '[.[0].last_changed, .[-1].last_changed]')`
-   - Extract specific fields: `jq_query(attachment_id, 'map(.state)')`
-3. **Create Vega-Lite spec** based on the data structure
-4. **Call `create_vega_chart`** with `data_attachments=[attachment_id]`
-   - The tool will automatically fetch the full content and inject it into your Vega spec
-   - You don't need to inline the data - just reference it by attachment ID
-
-### Example: Visualizing Home Assistant State History
+For multi-step pipelines or dashboards with several charts, run a single script with
+`execute_script` and return a list of charts as the final expression — all returned chart
+attachments are automatically shown to the user:
 
 ```python
-# User asks: "Chart pool temperature over last 5 days"
-# download_state_history returns 199KB of JSON
-
-# You receive:
-# [System: Large data attachment (199KB)]
-# [Attachment ID: 636058f3-...]
-# Schema: { type: "array", items: { properties: { entity_id, state, last_changed, ... }}}
-
-# Step 1: Explore the data
-jq_query("636058f3-...", "length")  # Returns: 367
-jq_query("636058f3-...", ".[0]")    # See first record structure
-jq_query("636058f3-...", "[.[0].last_changed, .[-1].last_changed]")  # Date range
-
-# Step 2: Create Vega-Lite spec
-spec = {
-  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-  "data": {"name": "pool_data"},  # Reference by name
-  "mark": "line",
-  "encoding": {
-    "x": {"field": "last_changed", "type": "temporal"},
-    "y": {"field": "state", "type": "quantitative"}
-  }
-}
-
-# Step 3: Create chart with attachment
-create_vega_chart(
-  spec=json.dumps(spec),
-  data_attachments=["636058f3-..."],  # Tool fetches full content
-  title="Pool Temperature Over 5 Days"
-)
-```
-
-### Script-Based Workflow Example
-
-For the same scenario using scripts (recommended for complex processing):
-
-```python
-# Define the Vega spec
-spec = {
-  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-  "data": {"name": "pool_data"},
-  "mark": "line",
-  "encoding": {
-    "x": {"field": "last_changed", "type": "temporal"},
-    "y": {"field": "state", "type": "quantitative"}
-  }
-}
-
-# Create and return chart - attachment automatically propagates
-create_vega_chart(
-  spec=json_encode(spec),
-  data_attachments=["636058f3-..."],
-  title="Pool Temperature Over 5 Days"
-)
-```
-
-**Advanced: Filter data with jq and create chart**
-
-```python
-# Functional composition - filter and visualize
-# jq_query returns data directly (not an attachment), pass via data parameter
-filtered_data = jq_query("636058f3-...", "[.[] | select(.state != null)]")
-
-spec = {
-  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-  "data": {"name": "data"},  # Use "data" as default name for direct data
-  "mark": {"type": "line", "point": true},
-  "encoding": {
-    "x": {"field": "last_changed", "type": "temporal"},
-    "y": {"field": "state", "type": "quantitative"}
-  }
-}
-
-create_vega_chart(
-  spec=json_encode(spec),
-  data=filtered_data,  # Direct data from jq_query result
-  title="Pool Temperature (Cleaned)"
-)
-```
-
-### Multi-Chart Dashboard Example
-
-Create multiple related charts in a single script:
-
-```python
-# Fetch sensor data
 temp_data = download_state_history(
-  entity_ids=["sensor.pool_temp"],
-  start_time=time_subtract_days(time_now(), 7)
+    entity_ids=["sensor.pool_temp"],
+    start_time=time_add_duration(time_now(), -7, "days"),
 )
 ph_data = download_state_history(
-  entity_ids=["sensor.pool_ph"],
-  start_time=time_subtract_days(time_now(), 7)
+    entity_ids=["sensor.pool_ph"],
+    start_time=time_add_duration(time_now(), -7, "days"),
 )
 
-# Create temperature chart
-temp_spec = {
-  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-  "data": {"name": "temp_data"},
-  "mark": "line",
-  "encoding": {
-    "x": {"field": "last_changed", "type": "temporal"},
-    "y": {"field": "state", "type": "quantitative", "title": "Temperature (°F)"}
-  },
-  "title": "Pool Temperature"
-}
-
-# Create pH chart
-ph_spec = {
-  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-  "data": {"name": "ph_data"},
-  "mark": "line",
-  "encoding": {
-    "x": {"field": "last_changed", "type": "temporal"},
-    "y": {"field": "state", "type": "quantitative", "title": "pH"}
-  },
-  "title": "Pool pH Levels"
-}
-
-# Create both charts - both automatically available to LLM
 temp_chart = create_vega_chart(spec=json_encode(temp_spec), data_attachments=[temp_data])
 ph_chart = create_vega_chart(spec=json_encode(ph_spec), data_attachments=[ph_data])
-
-# Return both charts
 [temp_chart, ph_chart]
 ```
 
-The script automatically makes both charts available. The LLM will see both attachments and can
-describe the results to the user.
+## Troubleshooting and Further Reference
 
-## When to Use This Tool
-
-Use `create_vega_chart` when users request:
-
-- Charts or graphs from data (bar charts, line graphs, scatter plots, etc.)
-- Visual representation of datasets
-- Data analysis visualizations
-- Comparisons or trends shown graphically
-
-## Vega vs Vega-Lite
-
-**Vega-Lite** (Recommended for most cases):
-
-- High-level grammar for simple, common charts
-- More concise specifications
-- Ideal for: bar charts, line graphs, scatter plots, area charts, pie charts
-- Schema: `https://vega.github.io/schema/vega-lite/v5.json`
-
-**Vega** (For complex visualizations):
-
-- Low-level specification with fine-grained control
-- More verbose but highly customizable
-- Use for: custom interactions, complex layouts, advanced transformations
-- Schema: `https://vega.github.io/schema/vega/v5.json`
-
-## Data Sources
-
-The tool supports three ways to provide data:
-
-1. **Inline in spec**: Embed data directly in the `values` field
-2. **CSV attachments**: Reference by filename in the spec's `data.name` field
-3. **JSON attachments**: Reference by filename in the spec's `data.name` field
-
-### Example with Inline Data
-
-```json
-{
-  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-  "data": {
-    "values": [
-      {"category": "A", "value": 28},
-      {"category": "B", "value": 55},
-      {"category": "C", "value": 43}
-    ]
-  },
-  "mark": "bar",
-  "encoding": {
-    "x": {"field": "category", "type": "nominal"},
-    "y": {"field": "value", "type": "quantitative"}
-  }
-}
-```
-
-### Example with CSV Attachment
-
-When the user provides a CSV file:
-
-```json
-{
-  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-  "data": {"name": "data.csv"},
-  "mark": "line",
-  "encoding": {
-    "x": {"field": "month", "type": "temporal"},
-    "y": {"field": "sales", "type": "quantitative"}
-  }
-}
-```
-
-## Common Chart Types
-
-### Bar Chart
-
-```json
-{
-  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-  "data": {"values": [...]},
-  "mark": "bar",
-  "encoding": {
-    "x": {"field": "category", "type": "nominal"},
-    "y": {"field": "value", "type": "quantitative"}
-  }
-}
-```
-
-### Line Chart
-
-```json
-{
-  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-  "data": {"values": [...]},
-  "mark": "line",
-  "encoding": {
-    "x": {"field": "time", "type": "temporal"},
-    "y": {"field": "value", "type": "quantitative"}
-  }
-}
-```
-
-### Scatter Plot
-
-```json
-{
-  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-  "data": {"values": [...]},
-  "mark": "point",
-  "encoding": {
-    "x": {"field": "x_value", "type": "quantitative"},
-    "y": {"field": "y_value", "type": "quantitative"},
-    "color": {"field": "category", "type": "nominal"}
-  }
-}
-```
-
-### Pie Chart
-
-```json
-{
-  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-  "data": {"values": [...]},
-  "mark": {"type": "arc", "innerRadius": 0},
-  "encoding": {
-    "theta": {"field": "value", "type": "quantitative"},
-    "color": {"field": "category", "type": "nominal"}
-  }
-}
-```
-
-### Area Chart
-
-```json
-{
-  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-  "data": {"values": [...]},
-  "mark": "area",
-  "encoding": {
-    "x": {"field": "time", "type": "temporal"},
-    "y": {"field": "value", "type": "quantitative"}
-  }
-}
-```
-
-## Field Types
-
-Vega-Lite requires you to specify the data type for each field:
-
-- **`quantitative`**: Numeric values (e.g., sales amounts, temperatures)
-- **`nominal`**: Categorical values without order (e.g., colors, names)
-- **`ordinal`**: Categorical values with order (e.g., size: small, medium, large)
-- **`temporal`**: Date/time values (e.g., timestamps, dates)
-
-## Best Practices
-
-1. **Choose appropriate chart types**: Match the visualization to the data and question
-2. **Use meaningful titles**: Set a descriptive title parameter
-3. **Label axes clearly**: Include field names that describe the data
-4. **Consider scale**: Default scale is 2x for high-DPI displays
-5. **Keep it simple**: Start with Vega-Lite unless you need advanced features
-6. **Test incrementally**: If a complex spec fails, simplify and build up
-
-## Tool Parameters
-
-- **`spec`** (required): JSON string of Vega/Vega-Lite specification
-- **`data_attachments`** (optional): List of CSV/JSON attachment IDs
-- **`title`** (optional): Chart title for the user (default: "Data Visualization")
-- **`scale`** (optional): PNG scale factor (default: 2 for high-DPI)
-
-## Error Handling
-
-If the tool returns an error:
-
-- **"Invalid JSON in spec"**: Fix JSON syntax errors
-- **"Error rendering chart"**: Invalid Vega spec - check field names, types, and structure
-- Check that referenced data fields exist in your dataset
-- Verify attachment IDs are correct if using external data
-
-## Example Workflow
-
-1. User provides data (inline, CSV, or JSON)
-2. Analyze the data structure and user's visualization goal
-3. Choose appropriate chart type
-4. Generate Vega-Lite spec with correct field types
-5. Call `create_vega_chart` with the spec
-6. The PNG image is automatically displayed to the user
-
-## Resources
-
-### Quick Reference
-
-A condensed Vega-Lite reference is automatically included in this profile's system prompt (see
-`vega_lite_reference.md`). It covers common chart types, encoding channels, data types, and
-essential transforms.
-
-### Full Documentation
-
-For detailed information beyond the quick reference, you can use the `scrape_url` tool to
-dynamically fetch specific documentation pages:
-
-**Key Vega-Lite Documentation Pages:**
-
-- Main docs: https://vega.github.io/vega-lite/docs/
-- Encoding reference: https://vega.github.io/vega-lite/docs/encoding.html
-- Mark types: https://vega.github.io/vega-lite/docs/mark.html
-- Data transforms: https://vega.github.io/vega-lite/docs/transform.html
-- Scales: https://vega.github.io/vega-lite/docs/scale.html
-- Time units: https://vega.github.io/vega-lite/docs/timeunit.html
-- Example gallery: https://vega.github.io/vega-lite/examples/
-
-**Vega (low-level) Documentation:**
-
-- Main docs: https://vega.github.io/vega/docs/
-- Specification: https://vega.github.io/vega/docs/specification/
-- Transforms: https://vega.github.io/vega/docs/transforms/
-
-**Using the scrape_url Tool:**
-
-When you need detailed information about specific Vega/Vega-Lite features, use the `scrape_url` MCP
-tool to fetch the documentation:
-
-```
-scrape_url("https://vega.github.io/vega-lite/docs/encoding.html")
-```
-
-This will return the documentation page as markdown that you can use to understand advanced
-features, complex configurations, or troubleshoot issues.
+- **Blank chart:** Verify `"data": {"name": "data"}` when using `data=<list>`, check that encoded
+  field names match the dataset keys, and confirm `jq_query` did not return an empty list.
+- **Rendering errors:** Strip non-numeric sensor states (`"unavailable"`, `"unknown"`) with
+  `tonumber?` before plotting quantitative fields.
+- **Spec reference:** See [vega_lite_reference.md](vega_lite_reference.md), or fetch specific pages
+  from `https://vega.github.io/vega-lite/docs/` (such as `encoding.html`, `mark.html`,
+  `transform.html`, `scale.html`, `timeunit.html`) using `scrape_url`.

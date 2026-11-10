@@ -1,314 +1,86 @@
 # Scheduling and Task Management Guide
 
-This guide explains how to use the Family Assistant's scheduling features to set reminders, schedule
-one-time callbacks and scripts, and manage recurring schedules via the automations framework.
+This guide explains how to set one-off reminders, schedule assistant callbacks and scripts, and
+manage recurring schedules via the automations framework.
 
 ## Overview
 
-The Family Assistant provides several ways to schedule future actions:
-
-1. **Reminders** - Simple notifications at specific times
-2. **Callbacks** - Assistant wake-ups to continue work or check on tasks
-3. **Scheduled Scripts/Actions** - One-time action execution at specific times
-4. **Recurring Schedules** - Use the automations framework (see [Automations](./automations.md)) for
-   anything that repeats on a schedule.
-
-## Quick Start Examples
-
-### Simple Reminders
-
-```
-"Remind me to call the dentist at 3pm"
-"Set a reminder for tomorrow morning to review the report"
-"Don't let me forget about the meeting at 4:30" (adds follow-up reminders)
-```
-
-### Scheduled Callbacks
-
-```
-"Check back with me in 2 hours about the project status"
-"Continue analyzing this data tomorrow at 9am"
-"Wake up at 6pm to see if the download finished"
-```
-
-### Script Scheduling
-
-```
-"Schedule a script to run at midnight that cleans up old notes"
-"Execute a script tomorrow at 9am to summarize all TODO items"
-"Run a script in 30 minutes to check system status"
-```
-
-### Recurring Schedules
-
-Recurring schedules are created via the automations framework rather than a dedicated scheduling
-tool. Under the hood the assistant calls `create_automation` with `automation_type="schedule"`.
-
-```
-"Send me a weather update every morning at 7am"
-"Check for new emails every hour"
-"Run a cleanup script every Sunday at midnight"
-"Remind me to take medication every day at 8am and 8pm"
-```
+1. **Reminders (`schedule_reminder`)** — Simple notifications at a specific time (with optional
+   follow-ups if you don't reply).
+2. **Callbacks (`schedule_future_callback`)** — Wake the assistant later to continue work or check
+   on something. If nothing needs your attention when it wakes, it finishes quietly without
+   messaging you.
+3. **One-off Scheduled Actions (`schedule_action`)** — Run a one-time `wake_llm` or Python `script`
+   at a specific time.
+4. **Recurring Schedules (`create_automation` with `automation_type="schedule"`)** — Anything that
+   repeats on an RRULE schedule. Never build a recurring task out of chained one-off callbacks. See
+   [automations.md](automations.md).
 
 ### Where they arrive
 
-With threads turned on, reminders, callbacks and automations you set up in the web or iOS app arrive
-in your Home rather than the conversation you set them up in, unless you set them up inside a
-thread. Ask for "here" or "in this conversation" to keep one where it is. See
-[automations.md](automations.md#where-the-assistant-replies) for the details.
+With threads turned on (see [threads.md](threads.md)), reminders, callbacks, and automations created
+in the web or iOS app arrive in your **Home** by default — except when created inside a thread,
+where they stay with that thread. Ask for "here" or "in this conversation" (`conversation="source"`)
+to keep one in the originating conversation. In Telegram, they always reply in the chat where they
+were created. See [automations.md](automations.md#where-the-assistant-replies).
 
-## Detailed Tool Reference
+## Tool Reference
 
-### schedule_reminder
+### `schedule_reminder`
 
-Creates a simple reminder that will notify you at the specified time.
+- `reminder_time`: ISO 8601 timestamp with timezone
+- `message`: Reminder message
+- `follow_up`: If `True`, sends follow-up reminders until you respond (skipped automatically if the
+  assistant can see you have already dealt with it)
+- `follow_up_interval`: Interval between follow-ups (e.g. `"30 minutes"`, `"1 hour"`)
+- `max_follow_ups`: Maximum follow-up reminders
+- `conversation`: `"home"` or `"source"` (defaults to the rule under
+  [Where they arrive](#where-they-arrive))
 
-**Parameters:**
+### `schedule_future_callback`
 
-- `reminder_time`: When to send the reminder (ISO 8601 format with timezone)
-- `message`: The reminder message
-- `follow_up`: If true, sends follow-up reminders if you don't respond. A follow-up is skipped when
-  it's clear you've already dealt with it, even if you didn't reply.
-- `follow_up_interval`: Time between follow-ups (e.g., "30 minutes", "1 hour")
-- `max_follow_ups`: Maximum number of follow-up reminders
-- `conversation`: `home` or `source` (the conversation it was set up in); omitted, it follows the
-  rule under [Where they arrive](#where-they-arrive)
+- `callback_time`: ISO 8601 timestamp with timezone
+- `context`: Instructions for what the assistant should check or do when woken
+- `conversation`: `"home"` or `"source"`
 
-**Examples:**
+### `schedule_action`
 
-```
-"Remind me to submit the report at 5pm"
-→ Creates a one-time reminder
-
-"Don't let me forget to take my medication at 8pm"
-→ Creates a reminder with follow_up=true for automatic re-reminders
-```
-
-### schedule_future_callback
-
-Schedules the assistant to wake up and continue a conversation or check on something. When it checks
-and there's nothing you need to know, it finishes without messaging you.
-
-**Parameters:**
-
-- `callback_time`: When to trigger the callback (ISO 8601 format)
-- `context`: Instructions for what the assistant should do when it wakes up
-- `conversation`: `home` or `source`, as for `schedule_reminder`
-
-**Examples:**
-
-```
-"Check if the server deployment completed in 2 hours"
-"Continue our discussion about vacation planning tomorrow morning"
-```
-
-### schedule_action
-
-Schedules any type of action (LLM callback or script) for one-time execution.
-
-**Parameters:**
-
-- `schedule_time`: When to execute (ISO 8601 format)
-- `action_type`: Either "wake_llm" or "script"
-- `action_config`: Configuration for the action
-  - For wake_llm: `{"context": "message for assistant"}`
-  - For script: `{"script_code": "your Python code", "timeout": 600}`
-
-**Examples:**
-
-```
-"Schedule a script for tomorrow at noon that counts all notes"
-"Run an LLM task at 3pm to review today's activities"
-```
+- `schedule_time`: ISO 8601 timestamp with timezone
+- `action_type`: `"wake_llm"` or `"script"`
+- `action_config`: `{"context": "..."}` for `wake_llm`, or `{"script_code": "...", "timeout": 600}`
+  for `script`
 
 ### Recurring schedules (`create_automation`)
-
-For anything that should repeat on a schedule, the assistant uses the automations framework —
-specifically `create_automation` with `automation_type="schedule"`. There is no longer a dedicated
-legacy "recurring task" tool; it has been fully superseded by automations.
-
-**Key parameters:**
 
 - `name`: Short identifier for the automation
 - `automation_type`: `"schedule"`
 - `trigger_config`: `{"recurrence_rule": "<RRULE>", "timezone": "<IANA tz>"}`
 - `action_type`: `"wake_llm"` or `"script"`
-- `action_config`:
-  - wake_llm: `{"context": "what the assistant should do each run"}`
-  - script: `{"script_code": "..."}` (inline) or `{"script_name": "..."}` (stored script)
-
-**Examples:**
-
-```
-"Send me a daily briefing every morning at 8am"
-→ create_automation(automation_type="schedule", action_type="wake_llm",
-  trigger_config={"recurrence_rule": "FREQ=DAILY;BYHOUR=8;BYMINUTE=0", ...})
-
-"Run a cleanup script every Sunday at midnight"
-→ create_automation(automation_type="schedule", action_type="script",
-  trigger_config={"recurrence_rule": "FREQ=WEEKLY;BYDAY=SU;BYHOUR=0;BYMINUTE=0", ...})
-```
-
-See the [Automations guide](./automations.md) for the full parameter reference and more examples.
+- `action_config`: `{"context": "..."}` for `wake_llm`, or `{"script_code": "..."}` (inline) /
+  `{"script_name": "..."}` (stored script) for `script`. See [scripting.md](scripting.md).
 
 ## Managing Scheduled Tasks
 
-### Listing Tasks
-
-One-time reminders and callbacks:
-
-```
-"Show me all my pending callbacks"
-"List all scheduled reminders"
-"What tasks are scheduled for tomorrow?"
-```
-
-Recurring schedules are automations — list them with `list_automations` or from the Automations page
-in the web UI.
-
-### Modifying Tasks
-
-```
-"Change the dentist reminder to 4pm instead"
-"Update the context for callback task_123"
-```
-
-Recurring schedules are modified via `update_automation`.
-
-### Cancelling Tasks
-
-One-time reminders and callbacks are cancelled by task id:
-
-```
-"Cancel the reminder about the meeting"
-```
-
-Recurring schedules are stopped via `disable_automation` or removed with `delete_automation`:
-
-```
-"Stop the daily weather updates"
-"Delete the cleanup automation"
-```
+- **One-off reminders and callbacks:** List (`list_pending_callbacks`), reschedule or edit context
+  (`modify_pending_callback`), or cancel (`cancel_pending_callback`) in conversation or on the
+  **Tasks** page in the web UI.
+- **Recurring schedules:** List (`list_automations`), update (`update_automation`), pause/resume
+  (`disable_automation` / `enable_automation`), or remove (`delete_automation`) in conversation or
+  on the **Automations** page. To stop a recurring schedule, disable or delete the automation itself
+  rather than cancelling individual queued instances.
 
 ## RRULE Format Guide
 
-RRULE (Recurrence Rule) strings follow the RFC 5545 standard. Common patterns:
+RRULE strings follow RFC 5545, and **`BYHOUR`/`BYMINUTE` are always interpreted in the user's
+configured timezone** (DST transitions are handled automatically):
 
-### Daily
-
-- Every day: `FREQ=DAILY`
-- Every 3 days: `FREQ=DAILY;INTERVAL=3`
-- Every weekday: `FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR`
-
-### Weekly
-
-- Every week: `FREQ=WEEKLY`
-- Every Monday: `FREQ=WEEKLY;BYDAY=MO`
-- Every Monday and Friday: `FREQ=WEEKLY;BYDAY=MO,FR`
-
-### Hourly
-
-- Every hour: `FREQ=HOURLY`
-- Every 4 hours: `FREQ=HOURLY;INTERVAL=4`
-
-### Monthly
-
-- Every month: `FREQ=MONTHLY`
-- On the 15th of each month: `FREQ=MONTHLY;BYMONTHDAY=15`
-- Last day of month: `FREQ=MONTHLY;BYMONTHDAY=-1`
-
-### Time Specification
-
-- At specific time: Add `;BYHOUR=9;BYMINUTE=30` for 9:30 AM
-- Multiple times: `;BYHOUR=9,17` for 9 AM and 5 PM
-
-### Limiting Occurrences
-
-- Only 10 times: Add `;COUNT=10`
-- Until specific date: Add `;UNTIL=20251231T235959Z`
-
-A count starts from the first run after the automation is created or its schedule is changed. Runs
-that fall while the automation is paused still count, so a paused automation can finish its count
-before it is resumed. A count can be at most 10,000; use an end date for anything longer.
-
-## Script Automation
-
-Scripts can access various tools and data:
-
-```python
-# Example script that runs daily to summarize notes
-notes = search_notes("TODO")
-summary = []
-for note in notes:
-    summary.append(f"- {note['title']}")
-
-if summary:
-    add_note("Daily TODO Summary", "\n".join(summary))
-    wake_llm(f"Found {len(summary)} TODO items today")
-```
-
-See the [Scripting Guide](scripting.md) for more details on writing automation scripts.
-
-## Best Practices
-
-1. **Always include timezone** in your time specifications to avoid confusion
-2. **Use descriptive task names** for recurring tasks to make them easier to manage
-3. **Test RRULE patterns** before creating long-term recurring tasks
-4. **Use scripts for deterministic tasks** and LLM callbacks for tasks requiring judgment
-5. **Set reasonable intervals** - avoid scheduling tasks too frequently
-6. **Monitor the Tasks page** in the web UI to ensure tasks are running as expected
-
-## Troubleshooting
-
-### Task Not Running
-
-- Check timezone settings - ensure times are specified correctly
-- Verify the task appears in "Show me pending callbacks"
-- Check the Tasks page in web UI for error messages
-
-### Duplicate Tasks
-
-- Recurring tasks create individual instances - this is normal
-- Use task names/descriptions to identify related tasks
-- Cancel all instances to stop a recurring task completely
-
-### Script Errors
-
-- Scripts have a default 10-minute timeout
-- Check script syntax using the assistant before scheduling
-- View script execution logs in the Tasks page
-
-## Examples by Use Case
-
-### Personal Productivity
-
-```
-"Remind me to review my todo list every morning at 8am"
-"Schedule a weekly script to archive completed tasks"
-"Alert me 15 minutes before each meeting"
-```
-
-### Home Automation
-
-```
-"Run a script every night at 10pm to turn off all lights"
-"Check if the garage door is open every hour after 9pm"
-"Send me a summary of home sensor data every morning"
-```
-
-### Information Monitoring
-
-```
-"Check for new emails from my boss every 30 minutes during work hours"
-"Search for news about my company every morning"
-"Monitor specific websites for updates daily"
-```
-
-### Health & Wellness
-
-```
-"Remind me to take medication at 8am and 8pm with follow-ups"
-"Schedule a daily check-in about my mood at 7pm"
-"Run a weekly script to summarize my health notes"
-```
+- **Daily / Weekday:** `FREQ=DAILY;BYHOUR=8;BYMINUTE=0` or
+  `FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=7;BYMINUTE=0`
+- **Weekly:** `FREQ=WEEKLY;BYDAY=MO,FR;BYHOUR=9;BYMINUTE=0`
+- **Hourly:** `FREQ=HOURLY;INTERVAL=4`
+- **Monthly:** `FREQ=MONTHLY;BYMONTHDAY=15` (or `BYMONTHDAY=-1` for the last day of the month)
+- **Multiple times per day:** `;BYHOUR=9,17;BYMINUTE=0`
+- **Limiting occurrences:** Append `;COUNT=10` (at most `10000`) or `;UNTIL=20251231T235959Z`.
+  `COUNT` starts from the first run after creation or the last schedule edit; runs that fall while
+  the automation is paused still count toward `COUNT`, so a paused automation can exhaust its count
+  before it is resumed.
