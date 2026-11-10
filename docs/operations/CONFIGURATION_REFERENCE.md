@@ -1098,13 +1098,13 @@ request *is* the authorization. A model choosing it is not, which is why the shi
 automatically.
 
 The shipped presets — `gpt_6_astra`, `gpt_6_1_sol`, `gpt_6_1_terra`, `claude_opus_5_5`,
-`claude_sonnet_5_5`, `claude_haiku_5_5`, `claude_fable_5_2`, `kimi_k3` and `gemini_4_argon` — are
-listed once, in `default_profile_settings.delegation_model_tiers`, so a delegating model may pin any
-profile that has a tier to any of them without a confirmation ("run complex_tasks on Gemini 4
-Argon"). A profile that names an inline model drops the inherited list, and a profile that declares
-its own replaces it, so `delegation_model_tiers: []` keeps a profile off presets entirely. Adding a
-preset is a `model_tiers` entry plus a name in that list. The profile catalog lists the presets most
-profiles share once, rather than under each profile.
+`claude_sonnet_5_5`, `claude_haiku_5_5`, `claude_fable_5_2`, `kimi_k3`, `gemini_4_argon` and
+`gemini_4_carbon` — are listed once, in `default_profile_settings.delegation_model_tiers`, so a
+delegating model may pin any profile that has a tier to any of them without a confirmation ("run
+complex_tasks on Gemini 4 Argon"). A profile that names an inline model drops the inherited list,
+and a profile that declares its own replaces it, so `delegation_model_tiers: []` keeps a profile off
+presets entirely. Adding a preset is a `model_tiers` entry plus a name in that list. The profile
+catalog lists the presets most profiles share once, rather than under each profile.
 
 #### The council's seats
 
@@ -1114,7 +1114,9 @@ exact-model preset per seat (see [the user guide](../user/council.md) and
 
 - **The roster** is in the `council` profile's system prompt: which preset sits in seats A, B, C and
   D, and which preset is the alternative Anthropic seat. The shipped roster is `gpt_6_astra`,
-  `claude_fable_5_2`, `kimi_k3` and `gemini_4_argon`, with `claude_opus_5_5` as the alternative.
+  `claude_fable_5_2`, `kimi_k3` and `gemini_4_carbon`, with `claude_opus_5_5` as the alternative.
+  `council_member` also admits `gemini_4_argon`, so the Gemini seat can be moved back to it by
+  editing the roster alone.
 - **The admissions** are `council_member`'s `delegation_model_tiers`. It declares its own list
   rather than inheriting the default one, so a change to the shared presets cannot unseat a member.
 
@@ -3785,9 +3787,10 @@ revision); a value that is not an Antigravity id is a startup error.
 and on an Antigravity profile a tier's single chain entry is that model. So the profile must name a
 tier and must not set `provider`, `llm_model` or `retry_config`, and every tier it can reach must be
 exactly one Google model with no `llm_parameters` (the agent has no fallback and takes no request
-parameters). The shipped `coder` defaults to `gemini_3_8_flash` and admits `gemini_4_argon` from a
-person (`allowed_model_tiers`) and from a delegating model (`delegation_model_tiers`); a deployment
-can add another model the agent accepts as a one-model tier and list it the same way.
+parameters). The shipped `coder` defaults to `gemini_3_8_flash` and admits `gemini_4_argon` and
+`gemini_4_carbon` from a person (`allowed_model_tiers`) and from a delegating model
+(`delegation_model_tiers`); a deployment can add another model the agent accepts as a one-model tier
+and list it the same way.
 
 `max_total_tokens` caps what a single run may spend; unset leaves the API's own default, which
 together with `max_async_seconds` is the only bound on how long an autonomous run iterates. A

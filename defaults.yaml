@@ -338,10 +338,19 @@ model_tiers:
         model: "openrouter/moonshotai/kimi-k3"
   gemini_4_argon:
     label: "Gemini 4 Argon"
-    description: "Google's strongest Gemini 4 model, at its default thinking level."
+    description: "Google's efficient Gemini 4 reasoning model, at its default thinking level."
     chain:
       - provider: "google"
         model: "gemini-4-argon"
+  # Carbon spends more thinking per turn than Argon at the same per-token
+  # price, so it is slower and costs more per answer: a choice for the hardest
+  # problems, not a replacement for Argon.
+  gemini_4_carbon:
+    label: "Gemini 4 Carbon"
+    description: "Google's strongest Gemini 4 model, at its default thinking level."
+    chain:
+      - provider: "google"
+        model: "gemini-4-carbon"
   # `standard` minus its fallback, for a profile that cannot fall back: coder's
   # default, where the tier is the Antigravity agent's reasoning model.
   gemini_3_8_flash:
@@ -964,7 +973,7 @@ default_profile_settings:
   # ("run complex_tasks on Gemini 4 Argon"). Auto never routes to these and the
   # tier picker does not list them. A profile that names an inline model drops
   # this list, and one that declares its own replaces it.
-  delegation_model_tiers: ["gpt_6_astra", "gpt_6_1_sol", "gpt_6_1_terra", "claude_opus_5_5", "claude_sonnet_5_5", "claude_haiku_5_5", "claude_fable_5_2", "kimi_k3", "gemini_4_argon"]
+  delegation_model_tiers: ["gpt_6_astra", "gpt_6_1_sol", "gpt_6_1_terra", "claude_opus_5_5", "claude_sonnet_5_5", "claude_haiku_5_5", "claude_fable_5_2", "kimi_k3", "gemini_4_argon", "gemini_4_carbon"]
   processing_config:
     # Inherited by every profile that does not select its own tier or name an
     # inline model.
@@ -1381,9 +1390,9 @@ service_profiles:
     description: "Coding agent. Writes and runs code, works with files, and reads the web to get a self-contained programming or computation task DONE — write and test a script, transform or analyse data, debug a snippet, work out a result — returning the finished output rather than instructions. Runs on the Google Antigravity managed agent in a throwaway Google-hosted Linux sandbox,, so it sees nothing but the text of the request: no notes, calendar, documents, Home Assistant or other Family Assistant tools, and no shared workspace. Attachments you pass are mounted as files in its sandbox under /workspace, so hand it the file rather than pasting the contents; files it saves under /workspace/outputs come back to you as attachments on its result (up to 20 files, 50 MB), so ask for a model, image or document as a file when that is what the user wants. Choose it over spawn_worker when the task needs no files from the shared workspace and you want the result back in the conversation; choose spawn_worker when the agent must read or write shared workspace files, and complex_tasks when the task needs the family's own data. It reasons with a fast, inexpensive model by default; ask for a stronger model_tier only for a problem the default has failed at or is plainly not up to, since it costs many times more."
     # The tier is the model the agent reasons with. Flash is the default
     # because it is a fraction of Argon's cost and enough for most requests;
-    # Argon is a choice someone makes, never Auto's.
-    allowed_model_tiers: ["gemini_3_8_flash", "gemini_4_argon"]
-    delegation_model_tiers: ["gemini_4_argon"]
+    # Argon and Carbon are a choice someone makes, never Auto's.
+    allowed_model_tiers: ["gemini_3_8_flash", "gemini_4_argon", "gemini_4_carbon"]
+    delegation_model_tiers: ["gemini_4_argon", "gemini_4_carbon"]
     processing_config:
       model_tier: "gemini_3_8_flash"
       antigravity_config:
@@ -1498,7 +1507,7 @@ service_profiles:
   # taint policy gates as it does everywhere else.
   - id: "council"
     user_selectable: true
-    description: "Use for an explicit multi-model council, broad exploratory work, or a difficult design or speculative question where independent proposals and critical review are valuable. Several strong models (GPT-6 Astra, Claude Fable 5.2, Kimi K3 and Gemini 4 Argon) each research the question independently, review and revise against each other over two rounds, and the council returns a synthesis with evidence, alternatives and remaining uncertainties. Slow and expensive. Not the default for routine lookups, straightforward coding or implementation. It can read the household's notes, documents, calendar and conversation history, so describe the question fully and pass relevant attachments."
+    description: "Use for an explicit multi-model council, broad exploratory work, or a difficult design or speculative question where independent proposals and critical review are valuable. Several strong models (GPT-6 Astra, Claude Fable 5.2, Kimi K3 and Gemini 4 Carbon) each research the question independently, review and revise against each other over two rounds, and the council returns a synthesis with evidence, alternatives and remaining uncertainties. Slow and expensive. Not the default for routine lookups, straightforward coding or implementation. It can read the household's notes, documents, calendar and conversation history, so describe the question fully and pass relevant attachments."
     # Household notes as the assistant sees them, plus the council's own
     # skill: no other profile holds the `council` grant.
     visibility_grants: ["default", "council"]
@@ -1530,7 +1539,7 @@ service_profiles:
           - Member A: model_tier "gpt_6_astra" (GPT-6 Astra)
           - Member B: model_tier "claude_fable_5_2" (Claude Fable 5.2)
           - Member C: model_tier "kimi_k3" (Kimi K3)
-          - Member D: model_tier "gemini_4_argon" (Gemini 4 Argon)
+          - Member D: model_tier "gemini_4_carbon" (Gemini 4 Carbon)
           "claude_opus_5_5" (Claude Opus 5.5) is an alternative Anthropic seat, used in place of Fable only when the request asks for it -- never as an extra seat. Never substitute another model for a member, and never describe a member as a model it is not.
 
           Use a separate, resumable conversation for each member and keep each member's model the same across phases: every resume passes that member's latest finished delegation as resume_delegation_id AND the same model_tier again.
@@ -2667,7 +2676,7 @@ service_profiles:
     # The seats. A profile admits presets for itself -- default_assistant's
     # list does not reach here -- and every one is a single model with no
     # fallback, so a seat answers as the model it names or fails visibly.
-    delegation_model_tiers: ["gpt_6_astra", "gpt_6_1_sol", "claude_opus_5_5", "claude_fable_5_2", "kimi_k3", "gemini_4_argon"]
+    delegation_model_tiers: ["gpt_6_astra", "gpt_6_1_sol", "claude_opus_5_5", "claude_fable_5_2", "kimi_k3", "gemini_4_argon", "gemini_4_carbon"]
     tools_policy:
       default_decision: "deny"
       rules:
