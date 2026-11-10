@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
+from family_assistant.storage.types import MessageHistoryRow
 from family_assistant.web.routers.chat_api import (
     _user_name_for_chat,  # noqa: PLC2701 - testing private helper directly
+    serialize_conversation_messages,
 )
 
 
@@ -66,3 +70,48 @@ def test_blank_values_are_skipped() -> None:
 
 def test_defaults_to_api_user_when_nothing_available() -> None:
     assert _user_name_for_chat({}) == "API User"
+
+
+def _history_row(timestamp: datetime) -> MessageHistoryRow:
+    return MessageHistoryRow(
+        internal_id=1,
+        interface_type="web",
+        conversation_id="web_conv",
+        interface_message_id=None,
+        turn_id="turn-1",
+        thread_root_id=None,
+        timestamp=timestamp,
+        role="assistant",
+        content="Hello",
+        tool_calls=None,
+        reasoning_info=None,
+        tool_call_id=None,
+        error_traceback=None,
+        processing_profile_id=None,
+        subconversation_id=None,
+        user_id=None,
+        attachments=None,
+        tool_name=None,
+        provider_metadata=None,
+        taint_metadata_json=None,
+        taint_metadata_version=None,
+        taint_metadata=None,
+        is_internal=False,
+        echoed_from_conversation_id=None,
+        moved_to_conversation_id=None,
+        started_thread_conversation_id=None,
+    )
+
+
+def test_serialized_message_timestamp_carries_utc_offset() -> None:
+    # SQLite returns timezone columns naive; the browser would read a naive
+    # ISO string in its own local zone.
+    naive = datetime(2026, 11, 10, 5, 0, 0)
+
+    messages = serialize_conversation_messages([_history_row(naive)])
+
+    assert len(messages) == 1
+    message = messages[0]
+
+    assert message.timestamp == naive.replace(tzinfo=UTC)
+    assert message.model_dump(mode="json")["timestamp"].endswith("Z")

@@ -3363,7 +3363,7 @@ def serialize_conversation_messages(
                 turn_id=msg.get("turn_id"),
                 role=msg["role"],
                 content=msg.get("content"),
-                timestamp=msg["timestamp"],
+                timestamp=_as_utc(msg["timestamp"]),
                 tool_calls=tool_calls_dicts,
                 tool_call_id=msg.get("tool_call_id"),
                 error_traceback=msg.get("error_traceback"),

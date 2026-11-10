@@ -13,6 +13,19 @@ interface NotificationData {
   timestamp: string;
 }
 
+// A notification is for a reply that has just arrived. A background reload
+// after the laptop wakes or the event stream reconnects can surface a reply
+// that landed hours ago; announcing it then reads as a new message.
+export const MAX_NOTIFICATION_AGE_MS = 5 * 60 * 1000;
+
+function isFreshMessage(timestamp: string): boolean {
+  const createdAt = Date.parse(timestamp);
+  if (Number.isNaN(createdAt)) {
+    return false;
+  }
+  return Date.now() - createdAt <= MAX_NOTIFICATION_AGE_MS;
+}
+
 // Multi-tab coordination using BroadcastChannel
 class NotificationCoordinator {
   private channel: BroadcastChannel | null = null;
@@ -211,6 +224,9 @@ export function useNotifications({
       if (!isLeaderTab) {
         return;
       } // Only leader tab shows notifications
+      if (!isFreshMessage(timestamp)) {
+        return;
+      }
 
       // Dedupe: check if we've already shown this notification
       const notificationKey = `${notifConvId}:${messageId}`;
