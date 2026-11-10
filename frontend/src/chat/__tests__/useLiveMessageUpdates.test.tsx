@@ -58,7 +58,7 @@ describe('useLiveMessageUpdates', () => {
     await vi.advanceTimersByTimeAsync(2000);
   };
 
-  it('subscribes as a follow stream filtered to message,turn_ended with ack_seq=-1', async () => {
+  it('subscribes as a follow stream filtered to message,turn_started,turn_ended with ack_seq=-1', async () => {
     renderHook(() => useLiveMessageUpdates({ conversationId: 'web_conv_live', enabled: true }));
 
     await flushConnect();
@@ -68,7 +68,23 @@ describe('useLiveMessageUpdates', () => {
     expect(url).toContain('follow=true');
     expect(url).toContain('from_seq=-1');
     expect(url).toContain('ack_seq=-1');
-    expect(url).toContain('event_types=message%2Cturn_ended');
+    expect(url).toContain('event_types=message%2Cturn_started%2Cturn_ended');
+  });
+
+  it('hands a turn_started frame to onTurnStarted with its seq', async () => {
+    const started: Array<{ turnId: string; seq: number }> = [];
+    renderHook(() =>
+      useLiveMessageUpdates({
+        conversationId: 'web_conv_live',
+        enabled: true,
+        onTurnStarted: (turn) => started.push(turn),
+      })
+    );
+
+    await flushConnect();
+    MockEventSource.instances[0].emit('turn_started', { turn_id: 'wake_turn_1', seq: 42 });
+
+    expect(started).toEqual([{ turnId: 'wake_turn_1', seq: 42 }]);
   });
 
   it('POSTs /ack with the turn_ended seq', async () => {

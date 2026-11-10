@@ -608,6 +608,13 @@ the original assistant, which posts the follow-up in the same conversation. For 
 handoffs post their result directly in Chat. You can ask for the status of a delegation reference at
 any time.
 
+In web chat, the assistant works through a delegated result just like a reply to you: you can watch
+it, press Stop, or send a message to steer it while it works. A result that arrives while the
+assistant is already replying to you waits for that reply to finish. Elsewhere, such as Telegram,
+there is no Stop, so the assistant gives up after about 30 minutes and posts a short note instead.
+The result is kept in the conversation either way, so asking the assistant to carry on picks up from
+there.
+
 While a longer handoff is running, the web and iOS chat show a small line above the message box for
 each one — which specialist is working, how it is going (queued, working, how many of a council's
 members have answered, finishing up) and when it started. Hover it on the web, or use VoiceOver on

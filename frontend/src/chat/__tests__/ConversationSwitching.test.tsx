@@ -364,6 +364,186 @@ describe('A live update while a conversation is opening', () => {
     return stream as MockEventSource;
   };
 
+  it('follows a turn started elsewhere live, with Stop', async () => {
+    const user = userEvent.setup();
+    serveConversations();
+    const streamRequests: string[] = [];
+    let cancelledTurnId = '';
+    const encoder = new TextEncoder();
+    server.use(
+      http.get('/api/v1/chat/conversations/:conversationId/stream', ({ request }) => {
+        streamRequests.push(request.url);
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue(
+              encoder.encode(
+                `event: turn_started\ndata: ${JSON.stringify({ turn_id: 'wake-1', seq: 5 })}\n\n`
+              )
+            );
+            controller.enqueue(
+              encoder.encode(
+                `event: text\ndata: ${JSON.stringify({ content: 'Reading the delegated result', seq: 6 })}\n\n`
+              )
+            );
+          },
+        });
+        return new HttpResponse(stream, { headers: { 'Content-Type': 'text/event-stream' } });
+      }),
+      http.post('/api/v1/chat/turns/:turnId/cancel', ({ params }) => {
+        cancelledTurnId = String(params.turnId);
+        return HttpResponse.json({
+          turn_id: cancelledTurnId,
+          conversation_id: 'conv-b',
+          status: 'cancelling',
+        });
+      })
+    );
+    await renderChatApp({ waitForReady: true });
+
+    await openConversation(user, 'conv-b');
+    expect(await screen.findByText('Hello from conv-b')).toBeInTheDocument();
+    (await followStreamFor('conv-b')).emit('turn_started', { turn_id: 'wake-1', seq: 5 });
+
+    expect(
+      await screen.findByText('Reading the delegated result', undefined, { timeout: 3000 })
+    ).toBeInTheDocument();
+    expect(streamRequests.some((url) => url.includes('from_seq=5'))).toBe(true);
+    await user.click(await screen.findByTestId('stop-button'));
+    await waitFor(() => expect(cancelledTurnId).toBe('wake-1'));
+  });
+
+  it("follows a turn that starts before this tab's own stream has settled", async () => {
+    const user = userEvent.setup();
+    serveConversations();
+    const encoder = new TextEncoder();
+    const sse = (type: string, payload: Record<string, unknown>) =>
+      encoder.encode(`event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`);
+    let ownTurnId = '';
+    let releaseOwnTurn = () => {};
+    const ownTurnStreaming = gate();
+    const streamRequests: string[] = [];
+    server.use(
+      http.post('/api/v1/chat/turns', async ({ request }) => {
+        const body = (await request.json()) as { turn_id: string; conversation_id: string };
+        ownTurnId = body.turn_id;
+        return HttpResponse.json({
+          turn_id: body.turn_id,
+          conversation_id: body.conversation_id,
+          first_seq: 0,
+        });
+      }),
+      http.get('/api/v1/chat/conversations/:conversationId/stream', ({ request }) => {
+        streamRequests.push(request.url);
+        const wake = new URL(request.url).searchParams.get('from_seq') === '7';
+        const stream = new ReadableStream({
+          start(controller) {
+            if (wake) {
+              controller.enqueue(sse('turn_started', { turn_id: 'wake-1', seq: 7 }));
+              controller.enqueue(
+                sse('text', { content: 'Working on the delegated result', seq: 8 })
+              );
+              return;
+            }
+            controller.enqueue(sse('turn_started', { turn_id: ownTurnId, seq: 0 }));
+            controller.enqueue(sse('text', { content: 'Own reply', seq: 1 }));
+            releaseOwnTurn = () => {
+              controller.enqueue(
+                sse('turn_ended', { turn_id: ownTurnId, status: 'complete', seq: 2 })
+              );
+              controller.close();
+            };
+            ownTurnStreaming.open();
+          },
+        });
+        return new HttpResponse(stream, { headers: { 'Content-Type': 'text/event-stream' } });
+      })
+    );
+    await renderChatApp({ waitForReady: true });
+
+    await openConversation(user, 'conv-b');
+    expect(await screen.findByText('Hello from conv-b')).toBeInTheDocument();
+    const follow = await followStreamFor('conv-b');
+    await user.type(screen.getByPlaceholderText('Message Family Assistant...'), 'Hi there');
+    await user.keyboard('{Enter}');
+    await ownTurnStreaming.promise;
+    expect(await screen.findByText('Own reply')).toBeInTheDocument();
+
+    // The wake was waiting for this turn, and starts as it ends.
+    follow.emit('turn_started', { turn_id: 'wake-1', seq: 7 });
+    releaseOwnTurn();
+
+    expect(
+      await screen.findByText('Working on the delegated result', undefined, { timeout: 3000 })
+    ).toBeInTheDocument();
+    expect(await screen.findByTestId('stop-button')).toBeInTheDocument();
+  });
+
+  it("reads a followed turn's opening message from history once the turn ends", async () => {
+    const user = userEvent.setup();
+    let promptStored = false;
+    serveConversations({
+      'conv-b': () =>
+        HttpResponse.json({
+          messages: [
+            {
+              internal_id: 'conv-b-msg-1',
+              role: 'user',
+              content: 'Hello from conv-b',
+              timestamp: '2025-01-01T09:00:00Z',
+            },
+            ...(promptStored
+              ? [
+                  {
+                    internal_id: 'conv-b-msg-2',
+                    role: 'user',
+                    content: 'Question from my phone',
+                    timestamp: '2025-01-01T09:01:00Z',
+                    turn_id: 'phone-1',
+                  },
+                  {
+                    internal_id: 'conv-b-msg-3',
+                    role: 'assistant',
+                    content: 'Answer for the phone',
+                    timestamp: '2025-01-01T09:01:05Z',
+                    turn_id: 'phone-1',
+                  },
+                ]
+              : []),
+          ],
+        }),
+    });
+    const encoder = new TextEncoder();
+    server.use(
+      http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+        // The opening message is only stored once the stream is under way.
+        promptStored = true;
+        const events = [
+          `event: turn_started\ndata: ${JSON.stringify({ turn_id: 'phone-1', seq: 3 })}\n\n`,
+          `event: text\ndata: ${JSON.stringify({ content: 'Answer for the phone', seq: 4 })}\n\n`,
+          `event: turn_ended\ndata: ${JSON.stringify({ turn_id: 'phone-1', status: 'complete', seq: 5 })}\n\n`,
+        ];
+        const stream = new ReadableStream({
+          start(controller) {
+            for (const event of events) {
+              controller.enqueue(encoder.encode(event));
+            }
+            controller.close();
+          },
+        });
+        return new HttpResponse(stream, { headers: { 'Content-Type': 'text/event-stream' } });
+      })
+    );
+    await renderChatApp({ waitForReady: true });
+
+    await openConversation(user, 'conv-b');
+    expect(await screen.findByText('Hello from conv-b')).toBeInTheDocument();
+    (await followStreamFor('conv-b')).emit('turn_started', { turn_id: 'phone-1', seq: 3 });
+
+    expect(
+      await screen.findByText('Question from my phone', undefined, { timeout: 3000 })
+    ).toBeInTheDocument();
+  });
+
   it('still ends the open in an error with Retry when the reload that took it over fails', async () => {
     const user = userEvent.setup();
     let requestsForB = 0;

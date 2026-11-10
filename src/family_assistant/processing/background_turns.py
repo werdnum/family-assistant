@@ -87,6 +87,10 @@ class BackgroundTurnRunner:
             )
         return task
 
+    def is_running(self, name: str) -> bool:
+        """Whether a background turn launched under ``name`` is still running."""
+        return any(task.get_name() == name and not task.done() for task in self._turns)
+
     def _on_done(self, task: asyncio.Task[None]) -> None:
         lease = self._turns.pop(task, None)
         if task.cancelled():

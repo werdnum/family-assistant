@@ -116,7 +116,13 @@ from family_assistant.tools.services import (
 from family_assistant.tools.types import CalendarConfig, EventSourcesById
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Coroutine, Mapping
+    from collections.abc import (
+        AsyncGenerator,
+        Awaitable,
+        Callable,
+        Coroutine,
+        Mapping,
+    )
     from zoneinfo import ZoneInfo
 
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -124,6 +130,7 @@ if TYPE_CHECKING:
     from family_assistant.embeddings import EmbeddingGenerator
     from family_assistant.events.indexing_source import IndexingSource
     from family_assistant.interfaces import ChatInterface
+    from family_assistant.llm import LLMStreamEvent
     from family_assistant.llm.content_parts import ContentPartDict
     from family_assistant.processing.types import (
         RequestConfirmationCallback,
@@ -148,7 +155,10 @@ if TYPE_CHECKING:
     from family_assistant.threads.turns import StartedThreadTurn, ThreadTurnRunner
     from family_assistant.tools.authenticated_sites import AuthenticatedRunSettlement
     from family_assistant.tools.infrastructure import ToolsProvider
-    from family_assistant.web.conversation_stream_hub import ConversationStreamHub
+    from family_assistant.web.conversation_stream_hub import (
+        ConversationStreamHub,
+        TurnStatus,
+    )
 
     # A handler may return a note recorded on the task when it finishes, for a
     # run that succeeded but hit problems worth surfacing in its history.
@@ -174,7 +184,6 @@ from family_assistant.services.delegated_run_resumption import (
 )
 from family_assistant.services.delegation_delivery import (
     DELEGATION_WAKE_RESUMER,
-    DELEGATION_WAKE_TURN_BUDGET_SECONDS,
     DelegationDeliveryPayload,
     queue_delegation_delivery,
 )
@@ -232,6 +241,12 @@ from family_assistant.tools.types import (
     ToolResult,
 )
 from family_assistant.utils.clock import Clock, SystemClock
+from family_assistant.web.conversation_stream_hub import (
+    ConversationTurnRunningError,
+    TurnAlreadyExistsError,
+)
+from family_assistant.web.turn_producer import HubTurnEventPublisher
+from family_assistant.web.web_mid_turn_controller import WebMidTurnController
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -518,6 +533,35 @@ class _SuspendableTurnController:
 
     def should_interrupt(self) -> bool:
         return self._suspend_requested
+
+
+@dataclass
+class _WakeTurnHost:
+    """Where a delegation wake turn runs, and what can stop it.
+
+    See ``TaskWorker._host_wake_turn``. ``end_turn`` closes the turn where it
+    is hosted, once: as soon as the turn has its reply, so a Stop that lands
+    while the reply is being delivered finds the turn already over.
+    """
+
+    controller: _SuspendableTurnController | WebMidTurnController
+    budget_seconds: float | None
+    on_stream_event: Callable[[LLMStreamEvent], Awaitable[None]] | None = None
+    end_turn: Callable[[TurnStatus], Awaitable[None]] | None = None
+    _ended: bool = False
+
+    @property
+    def stopped(self) -> bool:
+        """Whether the user stopped the turn, as opposed to a shutdown suspending it."""
+        return (
+            self.controller.should_interrupt() and not self.controller.suspend_requested
+        )
+
+    async def end(self, status: TurnStatus) -> None:
+        if self._ended or self.end_turn is None:
+            return
+        self._ended = True
+        await self.end_turn(status)
 
 
 _NEXT_NOTIFY_STAGE: dict[DelegationNotifyStage, DelegationNotifyStage] = {
@@ -1234,6 +1278,22 @@ class ConfirmationNotificationError(RuntimeError):
     """Raised when a confirmation result notification cannot be delivered."""
 
 
+class DelegationWakeTimedOutError(Exception):
+    """Raised when a delegation wake turn runs out of its budget.
+
+    The turn had started, so the result is already in the conversation as the
+    data behind its trigger, along with whatever the turn did with it. What is
+    left to deliver is a short notice, not the result again.
+    """
+
+    def __init__(self, delegation_id: str, budget_seconds: float) -> None:
+        super().__init__(
+            f"Wake turn for delegation {delegation_id} ran out of its "
+            f"{budget_seconds:.0f} s budget."
+        )
+        self.budget_seconds = budget_seconds
+
+
 class DelegationNotificationError(RuntimeError):
     """Raised when a terminal delegation notification cannot be delivered.
 
@@ -1364,10 +1424,17 @@ CONFIRMATION_CANCELLATION_CLEANUP_TIMEOUT = 5.0
 BACKGROUND_TURN_DEFER_SECONDS = 15.0
 
 
+# How often a wake turn waiting for a conversation's running turn checks again,
+# should it miss the hub's wake-up when that turn ends.
+_WAKE_TURN_BUSY_RECHECK_SECONDS = 30.0
+
 # A delegated run's turn may take this long before the run is failed as timed
 # out: deep-tier work such as an engineer investigation routinely runs well past
 # ten minutes. The turn runs on the background turn runner, not in a task
-# handler, so no handler timeout applies to it.
+# handler, so no handler timeout applies to it. The wake turn that delivers a
+# delegation's result to the profile that asked for it gets the same budget: it
+# is a whole turn of that profile, and a deep-tier one picking up an
+# investigation's findings is as long as the investigation's own.
 DELEGATED_RUN_TURN_BUDGET_SECONDS = 1800.0
 
 # Task types whose handler is itself one LLM turn. A worker that claims one hands
@@ -4384,7 +4451,20 @@ class TaskWorker:
         a wake that fails falls back and advances stages exactly as it would in
         the task. A failure that escapes it is left to the hourly cleanup, which
         queues every unnotified terminal run again.
+
+        One wake per run at a time: a web wake turn has no time limit, so the
+        hourly cleanup can queue a second delivery of a run whose wake is still
+        running. That one leaves the run to the running wake, which marks it
+        notified or, failing, leaves it for a later pass.
         """
+        name = f"delegation-wake:{run['delegation_id']}"
+        if self.background_turns.is_running(name):
+            logger.info(
+                "Delegation %s is already waking its source profile; not starting "
+                "a second wake.",
+                run["delegation_id"],
+            )
+            return
 
         async def deliver() -> None:
             try:
@@ -4404,7 +4484,7 @@ class TaskWorker:
 
         # The wake turn arms and tracks its own lease once it starts.
         self.background_turns.launch(
-            f"delegation-wake:{run['delegation_id']}",
+            name,
             deliver(),
             lease=None,
             database=exec_context.db_context,
@@ -4994,6 +5074,7 @@ class TaskWorker:
             return
 
         source_service = self._source_service_for_delegation(exec_context, run)
+        wake_timed_out = False
         # At canned_pending the model has already been asked and its answer was
         # refused too, so only the short standard notice is left to try.
         if source_service is not None and stage != "canned_pending":
@@ -5030,6 +5111,14 @@ class TaskWorker:
                     run["source_profile_id"],
                     run["delegation_id"],
                 )
+            except DelegationWakeTimedOutError:
+                logger.exception(
+                    "Wake turn of source profile '%s' for completed delegation %s "
+                    "ran out of time; sending a short notice instead of the result.",
+                    run["source_profile_id"],
+                    run["delegation_id"],
+                )
+                wake_timed_out = True
             except Exception:
                 logger.exception(
                     "Failed to wake source profile '%s' for completed delegation %s; "
@@ -5042,12 +5131,17 @@ class TaskWorker:
         # stage reached *because* the result would not fit: it would be refused
         # for the same reason. The last resort is a fixed short line with the
         # attachments left off.
+        #
+        # A wake turn that ran out of time has the result in the conversation
+        # already, and the turn itself was working through it, so sending the
+        # whole result again only repeats it into every later prompt.
         last_resort = stage == "canned_pending"
-        message_text = (
-            self._delegation_undeliverable_notice_text(run)
-            if last_resort
-            else self._delegation_notification_text(run)
-        )
+        if last_resort:
+            message_text = self._delegation_undeliverable_notice_text(run)
+        elif wake_timed_out:
+            message_text = self._delegation_wake_timed_out_notice_text(run)
+        else:
+            message_text = self._delegation_notification_text(run)
         attachments = (
             None if last_resort else self._delegation_notification_attachments(run)
         )
@@ -5170,7 +5264,6 @@ class TaskWorker:
             if stage == "failed_forward"
             else self._delegation_wakeup_text(run)
         )
-        source_subconversation_id = run["source_subconversation_id"]
         wake_turn_id = _turn_id_for_delegation_wake(run, stage)
 
         # --- Delivery checkpoint ---
@@ -5214,6 +5307,150 @@ class TaskWorker:
                 stage=stage,
             )
 
+        async with self._host_wake_turn(exec_context, run, wake_turn_id) as host:
+            try:
+                return await self._run_wake_turn(
+                    exec_context,
+                    run,
+                    source_service,
+                    clock,
+                    chat_interface,
+                    trigger_text,
+                    wake_turn_id,
+                    host,
+                    stage=stage,
+                    attempt=attempt,
+                )
+            except asyncio.CancelledError:
+                if not host.stopped:
+                    raise
+                # The user stopped it, at whatever point the turn had reached.
+                # That is a cancellation this task asked for, not one that
+                # should end it.
+                task = asyncio.current_task()
+                if task is not None:
+                    task.uncancel()
+                await self._record_stopped_wake_turn(
+                    exec_context, run, source_service, clock, wake_turn_id
+                )
+                await host.end("cancelled")
+                return None
+
+    @contextlib.asynccontextmanager
+    async def _host_wake_turn(
+        self,
+        exec_context: ToolExecutionContext,
+        run: DelegationRunDict,
+        wake_turn_id: str,
+    ) -> AsyncGenerator[_WakeTurnHost]:
+        """Host a wake turn: in the web conversation's stream, or in the background.
+
+        A web conversation takes one turn at a time: the stream hub refuses a
+        second, which is what keeps two turns from interleaving their rows in
+        history. A web wake turn registers there like a turn the user sent, so
+        it waits for a running user turn to finish before it starts, streams
+        live, and takes Stop and steering. Stop is how a stuck one ends, so it
+        has no time limit of its own.
+
+        Anywhere else nothing can stop a wake turn, so it runs against the
+        delegated turn budget instead.
+        """
+        hub = self.stream_hub
+        if hub is None or run["interface_type"] != "web":
+            yield _WakeTurnHost(
+                controller=_SuspendableTurnController(),
+                budget_seconds=self._delegated_turn_budget(),
+            )
+            return
+
+        conversation_id = run["conversation_id"]
+        controller = WebMidTurnController()
+        await self._register_web_wake_turn(hub, run, wake_turn_id, controller)
+        task = asyncio.current_task()
+        if task is not None:
+            # What the Stop endpoint cancels, after flagging the controller.
+            hub.attach_producer_task(conversation_id, wake_turn_id, task)
+        publisher = HubTurnEventPublisher(
+            hub=hub,
+            conversation_id=conversation_id,
+            turn_id=wake_turn_id,
+            db_context=exec_context.db_context,
+            attachment_registry=exec_context.attachment_registry,
+            acting_user_id=run["user_id"],
+        )
+
+        async def end(status: TurnStatus) -> None:
+            await publisher.flush()
+            await hub.end_turn(conversation_id, turn_id=wake_turn_id, status=status)
+
+        host = _WakeTurnHost(
+            controller=controller,
+            budget_seconds=None,
+            on_stream_event=publisher.publish,
+            end_turn=end,
+        )
+        try:
+            yield host
+        except BaseException:
+            await host.end("failed")
+            raise
+        await host.end("complete")
+
+    async def _register_web_wake_turn(
+        self,
+        hub: ConversationStreamHub,
+        run: DelegationRunDict,
+        wake_turn_id: str,
+        controller: WebMidTurnController,
+    ) -> None:
+        """Register the wake turn in the hub, once no other turn is running."""
+        conversation_id = run["conversation_id"]
+        while True:
+            generation = hub.changes.generation
+            try:
+                await hub.start_turn(
+                    conversation_id,
+                    turn_id=wake_turn_id,
+                    user_id=run["user_id"] or "",
+                    started_at=self.clock.now(),
+                    mid_turn_controller=controller,
+                    reject_if_running=True,
+                )
+                return
+            except TurnAlreadyExistsError as exc:
+                if exc.turn.status != "running":
+                    # This turn's record from an earlier attempt, which ended.
+                    await hub.discard_turn(conversation_id, wake_turn_id)
+                    continue
+            except ConversationTurnRunningError:
+                pass
+            logger.info(
+                "Wake turn %s for delegation %s is waiting for the turn running "
+                "in conversation %s.",
+                wake_turn_id,
+                run["delegation_id"],
+                conversation_id,
+            )
+            await hub.changes.wait_beyond(
+                generation, timeout=_WAKE_TURN_BUSY_RECHECK_SECONDS
+            )
+
+    async def _run_wake_turn(
+        self,
+        exec_context: ToolExecutionContext,
+        run: DelegationRunDict,
+        source_service: ProcessingService,
+        clock: Clock,
+        chat_interface: ChatInterface | None,
+        trigger_text: str,
+        wake_turn_id: str,
+        host: _WakeTurnHost,
+        *,
+        stage: DelegationNotifyStage,
+        attempt: int,
+    ) -> int | None:
+        """Run the wake turn itself and deliver its response."""
+        source_subconversation_id = run["source_subconversation_id"]
         # A wake turn already started on an earlier attempt -- cut off by this
         # task's timeout, or by its process going away -- has its data row and
         # whatever its tools did in history. Under commit-as-you-go those tool
@@ -5228,7 +5465,7 @@ class TaskWorker:
         lease = await self._arm_wake_turn_lease(
             exec_context, run, source_service, wake_turn_id, attempt=attempt
         )
-        controller = _SuspendableTurnController()
+        controller = host.controller
         try:
             if existing_data_row is not None:
                 logger.info(
@@ -5256,49 +5493,62 @@ class TaskWorker:
             self._track_wake_turn_lease(exec_context, lease, controller)
 
             # Phase 2: Run the LLM turn untransacted.
-            async with asyncio.timeout(DELEGATION_WAKE_TURN_BUDGET_SECONDS):
-                result = await source_service.handle_chat_interaction(
-                    db_context=exec_context.db_context,
-                    interface_type=run["interface_type"],
-                    conversation_id=run["conversation_id"],
-                    trigger_content_parts=[{"type": "text", "text": trigger_text}],
-                    trigger_interface_message_id=None,
-                    user_name=run["user_name"] or exec_context.user_name,
-                    user_id=run["user_id"],
-                    replied_to_interface_id=None,
-                    chat_interface=chat_interface,
-                    chat_interfaces=exec_context.chat_interfaces,
-                    confirmation_ui_managers=exec_context.confirmation_ui_managers,
-                    request_confirmation_callback=build_deferred_confirmation_callback(
-                        target_user_id=run["user_id"],
-                        source_prefix=(
-                            "From a completed delegated task — approve to run:"
+            budget_seconds = host.budget_seconds
+            deadline = asyncio.timeout(budget_seconds)
+            try:
+                async with deadline:
+                    result = await source_service.handle_chat_interaction(
+                        db_context=exec_context.db_context,
+                        interface_type=run["interface_type"],
+                        conversation_id=run["conversation_id"],
+                        trigger_content_parts=[{"type": "text", "text": trigger_text}],
+                        trigger_interface_message_id=None,
+                        user_name=run["user_name"] or exec_context.user_name,
+                        user_id=run["user_id"],
+                        replied_to_interface_id=None,
+                        chat_interface=chat_interface,
+                        chat_interfaces=exec_context.chat_interfaces,
+                        confirmation_ui_managers=exec_context.confirmation_ui_managers,
+                        request_confirmation_callback=build_deferred_confirmation_callback(
+                            target_user_id=run["user_id"],
+                            source_prefix=(
+                                "From a completed delegated task — approve to run:"
+                            ),
+                            missing_owner_message=lambda tool_name: (
+                                "This delegated task has no recorded owner, so the "
+                                f"confirm-gated tool '{tool_name}' cannot be approved and "
+                                "was not run."
+                            ),
                         ),
-                        missing_owner_message=lambda tool_name: (
-                            "This delegated task has no recorded owner, so the "
-                            f"confirm-gated tool '{tool_name}' cannot be approved and "
-                            "was not run."
+                        trigger_attachments=self._delegation_notification_attachments(
+                            run
                         ),
-                    ),
-                    trigger_attachments=self._delegation_notification_attachments(run),
-                    subconversation_id=source_subconversation_id,
-                    thread_root_id=data_message_internal_id,
-                    trigger_is_internal=True,
-                    pinned_history_message_ids=[data_message_internal_id],
-                    trigger_role="system",
-                    turn_id=wake_turn_id,
-                    mid_turn_input_provider=controller,
-                    model_selection=model_selection,
-                    resume=resume,
-                    initial_taint_sources=_taint_sources_from_delegation_run(run),
-                    tool_call_review_trigger=await _delegation_run_review_trigger(
-                        exec_context,
-                        run,
-                        trigger_type="delegation_completion",
-                        active_request_role="system",
-                        payload_present=True,
-                    ),
-                )
+                        subconversation_id=source_subconversation_id,
+                        thread_root_id=data_message_internal_id,
+                        trigger_is_internal=True,
+                        pinned_history_message_ids=[data_message_internal_id],
+                        trigger_role="system",
+                        turn_id=wake_turn_id,
+                        mid_turn_input_provider=controller,
+                        model_selection=model_selection,
+                        resume=resume,
+                        on_stream_event=host.on_stream_event,
+                        initial_taint_sources=_taint_sources_from_delegation_run(run),
+                        tool_call_review_trigger=await _delegation_run_review_trigger(
+                            exec_context,
+                            run,
+                            trigger_type="delegation_completion",
+                            active_request_role="system",
+                            payload_present=True,
+                        ),
+                    )
+            except TimeoutError as timeout:
+                if not deadline.expired() or budget_seconds is None:
+                    raise
+                raise DelegationWakeTimedOutError(
+                    run["delegation_id"], budget_seconds
+                ) from timeout
+            await host.end("complete")
 
             # Phase 3: deliver, then record the delivery and mark notified
             # atomically.
@@ -5315,6 +5565,58 @@ class TaskWorker:
         finally:
             if lease is not None and self.turn_lease_registry is not None:
                 await self.turn_lease_registry.release(lease)
+
+    async def _record_stopped_wake_turn(
+        self,
+        exec_context: ToolExecutionContext,
+        run: DelegationRunDict,
+        source_service: ProcessingService,
+        clock: Clock,
+        wake_turn_id: str,
+    ) -> None:
+        """Close a wake turn the user stopped, and count the result as delivered.
+
+        The user chose to stop working on the result, so nothing more is sent
+        -- and the run is marked notified, or the hourly cleanup would start it
+        again. A turn stopped before its data row was written has no thread to
+        put the stopped reply in, so the reply stands on its own.
+        """
+        data_row = (
+            await exec_context.db_context.message_history.get_user_row_by_turn_id(
+                wake_turn_id
+            )
+        )
+        data_message_internal_id = data_row["internal_id"] if data_row else None
+        stopped_taint_metadata = await delegation_run_result_taint_metadata(
+            exec_context.db_context, run
+        )
+
+        async def record(txn: DatabaseTransaction) -> None:
+            stopped_message_id = await txn.message_history.add_message(
+                AssistantMessage(
+                    content="_Stopped._", taint_metadata=stopped_taint_metadata
+                ),
+                interface_type=run["interface_type"],
+                conversation_id=run["conversation_id"],
+                timestamp=clock.now(),
+                turn_id=wake_turn_id,
+                thread_root_id=data_message_internal_id,
+                processing_profile_id=source_service.service_config.id,
+                user_id=run["user_id"],
+                subconversation_id=run["source_subconversation_id"],
+            )
+            await txn.delegation_runs.mark_notified(
+                delegation_id=run["delegation_id"],
+                result_message_internal_id=stopped_message_id,
+                notified_at=clock.now(),
+            )
+
+        await exec_context.db_context.atomic(record)
+        logger.info(
+            "Wake turn %s for delegation %s was stopped by the user.",
+            wake_turn_id,
+            run["delegation_id"],
+        )
 
     async def _persist_wake_data_row(
         self,
@@ -5394,7 +5696,7 @@ class TaskWorker:
         self,
         exec_context: ToolExecutionContext,
         lease: TurnLease | None,
-        controller: _SuspendableTurnController,
+        controller: _SuspendableTurnController | WebMidTurnController,
     ) -> None:
         """Renew the lease while the turn runs; a shutdown suspends the turn."""
         registry = self.turn_lease_registry
@@ -5769,6 +6071,16 @@ class TaskWorker:
             f"A delegated task ({run['delegation_id']}) finished, but its result "
             "could not be delivered here. Ask me about it and I will send it in "
             "a form this channel accepts."
+        )
+
+    def _delegation_wake_timed_out_notice_text(self, run: DelegationRunDict) -> str:
+        """Build the notice for a wake turn that ran out of time mid-way."""
+        minutes = round(self._delegated_turn_budget() / 60)
+        return (
+            f"A delegated task ({run['delegation_id']}) finished, but I ran out of "
+            f"time (about {minutes} minutes) while working through its result. "
+            "The result is saved in this conversation: ask me to carry on and I "
+            "will pick up from there."
         )
 
     def _delegation_notification_text(self, run: DelegationRunDict) -> str:

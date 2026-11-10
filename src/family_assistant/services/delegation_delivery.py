@@ -38,10 +38,6 @@ logger = logging.getLogger(__name__)
 DELEGATION_DELIVERY_TASK_TYPE = "delegation_delivery"
 DELEGATION_WAKE_RESUMER = "delegation_wake"
 
-# The wake turn's own budget. A turn that runs out of it is delivered the way a
-# failed wake is: the standard completion notice goes instead.
-DELEGATION_WAKE_TURN_BUDGET_SECONDS = 600.0
-
 
 class DelegationDeliveryPayload(TypedDict):
     """Payload for delegation_delivery tasks."""
