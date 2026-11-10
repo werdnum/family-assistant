@@ -412,6 +412,72 @@ describe('A live update while a conversation is opening', () => {
     await waitFor(() => expect(cancelledTurnId).toBe('wake-1'));
   });
 
+  it("reads a followed turn's opening message from history once the turn ends", async () => {
+    const user = userEvent.setup();
+    let promptStored = false;
+    serveConversations({
+      'conv-b': () =>
+        HttpResponse.json({
+          messages: [
+            {
+              internal_id: 'conv-b-msg-1',
+              role: 'user',
+              content: 'Hello from conv-b',
+              timestamp: '2025-01-01T09:00:00Z',
+            },
+            ...(promptStored
+              ? [
+                  {
+                    internal_id: 'conv-b-msg-2',
+                    role: 'user',
+                    content: 'Question from my phone',
+                    timestamp: '2025-01-01T09:01:00Z',
+                    turn_id: 'phone-1',
+                  },
+                  {
+                    internal_id: 'conv-b-msg-3',
+                    role: 'assistant',
+                    content: 'Answer for the phone',
+                    timestamp: '2025-01-01T09:01:05Z',
+                    turn_id: 'phone-1',
+                  },
+                ]
+              : []),
+          ],
+        }),
+    });
+    const encoder = new TextEncoder();
+    server.use(
+      http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+        // The opening message is only stored once the stream is under way.
+        promptStored = true;
+        const events = [
+          `event: turn_started\ndata: ${JSON.stringify({ turn_id: 'phone-1', seq: 3 })}\n\n`,
+          `event: text\ndata: ${JSON.stringify({ content: 'Answer for the phone', seq: 4 })}\n\n`,
+          `event: turn_ended\ndata: ${JSON.stringify({ turn_id: 'phone-1', status: 'complete', seq: 5 })}\n\n`,
+        ];
+        const stream = new ReadableStream({
+          start(controller) {
+            for (const event of events) {
+              controller.enqueue(encoder.encode(event));
+            }
+            controller.close();
+          },
+        });
+        return new HttpResponse(stream, { headers: { 'Content-Type': 'text/event-stream' } });
+      })
+    );
+    await renderChatApp({ waitForReady: true });
+
+    await openConversation(user, 'conv-b');
+    expect(await screen.findByText('Hello from conv-b')).toBeInTheDocument();
+    (await followStreamFor('conv-b')).emit('turn_started', { turn_id: 'phone-1', seq: 3 });
+
+    expect(
+      await screen.findByText('Question from my phone', undefined, { timeout: 3000 })
+    ).toBeInTheDocument();
+  });
+
   it('still ends the open in an error with Retry when the reload that took it over fails', async () => {
     const user = userEvent.setup();
     let requestsForB = 0;

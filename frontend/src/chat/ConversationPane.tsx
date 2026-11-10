@@ -695,6 +695,10 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
   const followRunningTurnRef = useRef<(conversationId: string, turn: TurnToFollow) => void>(
     () => {}
   );
+  // Turns followed from the follow stream's turn_started. The history loaded
+  // before following one can predate its opening message, and the stream does
+  // not carry that message, so history is read again once the turn ends.
+  const remoteFollowedTurnIdsRef = useRef<Set<string>>(new Set());
   // The profile the next send goes to as a new thread's opening message, set
   // by the composer's send-as-thread menu just before it sends.
   const sendAsThreadProfileRef = useRef<string | null>(null);
@@ -1122,7 +1126,9 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
       // thread. Reconcile it from persisted history whenever such a stream ends
       // — not only when the prompt went unconsumed, which is the narrower case
       // handled below.
-      if (adopted && conversationId) {
+      const followedRemoteTurn =
+        turnId !== undefined && remoteFollowedTurnIdsRef.current.delete(turnId);
+      if ((adopted || followedRemoteTurn) && conversationId) {
         // retryIfBailed: recovering a prompt fires its replacement turn right
         // after this, and an active stream makes the reconcile bail.
         void handleReloadHistoryRef.current?.(conversationId, { retryIfBailed: true });
@@ -2167,9 +2173,13 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
         return;
       }
       void loadConversationMessages(convId, true).then(() => {
-        if (selfTurnIdsRef.current.has(turn.turnId)) {
+        if (
+          selfTurnIdsRef.current.has(turn.turnId) ||
+          activeStreamConversationIdRef.current !== null
+        ) {
           return;
         }
+        remoteFollowedTurnIdsRef.current.add(turn.turnId);
         followRunningTurnRef.current(convId, {
           turnId: turn.turnId,
           firstSeq: turn.seq,
