@@ -442,8 +442,11 @@ class AnthropicClient(BaseLLMClient):
         """Process tool messages, converting attachments to native Anthropic format.
 
         Anthropic supports images and PDFs natively in tool results via `image`
-        and `document` content blocks. Unsupported attachment types fall back to
-        base class text injection.
+        and `document` content blocks. Any other attachment is rendered with
+        `create_attachment_injection` and its blocks go inside the same
+        tool_result rather than into a following user message: a batch of
+        parallel tool results must reach the API as contiguous tool_result
+        blocks, and a text block between two of them is rejected with a 400.
         """
         if not self._supports_multimodal_tools():
             return super()._process_tool_messages(messages)
@@ -459,7 +462,6 @@ class AnthropicClient(BaseLLMClient):
                 content: list[TextBlockParam | ImageBlockParam | DocumentBlockParam] = [
                     text_block,
                 ]
-                injection_msgs: list[LLMMessage] = []
                 for attachment in attachments:
                     if (
                         attachment.content
@@ -502,9 +504,11 @@ class AnthropicClient(BaseLLMClient):
                             logger.warning(
                                 f"File-path-only attachment {attachment.file_path} for Anthropic, falling back to text description"
                             )
-                        text_block["text"] += "\n[File content in following message]"
-                        injection_msg = self.create_attachment_injection(attachment)
-                        injection_msgs.append(injection_msg)
+                        content.extend(
+                            self._convert_user_content(
+                                self.create_attachment_injection(attachment)
+                            )
+                        )
                 updated_msg = original_msg.model_copy(
                     update={
                         "content": content,
@@ -512,8 +516,6 @@ class AnthropicClient(BaseLLMClient):
                     }
                 )
                 processed.append(updated_msg)
-                if injection_msgs:
-                    processed.extend(injection_msgs)
             else:
                 processed.append(original_msg)
         return processed

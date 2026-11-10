@@ -478,11 +478,10 @@ class TestAnthropicClient:
 
         result = client._process_tool_messages(messages)
 
-        # Should have 2 messages: tool message + injected user message
-        assert len(result) == 2
-        assert isinstance(result[0], ToolMessage)
-        assert isinstance(result[1], UserMessage)
-        assert "File from previous tool response" in str(result[1].content)
+        assert len(result) == 1
+        content_list: list[Any] = result[0].content  # type: ignore[assignment]
+        assert content_list[0] == {"type": "text", "text": "Created a ZIP file"}
+        assert "File from previous tool response" in content_list[1]["text"]
 
     def test_process_tool_messages_with_file_path_only(self) -> None:
         """Test file-path-only attachments fall back to injection"""
@@ -505,10 +504,9 @@ class TestAnthropicClient:
 
         result = client._process_tool_messages(messages)
 
-        assert len(result) == 2
-        assert isinstance(result[0], ToolMessage)
-        assert isinstance(result[1], UserMessage)
-        assert "File from previous tool response" in str(result[1].content)
+        assert len(result) == 1
+        content_list: list[Any] = result[0].content  # type: ignore[assignment]
+        assert "/path/to/document.pdf" in content_list[-1]["text"]
 
     def test_process_tool_messages_without_attachments_passes_through(self) -> None:
         """Test messages without attachments pass through unchanged"""
@@ -601,19 +599,64 @@ class TestAnthropicClient:
 
         result = client._process_tool_messages(messages)
 
-        # Should have 2 messages: tool (with image inline) + injected user (for zip)
-        assert len(result) == 2
-        assert isinstance(result[0], ToolMessage)
-        assert isinstance(result[1], UserMessage)
-
-        # Tool message content should have text + image blocks
+        assert len(result) == 1
         content_list: list[Any] = result[0].content  # type: ignore[assignment]
-        assert isinstance(content_list, list)
-        assert content_list[0]["type"] == "text"  # type: ignore[index]
-        assert content_list[1]["type"] == "image"  # type: ignore[index]
+        assert [block["type"] for block in content_list[:2]] == ["text", "image"]
+        assert "File from previous tool response" in content_list[2]["text"]
+        assert "application/zip" in content_list[-1]["text"]
 
-        # Injected user message for unsupported zip
-        assert "File from previous tool response" in str(result[1].content)
+    def test_parallel_tool_results_with_text_attachments_stay_contiguous(
+        self,
+    ) -> None:
+        """Parallel tool results with JSON attachments form one run of tool_result blocks.
+
+        Anthropic rejects a user turn where a text block sits between two
+        tool_result blocks answering the same assistant turn.
+        """
+        client = AnthropicClient(api_key="test", model="claude-3-sonnet-20240229")
+
+        messages: list = [
+            UserMessage(content="Look both up"),
+            AssistantMessage(
+                content=None,
+                tool_calls=[
+                    ToolCallItem(
+                        id=call_id,
+                        type="function",
+                        function=ToolCallFunction(name="lookup", arguments="{}"),
+                    )
+                    for call_id in ("call_a", "call_b")
+                ],
+            ),
+            *[
+                ToolMessage(
+                    tool_call_id=call_id,
+                    content=f"Result {call_id}",
+                    name="lookup",
+                    _attachments=[
+                        ToolAttachment(
+                            mime_type="application/json",
+                            content=f'{{"id": "{call_id}"}}'.encode(),
+                            description="Lookup data",
+                        )
+                    ],
+                )
+                for call_id in ("call_a", "call_b")
+            ],
+        ]
+
+        processed = client._process_tool_messages(messages)
+        _system, api_messages = client._convert_messages_to_anthropic_format(
+            processed, cache_conversation=False
+        )
+
+        tool_turn = api_messages[-1]
+        assert tool_turn["role"] == "user"
+        assert [block["type"] for block in tool_turn["content"]] == [
+            "tool_result",
+            "tool_result",
+        ]
+        assert '"id": "call_b"' in tool_turn["content"][1]["content"][1]["text"]
 
     def test_convert_messages_malformed_tool_arguments_raises_error(self) -> None:
         """Test that malformed JSON in tool call arguments raises InvalidRequestError."""
