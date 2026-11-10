@@ -5295,18 +5295,33 @@ class TaskWorker:
             )
 
         async with self._host_wake_turn(exec_context, run, wake_turn_id) as host:
-            return await self._run_wake_turn(
-                exec_context,
-                run,
-                source_service,
-                clock,
-                chat_interface,
-                trigger_text,
-                wake_turn_id,
-                host,
-                stage=stage,
-                attempt=attempt,
-            )
+            try:
+                return await self._run_wake_turn(
+                    exec_context,
+                    run,
+                    source_service,
+                    clock,
+                    chat_interface,
+                    trigger_text,
+                    wake_turn_id,
+                    host,
+                    stage=stage,
+                    attempt=attempt,
+                )
+            except asyncio.CancelledError:
+                if not host.stopped:
+                    raise
+                # The user stopped it, at whatever point the turn had reached.
+                # That is a cancellation this task asked for, not one that
+                # should end it.
+                task = asyncio.current_task()
+                if task is not None:
+                    task.uncancel()
+                await self._record_stopped_wake_turn(
+                    exec_context, run, source_service, clock, wake_turn_id
+                )
+                await host.end("cancelled")
+                return None
 
     @contextlib.asynccontextmanager
     async def _host_wake_turn(
@@ -5520,24 +5535,6 @@ class TaskWorker:
                 raise DelegationWakeTimedOutError(
                     run["delegation_id"], budget_seconds
                 ) from timeout
-            except asyncio.CancelledError:
-                if not host.stopped:
-                    raise
-                # The user stopped it. That is a cancellation this task asked
-                # for, not one that should end it.
-                task = asyncio.current_task()
-                if task is not None:
-                    task.uncancel()
-                await self._record_stopped_wake_turn(
-                    exec_context,
-                    run,
-                    source_service,
-                    clock,
-                    wake_turn_id,
-                    data_message_internal_id,
-                )
-                await host.end("cancelled")
-                return None
             await host.end("complete")
 
             # Phase 3: deliver, then record the delivery and mark notified
@@ -5563,14 +5560,20 @@ class TaskWorker:
         source_service: ProcessingService,
         clock: Clock,
         wake_turn_id: str,
-        data_message_internal_id: int,
     ) -> None:
         """Close a wake turn the user stopped, and count the result as delivered.
 
-        The result is in the conversation behind the turn's trigger, and the
-        user chose to stop working on it, so nothing more is sent -- and the
-        run is marked notified, or the hourly cleanup would start it again.
+        The user chose to stop working on the result, so nothing more is sent
+        -- and the run is marked notified, or the hourly cleanup would start it
+        again. A turn stopped before its data row was written has no thread to
+        put the stopped reply in, so the reply stands on its own.
         """
+        data_row = (
+            await exec_context.db_context.message_history.get_user_row_by_turn_id(
+                wake_turn_id
+            )
+        )
+        data_message_internal_id = data_row["internal_id"] if data_row else None
         stopped_taint_metadata = await delegation_run_result_taint_metadata(
             exec_context.db_context, run
         )
