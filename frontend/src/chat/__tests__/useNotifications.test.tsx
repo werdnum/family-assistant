@@ -218,4 +218,32 @@ describe('useNotifications', () => {
       expect(mockNotification).toHaveBeenCalledTimes(1);
     });
   });
+
+  it.each([
+    ['older than the freshness window', new Date(Date.now() - 6 * 60 * 1000).toISOString()],
+    ['with an unreadable timestamp', 'not-a-date'],
+  ])('should not show notification for a message %s', async (_label, timestamp) => {
+    mockNotification.permission = 'granted';
+
+    const { result } = renderHook(() =>
+      useNotifications({
+        enabled: true,
+        conversationId: 'test-conv',
+        onNotificationClick: vi.fn(),
+      })
+    );
+
+    await waitFor(() => {
+      expect(result.current.isLeaderTab).toBe(true);
+    });
+
+    result.current.showNotification({
+      conversationId: 'test-conv-2',
+      messageId: 'msg-old',
+      preview: 'Hours-old reply',
+      timestamp,
+    });
+
+    expect(mockNotification).not.toHaveBeenCalled();
+  });
 });

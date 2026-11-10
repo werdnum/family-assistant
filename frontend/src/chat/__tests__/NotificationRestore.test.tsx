@@ -57,6 +57,7 @@ describe('In-app notification restore', () => {
   let originalBroadcastChannel: typeof BroadcastChannel;
   let notificationCtor: Mock<(title: string, options?: unknown) => void>;
   let assistantTurns: number;
+  let secondReplyTimestamp: string;
 
   beforeEach(() => {
     resetLocalStorageMock();
@@ -101,6 +102,7 @@ describe('In-app notification restore', () => {
     // History grows by one assistant message on the second fetch, simulating
     // an out-of-band reply arriving while the tab is backgrounded.
     assistantTurns = 1;
+    secondReplyTimestamp = new Date().toISOString();
     server.use(
       http.get('/api/v1/chat/conversations/:conversationId/messages', ({ params }) => {
         expect(params.conversationId).toBe('web_conv_notify');
@@ -109,7 +111,7 @@ describe('In-app notification restore', () => {
             internal_id: 'a1',
             role: 'assistant',
             content: 'First reply',
-            timestamp: '2026-06-09T10:00:00Z',
+            timestamp: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
           },
         ];
         if (assistantTurns >= 2) {
@@ -117,7 +119,7 @@ describe('In-app notification restore', () => {
             internal_id: 'a2',
             role: 'assistant',
             content: 'Out-of-band scheduled reply',
-            timestamp: '2026-06-09T10:05:00Z',
+            timestamp: secondReplyTimestamp,
           });
         }
         return HttpResponse.json({ messages });
@@ -168,5 +170,41 @@ describe('In-app notification restore', () => {
     );
     const [, options] = notificationCtor.mock.calls[0];
     expect((options as { body?: string }).body).toBe('Out-of-band scheduled reply');
+  });
+
+  it('does not notify for an hours-old reply surfaced by a background reload', async () => {
+    // A reply that landed while the laptop slept is surfaced by the reload
+    // after the stream reconnects; it is not news by then.
+    secondReplyTimestamp = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+    await renderChatApp({ waitForReady: true });
+
+    await waitFor(
+      () => {
+        expect(screen.getByText('First reply')).toBeInTheDocument();
+      },
+      { timeout: 5000 }
+    );
+    await waitFor(
+      () => {
+        expect(MockEventSource.instances.some((es) => es.url.includes('/conversations/'))).toBe(
+          true
+        );
+      },
+      { timeout: 3000 }
+    );
+
+    assistantTurns = 2;
+    latestFollowStream().emit('turn_ended', {
+      seq: 1,
+      status: 'complete',
+    });
+
+    await waitFor(
+      () => {
+        expect(screen.getByText('Out-of-band scheduled reply')).toBeInTheDocument();
+      },
+      { timeout: 5000 }
+    );
+    expect(notificationCtor).not.toHaveBeenCalled();
   });
 });
