@@ -364,6 +364,54 @@ describe('A live update while a conversation is opening', () => {
     return stream as MockEventSource;
   };
 
+  it('follows a turn started elsewhere live, with Stop', async () => {
+    const user = userEvent.setup();
+    serveConversations();
+    const streamRequests: string[] = [];
+    let cancelledTurnId = '';
+    const encoder = new TextEncoder();
+    server.use(
+      http.get('/api/v1/chat/conversations/:conversationId/stream', ({ request }) => {
+        streamRequests.push(request.url);
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue(
+              encoder.encode(
+                `event: turn_started\ndata: ${JSON.stringify({ turn_id: 'wake-1', seq: 5 })}\n\n`
+              )
+            );
+            controller.enqueue(
+              encoder.encode(
+                `event: text\ndata: ${JSON.stringify({ content: 'Reading the delegated result', seq: 6 })}\n\n`
+              )
+            );
+          },
+        });
+        return new HttpResponse(stream, { headers: { 'Content-Type': 'text/event-stream' } });
+      }),
+      http.post('/api/v1/chat/turns/:turnId/cancel', ({ params }) => {
+        cancelledTurnId = String(params.turnId);
+        return HttpResponse.json({
+          turn_id: cancelledTurnId,
+          conversation_id: 'conv-b',
+          status: 'cancelling',
+        });
+      })
+    );
+    await renderChatApp({ waitForReady: true });
+
+    await openConversation(user, 'conv-b');
+    expect(await screen.findByText('Hello from conv-b')).toBeInTheDocument();
+    (await followStreamFor('conv-b')).emit('turn_started', { turn_id: 'wake-1', seq: 5 });
+
+    expect(
+      await screen.findByText('Reading the delegated result', undefined, { timeout: 3000 })
+    ).toBeInTheDocument();
+    expect(streamRequests.some((url) => url.includes('from_seq=5'))).toBe(true);
+    await user.click(await screen.findByTestId('stop-button'));
+    await waitFor(() => expect(cancelledTurnId).toBe('wake-1'));
+  });
+
   it('still ends the open in an error with Retry when the reload that took it over fails', async () => {
     const user = userEvent.setup();
     let requestsForB = 0;

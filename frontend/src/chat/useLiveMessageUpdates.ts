@@ -17,6 +17,10 @@ export interface UseLiveMessageUpdatesOptions {
   interfaceType?: string;
   enabled?: boolean;
   onMessageReceived?: (update: LiveMessageUpdate) => void;
+  /** A turn this tab did not start began in the conversation (another device,
+   * or a background turn such as a delegation wake-up). `seq` is the
+   * turn_started event's own seq, where a stream that follows it starts. */
+  onTurnStarted?: (turn: { turnId: string; seq: number }) => void;
 }
 
 /**
@@ -27,10 +31,12 @@ export function useLiveMessageUpdates({
   interfaceType = 'web',
   enabled = true,
   onMessageReceived,
+  onTurnStarted,
 }: UseLiveMessageUpdatesOptions) {
   const eventSourceRef = useRef<EventSource | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const callbackRef = useRef(onMessageReceived);
+  const turnStartedRef = useRef(onTurnStarted);
   const [reconnectTrigger, setReconnectTrigger] = useState(0);
   // Highest seq this follow stream has acked for the current conversation.
   // Passed as ?ack_seq= on (re)subscribe so the hub can mark covered turns
@@ -49,6 +55,10 @@ export function useLiveMessageUpdates({
   useEffect(() => {
     callbackRef.current = onMessageReceived;
   }, [onMessageReceived]);
+
+  useEffect(() => {
+    turnStartedRef.current = onTurnStarted;
+  }, [onTurnStarted]);
 
   // Reset the acked-seq baseline when switching conversations. Keyed only on
   // conversationId (not reconnectTrigger) so a reconnect keeps the prior ack
@@ -94,9 +104,11 @@ export function useLiveMessageUpdates({
       // — subscribing from 0 would 410 once the conversation's hub buffer has
       // rotated, trapping EventSource in a permanent reconnect loop.
       //
-      // event_types=message,turn_ended: this listener only reloads history on
-      // those frames, so skip the token firehose (the server still always
-      // delivers heartbeat/stream_dropped/turn_ended control frames).
+      // event_types=message,turn_started,turn_ended: this listener reloads
+      // history on message/turn_ended and hands turn_started to the pane, which
+      // follows the turn with its own stream; skip the token firehose (the
+      // server still always delivers heartbeat/stream_dropped/turn_ended
+      // control frames).
       //
       // ack_seq: tell the hub the highest seq we've already acked so it can
       // suppress the redundant disconnect push for turns we've seen.
@@ -104,7 +116,7 @@ export function useLiveMessageUpdates({
         follow: true,
         fromSeq: -1,
         ackSeq: ackedSeqRef.current,
-        eventTypes: 'message,turn_ended',
+        eventTypes: 'message,turn_started,turn_ended',
       });
 
       // Create EventSource connection
@@ -180,6 +192,19 @@ export function useLiveMessageUpdates({
           // A malformed payload only costs us the ack; the reload still fired.
         }
         notifyTurnEnded(turnId);
+      });
+      eventSource.addEventListener('turn_started', (event) => {
+        try {
+          const data = JSON.parse((event as MessageEvent).data) as {
+            seq?: unknown;
+            turn_id?: unknown;
+          };
+          if (typeof data.turn_id === 'string' && typeof data.seq === 'number') {
+            turnStartedRef.current?.({ turnId: data.turn_id, seq: data.seq });
+          }
+        } catch {
+          // Unreadable: the turn's turn_ended still reloads history.
+        }
       });
       // Out-of-band assistant messages (scheduled callbacks, task-worker flows)
       // arrive as a `message` event. This EventSource is scoped to a single

@@ -28,7 +28,7 @@ import {
   type OlderMessagesStatus,
   type SteerResult,
 } from './chatControls';
-import { type ConversationDraft, useChatShell } from './chatShell';
+import { type ConversationDraft, type TurnToFollow, useChatShell } from './chatShell';
 import { LOADING_MARKER } from './constants';
 import {
   type HomeTurnActions,
@@ -690,6 +690,11 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
   // Follows the first turn of a thread the user just started, once the thread's
   // history has loaded here; defined below, beside the send path.
   const followTurnRef = useRef<(conversationId: string) => void>(() => {});
+  // Streams a turn already running in the open conversation into this pane,
+  // with Stop and steering, as the tab that started it would.
+  const followRunningTurnRef = useRef<(conversationId: string, turn: TurnToFollow) => void>(
+    () => {}
+  );
   // The profile the next send goes to as a new thread's opening message, set
   // by the composer's send-as-thread menu just before it sends.
   const sendAsThreadProfileRef = useRef<string | null>(null);
@@ -2148,12 +2153,41 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
     [conversationId, loadConversationMessages, isStreaming, refreshPendingDelegations]
   );
 
+  // A turn this tab didn't start — sent from another device, or a delegation
+  // wake-up the server runs in the background — is followed live once history
+  // has caught up, so its progress, Stop and steering show here too.
+  const handleLiveTurnStarted = useCallback(
+    (turn: { turnId: string; seq: number }) => {
+      const convId = conversationIdRef.current;
+      if (
+        !convId ||
+        selfTurnIdsRef.current.has(turn.turnId) ||
+        activeStreamConversationIdRef.current !== null
+      ) {
+        return;
+      }
+      void loadConversationMessages(convId, true).then(() => {
+        if (selfTurnIdsRef.current.has(turn.turnId)) {
+          return;
+        }
+        followRunningTurnRef.current(convId, {
+          turnId: turn.turnId,
+          firstSeq: turn.seq,
+          alreadyComplete: false,
+          incomplete: false,
+        });
+      });
+    },
+    [loadConversationMessages]
+  );
+
   // Set up live message updates via SSE
   useLiveMessageUpdates({
     conversationId,
     interfaceType: 'web',
     enabled: true,
     onMessageReceived: handleLiveMessageUpdate,
+    onTurnStarted: handleLiveTurnStarted,
   });
 
   // Home and threads keep a read marker per viewer. The open one is marked
@@ -2509,6 +2543,13 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
     }
     const turn = takeTurnToFollow(convId);
     if (!turn) {
+      return;
+    }
+    followRunningTurnRef.current(convId, turn);
+  };
+
+  followRunningTurnRef.current = (convId: string, turn: TurnToFollow) => {
+    if (conversationIdRef.current !== convId || activeStreamConversationIdRef.current !== null) {
       return;
     }
     const assistantMessageId = `msg_${Date.now()}_assistant`;
