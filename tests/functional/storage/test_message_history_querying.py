@@ -676,6 +676,57 @@ async def test_get_message_history_tool_reads_a_long_row_in_ranges(
 
 
 @pytest.mark.asyncio
+async def test_get_message_history_search_returns_snippets_by_default(
+    db_engine: AsyncEngine,
+) -> None:
+    """A search returns a short snippet per row, with its full length and id."""
+    db = Database(engine=db_engine)
+    content = "passports " + "x" * 2_000
+    await _store_user_message(
+        db,
+        conversation_id="current",
+        user_id="user-a",
+        content=content,
+        timestamp=datetime.now(UTC),
+    )
+    context = _build_exec_context(db)
+
+    result = await get_message_history_tool(exec_context=context, query="passports")
+
+    row = cast("dict[str, Any]", result.data)["results"][0]
+    assert row["content"] == content[:300]
+    assert row["content_length"] == len(content)
+    assert isinstance(row["message_id"], int)
+
+
+@pytest.mark.asyncio
+async def test_get_message_history_lookup_by_message_id_reads_past_the_snippet(
+    db_engine: AsyncEngine,
+) -> None:
+    """A hit found by a search reads in full by its message_id."""
+    db = Database(engine=db_engine)
+    content = "passports " + "x" * 2_000
+    await _store_user_message(
+        db,
+        conversation_id="current",
+        user_id="user-a",
+        content=content,
+        timestamp=datetime.now(UTC),
+    )
+    context = _build_exec_context(db)
+    search = await get_message_history_tool(exec_context=context, query="passports")
+    message_id = cast("dict[str, Any]", search.data)["results"][0]["message_id"]
+
+    result = await get_message_history_tool(
+        exec_context=context, message_ids=[message_id]
+    )
+
+    row = cast("dict[str, Any]", result.data)["results"][0]
+    assert row["content"] == content
+    assert "content_length" not in row
+
+
+@pytest.mark.asyncio
 async def test_get_message_history_tool_merges_returned_row_taint(
     db_engine: AsyncEngine,
 ) -> None:

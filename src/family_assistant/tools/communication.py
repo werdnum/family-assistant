@@ -41,7 +41,11 @@ logger = logging.getLogger(__name__)
 
 # How much of each row's content one get_message_history call returns, so
 # recovering one detail does not put a whole large row back into the prompt.
+# An exact lookup reads rows the model already chose; a search or listing
+# returns a snippet per row, because the model usually needs one or two of the
+# hits and then reads those by message_ids.
 DEFAULT_HISTORY_CONTENT_CHARS = 4_000
+DEFAULT_HISTORY_SNIPPET_CHARS = 300
 MAX_HISTORY_CONTENT_CHARS = 20_000
 # query_history's own cap on rows per call.
 MAX_HISTORY_RESULTS = 100
@@ -92,7 +96,8 @@ COMMUNICATION_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "Structured and semantic lookup against past conversation history. Use structured mode for exact filters like dates, roles, tools, attachments, or errors; semantic mode for fuzzy recall; and hybrid mode when both are useful. "
                 "When you already know a turn_id, tool_call_ids or message_ids (an earlier turn's compacted note names them), pass them to read exactly those rows, oldest first, instead of searching. "
                 "Returns compact message summaries (each with a stable message_id, turn_id, timestamp, role, content, and optional neighboring context), or an empty list when nothing matches. "
-                "Each content and tool-call arguments string is cut to max_content_chars starting at content_offset; a cut one reports content_length or arguments_length, so read further with a larger content_offset. A result too large to keep inline was saved as an attachment, which read_text_attachment can page through or grep. "
+                f"A search or listing returns a snippet of each row (the first {DEFAULT_HISTORY_SNIPPET_CHARS} characters of content and of each tool call's arguments); read the rows you need in full by passing their message_ids, which return up to {DEFAULT_HISTORY_CONTENT_CHARS} characters each. "
+                "Each content and tool-call arguments string is cut to max_content_chars starting at content_offset; a cut one reports content_length or arguments_length, and one without them is complete, so read further with a larger content_offset. A result too large to keep inline was saved as an attachment, which read_text_attachment can page through or grep. "
                 "Semantic recall lags the conversation by a couple of minutes because a turn is indexed once it has finished, so use structured mode to look up something said in the last few exchanges."
             ),
             "parameters": {
@@ -194,8 +199,7 @@ COMMUNICATION_TOOLS_DEFINITION: list[ToolDefinition] = [
                     },
                     "max_content_chars": {
                         "type": "integer",
-                        "description": f"Optional maximum characters of content per row. Default is {DEFAULT_HISTORY_CONTENT_CHARS}, maximum is {MAX_HISTORY_CONTENT_CHARS}.",
-                        "default": DEFAULT_HISTORY_CONTENT_CHARS,
+                        "description": f"Optional maximum characters of content and of each tool call's arguments per row. Default is {DEFAULT_HISTORY_CONTENT_CHARS} for a lookup by turn_id, tool_call_ids or message_ids and {DEFAULT_HISTORY_SNIPPET_CHARS} for a search or listing; maximum is {MAX_HISTORY_CONTENT_CHARS}.",
                     },
                 },
                 "required": [],
@@ -290,7 +294,7 @@ async def get_message_history_tool(
     message_ids: list[int] | None = None,
     after_message_id: int | None = None,
     content_offset: int = 0,
-    max_content_chars: int = DEFAULT_HISTORY_CONTENT_CHARS,
+    max_content_chars: int | None = None,
 ) -> ToolResult:
     """
     Query persisted message history with structured filters and optional semantic search.
@@ -317,7 +321,9 @@ async def get_message_history_tool(
         message_ids: Optional exact lookup of rows by message id.
         after_message_id: Continue an exact lookup after this message id.
         content_offset: Character offset each row's content starts at.
-        max_content_chars: Maximum characters of content returned per row.
+        max_content_chars: Maximum characters of content returned per row;
+            defaults to a snippet for searches and listings, and to a fuller
+            read for exact lookups.
 
     Returns:
         Structured tool result containing compact message history results.
@@ -418,8 +424,14 @@ async def _history_response(
     rows: list[MessageHistoryRow],
     *,
     content_offset: int,
-    max_content_chars: int,
+    max_content_chars: int | None,
 ) -> dict[str, object]:
+    if max_content_chars is None:
+        max_content_chars = (
+            DEFAULT_HISTORY_CONTENT_CHARS
+            if history_query.is_exact_lookup
+            else DEFAULT_HISTORY_SNIPPET_CHARS
+        )
     data: dict[str, object] = {
         "search_mode": history_query.search_mode,
         "scope": history_query.scope,
