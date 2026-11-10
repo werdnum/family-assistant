@@ -125,10 +125,10 @@ def _request(
     )
 
 
-def _breakpoint_index(api_messages: list[WireMessage]) -> int:
-    """Where the conversation breakpoint sits, as a flattened block index."""
+def _breakpoint_indexes(api_messages: list[WireMessage]) -> list[int]:
+    """Every conversation breakpoint, as flattened block indexes."""
     index = 0
-    found: int | None = None
+    found: list[int] = []
     for message in api_messages:
         content = message["content"]
         blocks = (
@@ -136,10 +136,16 @@ def _breakpoint_index(api_messages: list[WireMessage]) -> int:
         )
         for block in blocks:
             if isinstance(block, dict) and "cache_control" in block:
-                found = index
+                found.append(index)
             index += 1
-    assert found is not None
     return found
+
+
+def _breakpoint_index(api_messages: list[WireMessage]) -> int:
+    """Where the trailing conversation breakpoint sits, as a flattened block index."""
+    found = _breakpoint_indexes(api_messages)
+    assert found
+    return found[-1]
 
 
 @pytest.mark.no_db
@@ -156,6 +162,7 @@ class TestAnthropicPrefixStability:
         instruction: str | None = None
         previous = _request(client, history, instruction)
         previous_instruction = instruction
+        previous_length = len(history)
 
         for index, step in enumerate(steps):
             history.extend(messages_for(step, index, history, _decorate))
@@ -189,7 +196,22 @@ class TestAnthropicPrefixStability:
                 assert instruction_block in after_breakpoint
                 # A tool addition can follow it, so it is not always last.
                 earlier.remove(instruction_block)
-            later = _flattened(cast("list[WireMessage]", current["messages"]))
+            current_messages = cast("list[WireMessage]", current["messages"])
+            later = _flattened(current_messages)
             assert later[: len(earlier)] == earlier
+            # The entry the previous request wrote is named outright, so reading
+            # it does not depend on how many blocks this step appended. That
+            # holds whenever this request extends the previous one by its
+            # response, which is every request the loop sends but the first
+            # after an interruption.
+            responses = sum(
+                isinstance(message, AssistantMessage)
+                for message in history[previous_length:]
+            )
+            if responses == 1:
+                assert _breakpoint_index(previous_messages) in _breakpoint_indexes(
+                    current_messages
+                )
             previous = current
             previous_instruction = instruction
+            previous_length = len(history)

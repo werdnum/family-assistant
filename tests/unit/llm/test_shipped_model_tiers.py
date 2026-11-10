@@ -244,7 +244,7 @@ def test_frontier_thinking_config_reaches_the_anthropic_client(
     assert client.model == "claude-fable-5-2"
     assert client._get_model_specific_params(client.model) == {
         "thinking": {"type": "adaptive"},
-        "output_config": {"effort": "xhigh"},
+        "output_config": {"effort": "high"},
     }
 
 

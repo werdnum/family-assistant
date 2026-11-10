@@ -478,9 +478,9 @@ def _breakpoint_positions(
 class TestConversationCacheBreakpoints:
     """Anthropic caches only to an explicit breakpoint.
 
-    Every request is the previous one plus appended messages, so one breakpoint
-    at the end of the conversation is enough: the previous request's is a prefix
-    of this one and is read back.
+    Every request is the previous one plus appended messages, so a breakpoint at
+    the end of the conversation is what the next request reads back, and a
+    second one where the previous request ended names the entry to read.
     """
 
     def _client(self) -> AnthropicClient:
@@ -509,7 +509,12 @@ class TestConversationCacheBreakpoints:
         )
 
         assert _without_markers(turn_two[: len(turn_one)]) == _without_markers(turn_one)
-        assert _breakpoint_positions(turn_one) == [(len(turn_one) - 1, 0)]
+        turn_one_tail = (len(turn_one) - 1, 0)
+        assert _breakpoint_positions(turn_one)[-1] == turn_one_tail
+        assert _breakpoint_positions(turn_two) == [
+            turn_one_tail,
+            (len(turn_two) - 1, 0),
+        ]
 
     def test_only_the_streamed_agent_loop_marks_the_conversation(self) -> None:
         """A one-shot request's tail is unique, so a breakpoint there is a write
@@ -569,7 +574,56 @@ class TestConversationCacheBreakpoints:
             messages, cache_conversation=True
         )
 
-        assert _breakpoint_positions(api_messages) == [(len(api_messages) - 1, 0)]
+        assert _breakpoint_positions(api_messages) == [
+            (len(api_messages) - 3, 0),
+            (len(api_messages) - 1, 0),
+        ]
+
+    def test_previous_breakpoint_survives_a_step_wider_than_the_lookback(self) -> None:
+        """The API looks only 20 blocks behind a breakpoint for an earlier entry.
+
+        Activating a server's tools appends a block per tool, which alone
+        outruns that, so the previous request's position is marked outright.
+        """
+        client = AnthropicClient(api_key="test", model="claude-opus-5-5")
+        names = [f"tool_{index}" for index in range(24)]
+        tools = [_tool(name, deferred=True) for name in names]
+        first_request: list[LLMMessage] = [
+            *_activation_turn()[:-1],
+            ToolMessage(
+                content="Activated.",
+                tool_call_id="call_activate",
+                name="activate_tools",
+                activated_tools=names,
+            ),
+        ]
+        second_request: list[LLMMessage] = [
+            *first_request,
+            AssistantMessage(
+                content=None,
+                tool_calls=[
+                    ToolCallItem(
+                        id="call_2",
+                        type="function",
+                        function=ToolCallFunction(name="tool_0", arguments="{}"),
+                    )
+                ],
+            ),
+            ToolMessage(content="done", tool_call_id="call_2", name="tool_0"),
+        ]
+
+        first = client._assemble_request(first_request, tools, "auto", streaming=True)
+        second = client._assemble_request(second_request, tools, "auto", streaming=True)
+
+        first_tail = _breakpoint_positions(first["messages"])[-1]
+        second_marks = _breakpoint_positions(second["messages"])
+        blocks_between = sum(
+            len(message["content"])
+            for message in second["messages"][first_tail[0] + 1 :]
+        )
+        assert blocks_between > 20
+        assert first_tail in second_marks
+        assert second_marks[-1] == (len(second["messages"]) - 1, 0)
 
     def test_thinking_blocks_are_never_annotated(self) -> None:
         """Their signatures are validated against exactly what came back."""
@@ -741,9 +795,11 @@ class TestDeferredTools:
             _activation_turn(), tools, "auto", streaming=True
         )
 
-        assert _breakpoint_positions(params["messages"]) == [
-            (len(params["messages"]) - 2, 0)
-        ]
+        assert params["messages"][-1]["role"] == "system"
+        assert _breakpoint_positions(params["messages"])[-1] == (
+            len(params["messages"]) - 2,
+            0,
+        )
 
     def test_models_without_tool_changes_get_the_active_tools_only(self) -> None:
         client = AnthropicClient(api_key="test", model="claude-haiku-4-5")

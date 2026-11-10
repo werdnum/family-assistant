@@ -236,13 +236,17 @@ model_tiers:
       # claude-fable- key (it matches by substring), so the
       # `claude_fable_5_2` preset below inherits nothing and runs at the
       # model's own default effort.
+      #
+      # `high`, not `xhigh`: this tier runs long tool loops, where every step
+      # pays for its thinking as output and again as input on the next step.
+      # At `xhigh` thinking was over a third of what the tier cost.
       - provider: "anthropic"
         model: "claude-fable-5-2"
         llm_parameters:
           thinking:
             type: "adaptive"
           output_config:
-            effort: "xhigh"
+            effort: "high"
   # The snapshot browser profiles' own recipe. A browsing run is a long tool
   # loop whose final answer reports what the pages said, so the model is chosen
   # for grounding -- reporting only what it read -- rather than for
