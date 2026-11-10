@@ -484,6 +484,76 @@ async def test_tool_message_with_pdf_attachment(
 @pytest.mark.no_db
 @pytest.mark.llm_integration
 @pytest.mark.vcr(before_record_response=sanitize_response)
+async def test_anthropic_parallel_tool_results_with_json_attachments(
+    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
+) -> None:
+    """Parallel tool results whose attachments Anthropic cannot take natively.
+
+    A JSON attachment is rendered as text. If that text lands between the
+    tool_result blocks answering one assistant turn, the API rejects the
+    request with a 400, so the tool_result blocks must stay contiguous.
+    """
+    client = await llm_client_factory("anthropic", "claude-haiku-4-5-20251001", None)
+
+    messages: list[LLMMessage] = [
+        create_user_message("Fetch the inventory for the north and south sheds."),
+        create_assistant_message(
+            content="I'll fetch both inventories.",
+            tool_calls=[
+                ToolCallItem(
+                    id="toolu_north",
+                    type="function",
+                    function=ToolCallFunction(
+                        name="fetch_inventory", arguments='{"shed": "north"}'
+                    ),
+                ),
+                ToolCallItem(
+                    id="toolu_south",
+                    type="function",
+                    function=ToolCallFunction(
+                        name="fetch_inventory", arguments='{"shed": "south"}'
+                    ),
+                ),
+            ],
+        ),
+        create_tool_message(
+            tool_call_id="toolu_north",
+            name="fetch_inventory",
+            content="Fetched the north shed inventory",
+            attachments_list=[
+                ToolAttachment(
+                    mime_type="application/json",
+                    content=b'{"shed": "north", "item": "wheelbarrow", "count": 7}',
+                    description="North shed inventory",
+                )
+            ],
+        ),
+        create_tool_message(
+            tool_call_id="toolu_south",
+            name="fetch_inventory",
+            content="Fetched the south shed inventory",
+            attachments_list=[
+                ToolAttachment(
+                    mime_type="application/json",
+                    content=b'{"shed": "south", "item": "lawnmower", "count": 3}',
+                    description="South shed inventory",
+                )
+            ],
+        ),
+        create_user_message("Which item does each shed hold, and how many?"),
+    ]
+
+    response = await client.generate_response(messages)
+
+    assert response.content is not None
+    content_lower = response.content.lower()
+    assert "wheelbarrow" in content_lower, response.content
+    assert "lawnmower" in content_lower, response.content
+
+
+@pytest.mark.no_db
+@pytest.mark.llm_integration
+@pytest.mark.vcr(before_record_response=sanitize_response)
 async def test_gemini_url_grounding() -> None:
     """Test Gemini URL grounding feature with real URL."""
     # Create Gemini client with URL context enabled
