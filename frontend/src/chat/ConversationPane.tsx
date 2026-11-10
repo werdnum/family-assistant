@@ -699,6 +699,10 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
   // before following one can predate its opening message, and the stream does
   // not carry that message, so history is read again once the turn ends.
   const remoteFollowedTurnIdsRef = useRef<Set<string>>(new Set());
+  // A turn started elsewhere while this tab's own stream was still settling,
+  // and the handler that follows it once the stream has.
+  const pendingRemoteTurnRef = useRef<{ convId: string; turnId: string; seq: number } | null>(null);
+  const liveTurnStartedRef = useRef<(turn: { turnId: string; seq: number }) => void>(() => {});
   // The profile the next send goes to as a new thread's opening message, set
   // by the composer's send-as-thread menu just before it sends.
   const sendAsThreadProfileRef = useRef<string | null>(null);
@@ -1035,6 +1039,17 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
       }
       if (toolCallMessageIdRef.current === toolCallMessageId) {
         toolCallMessageIdRef.current = null;
+      }
+      const pendingRemoteTurn = pendingRemoteTurnRef.current;
+      pendingRemoteTurnRef.current = null;
+      if (pendingRemoteTurn && pendingRemoteTurn.convId === conversationIdRef.current) {
+        // After the streaming hook has finished settling this stream.
+        setTimeout(() => {
+          liveTurnStartedRef.current({
+            turnId: pendingRemoteTurn.turnId,
+            seq: pendingRemoteTurn.seq,
+          });
+        }, 0);
       }
       lastStreamingErrorRef.current = null;
       lastStreamingErrorIsUserFacingRef.current = false;
@@ -2165,18 +2180,25 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
   const handleLiveTurnStarted = useCallback(
     (turn: { turnId: string; seq: number }) => {
       const convId = conversationIdRef.current;
-      if (
-        !convId ||
-        selfTurnIdsRef.current.has(turn.turnId) ||
-        activeStreamConversationIdRef.current !== null
-      ) {
+      if (!convId || selfTurnIdsRef.current.has(turn.turnId)) {
+        return;
+      }
+      // A turn that was waiting for this tab's own to finish starts the moment
+      // it does, which can be before this tab's stream has settled. It is
+      // followed once that stream completes.
+      const holdUntilStreamSettles = () => {
+        pendingRemoteTurnRef.current = { convId, ...turn };
+      };
+      if (activeStreamConversationIdRef.current !== null) {
+        holdUntilStreamSettles();
         return;
       }
       void loadConversationMessages(convId, true).then(() => {
-        if (
-          selfTurnIdsRef.current.has(turn.turnId) ||
-          activeStreamConversationIdRef.current !== null
-        ) {
+        if (selfTurnIdsRef.current.has(turn.turnId)) {
+          return;
+        }
+        if (activeStreamConversationIdRef.current !== null) {
+          holdUntilStreamSettles();
           return;
         }
         remoteFollowedTurnIdsRef.current.add(turn.turnId);
@@ -2190,6 +2212,7 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
     },
     [loadConversationMessages]
   );
+  liveTurnStartedRef.current = handleLiveTurnStarted;
 
   // Set up live message updates via SSE
   useLiveMessageUpdates({

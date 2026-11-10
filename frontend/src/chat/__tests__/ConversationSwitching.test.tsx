@@ -412,6 +412,72 @@ describe('A live update while a conversation is opening', () => {
     await waitFor(() => expect(cancelledTurnId).toBe('wake-1'));
   });
 
+  it("follows a turn that starts before this tab's own stream has settled", async () => {
+    const user = userEvent.setup();
+    serveConversations();
+    const encoder = new TextEncoder();
+    const sse = (type: string, payload: Record<string, unknown>) =>
+      encoder.encode(`event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`);
+    let ownTurnId = '';
+    let releaseOwnTurn = () => {};
+    const ownTurnStreaming = gate();
+    const streamRequests: string[] = [];
+    server.use(
+      http.post('/api/v1/chat/turns', async ({ request }) => {
+        const body = (await request.json()) as { turn_id: string; conversation_id: string };
+        ownTurnId = body.turn_id;
+        return HttpResponse.json({
+          turn_id: body.turn_id,
+          conversation_id: body.conversation_id,
+          first_seq: 0,
+        });
+      }),
+      http.get('/api/v1/chat/conversations/:conversationId/stream', ({ request }) => {
+        streamRequests.push(request.url);
+        const wake = new URL(request.url).searchParams.get('from_seq') === '7';
+        const stream = new ReadableStream({
+          start(controller) {
+            if (wake) {
+              controller.enqueue(sse('turn_started', { turn_id: 'wake-1', seq: 7 }));
+              controller.enqueue(
+                sse('text', { content: 'Working on the delegated result', seq: 8 })
+              );
+              return;
+            }
+            controller.enqueue(sse('turn_started', { turn_id: ownTurnId, seq: 0 }));
+            controller.enqueue(sse('text', { content: 'Own reply', seq: 1 }));
+            releaseOwnTurn = () => {
+              controller.enqueue(
+                sse('turn_ended', { turn_id: ownTurnId, status: 'complete', seq: 2 })
+              );
+              controller.close();
+            };
+            ownTurnStreaming.open();
+          },
+        });
+        return new HttpResponse(stream, { headers: { 'Content-Type': 'text/event-stream' } });
+      })
+    );
+    await renderChatApp({ waitForReady: true });
+
+    await openConversation(user, 'conv-b');
+    expect(await screen.findByText('Hello from conv-b')).toBeInTheDocument();
+    const follow = await followStreamFor('conv-b');
+    await user.type(screen.getByPlaceholderText('Message Family Assistant...'), 'Hi there');
+    await user.keyboard('{Enter}');
+    await ownTurnStreaming.promise;
+    expect(await screen.findByText('Own reply')).toBeInTheDocument();
+
+    // The wake was waiting for this turn, and starts as it ends.
+    follow.emit('turn_started', { turn_id: 'wake-1', seq: 7 });
+    releaseOwnTurn();
+
+    expect(
+      await screen.findByText('Working on the delegated result', undefined, { timeout: 3000 })
+    ).toBeInTheDocument();
+    expect(await screen.findByTestId('stop-button')).toBeInTheDocument();
+  });
+
   it("reads a followed turn's opening message from history once the turn ends", async () => {
     const user = userEvent.setup();
     let promptStored = false;
