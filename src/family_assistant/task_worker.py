@@ -4451,7 +4451,20 @@ class TaskWorker:
         a wake that fails falls back and advances stages exactly as it would in
         the task. A failure that escapes it is left to the hourly cleanup, which
         queues every unnotified terminal run again.
+
+        One wake per run at a time: a web wake turn has no time limit, so the
+        hourly cleanup can queue a second delivery of a run whose wake is still
+        running. That one leaves the run to the running wake, which marks it
+        notified or, failing, leaves it for a later pass.
         """
+        name = f"delegation-wake:{run['delegation_id']}"
+        if self.background_turns.is_running(name):
+            logger.info(
+                "Delegation %s is already waking its source profile; not starting "
+                "a second wake.",
+                run["delegation_id"],
+            )
+            return
 
         async def deliver() -> None:
             try:
@@ -4471,7 +4484,7 @@ class TaskWorker:
 
         # The wake turn arms and tracks its own lease once it starts.
         self.background_turns.launch(
-            f"delegation-wake:{run['delegation_id']}",
+            name,
             deliver(),
             lease=None,
             database=exec_context.db_context,

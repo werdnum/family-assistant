@@ -1883,6 +1883,52 @@ async def test_web_wake_turn_streams_live_and_takes_steering(
 
 
 @pytest.mark.asyncio
+async def test_a_second_delivery_leaves_a_running_web_wake_to_itself(
+    db_engine: AsyncEngine,
+) -> None:
+    """The hourly cleanup re-queuing a run whose web wake is running starts no second wake.
+
+    A web wake turn has no time limit, so it can outlast the hour after which
+    the cleanup queues every unnotified terminal run again.
+    """
+    hub = ConversationStreamHub()
+    gate = asyncio.Event()
+    processing_service = FakeWakeCapableSourceService(
+        FakeDelegatableService(), stream_hub=hub, wake_gate=gate
+    )
+    delegation_id = "delegation_web_wake_redelivered"
+    await _completed_web_run(db_engine, delegation_id)
+    chat_interface = ScriptedChatInterface()
+    worker = _build_worker(
+        db_engine, cast("ProcessingService", processing_service), chat_interface
+    )
+    worker.stream_hub = hub
+    db_context = Database(engine=db_engine)
+    exec_context = _tool_context(
+        db_context, cast("ProcessingService", processing_service), chat_interface
+    )
+    await run_delegated_profile_run(worker, exec_context, _payload(delegation_id))
+    first = asyncio.create_task(deliver_queued_delegations(worker, exec_context))
+    await wait_for_condition(
+        lambda: _running_turn(hub), description="the wake turn to start"
+    )
+
+    run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+    assert run is not None
+    assert run["notified_at"] is None
+    # What the cleanup's re-queued delivery does with the still-unnotified run.
+    await worker._deliver_terminal_delegation(exec_context, run, force=True)
+    gate.set()
+    await first
+    await worker.background_turns.wait_idle()
+
+    assert processing_service.wake_call_count == 1
+    delivered = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+    assert delivered is not None
+    assert delivered["notified_at"] is not None
+
+
+@pytest.mark.asyncio
 async def test_stopping_a_web_wake_turn_ends_it_without_resending_the_result(
     db_engine: AsyncEngine,
 ) -> None:
