@@ -93,6 +93,8 @@ if TYPE_CHECKING:
     from collections.abc import (
         AsyncGenerator,
         AsyncIterator,
+        Awaitable,
+        Callable,
         Collection,
         Mapping,
         Sequence,
@@ -2431,6 +2433,7 @@ class ProcessingService:
         memory_review: MemoryReviewContext | None = None,
         allow_quiet_end: bool = False,
         resume: bool = False,
+        on_stream_event: Callable[[LLMStreamEvent], Awaitable[None]] | None = None,
     ) -> ChatInteractionResult:
         """
         Handles a complete chat interaction from user input to final response.
@@ -2467,6 +2470,11 @@ class ProcessingService:
                 for a turn nobody is owed a reply on; see ``quiet_turn``.
             resume: Continue an interrupted turn from the rows it already
                 persisted (see ``_prepare_turn_messages_for_llm``).
+            on_stream_event: Called with each event the loop produces, after
+                any message it carries is saved, so a caller can show the turn
+                live while it runs. A ``user_input`` event therefore reaches it
+                only once the steering message is durable, which is what a
+                client's echo of that message promises.
 
         Returns:
             ChatInteractionResult containing:
@@ -2583,6 +2591,8 @@ class ProcessingService:
                     if "attachment_ids" in event.metadata:
                         response_attachment_ids = event.metadata["attachment_ids"]
                 if turn_msg is None:
+                    if on_stream_event is not None:
+                        await on_stream_event(event)
                     continue
 
                 if (
@@ -2629,6 +2639,9 @@ class ProcessingService:
                         and turn_msg.ended_quietly
                     ),
                 )
+
+                if on_stream_event is not None:
+                    await on_stream_event(event)
 
                 if isinstance(turn_msg, AssistantMessage) and turn_msg.ended_quietly:
                     ended_quietly = True

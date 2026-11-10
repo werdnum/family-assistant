@@ -17,6 +17,7 @@ from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.interfaces import ChatDeliveryError, ChatInterface
+from family_assistant.llm import LLMStreamEvent
 from family_assistant.llm.messages import AssistantMessage, SystemMessage, UserMessage
 from family_assistant.llm.model_selection import (
     ModelTierEligibility,
@@ -38,6 +39,8 @@ from family_assistant.processing.interactions_agent_service import (
 from family_assistant.processing.service import ProcessingService
 from family_assistant.processing.types import (
     ChatInteractionResult,
+    MidTurnInputProvider,
+    MidTurnUserInput,
     ProcessingServiceConfig,
 )
 from family_assistant.security.taint import (
@@ -88,7 +91,11 @@ from family_assistant.tools.types import (
     ToolExecutionContext,
 )
 from family_assistant.utils.clock import SystemClock
-from family_assistant.web.conversation_stream_hub import ConversationStreamHub
+from family_assistant.web.conversation_stream_hub import (
+    ConversationStreamHub,
+    TurnRecord,
+)
+from family_assistant.web.web_mid_turn_controller import WebMidTurnController
 from tests.helpers import (
     deliver_queued_delegations,
     run_delegated_profile_run,
@@ -364,6 +371,7 @@ class FakeWakeCapableSourceService:
         async_delegation_enabled: bool = True,
         wake_hangs: bool = False,
         stream_hub: ConversationStreamHub | None = None,
+        wake_gate: asyncio.Event | None = None,
     ) -> None:
         self.service_config = SimpleNamespace(
             id="source_profile",
@@ -389,6 +397,10 @@ class FakeWakeCapableSourceService:
         # running as each wake turn started.
         self.stream_hub = stream_hub
         self.running_turns_at_wake: list[list[str]] = []
+        # Set to hold the wake turn, after it has streamed a first event, until
+        # the test releases it; it then takes any steering it was sent.
+        self.wake_gate = wake_gate
+        self.steers: list[str] = []
         self.wake_call_count = 0
         self.wake_review_triggers: list[TriggerReviewInput | None] = []
         self.wake_assistant_message_ids: list[int] = []
@@ -419,6 +431,16 @@ class FakeWakeCapableSourceService:
         )
         if self.wake_hangs:
             await asyncio.Event().wait()
+        if self.wake_gate is not None:
+            on_stream_event = kwargs["on_stream_event"]
+            assert on_stream_event is not None
+            await on_stream_event(LLMStreamEvent(type="content", content="looking"))
+            await self.wake_gate.wait()
+            controller = cast("MidTurnInputProvider", kwargs["mid_turn_input_provider"])
+            self.steers.extend(
+                steer.content
+                for steer in await controller.drain_pending_mid_turn_inputs()
+            )
         if self.wake_result_status == "error":
             error_message_id = await db_context.message_history.add_message(
                 AssistantMessage(content="source wake error"),
@@ -1809,6 +1831,104 @@ async def test_web_wake_turn_waits_for_the_running_user_turn(
     running = processing_service.running_turns_at_wake[0]
     assert len(running) == 1
     assert "user-turn" not in running
+
+
+def _running_turn(hub: ConversationStreamHub) -> TurnRecord | None:
+    return next(
+        (
+            turn
+            for turn in hub.active_turns(TEST_CONVERSATION_ID)
+            if turn.status == "running"
+        ),
+        None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_web_wake_turn_streams_live_and_takes_steering(
+    db_engine: AsyncEngine,
+) -> None:
+    """A web wake turn is shown live, and a message sent to it reaches the model."""
+    hub = ConversationStreamHub()
+    gate = asyncio.Event()
+    processing_service = FakeWakeCapableSourceService(
+        FakeDelegatableService(), stream_hub=hub, wake_gate=gate
+    )
+    await _completed_web_run(db_engine, "delegation_web_wake_steered")
+
+    delivery = asyncio.create_task(
+        _deliver_web_run(
+            db_engine, "delegation_web_wake_steered", processing_service, hub
+        )
+    )
+    turn = await wait_for_condition(
+        lambda: _running_turn(hub), description="the wake turn to start"
+    )
+    assert turn is not None
+    controller = turn.mid_turn_controller
+    assert isinstance(controller, WebMidTurnController)
+    await controller.add_input(
+        MidTurnUserInput(content="check the calendar too", user_name="Tester")
+    )
+    gate.set()
+    await delivery
+
+    assert processing_service.steers == ["check the calendar too"]
+    subscription = await hub.subscribe(TEST_CONVERSATION_ID, from_seq=0)
+    assert [
+        event.payload
+        for event in subscription.replayed_events
+        if event.turn_id == turn.turn_id and event.type == "text"
+    ] == [{"content": "looking"}]
+
+
+@pytest.mark.asyncio
+async def test_stopping_a_web_wake_turn_ends_it_without_resending_the_result(
+    db_engine: AsyncEngine,
+) -> None:
+    """Stop ends a web wake turn, and the run counts as delivered.
+
+    Left unnotified, the hourly cleanup would start the stopped turn again;
+    falling back to the standard notice would post the result the user just
+    stopped working on.
+    """
+    hub = ConversationStreamHub()
+    processing_service = FakeWakeCapableSourceService(
+        FakeDelegatableService(), stream_hub=hub, wake_hangs=True
+    )
+    await _completed_web_run(db_engine, "delegation_web_wake_stopped")
+
+    delivery = asyncio.create_task(
+        _deliver_web_run(
+            db_engine, "delegation_web_wake_stopped", processing_service, hub
+        )
+    )
+    turn = await wait_for_condition(
+        lambda: _running_turn(hub), description="the wake turn to start"
+    )
+    assert turn is not None
+    # What POST /v1/chat/turns/{turn_id}/cancel does to a running turn.
+    controller = turn.mid_turn_controller
+    assert isinstance(controller, WebMidTurnController)
+    controller.request_interrupt()
+    assert turn.task is not None
+    turn.task.cancel()
+    await delivery
+
+    assert turn.status == "cancelled"
+    db_context = Database(engine=db_engine)
+    run = await db_context.delegation_runs.get_by_delegation_id(
+        "delegation_web_wake_stopped"
+    )
+    assert run is not None
+    assert run["notified_at"] is not None
+    assistant_rows = await db_context.fetch_all(
+        select(message_history_table).where(
+            message_history_table.c.conversation_id == TEST_CONVERSATION_ID,
+            message_history_table.c.role == "assistant",
+        )
+    )
+    assert [row["content"] for row in assistant_rows] == ["_Stopped._"]
 
 
 @pytest.mark.asyncio

@@ -738,6 +738,58 @@ async def persist_stopped_reply(
         )
 
 
+class HubTurnEventPublisher:
+    """Publishes a turn's events to the hub as the streaming producer does.
+
+    For a turn that runs outside :func:`run_turn_producer` -- a delegation wake
+    turn -- so that viewers see it live and its steering messages are echoed
+    back to the client that sent them.
+    """
+
+    def __init__(
+        self,
+        *,
+        hub: ConversationStreamHub,
+        conversation_id: str,
+        turn_id: str,
+        db_context: Database,
+        attachment_registry: "AttachmentRegistry | None",
+        acting_user_id: str | None,
+    ) -> None:
+        self._hub = hub
+        self._conversation_id = conversation_id
+        self._turn_id = turn_id
+        self._db_context = db_context
+        self._attachment_registry = attachment_registry
+        self._acting_user_id = acting_user_id
+        self._latex_normalizer = StreamingLatexNormalizer()
+        self._final_reply_parts: list[str] = []
+
+    async def publish(self, event: LLMStreamEvent) -> None:
+        await _publish_llm_event(
+            hub=self._hub,
+            conversation_id=self._conversation_id,
+            turn_id=self._turn_id,
+            event=event,
+            latex_normalizer=self._latex_normalizer,
+            final_reply_parts=self._final_reply_parts,
+            db_context=self._db_context,
+            attachment_registry=self._attachment_registry,
+            acting_user_id=self._acting_user_id,
+        )
+
+    async def flush(self) -> None:
+        """Publish any text the LaTeX normalizer is still holding back."""
+        trailing = self._latex_normalizer.flush()
+        if trailing:
+            await self._hub.publish(
+                self._conversation_id,
+                "text",
+                turn_id=self._turn_id,
+                payload={"content": trailing},
+            )
+
+
 async def _publish_llm_event(
     *,
     hub: ConversationStreamHub,

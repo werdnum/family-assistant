@@ -606,10 +606,14 @@ assistant may hand off to another profile. Quick handoffs come back inline. Long
 `delegation_...` reference and leave the conversation free; when the specialist finishes it wakes
 the original assistant, which posts the follow-up in the same conversation. For voice calls, longer
 handoffs post their result directly in Chat. You can ask for the status of a delegation reference at
-any time. If the assistant runs out of time (about 30 minutes) while working through a result, it
-posts a short note saying so instead; the result is kept in the conversation, so asking it to carry
-on picks up from there. In web chat, a result that arrives while the assistant is replying to you
-waits for that reply to finish, so the two never run side by side.
+any time.
+
+In web chat, the assistant works through a delegated result just like a reply to you: you can watch
+it, press Stop, or send a message to steer it while it works. A result that arrives while the
+assistant is already replying to you waits for that reply to finish. Elsewhere, such as Telegram,
+there is no Stop, so the assistant gives up after about 30 minutes and posts a short note instead.
+The result is kept in the conversation either way, so asking the assistant to carry on picks up from
+there.
 
 While a longer handoff is running, the web and iOS chat show a small line above the message box for
 each one — which specialist is working, how it is going (queued, working, how many of a council's
