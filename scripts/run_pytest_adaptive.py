@@ -374,6 +374,9 @@ def main() -> int:
     ]
     env = os.environ.copy()
     env["PYTEST_ADAPTIVE_BASE_COMMAND"] = json.dumps(base_command)
+    env.setdefault(
+        "PYTEST_ADAPTIVE_GATE_STATE", str(work_dir / "memory-gate-state.json")
+    )
     if json_report_file is not None:
         shard_reports_dir.mkdir()
         env["PYTEST_ADAPTIVE_SHARD_REPORT_DIR"] = str(shard_reports_dir)
