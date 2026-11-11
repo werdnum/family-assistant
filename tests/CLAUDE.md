@@ -49,6 +49,13 @@ after, so there is no cross-test state. The container starts automatically when 
 (requires Docker/Podman, or `pgserver`). Tests needing pgvector should request
 `pg_vector_db_engine`.
 
+A test that uses none of the database fixtures (`DATABASE_FIXTURES` in `tests/conftest.py`) is
+marked `db_independent` at collection. It runs the same whatever `--db` says, so CI runs those tests
+once, in `test-backend-independent`, and the SQLite and PostgreSQL jobs select
+`-m "not db_independent"`. Local commands are unaffected: `poe test` and `poe test-postgres` still
+run everything. A new fixture that hands a test a database must be added to `DATABASE_FIXTURES`, or
+its tests are treated as independent and left out of the backend jobs.
+
 Running against PostgreSQL has caught real issues SQLite hides — event loop conflicts in error
 logging, different transaction handling, and schema differences — so exercise it before pushing
 changes that touch database operations.
@@ -195,6 +202,7 @@ In CI, start from the JSON test report in the run's artifacts
 (`gh run download <run-id> --name <artifact-name>`). Artifact names are suffixed with the run id:
 
 - `backend-test-artifacts-sqlite-<run-id>` → `test-results/backend-sqlite-report.json`
+- `backend-test-artifacts-independent-<run-id>` → `test-results/backend-independent-report.json`
 - `backend-test-artifacts-postgres-<run-id>` → `test-results/backend-postgres-report.json`
 - `playwright-artifacts-sqlite-<run-id>` → `test-results/playwright-sqlite-report.json`
 - `playwright-artifacts-postgres-<run-id>` → `test-results/playwright-postgres-report.json`
