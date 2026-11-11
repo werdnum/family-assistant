@@ -212,6 +212,24 @@ RUN uv sync --locked --extra local-embeddings
 # build-only dependencies visible to vulnerability scanners.
 USER root
 RUN rm -rf /app/frontend
+
+# uv-managed Python interpreters ship pip in their base site-packages, and pip vendors its own
+# copies of certifi, urllib3, msgpack and setuptools (pkg_resources), which vulnerability scanners
+# report and which no uv sync can upgrade. Nothing here runs pip: the app venv and the uv tool
+# environments are created by uv and are not seeded with it. Remove it from every managed
+# interpreter, both root's (used by the app venv) and appuser's (if uv tool installed its own).
+RUN set -eu; \
+    found=0; \
+    for dir in "$(uv python dir)" "$(HOME=/home/appuser uv python dir)"; do \
+        for py in "$dir"/*/bin/python3; do \
+            [ -x "$py" ] || continue; \
+            found=1; \
+            purelib="$("$py" -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"; \
+            rm -rf "$purelib/pip" "$purelib"/pip-*.dist-info; \
+            if "$py" -c 'import pip' 2>/dev/null; then echo "pip still importable from $py" >&2; exit 1; fi; \
+        done; \
+    done; \
+    [ "$found" = 1 ] || { echo "no uv-managed Python found" >&2; exit 1; }
 USER appuser
 
 # --- Runtime Configuration ---
