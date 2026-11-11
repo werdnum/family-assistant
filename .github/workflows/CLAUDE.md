@@ -6,8 +6,9 @@ This file provides guidance for working with GitHub Actions workflows.
 
 - **`ci-with-devcontainer.yml`**: main CI. Builds the CI dev container image, then runs linting,
   frontend tests, and the backend suite against both SQLite and PostgreSQL, uploading test artifacts
-  for each. Triggers on push to `main` and on pull requests. Internal runs exchange the CI image
-  through GHCR. Fork PRs export a Docker image archive as a one-day workflow artifact, which
+  for each. Backend tests that use no database run once, in `test-backend-independent`, rather than
+  once per backend. Triggers on push to `main` and on pull requests. Internal runs exchange the CI
+  image through GHCR. Fork PRs export a Docker image archive as a one-day workflow artifact, which
   `.github/actions/load-ci-image` downloads and loads in each consuming job. Fork runs do not log in
   to GHCR or export registry caches; live Gemini tests are skipped because fork tokens cannot access
   the API secret. Keep this on `pull_request`, without granting fork code a privileged token. The

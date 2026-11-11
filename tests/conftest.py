@@ -145,6 +145,21 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
 
+# Fixtures that hand a test a database. `db_engine` and `alembic_engine` are
+# parametrized by --db; the rest are bound to one backend. A test using none of
+# them runs identically whatever --db says, so CI runs it once in a job of its
+# own rather than once per backend. A new fixture that provides a database
+# belongs here: until it is listed, its tests are left out of the backend jobs.
+DATABASE_FIXTURES = frozenset({
+    "db_engine",
+    "alembic_engine",
+    "pg_vector_db_engine",
+    "postgres_container",
+    "postgres_schema_template",
+    "session_db_engine",
+})
+
+
 def _selected_db_backends(config: pytest.Config) -> list[str]:
     """The backends chosen by --db, honouring the deprecated --postgres flag."""
     db_option = config.getoption("--db")
@@ -211,16 +226,29 @@ def pytest_collection_finish(session: pytest.Session) -> None:
         )
 
 
+# tryfirst: the marker has to be on the items before pytest applies `-m`.
+@pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
     """
     Modify test items after collection.
 
+    0. Mark tests that use no database as `db_independent`.
     1. Leave SQLite-only tests out of a PostgreSQL-only run.
     2. Mark Playwright tests as flaky on every backend.
     3. Mark a small set of backend tests with load-induced timing flakes for rerun.
     """
+    for item in items:
+        if DATABASE_FIXTURES.isdisjoint(getattr(item, "fixturenames", ())):
+            if item.get_closest_marker("postgres"):
+                raise pytest.UsageError(
+                    f"{item.nodeid} is marked postgres but uses none of "
+                    "DATABASE_FIXTURES in tests/conftest.py; list the fixture "
+                    "that gives it a database there."
+                )
+            item.add_marker(pytest.mark.db_independent)
+
     # 1. `session_db_engine` is SQLite whatever --db says, so a PostgreSQL-only
     #    run would repeat those tests against the backend the SQLite run covers.
     if _selected_db_backends(config) == ["postgres"]:

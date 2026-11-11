@@ -380,7 +380,10 @@ jobs:
           path: test-results/frontend-report.json
           retention-days: ${{ job.status == 'success' && 1 || 7 }}
           if-no-files-found: ignore
-  test-backend-sqlite:
+  # Tests that use a database run once per backend. The rest behave the same
+  # on both, so they run once, in a leg of their own.
+  test-backend:
+    name: test-backend-${{ matrix.suite }}
     needs: [prepare, build-ci-container, detect-changes]
     if: |
       needs.detect-changes.outputs.has_code_changes == 'true' &&
@@ -390,6 +393,16 @@ jobs:
        needs.detect-changes.outputs.ci_workflow == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: sqlite
+            title: SQLite
+            markers: not db_independent and not postgres and not playwright and not llm_integration and not gemini_live
+          - suite: independent
+            title: database-independent
+            markers: db_independent and not playwright and not llm_integration and not gemini_live
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -400,7 +413,7 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Run backend SQLite tests in devcontainer
+      - name: Run backend ${{ matrix.title }} tests in devcontainer
         run: |
           docker run \
             --rm \
@@ -429,9 +442,9 @@ jobs:
                 echo "No pre-built frontend assets found at /opt/frontend-dist"; \
               fi && \
               mkdir -p test-results && \
-              .venv/bin/python scripts/run_pytest_adaptive.py -q --timeout=300 --db sqlite -m "not postgres and not playwright and not llm_integration and not gemini_live" \
-                --json-report --json-report-file=test-results/backend-sqlite-report.json'
-      - name: Summarize backend test results (SQLite)
+              .venv/bin/python scripts/run_pytest_adaptive.py -q --timeout=300 --db sqlite -m "${{ matrix.markers }}" \
+                --json-report --json-report-file=test-results/backend-${{ matrix.suite }}-report.json'
+      - name: Summarize backend test results (${{ matrix.title }})
         if: always()
         run: |
           python - <<'PY'
@@ -439,11 +452,11 @@ jobs:
           import os
           from pathlib import Path
 
-          report_path = Path("test-results/backend-sqlite-report.json")
+          report_path = Path("test-results/backend-${{ matrix.suite }}-report.json")
           summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
           if not report_path.exists():
               summary_path.write_text(
-                  "## Backend SQLite tests\n\nNo pytest JSON report was produced.\n",
+                  "## Backend ${{ matrix.title }} tests\n\nNo pytest JSON report was produced.\n",
                   encoding="utf-8",
               )
               raise SystemExit(0)
@@ -456,7 +469,7 @@ jobs:
           ][:10]
 
           lines = [
-              "## Backend SQLite tests",
+              "## Backend ${{ matrix.title }} tests",
               "",
               f"- Exit code: `{report.get('exitcode')}`",
               f"- Collected: `{summary.get('collected', summary.get('total', 0))}`",
@@ -478,14 +491,14 @@ jobs:
           # is otherwise unidentifiable without downloading the artifact.
           print("\n".join(lines))
           PY
-      - name: Upload backend test results (SQLite)
+      - name: Upload backend test results (${{ matrix.title }})
         uses: actions/upload-artifact@v7
         # Successful runs keep the summary above; retain full diagnostics for
         # failures and cancellations (including timeouts) for seven days.
         if: failure() || cancelled()
         with:
-          name: backend-test-artifacts-sqlite-${{ github.run_id }}
-          path: test-results/backend-sqlite-report.json
+          name: backend-test-artifacts-${{ matrix.suite }}-${{ github.run_id }}
+          path: test-results/backend-${{ matrix.suite }}-report.json
           retention-days: ${{ job.status == 'success' && 1 || 7 }}
           if-no-files-found: ignore
   test-backend-postgres:
@@ -560,7 +573,7 @@ jobs:
                 echo "No pre-built frontend assets found at /opt/frontend-dist"; \
               fi && \
               mkdir -p test-results && \
-              .venv/bin/python scripts/run_pytest_adaptive.py --postgres -q --timeout=300 -m "not playwright and not llm_integration and not gemini_live" \
+              .venv/bin/python scripts/run_pytest_adaptive.py --postgres -q --timeout=300 -m "not db_independent and not playwright and not llm_integration and not gemini_live" \
                 --json-report --json-report-file=test-results/backend-postgres-report.json'
       - name: Summarize backend test results (PostgreSQL)
         if: always()
@@ -915,7 +928,7 @@ jobs:
 
   # Require all test jobs to pass
   all-tests:
-    needs: [prepare, detect-changes, build-ci-container, build-main-container, build-devcontainer, lint, test-frontend-unit, test-backend-sqlite, test-backend-postgres, test-playwright-sqlite, test-playwright-postgres, test-gemini-live, test-llm-integration, alembic-single-head, smoke-test-main-image, test-ios]
+    needs: [prepare, detect-changes, build-ci-container, build-main-container, build-devcontainer, lint, test-frontend-unit, test-backend, test-backend-postgres, test-playwright-sqlite, test-playwright-postgres, test-gemini-live, test-llm-integration, alembic-single-head, smoke-test-main-image, test-ios]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -954,7 +967,7 @@ jobs:
           check_job "build-devcontainer" "${{ needs.build-devcontainer.result }}" || FAILED=1
           check_job "lint" "${{ needs.lint.result }}" || FAILED=1
           check_job "test-frontend-unit" "${{ needs.test-frontend-unit.result }}" || FAILED=1
-          check_job "test-backend-sqlite" "${{ needs.test-backend-sqlite.result }}" || FAILED=1
+          check_job "test-backend" "${{ needs.test-backend.result }}" || FAILED=1
           check_job "test-backend-postgres" "${{ needs.test-backend-postgres.result }}" || FAILED=1
           check_job "test-playwright-sqlite" "${{ needs.test-playwright-sqlite.result }}" || FAILED=1
           check_job "test-playwright-postgres" "${{ needs.test-playwright-postgres.result }}" || FAILED=1
