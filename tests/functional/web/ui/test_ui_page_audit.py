@@ -4,7 +4,8 @@ import asyncio
 from pathlib import Path
 
 import pytest
-from playwright.async_api import expect
+from playwright.async_api import Error as PlaywrightError
+from playwright.async_api import Page, expect
 
 from tests.functional.web.conftest import WebTestFixture
 
@@ -33,25 +34,10 @@ PAGE_PATHS = [
 ]
 
 
-@pytest.mark.playwright
-@pytest.mark.asyncio
-@pytest.mark.parametrize("path", PAGE_PATHS)
-@pytest.mark.parametrize("theme", ["light", "dark"])
-@pytest.mark.parametrize("width", [375, 820, 1440])
-async def test_pages_fit_viewport(
-    web_test_fixture_readonly: WebTestFixture,
-    path: str,
-    theme: str,
-    width: int,
-    request: pytest.FixtureRequest,
+async def _audit_page(
+    page: Page, base_url: str, path: str, theme: str, width: int, *, screenshot: bool
 ) -> None:
-    """Pages fit phones, tablets and desktops in either selected theme."""
-    page = web_test_fixture_readonly.page
-    await page.set_viewport_size({"width": width, "height": 900})
-    await page.add_init_script(
-        f"localStorage.setItem('family-assistant-theme', '{theme}')"
-    )
-    response = await page.goto(f"{web_test_fixture_readonly.base_url}{path}")
+    response = await page.goto(f"{base_url}{path}")
     assert response is not None and response.ok, (
         f"{path} should support direct navigation"
     )
@@ -59,7 +45,7 @@ async def test_pages_fit_viewport(
     await expect(page.locator('[data-loading-indicator="true"]')).to_have_count(0)
     await expect(page.locator("html")).to_have_class(theme)
     await page.evaluate("document.fonts.ready")
-    if request.config.getoption("--take-screenshots", default=False):
+    if screenshot:
         screenshot_dir = Path("scratch/web-ui-audit")
         await asyncio.to_thread(screenshot_dir.mkdir, parents=True, exist_ok=True)
         slug = path.strip("/").replace("/", "-") or "home"
@@ -73,6 +59,46 @@ async def test_pages_fit_viewport(
         assert await page.get_by_test_id("voice-page").evaluate(
             "root => root.getBoundingClientRect().bottom >= innerHeight"
         ), "Voice Mode's background should fill the viewport"
+
+
+@pytest.mark.playwright
+@pytest.mark.asyncio
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("width", [375, 820, 1440])
+async def test_pages_fit_viewport(
+    web_test_fixture_readonly: WebTestFixture,
+    theme: str,
+    width: int,
+    request: pytest.FixtureRequest,
+) -> None:
+    """Pages fit phones, tablets and desktops in either selected theme.
+
+    One browser page visits every path: a fresh page per path spends longer
+    booting the app than auditing it. Every path is still visited after a
+    failure, so one run reports all the pages that are broken.
+    """
+    page = web_test_fixture_readonly.page
+    await page.set_viewport_size({"width": width, "height": 900})
+    await page.add_init_script(
+        f"localStorage.setItem('family-assistant-theme', '{theme}')"
+    )
+    screenshot = bool(request.config.getoption("--take-screenshots", default=False))
+
+    failures: list[str] = []
+    for path in PAGE_PATHS:
+        try:
+            await _audit_page(
+                page,
+                web_test_fixture_readonly.base_url,
+                path,
+                theme,
+                width,
+                screenshot=screenshot,
+            )
+        except (AssertionError, PlaywrightError) as error:
+            failures.append(f"{path}: {error}")
+
+    assert not failures, "\n\n".join(failures)
 
 
 @pytest.mark.playwright

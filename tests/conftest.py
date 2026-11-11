@@ -80,6 +80,15 @@ logging.basicConfig(level=logging.INFO)
 # when the database is disposed
 os.environ["FAMILY_ASSISTANT_DISABLE_DB_ERROR_LOGGING"] = "1"
 
+# Shipped configuration launches console scripts such as `mcp-server-time` by
+# name. An activated venv puts them on PATH; `.venv/bin/pytest` run directly
+# does not, so do what activation would.
+_interpreter_bin = str(pathlib.Path(sys.executable).parent)
+if _interpreter_bin not in os.environ.get("PATH", "").split(os.pathsep):
+    os.environ["PATH"] = os.pathsep.join(
+        filter(None, [_interpreter_bin, os.environ.get("PATH")])
+    )
+
 logger = logging.getLogger(__name__)
 
 
@@ -136,6 +145,16 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
 
+def _selected_db_backends(config: pytest.Config) -> list[str]:
+    """The backends chosen by --db, honouring the deprecated --postgres flag."""
+    db_option = config.getoption("--db")
+    if config.getoption("--postgres") and db_option == "all":
+        db_option = "postgres"
+    return [
+        backend for backend in ("sqlite", "postgres") if db_option in {backend, "all"}
+    ]
+
+
 def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
     """
     Dynamically parameterizes fixtures based on the --db option.
@@ -152,19 +171,7 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
     # Since db_engine (autouse) depends on db_engine, we need to parameterize
     # db_engine for ALL tests now
     if "db_engine" in metafunc.fixturenames:
-        # Get the --db option value, with backwards compatibility for --postgres
-        db_option = metafunc.config.getoption("--db")
-        use_postgres_flag = metafunc.config.getoption("--postgres")
-
-        # Handle backwards compatibility
-        if use_postgres_flag and db_option == "all":
-            db_option = "postgres"
-
-        db_backends = []
-        if db_option in {"sqlite", "all"}:
-            db_backends.append("sqlite")
-        if db_option in {"postgres", "all"}:
-            db_backends.append("postgres")
+        db_backends = _selected_db_backends(metafunc.config)
 
         # Check if the test is requesting pg_vector_db_engine
         # These tests should only run with postgres
@@ -204,15 +211,30 @@ def pytest_collection_finish(session: pytest.Session) -> None:
         )
 
 
-def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
     """
     Modify test items after collection.
 
-    1. Mark Playwright tests as flaky on every backend.
-    2. Mark a small set of backend tests with load-induced timing flakes for rerun.
+    1. Leave SQLite-only tests out of a PostgreSQL-only run.
+    2. Mark Playwright tests as flaky on every backend.
+    3. Mark a small set of backend tests with load-induced timing flakes for rerun.
     """
+    # 1. `session_db_engine` is SQLite whatever --db says, so a PostgreSQL-only
+    #    run would repeat those tests against the backend the SQLite run covers.
+    if _selected_db_backends(config) == ["postgres"]:
+        sqlite_only = [
+            item
+            for item in items
+            if "session_db_engine" in getattr(item, "fixturenames", ())
+        ]
+        if sqlite_only:
+            config.hook.pytest_deselected(items=sqlite_only)
+            items[:] = [item for item in items if item not in sqlite_only]
+
     for item in items:
-        # 1. Playwright UI tests are prone to load-induced `Locator.wait_for`
+        # 2. Playwright UI tests are prone to load-induced `Locator.wait_for`
         #    timeouts under the parallel CI shards. This was previously limited to
         #    SQLite, but the same timeouts hit the postgres-chromium shard (which
         #    gets no reruns), failing unrelated PRs outright. Rerun on every
@@ -220,7 +242,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
         if item.get_closest_marker("playwright"):
             item.add_marker(pytest.mark.flaky(reruns=3))
 
-        # 2. Backend tests with known load-induced timing flakes (xdist timeouts,
+        # 3. Backend tests with known load-induced timing flakes (xdist timeouts,
         #    async-delegation wakeups). Rerun rather than fail the whole build.
         if item.nodeid in {
             "tests/functional/telegram/test_telegram_slash_commands.py::test_slash_command_routes_to_specific_profile[sqlite]",
@@ -425,50 +447,17 @@ async def db_engine(
 
         unique_db_name = f"test_{test_name_safe}_{uuid.uuid4().hex[:8]}".lower()
 
-        # Get the main connection URL and create an admin engine
-        admin_url = postgres_container.get_connection_url().replace(
-            "postgresql://", "postgresql+asyncpg://", 1
-        )
-        # ast-grep-ignore: no-raw-create-async-engine - AUTOCOMMIT admin engine for CREATE/DROP DATABASE, never runs application queries
-        admin_engine = create_async_engine(
-            admin_url, echo=False, isolation_level="AUTOCOMMIT"
-        )
+        admin_url = _postgres_admin_url(postgres_container)
+        template_name = await request.getfixturevalue("postgres_schema_template")()
 
         logger.info(f"\n--- PostgreSQL Test DB Setup ({request.node.name}) ---")
-        logger.info(f"Creating unique database: {unique_db_name}")
-
-        # Create the unique database
-        # ast-grep-ignore: no-raw-transaction-management - test fixture setup, outside the application transaction model
-        async with admin_engine.begin() as conn:
-            # Check if database exists and drop it if so (cleanup from previous failed run)
-            result = await conn.execute(
-                text("SELECT 1 FROM pg_database WHERE datname = :dbname"),
-                {"dbname": unique_db_name},
-            )
-            if result.scalar():
-                await conn.execute(text(f'DROP DATABASE "{unique_db_name}"'))
-
-            # Create the new database
-            await conn.execute(text(f'CREATE DATABASE "{unique_db_name}"'))
-
-        # Close admin engine
-        await admin_engine.dispose()
-
-        # Create engine for the new test database
-        # Preserve query parameters (like ?host=/tmp/socket_path for Unix sockets)
-        if "?" in admin_url:
-            base_url, query_params = admin_url.rsplit("?", 1)
-            db_part = base_url.rsplit("/", 1)[0]
-            test_db_url = f"{db_part}/{unique_db_name}?{query_params}"
-        else:
-            test_db_url = admin_url.rsplit("/", 1)[0] + f"/{unique_db_name}"
-        engine = create_engine_with_sqlite_optimizations(test_db_url, instrument=True)
+        await _create_postgres_database(
+            admin_url, unique_db_name, template=template_name
+        )
+        engine = create_engine_with_sqlite_optimizations(
+            _postgres_database_url(admin_url, unique_db_name), instrument=True
+        )
         logger.info(f"Created PostgreSQL test engine for database: {unique_db_name}")
-
-        # Initialize vector extension first for PostgreSQL
-        db_context = Database(engine=engine)
-        await init_vector_db(db_context)
-        logger.info("PostgreSQL vector database components initialized.")
 
     if not engine:
         raise ValueError(f"Unsupported database backend: {db_backend}")
@@ -477,13 +466,6 @@ async def db_engine(
     logger.info(f"Using {db_backend} test engine.")
 
     try:
-        # Initialize the database schema using the test engine
-        # Pass the engine to init_db for dependency injection
-        if db_backend == "postgres":
-            await init_db(engine)
-        logger.info("Database schema initialized.")
-
-        # Yield control to the test function
         yield engine
 
     finally:
@@ -501,27 +483,9 @@ async def db_engine(
             os.unlink(tmp_name)
             logger.info("Removed temporary SQLite database file.")
 
-        # Drop the PostgreSQL database if we created one
         if db_backend == "postgres" and unique_db_name and admin_url:
-            # Recreate admin engine for cleanup
-            # ast-grep-ignore: no-raw-create-async-engine - AUTOCOMMIT admin engine for CREATE/DROP DATABASE, never runs application queries
-            admin_engine = create_async_engine(
-                admin_url, echo=False, isolation_level="AUTOCOMMIT"
-            )
-            try:
-                # ast-grep-ignore: no-raw-transaction-management - test fixture setup, outside the application transaction model
-                async with admin_engine.begin() as conn:
-                    # Drop with FORCE rather than terminating backends first and
-                    # dropping after: a connection appearing between the two
-                    # steps fails the drop with ObjectInUseError, which is a
-                    # teardown error against whichever test happened to run.
-                    # FORCE does both as one statement (PostgreSQL 13+).
-                    await conn.execute(
-                        text(f'DROP DATABASE IF EXISTS "{unique_db_name}" WITH (FORCE)')
-                    )
-                logger.info(f"Dropped test database: {unique_db_name}")
-            finally:
-                await admin_engine.dispose()
+            await _drop_postgres_database(admin_url, unique_db_name)
+            logger.info(f"Dropped test database: {unique_db_name}")
 
 
 # --- PostgreSQL Test Fixtures (using pgserver) ---
@@ -645,11 +609,93 @@ def postgres_container() -> Generator[ContainerProtocol]:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+def _postgres_admin_url(postgres_container: ContainerProtocol) -> str:
+    return postgres_container.get_connection_url().replace(
+        "postgresql://", "postgresql+asyncpg://", 1
+    )
+
+
+def _postgres_database_url(admin_url: str, database_name: str) -> str:
+    """The admin URL pointed at another database on the same server."""
+    # Query parameters carry the Unix socket directory for pgserver.
+    base_url, separator, query = admin_url.partition("?")
+    return f"{base_url.rsplit('/', 1)[0]}/{database_name}{separator}{query}"
+
+
+async def _run_postgres_admin_statement(admin_url: str, statement: str) -> None:
+    # ast-grep-ignore: no-raw-create-async-engine - AUTOCOMMIT admin engine for CREATE/DROP DATABASE, never runs application queries
+    admin_engine = create_async_engine(
+        admin_url, echo=False, isolation_level="AUTOCOMMIT"
+    )
+    try:
+        # ast-grep-ignore: no-raw-transaction-management - test fixture setup, outside the application transaction model
+        async with admin_engine.begin() as conn:
+            await conn.execute(text(statement))
+    finally:
+        await admin_engine.dispose()
+
+
+async def _create_postgres_database(
+    admin_url: str, database_name: str, *, template: str | None = None
+) -> None:
+    template_clause = f' TEMPLATE "{template}"' if template else ""
+    await _run_postgres_admin_statement(
+        admin_url, f'CREATE DATABASE "{database_name}"{template_clause}'
+    )
+
+
+async def _drop_postgres_database(admin_url: str, database_name: str) -> None:
+    # FORCE terminates remaining backends and drops as one statement
+    # (PostgreSQL 13+). Terminating first and dropping after leaves a window in
+    # which a new connection fails the drop with ObjectInUseError.
+    await _run_postgres_admin_statement(
+        admin_url, f'DROP DATABASE IF EXISTS "{database_name}" WITH (FORCE)'
+    )
+
+
+@pytest.fixture(scope="session")
+def postgres_schema_template(
+    postgres_container: ContainerProtocol,
+) -> Generator[Callable[[], Awaitable[str]]]:
+    """Build one initialized PostgreSQL database per worker for tests to clone.
+
+    Each test still gets a database of its own, with real commits and
+    independent connections; `CREATE DATABASE ... TEMPLATE` only replaces
+    creating the schema from scratch every time. The name is unique to this
+    pytest process because parallel shards can share one server.
+    """
+    admin_url = _postgres_admin_url(postgres_container)
+    template_name = f"fa_template_{uuid.uuid4().hex[:12]}"
+    built = False
+
+    async def get_template() -> str:
+        nonlocal built
+        if not built:
+            await _create_postgres_database(admin_url, template_name)
+            engine = create_engine_with_sqlite_optimizations(
+                _postgres_database_url(admin_url, template_name), instrument=True
+            )
+            try:
+                await init_vector_db(Database(engine=engine))
+                await init_db(engine)
+            finally:
+                # PostgreSQL refuses to clone a database that has connections.
+                await dispose_engine(engine)
+            built = True
+        return template_name
+
+    yield get_template
+
+    if built:
+        asyncio.run(_drop_postgres_database(admin_url, template_name))
+
+
 @pytest_asyncio.fixture(
     scope="function"
 )  # Use function scope for engine to ensure isolation
 async def pg_vector_db_engine(
     postgres_container: ContainerProtocol,
+    postgres_schema_template: Callable[[], Awaitable[str]],
     request: pytest.FixtureRequest,
 ) -> AsyncGenerator[AsyncEngine]:
     """
@@ -686,87 +732,22 @@ async def pg_vector_db_engine(
 
     unique_db_name = f"test_pgvec_{test_name_safe}_{uuid.uuid4().hex[:8]}".lower()
 
-    # Get the main connection URL and create an admin engine
-    admin_url = postgres_container.get_connection_url().replace(
-        "postgresql://", "postgresql+asyncpg://", 1
+    admin_url = _postgres_admin_url(postgres_container)
+    await _create_postgres_database(
+        admin_url, unique_db_name, template=await postgres_schema_template()
     )
-    # ast-grep-ignore: no-raw-create-async-engine - AUTOCOMMIT admin engine for CREATE/DROP DATABASE, never runs application queries
-    admin_engine = create_async_engine(
-        admin_url, echo=False, isolation_level="AUTOCOMMIT"
+    engine = create_engine_with_sqlite_optimizations(
+        _postgres_database_url(admin_url, unique_db_name), instrument=True
     )
-
-    logger.info("Creating PostgreSQL engine with pgvector support")
-    logger.info(f"Creating unique database: {unique_db_name}")
-
-    # Create the unique database
-    # ast-grep-ignore: no-raw-transaction-management - test fixture setup, outside the application transaction model
-    async with admin_engine.begin() as conn:
-        # Check if database exists and drop it if so (cleanup from previous failed run)
-        result = await conn.execute(
-            text("SELECT 1 FROM pg_database WHERE datname = :dbname"),
-            {"dbname": unique_db_name},
-        )
-        if result.scalar():
-            await conn.execute(text(f'DROP DATABASE "{unique_db_name}"'))
-
-        # Create the new database
-        await conn.execute(text(f'CREATE DATABASE "{unique_db_name}"'))
-
-    # Close admin engine
-    await admin_engine.dispose()
-
-    # Create engine for the new test database
-    # Preserve query parameters (like ?host=/tmp/socket_path for Unix sockets)
-    if "?" in admin_url:
-        base_url, query_params = admin_url.rsplit("?", 1)
-        db_part = base_url.rsplit("/", 1)[0]
-        test_db_url = f"{db_part}/{unique_db_name}?{query_params}"
-    else:
-        test_db_url = admin_url.rsplit("/", 1)[0] + f"/{unique_db_name}"
-
-    engine = create_engine_with_sqlite_optimizations(test_db_url, instrument=True)
-
-    # No global engine to patch anymore - engine is passed via dependency injection
-    logger.info("Using PostgreSQL test engine with vector support.")
 
     try:
-        # Initialize vector extension first for PostgreSQL
-        db_context = Database(engine=engine)
-        await init_vector_db(db_context)
-        logger.info("PostgreSQL vector database components initialized.")
-
-        # Initialize the database schema
-        logger.info("Initializing PostgreSQL database schema...")
-        await init_db(engine)  # Pass engine for dependency injection
-        logger.info("PostgreSQL database schema initialized.")
-
         yield engine
     finally:
         logger.info(f"--- PostgreSQL Test DB Teardown ({unique_db_name}) ---")
         await check_db_engine_invariants(engine, request.node.name)
         await dispose_engine(engine)
-
-        # Drop the PostgreSQL database
-        # ast-grep-ignore: no-raw-create-async-engine - AUTOCOMMIT admin engine for CREATE/DROP DATABASE, never runs application queries
-        admin_engine = create_async_engine(
-            admin_url, echo=False, isolation_level="AUTOCOMMIT"
-        )
-        try:
-            # ast-grep-ignore: no-raw-transaction-management - test fixture setup, outside the application transaction model
-            async with admin_engine.begin() as conn:
-                # Terminate any remaining connections to the test database
-                await conn.execute(
-                    text(
-                        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
-                        "WHERE datname = :dbname AND pid <> pg_backend_pid()"
-                    ),
-                    {"dbname": unique_db_name},
-                )
-                # Drop the test database
-                await conn.execute(text(f'DROP DATABASE IF EXISTS "{unique_db_name}"'))
-            logger.info(f"Dropped test database: {unique_db_name}")
-        finally:
-            await admin_engine.dispose()
+        await _drop_postgres_database(admin_url, unique_db_name)
+        logger.info(f"Dropped test database: {unique_db_name}")
 
 
 # Note: We don't provide a Database fixture directly.
