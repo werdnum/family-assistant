@@ -508,6 +508,16 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Trade PostgreSQL durability for speed
+        # The databases last one test each, so nothing here needs to survive a
+        # crash. Without this every commit, CREATE DATABASE and DROP DATABASE
+        # waits on an fsync of the runner's disk.
+        run: |
+          docker exec "${{ job.services.postgres.id }}" psql -U test -d test \
+            -c "ALTER SYSTEM SET fsync = off" \
+            -c "ALTER SYSTEM SET synchronous_commit = off" \
+            -c "ALTER SYSTEM SET full_page_writes = off" \
+            -c "SELECT pg_reload_conf()"
       - name: Run backend PostgreSQL tests in devcontainer
         run: |
           docker run \
@@ -704,6 +714,16 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Trade PostgreSQL durability for speed
+        # The databases last one test each, so nothing here needs to survive a
+        # crash. Without this every commit, CREATE DATABASE and DROP DATABASE
+        # waits on an fsync of the runner's disk.
+        run: |
+          docker exec "${{ job.services.postgres.id }}" psql -U test -d test \
+            -c "ALTER SYSTEM SET fsync = off" \
+            -c "ALTER SYSTEM SET synchronous_commit = off" \
+            -c "ALTER SYSTEM SET full_page_writes = off" \
+            -c "SELECT pg_reload_conf()"
       - name: Run Playwright tests with PostgreSQL in devcontainer
         run: |
           docker run \
