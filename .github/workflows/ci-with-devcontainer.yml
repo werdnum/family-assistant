@@ -143,10 +143,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Free up disk space
+      - name: Free up disk space if the runner is short of it
+        # Every test job waits on this one, and the cleanup takes two to three
+        # minutes. Hosted runners currently start with far more free space
+        # than this image needs, so only pay for it when that stops being true.
         run: |
-          echo "Before cleanup:"
-          df -h
+          free_gb=$(df --output=avail -BG / | tail -1 | tr -dc '0-9')
+          echo "Free space on /: ${free_gb}G"
+          if [ "$free_gb" -ge 40 ]; then
+            echo "Enough free space; skipping cleanup."
+            exit 0
+          fi
           sudo rm -rf /usr/share/dotnet
           sudo rm -rf /usr/local/lib/android
           sudo rm -rf /opt/ghc
