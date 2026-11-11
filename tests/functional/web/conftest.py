@@ -52,9 +52,11 @@ from family_assistant.tools.policy import (
     ToolPolicyConfig,
     ToolPolicyDecision,
 )
+from family_assistant.web.app_creator import create_app
 from family_assistant.web.auth import AuthService
 from family_assistant.web.conversation_stream_hub import ConversationStreamHub
 from family_assistant.web.jwt_tokens import JWTTokenService
+from family_assistant.web.mcp_adapter import MCPAdapter
 from family_assistant.web.routers.errors_api import (
     ERROR_INTAKE_ADDRESS_ADMISSION_RATE_LIMIT,
     ErrorIntakeRateLimiter,
@@ -1249,11 +1251,37 @@ def attachment_registry_fixture(db_engine: AsyncEngine) -> AttachmentRegistry:
     )
 
 
-@pytest.fixture(scope="function")
-def actual_app(web_only_assistant: Assistant) -> FastAPI:
-    """Return the assistant's owned FastAPI app instance."""
-    assert web_only_assistant.fastapi_app is not None
-    return web_only_assistant.fastapi_app
+@pytest_asyncio.fixture(scope="function")
+async def actual_app() -> AsyncGenerator[FastAPI]:
+    """The production app's routes and middleware, with no services behind it.
+
+    `Assistant` builds its app from the same factory. Tests that need the
+    running services (task worker, real server socket) use `web_only_assistant`.
+    """
+    app = create_app()
+    mcp_adapter: MCPAdapter = app.state.mcp_adapter
+    serving = asyncio.Event()
+    stop = asyncio.Event()
+
+    async def serve_mcp_endpoint() -> None:
+        # The app's lifespan does this in production. The MCP routes are bound
+        # to this adapter and answer 503 until its session manager runs, and
+        # the context has to be entered and left by one task.
+        async with mcp_adapter.run():
+            serving.set()
+            await stop.wait()
+
+    server = asyncio.create_task(serve_mcp_endpoint())
+    waiter = asyncio.create_task(serving.wait())
+    await asyncio.wait({server, waiter}, return_when=asyncio.FIRST_COMPLETED)
+    if server.done():
+        waiter.cancel()
+        server.result()
+
+    yield app
+
+    stop.set()
+    await server
 
 
 @pytest_asyncio.fixture(scope="function")
