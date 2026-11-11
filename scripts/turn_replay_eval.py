@@ -51,13 +51,11 @@ VARIANTS = (("shipped", True), ("without_policy", False))
 
 
 def _cost(trial: ReplayTrial) -> float:
+    # The Anthropic client reports prompt_tokens as the uncached remainder;
+    # cache reads and writes are separate, disjoint buckets.
     price_in, price_read, price_write, price_out = SONNET_5_5_PRICES
-    uncached = max(
-        trial.prompt_tokens - trial.cached_prompt_tokens - trial.cache_write_tokens,
-        0,
-    )
     return (
-        uncached * price_in
+        trial.prompt_tokens * price_in
         + trial.cached_prompt_tokens * price_read
         + trial.cache_write_tokens * price_write
         + trial.completion_tokens * price_out
