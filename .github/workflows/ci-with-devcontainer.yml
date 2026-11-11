@@ -110,8 +110,12 @@ jobs:
               - 'alembic.ini'
             backend_tests_unit:
               - 'tests/**/*.py'
+            # Browser tests live under ui/, and their fixtures in the conftest
+            # files above them, so a single-level test_*.py glob misses both.
             backend_tests_playwright:
-              - 'tests/functional/web/test_*.py'
+              - 'tests/functional/web/**'
+              - 'tests/functional/conftest.py'
+              - 'tests/conftest.py'
             ci_workflow:
               - '.github/workflows/ci-*.yml'
               - '.github/actions/**'
