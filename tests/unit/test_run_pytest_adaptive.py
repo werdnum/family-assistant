@@ -34,6 +34,31 @@ def test_default_jobs_follow_the_machines_cpu_count() -> None:
     assert runner._default_jobs(16) == "18"
 
 
+def test_a_cgroup_cpu_quota_caps_the_cpus_counted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A two-CPU container on a large node must not be sized for the node."""
+    runner = _load_runner_module()
+    monkeypatch.setattr(runner.os, "process_cpu_count", lambda: 64)
+    (tmp_path / "cpu.max").write_text("200000 100000\n")
+
+    assert runner._available_cpus(tmp_path) == 2
+
+
+@pytest.mark.parametrize(
+    "cpu_max", ["max 100000\n", None], ids=["no-quota", "no-cgroup-file"]
+)
+def test_without_a_cgroup_quota_the_process_cpu_count_stands(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cpu_max: str | None
+) -> None:
+    runner = _load_runner_module()
+    monkeypatch.setattr(runner.os, "process_cpu_count", lambda: 4)
+    if cpu_max is not None:
+        (tmp_path / "cpu.max").write_text(cpu_max)
+
+    assert runner._available_cpus(tmp_path) == 4
+
+
 def test_sanitize_pytest_args_strips_quiet_from_compact_fail_fast() -> None:
     runner = _load_runner_module()
 

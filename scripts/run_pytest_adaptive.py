@@ -317,8 +317,33 @@ def _write_merged_json_report(
     )
 
 
+def _cgroup_cpu_quota(cgroup_path: Path = Path("/sys/fs/cgroup")) -> float | None:
+    """CPUs this container may use under cgroup v2, or None when unlimited."""
+    try:
+        quota, period = (cgroup_path / "cpu.max").read_text().split()
+    except OSError, ValueError:
+        return None
+    if quota == "max":
+        return None
+    return int(quota) / int(period)
+
+
+def _available_cpus(cgroup_path: Path = Path("/sys/fs/cgroup")) -> int:
+    """CPUs this process can actually use.
+
+    `os.cpu_count()` is the machine's. A container on a large node may be
+    pinned to a few of them, or limited by a quota that leaves the count
+    untouched, as the Kubernetes dev pod's two-CPU limit does.
+    """
+    cpus = os.process_cpu_count() or 4
+    quota = _cgroup_cpu_quota(cgroup_path)
+    if quota is not None:
+        cpus = min(cpus, max(1, math.ceil(quota)))
+    return cpus
+
+
 def _default_jobs(cpu_count: int | None = None) -> str:
-    """Concurrent shards for this machine: its CPUs plus two.
+    """Concurrent shards for this machine: its usable CPUs plus two.
 
     Shards are CPU-bound with some waiting on a database or a browser, so a
     little more than one per CPU keeps the machine busy. Past that each shard
@@ -326,7 +351,7 @@ def _default_jobs(cpu_count: int | None = None) -> str:
     work of 6 on PostgreSQL and finished later. The load and memory gates only
     delay shard starts; they cannot undo having too many.
     """
-    cpus = cpu_count if cpu_count is not None else os.cpu_count() or 4
+    cpus = cpu_count if cpu_count is not None else _available_cpus()
     return str(cpus + 2)
 
 
