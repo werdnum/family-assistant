@@ -97,8 +97,12 @@ Default pytest runner used by `scripts/run-tests.sh`. It collects nodeids, group
 modules into serial pytest shards through GNU Parallel, and gates new shards on CPU load plus memory
 usage (`memory_gate.py`). Memory is read from cgroup v2 where a limit is set, and on macOS from
 `vm_stat` as Activity Monitor's "Memory Used" (app + wired + compressed) over physical memory;
-elsewhere it is not gated. Use `scripts/run-tests.sh --xdist-pytest` or
-`PYTEST_RUNNER=xdist scripts/run-tests.sh` to use direct pytest-xdist instead.
+elsewhere it is not gated. On macOS the gate also holds a shard back while the memory compressor is
+busy, because a Mac that is thrashing levels off below the usage threshold, and shards start a few
+seconds apart so the gate can see what the previous one cost. A shard is always admitted when none
+is running, so pressure from something else on the machine slows a run but cannot hang it. Use
+`scripts/run-tests.sh --xdist-pytest` or `PYTEST_RUNNER=xdist scripts/run-tests.sh` to use direct
+pytest-xdist instead.
 
 Useful environment variables:
 
@@ -113,6 +117,8 @@ Useful environment variables:
 - `PYTEST_ADAPTIVE_MEM_THRESHOLD`: memory usage ratio that stops new shards. Defaults to `0.80` for
   cgroup and `0.90` on macOS, where a healthy full run at 16 jobs peaks around `0.85`
 - `PYTEST_ADAPTIVE_LOAD`: GNU Parallel `--load` value, defaults to `100%`
+- `PYTEST_ADAPTIVE_DELAY`: seconds between shard starts, defaults to `3` on macOS and `0.2`
+  elsewhere
 
 ### `refresh-provider-model-skills.py`
 

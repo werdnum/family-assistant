@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -33,6 +34,7 @@ Anonymous pages:                         351853.
 Pages stored in compressor:              839121.
 Pages occupied by compressor:             70349.
 Decompressions:                     33189440773.
+Compressions:                       33932718123.
 """
 TOTAL_BYTES = 17179869184
 
@@ -94,9 +96,71 @@ def test_threshold_defaults_to_the_reading_source(
 ) -> None:
     gate = _load_gate()
     monkeypatch.setattr(gate, "memory_reading", lambda: gate.MemoryReading(0.85, 0.90))
+    monkeypatch.setattr(gate, "shard_is_running", lambda: True)
     monkeypatch.setattr(sys, "argv", argv)
 
     assert gate.main() == expected
+
+
+def _vm_stat_after(compressions: int, decompressions: int) -> str:
+    return VM_STAT_OUTPUT.replace(
+        "Compressions:                       33932718123.",
+        f"Compressions:                       {33932718123 + compressions}.",
+    ).replace(
+        "Decompressions:                     33189440773.",
+        f"Decompressions:                     {33189440773 + decompressions}.",
+    )
+
+
+def test_compressor_traffic_is_memory_moved_per_second_over_physical_memory() -> None:
+    gate = _load_gate()
+
+    traffic = gate.vm_stat_compressor_traffic(
+        VM_STAT_OUTPUT, _vm_stat_after(30_000, 22_000), 2.0, TOTAL_BYTES
+    )
+
+    assert traffic == pytest.approx(52_000 * 16384 / TOTAL_BYTES / 2.0)
+
+
+def test_heavy_compressor_traffic_holds_a_job_back_below_the_usage_threshold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A thrashing Mac levels off under the usage threshold; traffic is what shows it."""
+    gate = _load_gate()
+    monkeypatch.setattr(
+        gate,
+        "memory_reading",
+        lambda: gate.MemoryReading(0.87, 0.90, compressor_traffic=0.05),
+    )
+    monkeypatch.setattr(gate, "shard_is_running", lambda: True)
+    monkeypatch.setattr(sys, "argv", ["memory_gate.py"])
+
+    assert gate.main() == 1
+
+
+def test_pressure_with_no_shard_running_still_admits_a_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Otherwise pressure from elsewhere on the machine would hang the run for good."""
+    gate = _load_gate()
+    monkeypatch.setattr(
+        gate,
+        "memory_reading",
+        lambda: gate.MemoryReading(0.97, 0.90, compressor_traffic=0.05),
+    )
+    monkeypatch.setattr(gate, "shard_is_running", lambda: False)
+    monkeypatch.setattr(sys, "argv", ["memory_gate.py"])
+
+    assert gate.main() == 0
+
+
+def test_running_shard_pattern_matches_a_shard_and_not_its_scheduler() -> None:
+    gate = _load_gate()
+    shard = "python '/repo/scripts/run_pytest_shard.py' --adaptive-manifest '/repo/.pytest-adaptive/shards/shard-9.json'"
+    scheduler = "perl parallel --jobs 10 python /repo/scripts/run_pytest_shard.py --adaptive-manifest {} :::: /repo/.pytest-adaptive/shards.txt"
+
+    assert re.search(gate._RUNNING_SHARD_PATTERN, shard)
+    assert not re.search(gate._RUNNING_SHARD_PATTERN, scheduler)
 
 
 def test_unmeasurable_memory_admits_the_job_and_says_why(
@@ -116,7 +180,13 @@ def test_unmeasurable_memory_admits_the_job_and_says_why(
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="reads this Mac's vm_stat")
-def test_macos_reading_is_a_plausible_fraction_of_memory() -> None:
+def test_macos_reading_is_a_plausible_fraction_of_memory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     gate = _load_gate()
+    monkeypatch.setattr(gate, "COMPRESSOR_SAMPLE_SECONDS", 0.05)
 
-    assert 0.0 < gate.macos_usage_ratio() < 1.0
+    reading = gate.macos_reading()
+
+    assert 0.0 < reading.ratio < 1.0
+    assert reading.compressor_traffic >= 0.0
