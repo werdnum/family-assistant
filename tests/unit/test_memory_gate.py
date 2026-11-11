@@ -39,6 +39,12 @@ Compressions:                       33932718123.
 TOTAL_BYTES = 17179869184
 
 
+@pytest.fixture(autouse=True)
+def _no_inherited_gate_log(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A run that is logging gate decisions must not collect these tests' ones."""
+    monkeypatch.delenv("PYTEST_ADAPTIVE_GATE_LOG", raising=False)
+
+
 def _load_gate() -> ModuleType:
     script_path = Path(__file__).parents[2] / "scripts" / "memory_gate.py"
     spec = importlib.util.spec_from_file_location("memory_gate", script_path)
@@ -102,24 +108,49 @@ def test_threshold_defaults_to_the_reading_source(
     assert gate.main() == expected
 
 
-def _vm_stat_after(compressions: int, decompressions: int) -> str:
-    return VM_STAT_OUTPUT.replace(
-        "Compressions:                       33932718123.",
-        f"Compressions:                       {33932718123 + compressions}.",
-    ).replace(
-        "Decompressions:                     33189440773.",
-        f"Decompressions:                     {33189440773 + decompressions}.",
-    )
+PAGE_FRACTION = 16384 / TOTAL_BYTES
 
 
-def test_compressor_traffic_is_memory_moved_per_second_over_physical_memory() -> None:
+def test_compressor_traffic_is_memory_moved_per_second_since_the_last_sample() -> None:
     gate = _load_gate()
+    previous = gate.CompressorSample(taken_at=100.0, moved_pages=1_000_000, traffic=0.0)
 
-    traffic = gate.vm_stat_compressor_traffic(
-        VM_STAT_OUTPUT, _vm_stat_after(30_000, 22_000), 2.0, TOTAL_BYTES
+    sample = gate.next_compressor_sample(previous, 104.0, 1_052_000, PAGE_FRACTION)
+
+    assert sample.traffic == pytest.approx(52_000 * PAGE_FRACTION / 4.0)
+    assert (sample.taken_at, sample.moved_pages) == (104.0, 1_052_000)
+
+
+def test_a_sample_younger_than_the_window_is_kept_with_its_rate() -> None:
+    """Calls arrive faster than a rate can be measured; they reuse the last one."""
+    gate = _load_gate()
+    previous = gate.CompressorSample(
+        taken_at=100.0, moved_pages=1_000_000, traffic=0.04
     )
 
-    assert traffic == pytest.approx(52_000 * 16384 / TOTAL_BYTES / 2.0)
+    sample = gate.next_compressor_sample(previous, 100.3, 1_900_000, PAGE_FRACTION)
+
+    assert sample is previous
+
+
+@pytest.mark.parametrize(
+    ("previous", "moved_pages"),
+    [
+        (None, 1_000_000),
+        ((100.0, 1_000_000, 0.04), 2_000_000),
+        ((1_000.0, 9_000_000, 0.04), 1_000_000),
+    ],
+    ids=["first-call", "stale-sample", "counters-went-backwards"],
+)
+def test_a_sample_that_cannot_give_a_rate_starts_a_new_window(
+    previous: tuple[float, int, float] | None, moved_pages: int
+) -> None:
+    gate = _load_gate()
+    earlier = None if previous is None else gate.CompressorSample(*previous)
+
+    sample = gate.next_compressor_sample(earlier, 1_010.0, moved_pages, PAGE_FRACTION)
+
+    assert sample == gate.CompressorSample(1_010.0, moved_pages, 0.0)
 
 
 def test_heavy_compressor_traffic_holds_a_job_back_below_the_usage_threshold(
@@ -181,10 +212,10 @@ def test_unmeasurable_memory_admits_the_job_and_says_why(
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="reads this Mac's vm_stat")
 def test_macos_reading_is_a_plausible_fraction_of_memory(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     gate = _load_gate()
-    monkeypatch.setattr(gate, "COMPRESSOR_SAMPLE_SECONDS", 0.05)
+    monkeypatch.setenv("PYTEST_ADAPTIVE_GATE_STATE", str(tmp_path / "state.json"))
 
     reading = gate.macos_reading()
 

@@ -27,9 +27,12 @@ shard is running.
 
 from __future__ import annotations
 
+import json
+import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import NamedTuple
@@ -38,7 +41,11 @@ CGROUP_DEFAULT_THRESHOLD = 0.80
 MACOS_DEFAULT_THRESHOLD = 0.90
 # Fraction of physical memory compressed plus decompressed per second.
 MACOS_COMPRESSOR_TRAFFIC_THRESHOLD = 0.03
-COMPRESSOR_SAMPLE_SECONDS = 1.0
+# GNU Parallel asks the gate about once a second for the whole run, so the gate
+# cannot stop to measure a rate. Each call compares the counters with the ones
+# an earlier call left behind, once they are at least this far apart.
+COMPRESSOR_WINDOW_SECONDS = 2.0
+COMPRESSOR_SAMPLE_MAX_AGE_SECONDS = 30.0
 
 _VM_STAT_PAGE_SIZE = re.compile(r"page size of (\d+) bytes")
 _VM_STAT_USAGE_FIELDS = {
@@ -54,6 +61,14 @@ _VM_STAT_TRAFFIC_FIELDS = {
 # A shard's command line names its manifest; GNU Parallel's own names a
 # placeholder, so this matches running shards and not their scheduler.
 _RUNNING_SHARD_PATTERN = r"run_pytest_shard\.py.*shard-[0-9]+\.json"
+
+
+class CompressorSample(NamedTuple):
+    """Cumulative compressor counters at a moment, and the rate they then showed."""
+
+    taken_at: float
+    moved_pages: int
+    traffic: float
 
 
 class MemoryReading(NamedTuple):
@@ -108,20 +123,48 @@ def vm_stat_usage_ratio(vm_stat_output: str, total_bytes: int) -> float:
     return used_pages * _vm_stat_page_size(vm_stat_output) / total_bytes
 
 
-def vm_stat_compressor_traffic(
-    earlier_output: str, later_output: str, seconds: float, total_bytes: int
-) -> float:
-    """Return the fraction of physical memory (de)compressed per second."""
-    earlier = _vm_stat_pages(earlier_output, _VM_STAT_TRAFFIC_FIELDS)
-    later = _vm_stat_pages(later_output, _VM_STAT_TRAFFIC_FIELDS)
-    moved_pages = sum(later[key] - earlier[key] for key in _VM_STAT_TRAFFIC_FIELDS)
-    return moved_pages * _vm_stat_page_size(later_output) / total_bytes / seconds
+def next_compressor_sample(
+    previous: CompressorSample | None,
+    taken_at: float,
+    moved_pages: int,
+    memory_fraction_per_page: float,
+) -> CompressorSample:
+    """Return the sample to remember, carrying the traffic rate it implies.
+
+    A previous sample younger than the window is kept as it is, so the rate is
+    always measured over a meaningful interval. One that is missing, stale, or
+    ahead of the counters (a reboot) starts a new window with no rate yet.
+    """
+    if previous is None or moved_pages < previous.moved_pages:
+        return CompressorSample(taken_at, moved_pages, 0.0)
+    age = taken_at - previous.taken_at
+    if age > COMPRESSOR_SAMPLE_MAX_AGE_SECONDS:
+        return CompressorSample(taken_at, moved_pages, 0.0)
+    if age < COMPRESSOR_WINDOW_SECONDS:
+        return previous
+    traffic = (moved_pages - previous.moved_pages) * memory_fraction_per_page / age
+    return CompressorSample(taken_at, moved_pages, traffic)
 
 
-def _vm_stat() -> str:
-    return subprocess.run(
-        ["vm_stat"], capture_output=True, text=True, check=True
-    ).stdout
+def _compressor_state_path() -> Path:
+    configured = os.environ.get("PYTEST_ADAPTIVE_GATE_STATE")
+    if configured:
+        return Path(configured)
+    return Path(tempfile.gettempdir()) / f"fa-memory-gate-{os.getuid()}.json"
+
+
+def _load_compressor_sample(path: Path) -> CompressorSample | None:
+    try:
+        taken_at, moved_pages, traffic = json.loads(path.read_text(encoding="utf-8"))
+    except OSError, ValueError:
+        return None
+    return CompressorSample(float(taken_at), int(moved_pages), float(traffic))
+
+
+def _store_compressor_sample(path: Path, sample: CompressorSample) -> None:
+    scratch = path.with_name(f"{path.name}.{os.getpid()}")
+    scratch.write_text(json.dumps(sample), encoding="utf-8")
+    scratch.replace(path)
 
 
 def macos_reading() -> MemoryReading:
@@ -131,16 +174,26 @@ def macos_reading() -> MemoryReading:
             ["sysctl", "-n", "hw.memsize"], capture_output=True, text=True, check=True
         ).stdout
     )
-    earlier_output = _vm_stat()
-    started = time.monotonic()
-    time.sleep(COMPRESSOR_SAMPLE_SECONDS)
-    later_output = _vm_stat()
+    vm_stat_output = subprocess.run(
+        ["vm_stat"], capture_output=True, text=True, check=True
+    ).stdout
+    moved = _vm_stat_pages(vm_stat_output, _VM_STAT_TRAFFIC_FIELDS)
+
+    state_path = _compressor_state_path()
+    previous = _load_compressor_sample(state_path)
+    sample = next_compressor_sample(
+        previous,
+        time.time(),
+        sum(moved.values()),
+        _vm_stat_page_size(vm_stat_output) / total_bytes,
+    )
+    if sample is not previous:
+        _store_compressor_sample(state_path, sample)
+
     return MemoryReading(
-        ratio=vm_stat_usage_ratio(later_output, total_bytes),
+        ratio=vm_stat_usage_ratio(vm_stat_output, total_bytes),
         default_threshold=MACOS_DEFAULT_THRESHOLD,
-        compressor_traffic=vm_stat_compressor_traffic(
-            earlier_output, later_output, time.monotonic() - started, total_bytes
-        ),
+        compressor_traffic=sample.traffic,
     )
 
 
@@ -164,20 +217,36 @@ def memory_reading() -> MemoryReading | None:
     return None
 
 
+def _log_decision(reading: MemoryReading, decision: int) -> None:
+    """Append this decision to PYTEST_ADAPTIVE_GATE_LOG, for tuning the gate."""
+    log_path = os.environ.get("PYTEST_ADAPTIVE_GATE_LOG")
+    if not log_path:
+        return
+    with Path(log_path).open("a", encoding="utf-8") as log:
+        log.write(
+            f"{time.time():.1f}\t{reading.ratio:.3f}\t"
+            f"{reading.compressor_traffic:.4f}\t{decision}\n"
+        )
+
+
+def _decide(argv: list[str]) -> int:
+    reading = memory_reading()
+    if reading is None:
+        return 0
+    threshold = float(argv[1]) if len(argv) > 1 else reading.default_threshold
+    under_pressure = (
+        reading.ratio >= threshold
+        or reading.compressor_traffic >= MACOS_COMPRESSOR_TRAFFIC_THRESHOLD
+    )
+    decision = 1 if under_pressure and shard_is_running() else 0
+    _log_decision(reading, decision)
+    return decision
+
+
 def main() -> int:
     """Exit using GNU Parallel --limit semantics: 0 starts a job, 1 waits."""
     try:
-        reading = memory_reading()
-        if reading is None:
-            return 0
-        threshold = (
-            float(sys.argv[1]) if len(sys.argv) > 1 else reading.default_threshold
-        )
-        under_pressure = (
-            reading.ratio >= threshold
-            or reading.compressor_traffic >= MACOS_COMPRESSOR_TRAFFIC_THRESHOLD
-        )
-        return 1 if under_pressure and shard_is_running() else 0
+        return _decide(sys.argv)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         # GNU Parallel retries a waiting job forever, so failing closed would
         # hang the run without a word; say why and let the job start.

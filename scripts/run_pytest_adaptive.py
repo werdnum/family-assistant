@@ -317,17 +317,6 @@ def _write_merged_json_report(
     )
 
 
-def _default_delay() -> str:
-    """Seconds between shard starts.
-
-    The memory gate judges the machine as it is, and a shard takes a few
-    seconds to reach its size. On macOS, where memory is what runs out, start
-    shards far enough apart for the gate to see the previous one's cost;
-    otherwise every slot fills before there is anything to measure.
-    """
-    return "3" if sys.platform == "darwin" else "0.2"
-
-
 def main() -> int:
     pytest_bin = _pytest_bin()
     parallel_bin = _parallel_bin()
@@ -370,7 +359,7 @@ def main() -> int:
     load_limit = os.environ.get("PYTEST_ADAPTIVE_LOAD", "100%")
     # Unset leaves the default to memory_gate.py, which picks one per platform.
     mem_threshold = os.environ.get("PYTEST_ADAPTIVE_MEM_THRESHOLD")
-    delay = os.environ.get("PYTEST_ADAPTIVE_DELAY", _default_delay())
+    delay = os.environ.get("PYTEST_ADAPTIVE_DELAY", "0.2")
     joblog = work_dir / "joblog.tsv"
     results_dir = work_dir / "results" / "{#}"
     shard_reports_dir = work_dir / "json-reports"
@@ -385,6 +374,9 @@ def main() -> int:
     ]
     env = os.environ.copy()
     env["PYTEST_ADAPTIVE_BASE_COMMAND"] = json.dumps(base_command)
+    env.setdefault(
+        "PYTEST_ADAPTIVE_GATE_STATE", str(work_dir / "memory-gate-state.json")
+    )
     if json_report_file is not None:
         shard_reports_dir.mkdir()
         env["PYTEST_ADAPTIVE_SHARD_REPORT_DIR"] = str(shard_reports_dir)
