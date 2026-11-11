@@ -393,7 +393,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        jobs: [4, 6, 8, 12, 16]
+        include:
+          - {jobs: 4, batch: 176}
+          - {jobs: 6, batch: 176}
+          - {jobs: 8, batch: 176}
+          - {jobs: 12, batch: 176}
+          - {jobs: 6, batch: 350}
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -409,6 +414,7 @@ jobs:
           docker run \
             --rm \
             -e PYTEST_ADAPTIVE_JOBS=${{ matrix.jobs }} \
+            -e PYTEST_ADAPTIVE_BATCH_SIZE=${{ matrix.batch }} \
             -v ${{ github.workspace }}:/workspace/main \
             -e CLAUDE_PROJECT_REPO="" \
             -e UV_CACHE_DIR=/opt/uv-cache \
@@ -435,7 +441,7 @@ jobs:
               fi && \
               mkdir -p test-results && \
               echo "EXPERIMENT nproc=$(nproc) cgroup_memory_max=$(cat /sys/fs/cgroup/memory.max) $(grep MemTotal /proc/meminfo)" && \
-              (while sleep 5; do echo "$(date +%s) $(grep MemAvailable /proc/meminfo) $(cat /proc/loadavg)"; done > test-results/mem.log &) && \
+              (while sleep 5; do echo "$(date +%s) $(grep MemAvailable /proc/meminfo) $(cat /proc/loadavg)"; done > mem-samples.log &) && \
               .venv/bin/python scripts/run_pytest_adaptive.py -q --timeout=300 --db sqlite -m "not postgres and not playwright and not llm_integration and not gemini_live" \
                 --json-report --json-report-file=test-results/backend-sqlite-report.json'
       - name: Summarize shard scheduling (experiment)
@@ -450,8 +456,8 @@ jobs:
           ends = [float(r["Starttime"]) + float(r["JobRuntime"]) for r in rows]
           wall = max(ends) - min(starts)
           total = sum(float(r["JobRuntime"]) for r in rows)
-          print(f"EXPERIMENT jobs=${{ matrix.jobs }} shards={len(rows)} shard_wall={wall:.0f}s summed={total:.0f}s mean_concurrency={total / wall:.1f}")
-          samples = [line.split() for line in Path("test-results/mem.log").read_text().splitlines()]
+          print(f"EXPERIMENT jobs=${{ matrix.jobs }} batch=${{ matrix.batch }} shards={len(rows)} shard_wall={wall:.0f}s summed={total:.0f}s mean_concurrency={total / wall:.1f}")
+          samples = [line.split() for line in Path("mem-samples.log").read_text().splitlines()]
           available = [int(s[2]) / 1048576 for s in samples]
           load = [float(s[4]) for s in samples]
           print(f"EXPERIMENT mem_available_gb min={min(available):.1f} median={sorted(available)[len(available) // 2]:.1f} load1 mean={sum(load) / len(load):.1f} max={max(load):.1f} samples={len(samples)}")
@@ -526,7 +532,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        jobs: [4, 6, 8, 12, 16]
+        include:
+          - {jobs: 4, batch: 176}
+          - {jobs: 6, batch: 176}
+          - {jobs: 8, batch: 176}
+          - {jobs: 12, batch: 176}
+          - {jobs: 6, batch: 350}
     services:
       postgres:
         image: pgvector/pgvector:0.8.0-pg17
@@ -563,6 +574,7 @@ jobs:
           docker run \
             --rm \
             -e PYTEST_ADAPTIVE_JOBS=${{ matrix.jobs }} \
+            -e PYTEST_ADAPTIVE_BATCH_SIZE=${{ matrix.batch }} \
             --network host \
             -v ${{ github.workspace }}:/workspace/main \
             -e TEST_DATABASE_URL="postgresql://test:test@localhost:5432/test" \
@@ -591,7 +603,7 @@ jobs:
               fi && \
               mkdir -p test-results && \
               echo "EXPERIMENT nproc=$(nproc) cgroup_memory_max=$(cat /sys/fs/cgroup/memory.max) $(grep MemTotal /proc/meminfo)" && \
-              (while sleep 5; do echo "$(date +%s) $(grep MemAvailable /proc/meminfo) $(cat /proc/loadavg)"; done > test-results/mem.log &) && \
+              (while sleep 5; do echo "$(date +%s) $(grep MemAvailable /proc/meminfo) $(cat /proc/loadavg)"; done > mem-samples.log &) && \
               .venv/bin/python scripts/run_pytest_adaptive.py --postgres -q --timeout=300 -m "not playwright and not llm_integration and not gemini_live" \
                 --json-report --json-report-file=test-results/backend-postgres-report.json'
       - name: Summarize shard scheduling (experiment)
@@ -606,8 +618,8 @@ jobs:
           ends = [float(r["Starttime"]) + float(r["JobRuntime"]) for r in rows]
           wall = max(ends) - min(starts)
           total = sum(float(r["JobRuntime"]) for r in rows)
-          print(f"EXPERIMENT jobs=${{ matrix.jobs }} shards={len(rows)} shard_wall={wall:.0f}s summed={total:.0f}s mean_concurrency={total / wall:.1f}")
-          samples = [line.split() for line in Path("test-results/mem.log").read_text().splitlines()]
+          print(f"EXPERIMENT jobs=${{ matrix.jobs }} batch=${{ matrix.batch }} shards={len(rows)} shard_wall={wall:.0f}s summed={total:.0f}s mean_concurrency={total / wall:.1f}")
+          samples = [line.split() for line in Path("mem-samples.log").read_text().splitlines()]
           available = [int(s[2]) / 1048576 for s in samples]
           load = [float(s[4]) for s in samples]
           print(f"EXPERIMENT mem_available_gb min={min(available):.1f} median={sorted(available)[len(available) // 2]:.1f} load1 mean={sum(load) / len(load):.1f} max={max(load):.1f} samples={len(samples)}")
