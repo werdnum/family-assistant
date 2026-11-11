@@ -390,6 +390,10 @@ jobs:
        needs.detect-changes.outputs.ci_workflow == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        jobs: [4, 6, 8, 12, 16]
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -404,6 +408,7 @@ jobs:
         run: |
           docker run \
             --rm \
+            -e PYTEST_ADAPTIVE_JOBS=${{ matrix.jobs }} \
             -v ${{ github.workspace }}:/workspace/main \
             -e CLAUDE_PROJECT_REPO="" \
             -e UV_CACHE_DIR=/opt/uv-cache \
@@ -429,8 +434,28 @@ jobs:
                 echo "No pre-built frontend assets found at /opt/frontend-dist"; \
               fi && \
               mkdir -p test-results && \
+              echo "EXPERIMENT nproc=$(nproc) cgroup_memory_max=$(cat /sys/fs/cgroup/memory.max) $(grep MemTotal /proc/meminfo)" && \
+              (while sleep 5; do echo "$(date +%s) $(grep MemAvailable /proc/meminfo) $(cat /proc/loadavg)"; done > test-results/mem.log &) && \
               .venv/bin/python scripts/run_pytest_adaptive.py -q --timeout=300 --db sqlite -m "not postgres and not playwright and not llm_integration and not gemini_live" \
                 --json-report --json-report-file=test-results/backend-sqlite-report.json'
+      - name: Summarize shard scheduling (experiment)
+        if: always()
+        run: |
+          python - <<'PY'
+          import csv
+          from pathlib import Path
+
+          rows = list(csv.DictReader(Path(".pytest-adaptive/joblog.tsv").open(), delimiter="\t"))
+          starts = [float(r["Starttime"]) for r in rows]
+          ends = [float(r["Starttime"]) + float(r["JobRuntime"]) for r in rows]
+          wall = max(ends) - min(starts)
+          total = sum(float(r["JobRuntime"]) for r in rows)
+          print(f"EXPERIMENT jobs=${{ matrix.jobs }} shards={len(rows)} shard_wall={wall:.0f}s summed={total:.0f}s mean_concurrency={total / wall:.1f}")
+          samples = [line.split() for line in Path("test-results/mem.log").read_text().splitlines()]
+          available = [int(s[2]) / 1048576 for s in samples]
+          load = [float(s[4]) for s in samples]
+          print(f"EXPERIMENT mem_available_gb min={min(available):.1f} median={sorted(available)[len(available) // 2]:.1f} load1 mean={sum(load) / len(load):.1f} max={max(load):.1f} samples={len(samples)}")
+          PY
       - name: Summarize backend test results (SQLite)
         if: always()
         run: |
@@ -498,6 +523,10 @@ jobs:
        needs.detect-changes.outputs.ci_workflow == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        jobs: [4, 6, 8, 12, 16]
     services:
       postgres:
         image: pgvector/pgvector:0.8.0-pg17
@@ -533,6 +562,7 @@ jobs:
         run: |
           docker run \
             --rm \
+            -e PYTEST_ADAPTIVE_JOBS=${{ matrix.jobs }} \
             --network host \
             -v ${{ github.workspace }}:/workspace/main \
             -e TEST_DATABASE_URL="postgresql://test:test@localhost:5432/test" \
@@ -560,8 +590,28 @@ jobs:
                 echo "No pre-built frontend assets found at /opt/frontend-dist"; \
               fi && \
               mkdir -p test-results && \
+              echo "EXPERIMENT nproc=$(nproc) cgroup_memory_max=$(cat /sys/fs/cgroup/memory.max) $(grep MemTotal /proc/meminfo)" && \
+              (while sleep 5; do echo "$(date +%s) $(grep MemAvailable /proc/meminfo) $(cat /proc/loadavg)"; done > test-results/mem.log &) && \
               .venv/bin/python scripts/run_pytest_adaptive.py --postgres -q --timeout=300 -m "not playwright and not llm_integration and not gemini_live" \
                 --json-report --json-report-file=test-results/backend-postgres-report.json'
+      - name: Summarize shard scheduling (experiment)
+        if: always()
+        run: |
+          python - <<'PY'
+          import csv
+          from pathlib import Path
+
+          rows = list(csv.DictReader(Path(".pytest-adaptive/joblog.tsv").open(), delimiter="\t"))
+          starts = [float(r["Starttime"]) for r in rows]
+          ends = [float(r["Starttime"]) + float(r["JobRuntime"]) for r in rows]
+          wall = max(ends) - min(starts)
+          total = sum(float(r["JobRuntime"]) for r in rows)
+          print(f"EXPERIMENT jobs=${{ matrix.jobs }} shards={len(rows)} shard_wall={wall:.0f}s summed={total:.0f}s mean_concurrency={total / wall:.1f}")
+          samples = [line.split() for line in Path("test-results/mem.log").read_text().splitlines()]
+          available = [int(s[2]) / 1048576 for s in samples]
+          load = [float(s[4]) for s in samples]
+          print(f"EXPERIMENT mem_available_gb min={min(available):.1f} median={sorted(available)[len(available) // 2]:.1f} load1 mean={sum(load) / len(load):.1f} max={max(load):.1f} samples={len(samples)}")
+          PY
       - name: Summarize backend test results (PostgreSQL)
         if: always()
         run: |
