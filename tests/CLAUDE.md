@@ -62,9 +62,9 @@ Defined in `tests/conftest.py` unless noted otherwise.
 **`db_engine`** (function scope) — the primary fixture for database tests. Parameterized to SQLite
 or PostgreSQL by `pytest_generate_tests` from the `--db`/`--postgres` flags. SQLite uses a temporary
 on-disk file (`fa_test_*.sqlite`) deleted after the test; PostgreSQL creates and drops a unique
-database per test. SQLite copies a closed schema template initialized once per pytest worker;
-connections and data remain local to each test. Handles schema initialization. Not `autouse` — tests
-must request it.
+database per test. Both backends build the schema once per pytest worker and copy it for each test
+(a closed template file on SQLite, `CREATE DATABASE ... TEMPLATE` on PostgreSQL); connections and
+data remain local to each test. Not `autouse` — tests must request it.
 
 **`postgres_container`** (session scope) — manages the PostgreSQL server for the whole session, via
 `pgserver` (embedded) or an external instance from `TEST_DATABASE_URL`. Includes `pgvector`.
@@ -74,7 +74,8 @@ per test. Requesting it forces the test to the postgres backend only.
 
 **`session_db_engine`** (session scope, `tests/functional/web/conftest.py`) — shared file-based
 SQLite engine for performance-critical **read-only** tests; state persists across tests in the
-session. One database file per `pytest-xdist` worker.
+session. One database file per `pytest-xdist` worker. It is SQLite whatever `--db` says, so a
+`--db postgres` run deselects the tests that use it; the SQLite run covers them.
 
 **`api_db_context`** (function scope, `tests/functional/web/conftest.py`) — a `Database` handle over
 `db_engine`, so API tests can call repository methods directly.
