@@ -199,13 +199,27 @@ model_tiers:
       - provider: "google"
         model: "gemini-3.8-flash"
         flex: true
-      - provider: "anthropic"
+      #
+      # The Sonnet entry also carries a completion policy (`custom_instructions`,
+      # appended to the system prompt): at medium effort in everyday chat,
+      # Sonnet tends to name a check it could run with a read-only tool and
+      # then end the turn without running it, leaving the user to say "so check
+      # it". The anchor shares the entry with the `claude_sonnet_5_5` preset, so
+      # an experiment arm on the preset measures the same recipe this fallback
+      # runs. The `browser` tier's Sonnet fallback deliberately does not carry
+      # it: a browsing run is already a long tool loop with its own prompt.
+      - &sonnet_5_5_chat
+        provider: "anthropic"
         model: "claude-sonnet-5-5"
         llm_parameters:
           thinking:
             type: "adaptive"
           output_config:
             effort: "medium"
+          custom_instructions: |
+            Finish the job in this turn. Before you give your final answer, use the read-only tools you have, including on-demand ones you can activate, to settle anything that could change it, such as current times, services, availability or status, rather than estimating or leaving it open. If you are about to say you haven't checked something, or that the user could check it, and one of your tools can, check it now. When an answer feeds a decision the user is making right now, verify the live facts it rests on.
+
+            Read a short follow-up in light of what the user is already trying to do, and keep the constraints they have given you, such as where they are, when, and where they're going. Ask only for information or permission you genuinely need. Once the question is answered, stop.
   deep:
     label: "Deep"
     description: "Multi-stage reasoning, difficult judgement, conflicting evidence."
@@ -306,19 +320,14 @@ model_tiers:
     chain:
       - provider: "anthropic"
         model: "claude-opus-5-5"
-  # Sonnet at the effort `standard`'s fallback runs it at, so an experiment
-  # arm on it measures the model rather than a different effort.
+  # Sonnet exactly as `standard`'s fallback runs it -- effort and completion
+  # policy -- so an experiment arm on it measures the model rather than a
+  # different recipe.
   claude_sonnet_5_5:
     label: "Claude Sonnet 5.5"
     description: "Anthropic's fast, mid-priced Claude model, with adaptive thinking at medium effort."
     chain:
-      - provider: "anthropic"
-        model: "claude-sonnet-5-5"
-        llm_parameters:
-          thinking:
-            type: "adaptive"
-          output_config:
-            effort: "medium"
+      - *sonnet_5_5_chat
   claude_haiku_5_5:
     label: "Claude Haiku 5.5"
     description: "Anthropic's fastest, least expensive Claude model, at its default effort."

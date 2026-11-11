@@ -15,6 +15,7 @@ import pytest
 
 from family_assistant.assistant import Assistant
 from family_assistant.config_models import AppConfig
+from family_assistant.llm.custom_instructions import CustomInstructionsClient
 from family_assistant.llm.factory import LLMClientFactory
 from family_assistant.llm.model_selection import ModelTierEligibility
 from family_assistant.llm.model_tiers import (
@@ -62,10 +63,12 @@ def test_standard_tier_falls_back_to_sonnet_at_medium_effort(
     resolved = resolve_tier_client_config(
         shipped_config.model_tiers["standard"], shipped_config.llm_parameters
     )["retry_config"]
-    fallback = LLMClientFactory.create_client({
+    wrapped = LLMClientFactory.create_client({
         **resolved["fallback"],
         "api_key": "test-key",
     })
+    assert isinstance(wrapped, CustomInstructionsClient)
+    fallback = wrapped.inner
 
     assert isinstance(fallback, AnthropicClient)
     assert fallback.model == "claude-sonnet-5-5"
@@ -87,6 +90,40 @@ def test_sonnet_preset_runs_as_the_standard_fallback_does(
     assert resolve_entry_model_parameters(
         preset.chain[0], shipped_config.llm_parameters
     ) == _standard_fallback_parameters(shipped_config)
+
+
+@pytest.mark.parametrize(
+    ("tier_id", "entry_index"),
+    [
+        pytest.param("standard", 1, id="standard-fallback"),
+        pytest.param("claude_sonnet_5_5", 0, id="preset"),
+    ],
+)
+def test_sonnet_chat_entries_carry_the_completion_policy(
+    shipped_config: AppConfig, tier_id: str, entry_index: int
+) -> None:
+    """Sonnet in everyday chat is told to run the checks it identifies."""
+    entry = shipped_config.model_tiers[tier_id].chain[entry_index]
+    client = LLMClientFactory.create_client({
+        **resolve_entry_client_config(entry, shipped_config.llm_parameters),
+        "api_key": "test-key",
+    })
+
+    assert isinstance(client, CustomInstructionsClient)
+    assert "Finish the job in this turn." in client.custom_instructions
+
+
+def test_browser_sonnet_fallback_has_no_completion_policy(
+    shipped_config: AppConfig,
+) -> None:
+    """A browsing run has its own prompt; the chat policy stays out of it."""
+    entry = shipped_config.model_tiers["browser"].chain[1]
+    client = LLMClientFactory.create_client({
+        **resolve_entry_client_config(entry, shipped_config.llm_parameters),
+        "api_key": "test-key",
+    })
+
+    assert isinstance(client, AnthropicClient)
 
 
 @pytest.mark.parametrize(
