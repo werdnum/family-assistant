@@ -884,6 +884,11 @@ llm_parameters:
   (summaries, classifiers, tool-call review), not only conversation turns.
 - To confine it to one tier, set it on that tier's chain entry instead: `chain[].llm_parameters`
   overlays the global map for that entry only (see [model_tiers](#model_tiers)).
+- The shipped `standard` tier's Sonnet fallback and the `claude_sonnet_5_5` preset carry a
+  completion policy this way (run the read-only checks that could change the answer before
+  replying); the `browser` tier's Sonnet fallback does not. An operator entry keyed by the exact
+  model id `claude-sonnet-5-5` is overridden by it on those entries, because the chain entry's
+  overlay wins key by key; a broader key such as `"claude-"` still adds to it.
 
 #### Reasoning propagation, by provider
 
