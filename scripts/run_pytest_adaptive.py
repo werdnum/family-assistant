@@ -317,6 +317,19 @@ def _write_merged_json_report(
     )
 
 
+def _default_jobs(cpu_count: int | None = None) -> str:
+    """Concurrent shards for this machine: its CPUs plus two.
+
+    Shards are CPU-bound with some waiting on a database or a browser, so a
+    little more than one per CPU keeps the machine busy. Past that each shard
+    slows the others down: on a 4-CPU CI runner, 12 shards did twice the total
+    work of 6 on PostgreSQL and finished later. The load and memory gates only
+    delay shard starts; they cannot undo having too many.
+    """
+    cpus = cpu_count if cpu_count is not None else os.cpu_count() or 4
+    return str(cpus + 2)
+
+
 def main() -> int:
     pytest_bin = _pytest_bin()
     parallel_bin = _parallel_bin()
@@ -341,7 +354,7 @@ def main() -> int:
         print("No pytest nodeids collected.")
         return PYTEST_EXIT_NO_TESTS_COLLECTED
 
-    jobs = os.environ.get("PYTEST_ADAPTIVE_JOBS", "12")
+    jobs = os.environ.get("PYTEST_ADAPTIVE_JOBS", _default_jobs())
     nodeid_count = len(nodeids_file.read_text(encoding="utf-8").splitlines())
     # Leave several scheduling waves for load balancing, without restarting pytest
     # hundreds of times for a large suite. GNU Parallel also accepts nonnumeric jobs.

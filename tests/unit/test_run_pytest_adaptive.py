@@ -27,6 +27,13 @@ def _load_runner_module() -> ModuleType:
     return module
 
 
+def test_default_jobs_follow_the_machines_cpu_count() -> None:
+    runner = _load_runner_module()
+
+    assert runner._default_jobs(4) == "6"
+    assert runner._default_jobs(16) == "18"
+
+
 def test_sanitize_pytest_args_strips_quiet_from_compact_fail_fast() -> None:
     runner = _load_runner_module()
 
