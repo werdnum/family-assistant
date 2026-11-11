@@ -218,9 +218,10 @@ RUN rm -rf /app/frontend
 # report and which no uv sync can upgrade. Nothing here runs pip: the app venv and the uv tool
 # environments are created by uv and are not seeded with it. Remove it from every managed
 # interpreter, both root's (used by the app venv) and appuser's (if uv tool installed its own).
+# HOME is set explicitly because the earlier `ENV HOME=/home/appuser` also applies to root.
 RUN set -eu; \
     found=0; \
-    for dir in "$(uv python dir)" "$(HOME=/home/appuser uv python dir)"; do \
+    for dir in "$(HOME=/root uv python dir)" "$(HOME=/home/appuser uv python dir)"; do \
         for py in "$dir"/*/bin/python3; do \
             [ -x "$py" ] || continue; \
             found=1; \
