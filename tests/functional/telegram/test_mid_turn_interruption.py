@@ -6,8 +6,16 @@ import pytest
 from telegram import Update
 
 from family_assistant.llm import ToolCallFunction, ToolCallItem
+from family_assistant.llm.messages import ImageUrlContentPart, LLMMessage
 from tests.helpers import wait_for_condition
-from tests.mocks.mock_llm import LLMOutput, MatcherArgs, RuleBasedMockLLMClient
+from tests.mocks.mock_llm import (
+    LLMOutput,
+    MatcherArgs,
+    RuleBasedMockLLMClient,
+    extract_text_from_content,
+    get_last_message_text,
+    get_message_content,
+)
 
 from .conftest import TelegramHandlerTestFixture
 from .helpers import assert_bot_sent_message
@@ -148,3 +156,167 @@ async def test_interrupt_cancels_active_telegram_turn(
         )
     finally:
         fix.tools_provider.execute_tool = original_execute_tool  # type: ignore[method-assign]
+
+
+def _install_slow_tool(
+    fix: TelegramHandlerTestFixture,
+) -> tuple[asyncio.Event, asyncio.Event]:
+    """Make every tool call block until released; returns (started, release)."""
+    tool_started = asyncio.Event()
+    release_tool = asyncio.Event()
+
+    async def slow_execute_tool(
+        name: str,
+        # ast-grep-ignore: no-dict-any - tool arguments are arbitrary JSON
+        arguments: dict[str, Any],
+        context: Any,  # noqa: ANN401
+        call_id: str | None = None,
+    ) -> str:
+        tool_started.set()
+        await release_tool.wait()
+        return "tool completed"
+
+    fix.tools_provider.execute_tool = slow_execute_tool  # type: ignore[method-assign]
+    return tool_started, release_tool
+
+
+def _text_of(messages: list[LLMMessage]) -> str:
+    return " ".join(
+        extract_text_from_content(get_message_content(message)) for message in messages
+    )
+
+
+def _calls_mentioning(mock_llm: RuleBasedMockLLMClient, text: str) -> int:
+    return sum(
+        1
+        for call in mock_llm.get_calls()
+        if text in _text_of(call["kwargs"]["messages"])
+    )
+
+
+@pytest.mark.asyncio
+async def test_mid_turn_attachment_runs_once_as_a_follow_up_turn(
+    telegram_handler_fixture: TelegramHandlerTestFixture,
+) -> None:
+    """A file sent mid-turn is not described to the running turn by name; it
+    runs once, as its own turn with the file attached, after that turn ends."""
+    fix = telegram_handler_fixture
+    mock_llm = cast("RuleBasedMockLLMClient", fix.mock_llm)
+    original_execute_tool = fix.tools_provider.execute_tool
+    tool_started, release_tool = _install_slow_tool(fix)
+
+    def follow_up_call(kwargs: MatcherArgs) -> bool:
+        # The turn's attachments follow its text as a separate user message.
+        return "print this too" in _text_of(kwargs["messages"][-2:])
+
+    def first_call(kwargs: MatcherArgs) -> bool:
+        return not any(msg.role == "tool" for msg in kwargs["messages"])
+
+    mock_llm.rules = [
+        (follow_up_call, LLMOutput(content="Printing the PDF.")),
+        (first_call, LLMOutput(tool_calls=[_tool_call()])),
+    ]
+    mock_llm.default_response = LLMOutput(content="Note saved.")
+
+    try:
+        context = create_mock_context(fix.application)
+        first_result = await fix.telegram_client.send_message("Start the note")
+        first_update = Update.de_json(first_result.get("result", {}), fix.bot)
+        active_task = asyncio.create_task(
+            fix.handler.message_handler(first_update, context)
+        )
+        await wait_for_condition(
+            tool_started.is_set,
+            timeout=5,
+            description="slow tool execution to start",
+        )
+
+        document_result = await fix.telegram_client.send_document(
+            b"%PDF-1.4 fake",
+            filename="flyer.pdf",
+            caption="print this too",
+            mime_type="application/pdf",
+        )
+        document_update = Update.de_json(document_result.get("result", {}), fix.bot)
+        await fix.handler.message_handler(document_update, context)
+
+        release_tool.set()
+        await asyncio.wait_for(active_task, timeout=10)
+        await assert_bot_sent_message(
+            fix.telegram_client, "Printing the PDF", timeout=5
+        )
+    finally:
+        release_tool.set()
+        fix.tools_provider.execute_tool = original_execute_tool  # type: ignore[method-assign]
+
+    assert _calls_mentioning(mock_llm, "print this too") == 1
+    assert _calls_mentioning(mock_llm, "flyer.pdf") == 0
+    follow_up = next(
+        call["kwargs"]
+        for call in mock_llm.get_calls()
+        if follow_up_call(call["kwargs"])
+    )
+    assert any(
+        isinstance(part, ImageUrlContentPart)
+        for message in follow_up["messages"][-2:]
+        if isinstance(message.content, list)
+        for part in message.content
+    ), "the follow-up turn did not carry the PDF to the model"
+
+
+@pytest.mark.asyncio
+async def test_forwarded_mid_turn_message_steers_with_its_origin(
+    telegram_handler_fixture: TelegramHandlerTestFixture,
+) -> None:
+    fix = telegram_handler_fixture
+    mock_llm = cast("RuleBasedMockLLMClient", fix.mock_llm)
+    original_execute_tool = fix.tools_provider.execute_tool
+    tool_started, release_tool = _install_slow_tool(fix)
+
+    def steered_call(kwargs: MatcherArgs) -> bool:
+        return "(forwarded from Bob) Dinner is at 7" in get_last_message_text(
+            kwargs["messages"]
+        )
+
+    def first_call(kwargs: MatcherArgs) -> bool:
+        return not any(msg.role == "tool" for msg in kwargs["messages"])
+
+    mock_llm.rules = [
+        (steered_call, LLMOutput(content="Noted Bob's dinner time.")),
+        (first_call, LLMOutput(tool_calls=[_tool_call()])),
+    ]
+    mock_llm.default_response = LLMOutput(content="Note saved.")
+
+    try:
+        context = create_mock_context(fix.application)
+        first_result = await fix.telegram_client.send_message("Start the note")
+        first_update = Update.de_json(first_result.get("result", {}), fix.bot)
+        active_task = asyncio.create_task(
+            fix.handler.message_handler(first_update, context)
+        )
+        await wait_for_condition(
+            tool_started.is_set,
+            timeout=5,
+            description="slow tool execution to start",
+        )
+
+        forward_result = await fix.telegram_client.send_message("Dinner is at 7")
+        forward_payload = forward_result.get("result", {})
+        forward_payload["message"]["forward_origin"] = {
+            "type": "user",
+            "date": forward_payload["message"]["date"],
+            "sender_user": {"id": 999, "is_bot": False, "first_name": "Bob"},
+        }
+        await fix.handler.message_handler(
+            Update.de_json(forward_payload, fix.bot), context
+        )
+
+        release_tool.set()
+        await asyncio.wait_for(active_task, timeout=10)
+    finally:
+        release_tool.set()
+        fix.tools_provider.execute_tool = original_execute_tool  # type: ignore[method-assign]
+
+    await assert_bot_sent_message(
+        fix.telegram_client, "Noted Bob's dinner time", timeout=5
+    )

@@ -113,14 +113,34 @@ class _SlashCommandInvocation:
 
 @dataclass
 class _QueuedMidTurnUpdate:
+    """A live update held for the running turn.
+
+    ``user_input`` is the steering text injected into the turn. An update with
+    no ``user_input`` (one carrying attachments, which steering cannot hand to
+    the model) is held only to run as a follow-up turn once this one ends.
+    """
+
     update: Update
     attachments: list[AttachmentData] | None
-    user_input: MidTurnUserInput
+    user_input: MidTurnUserInput | None
     user_input_consumed: bool = False
 
-    @property
-    def needs_follow_up_batch_processing(self) -> bool:
-        return bool(self.attachments)
+
+def _forward_context(message: Message) -> str:
+    """The ``(forwarded from <name>) `` prefix for a forwarded message, or ``""``."""
+    origin = message.forward_origin
+    if origin is None:
+        return ""
+    original_sender_name = "Unknown Sender"
+    if isinstance(origin, MessageOriginUser):
+        original_sender_name = origin.sender_user.first_name or "User"
+    elif isinstance(origin, MessageOriginHiddenUser):
+        original_sender_name = origin.sender_user_name or "Hidden User"
+    elif isinstance(origin, MessageOriginChat):
+        original_sender_name = origin.sender_chat.title or "Chat"
+    elif isinstance(origin, MessageOriginChannel):
+        original_sender_name = origin.chat.title or "Channel"
+    return f"(forwarded from {original_sender_name}) "
 
 
 def _telegram_message_id(interface_message_id: str | None) -> int | None:
@@ -178,7 +198,7 @@ class TelegramMidTurnController:
         self,
         update: Update,
         attachments: list[AttachmentData] | None,
-        user_input: MidTurnUserInput,
+        user_input: MidTurnUserInput | None,
     ) -> None:
         async with self._lock:
             self._queued_updates.append(
@@ -192,20 +212,21 @@ class TelegramMidTurnController:
     async def drain_pending_mid_turn_inputs(self) -> list[MidTurnUserInput]:
         async with self._lock:
             pending = [
-                item for item in self._queued_updates if not item.user_input_consumed
+                item.user_input
+                for item in self._queued_updates
+                if item.user_input is not None and not item.user_input_consumed
             ]
-            for item in pending:
-                item.user_input_consumed = True
-            return [item.user_input for item in pending]
+            for item in self._queued_updates:
+                if item.user_input is not None:
+                    item.user_input_consumed = True
+            return pending
 
     async def pop_unconsumed_batch(
         self,
     ) -> list[tuple[Update, list[AttachmentData] | None]]:
         async with self._lock:
             pending = [
-                item
-                for item in self._queued_updates
-                if not item.user_input_consumed or item.needs_follow_up_batch_processing
+                item for item in self._queued_updates if not item.user_input_consumed
             ]
             self._queued_updates = []
             return [(item.update, item.attachments) for item in pending]
@@ -315,23 +336,19 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         attachments: list[AttachmentData] | None,
         user_name: str,
     ) -> MidTurnUserInput | None:
-        """Convert a live Telegram update into steering text for the active turn."""
-        if update.message is None:
+        """Convert a live Telegram update into steering text for the active turn.
+
+        Returns ``None`` for an update steering cannot carry: one with
+        attachments (steering text has no way to hand the model a file), or one
+        with no text.
+        """
+        if update.message is None or attachments:
             return None
 
-        text = update.message.caption or update.message.text or ""
-        text = text.strip()
-        attachment_descriptions = [
-            attachment.filename for attachment in attachments or []
-        ]
-        if attachment_descriptions:
-            attachment_text = "Attachments included in this live update: " + ", ".join(
-                attachment_descriptions
-            )
-            text = f"{text}\n\n{attachment_text}".strip()
-
+        text = (update.message.caption or update.message.text or "").strip()
         if not text:
             return None
+        text = f"{_forward_context(update.message)}{text}"
 
         return MidTurnUserInput(
             content=text,
@@ -395,13 +412,18 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         user_name: str,
         attachments: list[AttachmentData] | None,
     ) -> bool:
-        """Queue an update as active-turn guidance when a Telegram turn is running."""
+        """Hold an update for the running Telegram turn, if there is one.
+
+        Text steers the running turn. An update with attachments is held to
+        run as its own turn once the running one ends, so the files are
+        registered and shown to the model the way any other message's are.
+        """
         controller = self._active_mid_turns.get(chat_id)
         if controller is None:
             return False
 
         user_input = self._build_mid_turn_user_input(update, attachments, user_name)
-        if user_input is None:
+        if user_input is None and not attachments:
             return False
 
         await controller.add_update(update, attachments, user_input)
@@ -1046,24 +1068,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         )
 
                     if update_item.message.forward_origin:
-                        origin = update_item.message.forward_origin
-                        original_sender_name = "Unknown Sender"
-                        if isinstance(origin, MessageOriginUser):
-                            original_sender_name = (
-                                origin.sender_user.first_name or "User"
-                            )
-                        elif isinstance(origin, MessageOriginHiddenUser):
-                            original_sender_name = (
-                                origin.sender_user_name or "Hidden User"
-                            )
-                        elif isinstance(origin, MessageOriginChat):
-                            original_sender_name = origin.sender_chat.title or "Chat"
-                        elif isinstance(origin, MessageOriginChannel):
-                            original_sender_name = origin.chat.title or "Channel"
-                        forward_context = f"(forwarded from {original_sender_name}) "
-                        logger.debug(
-                            f"Detected forward context from {original_sender_name} in last message."
-                        )
+                        forward_context = _forward_context(update_item.message)
 
             combined_text = "\n\n".join(all_texts).strip()
             logger.debug(f"Combined text: '{combined_text[:100]}...'")
@@ -1129,7 +1134,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         attachment_dict = {
                             "type": attachment_type,
                             "content_url": attachment_metadata.content_url,
-                            "name": attachment_metadata.description,
+                            "name": current_attachment.filename
+                            or attachment_metadata.description,
                             "size": attachment_metadata.size,
                             "content_type": attachment_metadata.mime_type,
                             "attachment_id": attachment_metadata.attachment_id,
