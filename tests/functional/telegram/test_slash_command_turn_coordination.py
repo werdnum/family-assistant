@@ -18,12 +18,14 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal, cast
 
 import pytest
 from telegram import Update
 
 from family_assistant.llm import LLMOutput
+from family_assistant.llm.messages import UserMessage
 from family_assistant.processing import ProcessingService
 from tests.helpers import wait_for_condition
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
@@ -31,6 +33,7 @@ from tests.mocks.mock_llm import RuleBasedMockLLMClient
 from .helpers import assert_bot_sent_message, record_batched_updates
 from .test_telegram_model_tier_commands import (
     ALL_TIERS,
+    CHAT_ID,
     create_command_update,
     create_context,
     install_tiered_service,
@@ -239,3 +242,88 @@ async def test_a_message_arriving_during_a_tier_command_steers_it(
 
     deep_gate.set()
     await asyncio.wait_for(command_turn, timeout=10)
+
+
+@pytest.mark.asyncio
+async def test_a_batch_flushed_during_a_command_turn_waits_for_it(
+    telegram_handler_fixture: TelegramHandlerTestFixture,
+) -> None:
+    """A plain message still waiting out its batching delay when a command turn
+    starts does not run a second loop beside that turn when the delay ends."""
+    fix = telegram_handler_fixture
+    standard = client_saying("standard served this")
+    deep, deep_gate = gated_client("deep served this")
+    install_tiered_service(
+        fix,
+        {"standard": standard, "deep": deep, "frontier": client_saying("frontier")},
+        ALL_TIERS,
+    )
+    register_tier_commands(fix)
+    context = create_context(fix.application, args=[])
+
+    command_turn = asyncio.create_task(
+        fix.handler.handle_tier_slash_command(
+            create_command_update(
+                "/deep which contract is worse", fix.bot, message_id=505
+            ),
+            create_context(fix.application, args=["which", "contract", "is", "worse"]),
+        )
+    )
+    await wait_for_condition(
+        deep_gate.reached.is_set,
+        timeout=5,
+        description="the tier command turn to reach the model",
+    )
+
+    await fix.handler.process_batch(
+        CHAT_ID,
+        [(create_command_update("Also the lease", fix.bot, message_id=504), None)],
+        context,
+    )
+
+    assert not standard.get_calls(), (
+        "the flushed batch ran a second LLM loop beside the command turn"
+    )
+    deep_gate.set()
+    await asyncio.wait_for(command_turn, timeout=10)
+
+
+@pytest.mark.asyncio
+async def test_a_coalesced_batch_keeps_the_thread_of_its_reply(
+    telegram_handler_fixture: TelegramHandlerTestFixture,
+) -> None:
+    """A reply followed within the batching delay by an unthreaded message
+    still continues the replied-to thread."""
+    fix = telegram_handler_fixture
+    root_id = await fix.database.message_history.add_message(
+        UserMessage.from_trusted_user(content="an earlier answer"),
+        interface_type="telegram",
+        conversation_id=str(CHAT_ID),
+        timestamp=datetime.now(UTC),
+        interface_message_id="390",
+    )
+    context = create_context(fix.application, args=[])
+
+    await fix.handler.process_batch(
+        CHAT_ID,
+        [
+            (
+                create_command_update(
+                    "what about this one?",
+                    fix.bot,
+                    message_id=506,
+                    reply_to_message_id=390,
+                ),
+                None,
+            ),
+            (create_command_update("and this too", fix.bot, message_id=507), None),
+        ],
+        context,
+    )
+
+    rows = await fix.database.message_history.get_recent_with_metadata(
+        interface_type="telegram", conversation_id=str(CHAT_ID), limit=20
+    )
+    turn_rows = [row for row in rows if row["internal_id"] != root_id]
+    assert turn_rows, "the batch persisted nothing"
+    assert {row["thread_root_id"] for row in turn_rows} == {root_id}

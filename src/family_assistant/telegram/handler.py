@@ -1028,6 +1028,19 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             logger.warning("Ignoring batch from unauthorized Telegram user")
             return
 
+        if chat_id in self._active_mid_turns:
+            # A turn started while this batch waited out its delay (a slash
+            # command, say), so the batch joins it as any live update would
+            # rather than running a second loop over the chat.
+            for update_item, attachments in batch:
+                await self._route_mid_turn_update_if_active(
+                    update=update_item,
+                    chat_id=chat_id,
+                    user_name=user_name,
+                    attachments=attachments,
+                )
+            return
+
         with tracer.start_as_current_span(
             "telegram.process_batch",
             attributes={
@@ -1045,11 +1058,16 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 f"Extracted user='{user_name}', reply_target_id={reply_target_message_id} from last update."
             )
 
-            replied_to_interface_id: str | None = None
-            if last_update.message and last_update.message.reply_to_message:
-                replied_to_interface_id = str(
-                    last_update.message.reply_to_message.message_id
-                )
+            # A batch can coalesce a reply with messages sent just after it
+            # (a file, a forward), so the newest reply in it sets the thread.
+            replied_to_interface_id: str | None = next(
+                (
+                    str(item.message.reply_to_message.message_id)
+                    for item, _ in reversed(batch)
+                    if item.message and item.message.reply_to_message
+                ),
+                None,
+            )
 
             all_texts = []
             all_attachments: list[AttachmentData] = []
