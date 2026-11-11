@@ -391,7 +391,6 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
     async def _route_mid_turn_update_if_active(
         self,
         update: Update,
-        context: ContextTypes.DEFAULT_TYPE,
         chat_id: int,
         user_name: str,
         attachments: list[AttachmentData] | None,
@@ -406,12 +405,6 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             return False
 
         await controller.add_update(update, attachments, user_input)
-        if update.message is not None:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text="Got it. I'll apply that to the current response.",
-                reply_to_message_id=update.message.message_id,
-            )
         return True
 
     async def _send_message_chunks(
@@ -2487,7 +2480,6 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         user_name = update.effective_user.first_name or "Unknown User"
         if await self._route_mid_turn_update_if_active(
             update=update,
-            context=context,
             chat_id=chat_id,
             user_name=user_name,
             attachments=attachments,

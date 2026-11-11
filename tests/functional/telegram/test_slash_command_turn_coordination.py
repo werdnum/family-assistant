@@ -28,7 +28,7 @@ from family_assistant.processing import ProcessingService
 from tests.helpers import wait_for_condition
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
-from .helpers import assert_bot_sent_message
+from .helpers import assert_bot_sent_message, record_batched_updates
 from .test_telegram_model_tier_commands import (
     ALL_TIERS,
     create_command_update,
@@ -42,7 +42,6 @@ if TYPE_CHECKING:
     from .conftest import TelegramHandlerTestFixture
 
 BUSY_REPLY = "still working on your previous request"
-STEER_REPLY = "I'll apply that to the current response"
 
 
 class ObservableGate(asyncio.Event):
@@ -202,6 +201,7 @@ async def test_a_profile_command_is_refused_while_a_turn_is_running(
 @pytest.mark.asyncio
 async def test_a_message_arriving_during_a_tier_command_steers_it(
     telegram_handler_fixture: TelegramHandlerTestFixture,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A command turn holds the slot, so a message mid-turn steers it."""
     fix = telegram_handler_fixture
@@ -229,12 +229,13 @@ async def test_a_message_arriving_during_a_tier_command_steers_it(
         description="the tier command turn to reach the model",
     )
 
+    batched = record_batched_updates(fix.handler, monkeypatch)
     await send_plain_message(fix, context, "Actually make it urgent")
 
+    assert not batched, "the message was batched instead of steering the turn"
     assert not standard.get_calls(), (
         "the message started its own turn instead of steering the running one"
     )
-    await assert_bot_sent_message(fix.telegram_client, STEER_REPLY, timeout=5)
 
     deep_gate.set()
     await asyncio.wait_for(command_turn, timeout=10)

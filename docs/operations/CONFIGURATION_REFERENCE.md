@@ -767,6 +767,23 @@ normal YAML config semantics and are replaced by the overlay value.
 
 ______________________________________________________________________
 
+### message_batching_config (config.yaml)
+
+How incoming Telegram messages are coalesced into one turn.
+
+| Key                            | Default     | Meaning                                                                       |
+| ------------------------------ | ----------- | ----------------------------------------------------------------------------- |
+| `strategy`                     | `"default"` | `"default"` waits `delay_seconds` after the last message; `"none"` starts now |
+| `delay_seconds`                | `5.0`       | Quiet period before a batch of plain messages starts a turn                   |
+| `media_group_quiet_seconds`    | `1.0`       | Quiet period for an album once every expected photo has arrived               |
+| `media_group_max_wait_seconds` | `60.0`      | Longest wait for an album whose attachments are still downloading             |
+
+The delay lets a question followed by a forward or a file ("can you print this?" plus the PDF) reach
+the assistant as one request. A message sent while a turn is already running steers that turn
+instead of waiting for the delay.
+
+______________________________________________________________________
+
 ## AI/LLM Services
 
 ### GEMINI_API_KEY

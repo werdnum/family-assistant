@@ -91,11 +91,6 @@ async def test_follow_up_message_steers_active_tool_turn(
 
         await assert_bot_sent_message(
             fix.telegram_client,
-            "I'll apply that to the current response.",
-            timeout=5,
-        )
-        await assert_bot_sent_message(
-            fix.telegram_client,
             "I made it urgent",
             timeout=5,
         )

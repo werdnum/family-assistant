@@ -1599,8 +1599,8 @@ class MessageBatchingConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    strategy: str = "none"
-    delay_seconds: float = 0.5
+    strategy: str = "default"
+    delay_seconds: float = 5.0
     media_group_quiet_seconds: float = 1.0
     media_group_max_wait_seconds: float = 60.0
 
