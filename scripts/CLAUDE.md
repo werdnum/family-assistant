@@ -223,3 +223,14 @@ a provider spend cap, leaves failed or malformed uploads and definitive 4xx crea
 pending for retry, refuses ambiguous job-creation outcomes, and harvests only exactly reconciled
 successful `STOP` responses. See `docs/development/tool-call-review-gemini-batch.md`; native batch
 reports are review drafts until maintainers promote cases through the ordinary corpus workflow.
+
+### `turn_replay_eval.py`
+
+Replays recorded assistant turns against one shipped model-tier chain entry, twice per trial: as
+shipped and with the entry's `custom_instructions` removed. Cases are JSON files under
+`.review-eval-local/turn-replay/` (they quote household conversations): the system prompt, history
+up to the user message that starts the turn, the tools offered, recorded tool results, and
+deterministic expectations (a tool that must be called, a ceiling on calls for a control case,
+phrases the reply must not contain). It prints pass rates, tool calls, requests, estimated cost and
+wall time per case and variant. Every trial is a billed call to the real provider. The format is
+documented in `family_assistant/eval/turn_replay.py`.
