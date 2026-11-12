@@ -127,7 +127,8 @@ def test_browser_sonnet_fallback_has_no_completion_policy(
 
 
 @pytest.mark.parametrize(
-    "preset", ["claude_sonnet_5_5", "claude_haiku_5_5", "gpt_6_1_terra"]
+    "preset",
+    ["claude_sonnet_5_5", "claude_haiku_5_5", "gpt_6_1_terra", "gemini_4_hydrogen"],
 )
 def test_default_assistant_can_run_the_standard_candidate_presets(
     shipped_config: AppConfig, preset: str
