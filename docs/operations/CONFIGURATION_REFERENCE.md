@@ -1120,8 +1120,8 @@ request *is* the authorization. A model choosing it is not, which is why the shi
 automatically.
 
 The shipped presets — `gpt_6_astra`, `gpt_6_1_sol`, `gpt_6_1_terra`, `claude_opus_5_5`,
-`claude_sonnet_5_5`, `claude_haiku_5_5`, `claude_fable_5_2`, `kimi_k3`, `gemini_4_argon` and
-`gemini_4_carbon` — are listed once, in `default_profile_settings.delegation_model_tiers`, so a
+`claude_sonnet_5_5`, `claude_haiku_5_5`, `claude_fable_5_2`, `kimi_k3`, `gemini_4_argon`,
+`gemini_4_carbon` and `gemini_4_hydrogen` — are listed once, in `default_profile_settings.delegation_model_tiers`, so a
 delegating model may pin any profile that has a tier to any of them without a confirmation ("run
 complex_tasks on Gemini 4 Argon"). A profile that names an inline model drops the inherited list,
 and a profile that declares its own replaces it, so `delegation_model_tiers: []` keeps a profile off
