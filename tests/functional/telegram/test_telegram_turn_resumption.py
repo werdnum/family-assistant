@@ -36,7 +36,7 @@ from tests.helpers import wait_for_condition
 from tests.mocks.mock_llm import LLMOutput, MatcherArgs, RuleBasedMockLLMClient
 
 from .conftest import TelegramHandlerTestFixture
-from .helpers import assert_bot_sent_message
+from .helpers import assert_bot_sent_message, record_batched_updates
 from .test_telegram_handler import create_mock_context
 
 CHAT_ID = "123"
@@ -417,16 +417,15 @@ async def test_message_arriving_while_a_resume_starts_steers_it(
     monkeypatch.setattr(registry, "arm", slow_arm)
     resume = asyncio.create_task(_resume(fix, turn_id))
     await wait_for_condition(arming.is_set, timeout=10, description="resume arming")
+    batched = record_batched_updates(fix.handler, monkeypatch)
     sent = await fix.telegram_client.send_message("Also check tomorrow")
     update = Update.de_json(sent.get("result", {}), fix.bot)
 
     await fix.handler.message_handler(update, create_mock_context(fix.application))
 
+    assert not batched, "the message started its own turn instead of steering"
     proceed.set()
     await asyncio.wait_for(resume, timeout=10)
-    await assert_bot_sent_message(
-        fix.telegram_client, "I'll apply that to the current response", timeout=10
-    )
 
 
 @pytest.mark.asyncio

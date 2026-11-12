@@ -10,6 +10,12 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    import pytest
+    from telegram import Update
+    from telegram.ext import ContextTypes
+
+    from family_assistant.telegram.handler import TelegramUpdateHandler
+    from family_assistant.telegram.types import AttachmentData
     from tests.mocks.telegram_test_server import TelegramTestClient, TestServerUpdate
 
 logger = logging.getLogger(__name__)
@@ -178,3 +184,28 @@ def extract_callback_data_from_keyboard(
 
     button = row[button_index]
     return button.get("callback_data", "")
+
+
+def record_batched_updates(
+    handler: TelegramUpdateHandler, monkeypatch: pytest.MonkeyPatch
+) -> list[Update]:
+    """Record every update the handler hands to its batcher.
+
+    An update that steers a running turn never reaches the batcher, so an
+    empty list after sending a message shows it was routed mid-turn.
+    """
+    batcher = handler.message_batcher
+    assert batcher is not None
+    original_add_to_batch = batcher.add_to_batch
+    recorded: list[Update] = []
+
+    async def recording_add_to_batch(
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        attachments: list[AttachmentData] | None,
+    ) -> None:
+        recorded.append(update)
+        await original_add_to_batch(update, context, attachments)
+
+    monkeypatch.setattr(batcher, "add_to_batch", recording_add_to_batch)
+    return recorded

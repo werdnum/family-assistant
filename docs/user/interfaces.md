@@ -22,9 +22,13 @@ messages as you would to a person.
   also keeps the conversation in a specialised mode if you were using one.
 - **Send photos and files** directly in a message with your question as the caption. A whole album
   is treated as one message, so you get one answer covering all the photos.
+- **Several messages in a row are read together.** The assistant waits about five seconds after your
+  last message before it starts, so a question followed by a forwarded message or a file (for
+  example "can you print this?" and then the PDF) is answered as one request.
 - **Follow up mid-reply:** sending an ordinary message while the assistant is still working folds it
-  into the reply being prepared. A slash command is the exception: wait for the current reply to
-  finish or send **`/interrupt`** first.
+  into the reply being prepared. A photo or file sent mid-reply is answered on its own once the
+  current reply finishes. A slash command is the exception: wait for the current reply to finish or
+  send **`/interrupt`** first.
 - **`/interrupt`** stops the request currently being processed in that chat.
 - **Restarts:** if the assistant restarts while answering, it picks the reply back up within a
   minute or two (except slash-command requests, which should be sent again).

@@ -197,15 +197,19 @@ class DefaultMessageBatcher(MessageBatcher):
                     lambda t, c=chat_id: self._remove_task_callback(t, c)
                 )
             else:
-                logger.info(
-                    f"Processing task already running for chat {chat_id}. Batch was cleared but not processed immediately."
-                )
+                # The running task is outside its turn slot (still preparing
+                # the turn, or delivering after it), so these updates could
+                # not be routed into it as mid-turn input. Re-arm the timer so
+                # they run once that task ends instead of waiting for the
+                # user's next message.
                 self.message_buffers[chat_id] = (
                     current_batch + self.message_buffers[chat_id]
                 )
-                logger.warning(
-                    f"Re-added batch to buffer for chat {chat_id} as task was still running."
+                logger.info(
+                    f"Processing task still running for chat {chat_id}; "
+                    f"re-buffered {len(current_batch)} update(s) and re-armed the timer."
                 )
+                self._schedule_batch_locked(chat_id, context)
 
     def _remove_task_callback(self, task: asyncio.Task, chat_id: int) -> None:
         """Callback function to remove task from processing_tasks dict."""

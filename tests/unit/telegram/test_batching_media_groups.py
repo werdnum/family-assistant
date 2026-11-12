@@ -772,3 +772,63 @@ async def test_no_batch_batcher_text_flushes_active_albums_in_arrival_order() ->
     assert [u.update_id for u, _ in batches[0]] == [1, 2]
     assert [u.update_id for u, _ in batches[1]] == [10]
     assert [u.update_id for u, _ in batches[2]] == [99]
+
+
+class GatedBatchProcessor:
+    """BatchProcessor fake whose first batch blocks until released."""
+
+    def __init__(self) -> None:
+        self.calls: list[BatchCall] = []
+        self.first_started = asyncio.Event()
+        self.release_first = asyncio.Event()
+
+    async def process_batch(
+        self,
+        chat_id: int,
+        batch: list[tuple[Update, list[AttachmentData] | None]],
+        context: ContextTypes.DEFAULT_TYPE,
+    ) -> None:
+        self.calls.append(BatchCall(chat_id, list(batch), context))
+        if len(self.calls) == 1:
+            self.first_started.set()
+            await self.release_first.wait()
+
+
+@pytest.mark.asyncio
+async def test_default_batcher_processes_a_batch_buffered_while_a_task_runs() -> None:
+    """A batch whose timer fires while the chat's task is still running is
+    processed once that task ends, not left waiting for another message."""
+    processor = GatedBatchProcessor()
+    batcher = DefaultMessageBatcher(batch_processor=processor, batch_delay_seconds=0.05)
+    context = _make_context()
+
+    await batcher.add_to_batch(
+        _make_text_update(update_id=1, message_id=100, text="first"),
+        context,
+        attachments=None,
+    )
+    await wait_for_condition(
+        processor.first_started.is_set,
+        timeout=5,
+        description="the first batch to start processing",
+    )
+    await batcher.add_to_batch(
+        _make_text_update(update_id=2, message_id=101, text="second"),
+        context,
+        attachments=None,
+    )
+    initial_timer = batcher.batch_timers[123]
+    await wait_for_condition(
+        lambda: batcher.batch_timers.get(123) not in {None, initial_timer},
+        timeout=5,
+        description="the second batch's timer to fire and re-arm behind the task",
+    )
+    processor.release_first.set()
+
+    await wait_for_condition(
+        lambda: len(processor.calls) == 2,
+        timeout=5,
+        description="the re-buffered batch to be processed",
+    )
+    second_batch = processor.calls[1].batch
+    assert [u.message.text for u, _ in second_batch if u.message] == ["second"]

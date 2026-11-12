@@ -19,9 +19,9 @@ async def test_drained_text_only_mid_turn_update_is_not_replayed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_drained_attachment_mid_turn_update_is_replayed_for_registration() -> (
-    None
-):
+async def test_attachment_mid_turn_update_runs_only_as_a_follow_up() -> None:
+    """An update held without steering text is never injected into the running
+    turn, and is replayed exactly once after it."""
     controller = TelegramMidTurnController()
     update = Update(update_id=2)
     attachment = AttachmentData(
@@ -29,11 +29,10 @@ async def test_drained_attachment_mid_turn_update_is_replayed_for_registration()
         filename="photo.jpg",
         mime_type="image/jpeg",
     )
-    user_input = MidTurnUserInput(content="look at this photo")
 
-    await controller.add_update(update, [attachment], user_input)
+    await controller.add_update(update, [attachment], None)
 
-    assert await controller.drain_pending_mid_turn_inputs() == [user_input]
+    assert await controller.drain_pending_mid_turn_inputs() == []
     assert await controller.pop_unconsumed_batch() == [(update, [attachment])]
 
 
