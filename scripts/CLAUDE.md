@@ -114,7 +114,9 @@ Useful environment variables:
   startup/load-balancing tradeoff. Tests marked `playwright` run first in batches capped at `25` so
   browser work remains distributed even in large modules. Markers and nodeids come from the final
   pytest collection, including selections made with `-m` and `-k`.
-- `PYTEST_ADAPTIVE_JOBS`: maximum concurrent pytest shards, defaults to `12`
+- `PYTEST_ADAPTIVE_JOBS`: maximum concurrent pytest shards, defaults to the usable CPU count plus
+  two (6 on a 4-CPU CI runner), where usable respects CPU affinity and a cgroup CPU quota. More than
+  that makes each shard slower without finishing sooner
 - `PYTEST_ADAPTIVE_MEM_THRESHOLD`: memory usage ratio that stops new shards. Defaults to `0.80` for
   cgroup and `0.90` on macOS, where a healthy full run at 16 jobs peaks around `0.85`
 - `PYTEST_ADAPTIVE_LOAD`: GNU Parallel `--load` value, defaults to `100%`
