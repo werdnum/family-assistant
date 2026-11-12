@@ -21,7 +21,7 @@ request is the authorization. A model-composed request -- a
 authorized by ``auto_model_tiers``, which is a subset. A delegating model may
 also name a tier from ``delegation_model_tiers``: exact-model presets another
 profile asks for on purpose, which Auto never routes to and the tier picker
-does not list. A profile that names an inline model instead of a tier admits
+offers only as specific models, apart from the tiers. A profile that names an inline model instead of a tier admits
 no selection at all.
 """
 
@@ -160,7 +160,7 @@ class ModelTierEligibility:
     """Tiers a delegating model may also name, in configured tier order.
 
     Exact-model presets live here. They are kept out of ``selectable`` so the
-    tier picker does not list them, and out of ``auto`` so the classifier
+    tier picker lists them apart, as specific models, and out of ``auto`` so the classifier
     never routes an ordinary turn to them: asking for one specific model is
     something another profile does on purpose, not a capability level."""
 

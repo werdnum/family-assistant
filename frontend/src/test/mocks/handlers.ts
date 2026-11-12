@@ -24,6 +24,12 @@ export const MOCK_MODEL_TIERS = [
   { id: 'frontier', label: 'Max', description: 'The strongest configured recipe.' },
 ];
 
+// Specific models a profile may also run on, offered apart from the tiers.
+export const MOCK_MODEL_PRESETS = [
+  { id: 'gemini_4_argon', label: 'Gemini 4 Argon', description: "Google's strongest model." },
+  { id: 'kimi_k3', label: 'Kimi K3', description: null },
+];
+
 export const handlers = [
   // Mock profiles endpoint
   http.get('/api/v1/profiles', () => {
@@ -50,6 +56,7 @@ export const handlers = [
           available_tools: [],
           enabled_mcp_servers: [],
           model_tiers: MOCK_MODEL_TIERS,
+          model_presets: MOCK_MODEL_PRESETS,
           default_model_tier: 'standard',
           receives_household_context: true,
         },

@@ -157,6 +157,10 @@ struct ChatProfile: Codable, Equatable, Identifiable {
     /// order. Empty for a profile pinned to one model, which is how the client
     /// knows to offer no intelligence control for it.
     let modelTiers: [ChatModelTier]
+    /// Specific models the profile may also run on, sent as a model tier like
+    /// any other. Not capability levels, so the picker keeps them in a submenu
+    /// apart from `modelTiers`.
+    let modelPresets: [ChatModelTier]
     /// The tier the profile runs at when a request names none. Nil for a pinned
     /// profile.
     let defaultModelTier: String?
@@ -174,6 +178,7 @@ struct ChatProfile: Codable, Equatable, Identifiable {
         case delegationOnly = "delegation_only"
         case userSelectable = "user_selectable"
         case modelTiers = "model_tiers"
+        case modelPresets = "model_presets"
         case defaultModelTier = "default_model_tier"
         case receivesHouseholdContext = "receives_household_context"
     }
@@ -187,6 +192,7 @@ struct ChatProfile: Codable, Equatable, Identifiable {
         delegationOnly: Bool,
         userSelectable: Bool? = nil,
         modelTiers: [ChatModelTier] = [],
+        modelPresets: [ChatModelTier] = [],
         defaultModelTier: String? = nil,
         receivesHouseholdContext: Bool = false
     ) {
@@ -198,6 +204,7 @@ struct ChatProfile: Codable, Equatable, Identifiable {
         self.delegationOnly = delegationOnly
         self.userSelectable = userSelectable ?? !delegationOnly
         self.modelTiers = modelTiers
+        self.modelPresets = modelPresets
         self.defaultModelTier = defaultModelTier
         self.receivesHouseholdContext = receivesHouseholdContext
     }
@@ -217,6 +224,8 @@ struct ChatProfile: Codable, Equatable, Identifiable {
         // Absent against a server that predates tier selection: no tiers means no
         // control, which is the same thing a pinned profile reports.
         modelTiers = try container.decodeIfPresent([ChatModelTier].self, forKey: .modelTiers) ?? []
+        // Absent against a server that predates offering specific models.
+        modelPresets = try container.decodeIfPresent([ChatModelTier].self, forKey: .modelPresets) ?? []
         defaultModelTier = try container.decodeIfPresent(String.self, forKey: .defaultModelTier)
         // Absent against a server that predates the context gate: offering
         // nothing is what the server would then refuse anyway.
@@ -226,10 +235,16 @@ struct ChatProfile: Codable, Equatable, Identifiable {
         ) ?? false
     }
 
+    /// Every tier the user may send for this profile: the intelligence levels,
+    /// then the specific models.
+    var selectableModelTiers: [ChatModelTier] {
+        modelTiers + modelPresets
+    }
+
     /// Whether this profile gives the user something to decide. One tier is not a
     /// choice, so the intelligence control is hidden rather than shown dead.
     var offersModelTierChoice: Bool {
-        modelTiers.count > 1
+        selectableModelTiers.count > 1
     }
 }
 

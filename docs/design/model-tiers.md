@@ -386,8 +386,9 @@ Auto then enables for the Assistant and Engineer first; pinned profiles stay out
 - **Mid-run model switching.** One recipe per turn is the conservative baseline; hybrid patterns are
   later, explicit work.
 - **A raw model picker in ordinary UX.** Provider churn is an operator concern; tiers keep the user
-  concept stable while operators remap underneath. Exact-model presets exist for delegation only
-  (see below), never on the picker and never as profiles.
+  concept stable while operators remap underneath. The exact-model presets (see below) are offered
+  to a person only in a submenu of the intelligence control, never on its main list and never as
+  profiles.
 - **Difficulty escalation via retry.** Rejected above.
 
 ## Exact-model presets for delegation
@@ -398,12 +399,15 @@ fallback, so naming it yields that model's answer or a visible failure, never a 
 under its name. A profile admits presets through a third list, `delegation_model_tiers`, rather than
 `auto_model_tiers`, because that list is also the Auto classifier's range: presets are not points on
 a capability scale, and the classifier must not route everyday turns to them. They are kept off the
-intelligence control for the same reason. A person may still name one through the API, preserving
-the rule that a model cannot reach a tier a person would be refused. Presets reuse the tier
-admission gate, client construction and persisted envelope unchanged; the delegating model sees them
-in its profile catalog, separately from tiers, and delegation status reports each run's tier. The
-shipped presets are admitted for every tiered profile through `default_profile_settings`, so pinning
-a specialist to a model needs no per-profile list; the catalog lists that shared set once.
+intelligence control's main list for the same reason, and a person reaches them through a "Specific
+model" submenu of it — the rule that a model cannot reach a tier a person would be refused, made
+usable rather than API-only. The profile listing reports them as `model_presets`, apart from
+`model_tiers`; a chosen preset is a user-sourced tier like any other, so it is sticky for the
+conversation and needs no admission or persistence of its own. Presets reuse the tier admission
+gate, client construction and persisted envelope unchanged; the delegating model sees them in its
+profile catalog, separately from tiers, and delegation status reports each run's tier. The shipped
+presets are admitted for every tiered profile through `default_profile_settings`, so pinning a
+specialist to a model needs no per-profile list; the catalog lists that shared set once.
 
 ## Deliberate simplifications
 

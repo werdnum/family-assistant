@@ -680,6 +680,7 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
   }, [lockedProfileId, currentProfileId]);
   const currentProfile = profilesById[currentProfileId];
   const modelTiers: ModelTier[] = currentProfile?.model_tiers ?? EMPTY_MODEL_TIERS;
+  const modelPresets: ModelTier[] = currentProfile?.model_presets ?? EMPTY_MODEL_TIERS;
   const defaultModelTier = currentProfile?.default_model_tier ?? null;
   const defaultModelTierRef = useRef(defaultModelTier);
   defaultModelTierRef.current = defaultModelTier;
@@ -2633,7 +2634,10 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
     const chosenTier = tierState?.selected ?? null;
     const offersTier =
       chosenTier !== null &&
-      (profilesById[threadProfileId]?.model_tiers ?? []).some((tier) => tier.id === chosenTier);
+      [
+        ...(profilesById[threadProfileId]?.model_tiers ?? []),
+        ...(profilesById[threadProfileId]?.model_presets ?? []),
+      ].some((tier) => tier.id === chosenTier);
     const modelTier = offersTier && chosenTier ? chosenTier : null;
     const key = JSON.stringify([
       threadProfileId,
@@ -3285,6 +3289,7 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
   const intelligenceSelector = (
     <IntelligenceSelector
       tiers={modelTiers}
+      presets={modelPresets}
       defaultTierId={defaultModelTier}
       selectedTierId={selectedModelTierId}
       onChange={handleModelTierChange}

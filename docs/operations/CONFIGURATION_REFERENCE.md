@@ -1100,13 +1100,13 @@ message history records the served tier in `reasoning_info.service_tier`.
   confirmation: a `delegate_to_service` `model_tier` argument, and the Auto classifier. Omitted
   means "only its own `model_tier`".
 - `delegation_model_tiers` (likewise top level) — further tiers **a delegating model** may name for
-  the profile, which the Auto classifier never routes to and the intelligence control does not list.
-  This is where exact-model presets go: a tier holding one model and no fallback (startup refuses
-  one with a fallback), so a delegation that names it gets that model's answer or a visible failure,
-  never another model's answer under its name. It is what lets one profile put the same question to
-  several specific models and compare the answers. A person may also name a preset through the API,
-  since a model may not reach what a person would be refused, but no client lists them. Omitted
-  means none.
+  the profile, which the Auto classifier never routes to and the intelligence control lists only
+  under its "Specific model" submenu, apart from the tiers. This is where exact-model presets go: a
+  tier holding one model and no fallback (startup refuses one with a fallback), so a delegation that
+  names it gets that model's answer or a visible failure, never another model's answer under its
+  name. It is what lets one profile put the same question to several specific models and compare the
+  answers. A person may also choose a preset, since a model may not reach what a person would be
+  refused; the web and iOS clients offer them in that submenu. Omitted means none.
 
 The lists are replaced, never merged, when a profile or an operator overrides one, so they can only
 narrow. Every name must exist in `model_tiers`; the profile's own `model_tier` must appear in
@@ -1152,10 +1152,12 @@ not admit fails that member's delegation visibly rather than running on another 
   by `allowed_model_tiers`; a tier the profile does not accept is a 400 naming the ones that would
   have worked. `GET /api/v1/profiles` reports each profile's `model_tiers` and `default_model_tier`,
   which is what a client renders its intelligence control from — an empty list means the profile is
-  pinned to one model — plus `model_selection`, which says whether a request naming no tier gets
-  `default_model_tier` or gets one chosen for it. `model_selection` reports **effective** behaviour:
-  a profile configured for Auto reads as `explicit` while `model_routing.mode` is `off` or `shadow`,
-  because that is what its requests actually do.
+  pinned to one model — and `model_presets`, the profile's `delegation_model_tiers` not already in
+  `model_tiers`, which a client offers as specific models. Plus `model_selection`, which says
+  whether a request naming no tier gets `default_model_tier` or gets one chosen for it.
+  `model_selection` reports **effective** behaviour: a profile configured for Auto reads as
+  `explicit` while `model_routing.mode` is `off` or `shadow`, because that is what its requests
+  actually do.
 - **Delegation:** `model_tier` on `delegate_to_service`, bound by the *target's* `auto_model_tiers`
   and `delegation_model_tiers`, which the delegating model sees in its profile catalog.
   `get_delegation_status` and `list_delegations` report each run's `model_tier`. The resolved tier

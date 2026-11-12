@@ -1323,7 +1323,7 @@ final class ChatViewModel {
         // tier on the next send would be refused.
         guard let latest, let tier = Self.chosenModelTier(of: latest),
               tier != defaultModelTierID,
-              availableModelTiers.contains(where: { $0.id == tier })
+              selectableModelTiers.contains(where: { $0.id == tier })
         else {
             return
         }
@@ -1467,6 +1467,17 @@ final class ChatViewModel {
         selectedProfile?.modelTiers ?? []
     }
 
+    /// The specific models the active profile may also run on, offered apart
+    /// from the intelligence levels.
+    var availableModelPresets: [ChatModelTier] {
+        selectedProfile?.modelPresets ?? []
+    }
+
+    /// Every tier the user may choose for the active profile.
+    var selectableModelTiers: [ChatModelTier] {
+        selectedProfile?.selectableModelTiers ?? []
+    }
+
     /// The tier the active profile runs at when a request names none.
     var defaultModelTierID: String? {
         selectedProfile?.defaultModelTier
@@ -1483,7 +1494,7 @@ final class ChatViewModel {
     ) -> [String: String] {
         var labels: [String: String] = [:]
         for profile in profiles {
-            for tier in profile.modelTiers where labels[tier.id] == nil {
+            for tier in profile.selectableModelTiers where labels[tier.id] == nil {
                 labels[tier.id] = tier.label
             }
         }
@@ -1513,7 +1524,7 @@ final class ChatViewModel {
     func selectModelTier(_ tierID: String?) {
         guard let tierID,
               tierID != defaultModelTierID,
-              availableModelTiers.contains(where: { $0.id == tierID })
+              selectableModelTiers.contains(where: { $0.id == tierID })
         else {
             modelTierChoice = nil
             return
@@ -2426,7 +2437,7 @@ final class ChatViewModel {
            pending.homeTierChoice == modelTierChoice, pending.start.profileID == profileID {
             return pending.start.modelTier
         }
-        let targetTiers = profiles.first { $0.id == profileID }?.modelTiers ?? []
+        let targetTiers = profiles.first { $0.id == profileID }?.selectableModelTiers ?? []
         return modelTierChoice.flatMap { choice in
             targetTiers.contains { $0.id == choice } ? choice : nil
         }

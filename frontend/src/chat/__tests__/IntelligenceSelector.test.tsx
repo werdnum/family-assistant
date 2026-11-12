@@ -10,6 +10,11 @@ const TIERS: ModelTier[] = [
   { id: 'frontier', label: 'Max', description: null },
 ];
 
+const PRESETS: ModelTier[] = [
+  { id: 'gemini_4_argon', label: 'Gemini 4 Argon', description: "Google's strongest model." },
+  { id: 'kimi_k3', label: 'Kimi K3', description: null },
+];
+
 // Radix Select needs pointer-capture and scroll APIs jsdom lacks. Stub them for
 // the tests that open the menu and restore afterwards, so a later test doesn't
 // silently get a defined no-op where jsdom has nothing.
@@ -48,7 +53,7 @@ describe('IntelligenceSelector', () => {
       />
     );
 
-    expect(screen.getByRole('combobox', { name: 'Intelligence' })).toHaveTextContent('Standard');
+    expect(screen.getByRole('button', { name: 'Intelligence' })).toHaveTextContent('Standard');
   });
 
   it('lists every tier with its description and marks the default', async () => {
@@ -62,14 +67,14 @@ describe('IntelligenceSelector', () => {
       />
     );
 
-    await user.click(screen.getByRole('combobox', { name: 'Intelligence' }));
+    await user.click(screen.getByRole('button', { name: 'Intelligence' }));
 
-    const standard = await screen.findByRole('option', { name: /Standard/ });
+    const standard = await screen.findByRole('menuitemradio', { name: /Standard/ });
     expect(standard).toHaveTextContent('Default');
     expect(standard).toHaveTextContent('Good value for everyday requests.');
-    const deep = screen.getByRole('option', { name: /Deep/ });
+    const deep = screen.getByRole('menuitemradio', { name: /Deep/ });
     expect(deep).not.toHaveTextContent('Default');
-    expect(screen.getByRole('option', { name: /Max/ })).toBeInTheDocument();
+    expect(screen.getByRole('menuitemradio', { name: /Max/ })).toBeInTheDocument();
   });
 
   it('reports a non-default choice', async () => {
@@ -84,8 +89,8 @@ describe('IntelligenceSelector', () => {
       />
     );
 
-    await user.click(screen.getByRole('combobox', { name: 'Intelligence' }));
-    await user.click(await screen.findByRole('option', { name: /Deep/ }));
+    await user.click(screen.getByRole('button', { name: 'Intelligence' }));
+    await user.click(await screen.findByRole('menuitemradio', { name: /Deep/ }));
 
     expect(onChange).toHaveBeenCalledWith('deep');
   });
@@ -102,8 +107,8 @@ describe('IntelligenceSelector', () => {
       />
     );
 
-    await user.click(screen.getByRole('combobox', { name: 'Intelligence' }));
-    await user.click(await screen.findByRole('option', { name: /Standard/ }));
+    await user.click(screen.getByRole('button', { name: 'Intelligence' }));
+    await user.click(await screen.findByRole('menuitemradio', { name: /Standard/ }));
 
     expect(onChange).toHaveBeenCalledWith(null);
   });
@@ -118,7 +123,7 @@ describe('IntelligenceSelector', () => {
       />
     );
 
-    const trigger = screen.getByRole('combobox', { name: 'Intelligence' });
+    const trigger = screen.getByRole('button', { name: 'Intelligence' });
     expect(trigger).toHaveTextContent('Deep');
     expect(trigger).toHaveAttribute('title', expect.stringContaining('stays selected'));
   });
@@ -147,5 +152,77 @@ describe('IntelligenceSelector', () => {
     );
 
     expect(container).toBeEmptyDOMElement();
+  });
+
+  it('keeps specific models out of the tier list, behind a submenu', async () => {
+    const user = setupUser();
+    render(
+      <IntelligenceSelector
+        tiers={TIERS}
+        presets={PRESETS}
+        defaultTierId="standard"
+        selectedTierId={null}
+        onChange={vi.fn()}
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Intelligence' }));
+
+    expect(await screen.findAllByRole('menuitemradio')).toHaveLength(TIERS.length);
+    expect(screen.getByRole('menuitem', { name: /Specific model/ })).toBeInTheDocument();
+  });
+
+  it('reports choosing a specific model from the submenu', async () => {
+    const user = setupUser();
+    const onChange = vi.fn();
+    render(
+      <IntelligenceSelector
+        tiers={TIERS}
+        presets={PRESETS}
+        defaultTierId="standard"
+        selectedTierId={null}
+        onChange={onChange}
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Intelligence' }));
+    // By keyboard: jsdom has no layout, so Radix's pointer grace area, which
+    // keeps a submenu open while the pointer travels into it, cannot work here.
+    (await screen.findByRole('menuitem', { name: /Specific model/ })).focus();
+    await user.keyboard('{ArrowRight}');
+    (await screen.findByRole('menuitemradio', { name: /Kimi K3/ })).focus();
+    await user.keyboard('{Enter}');
+
+    expect(onChange).toHaveBeenCalledWith('kimi_k3');
+  });
+
+  it('names a chosen specific model on the control', () => {
+    render(
+      <IntelligenceSelector
+        tiers={TIERS}
+        presets={PRESETS}
+        defaultTierId="standard"
+        selectedTierId="gemini_4_argon"
+        onChange={vi.fn()}
+      />
+    );
+
+    expect(screen.getByRole('button', { name: 'Intelligence' })).toHaveTextContent(
+      'Gemini 4 Argon'
+    );
+  });
+
+  it('offers a choice when the only tier is joined by a specific model', () => {
+    render(
+      <IntelligenceSelector
+        tiers={[TIERS[0]]}
+        presets={[PRESETS[0]]}
+        defaultTierId="standard"
+        selectedTierId={null}
+        onChange={vi.fn()}
+      />
+    );
+
+    expect(screen.getByRole('button', { name: 'Intelligence' })).toBeInTheDocument();
   });
 });

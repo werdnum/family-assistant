@@ -2610,6 +2610,16 @@ class ServiceProfile(BaseModel):
             "no intelligence control for it."
         ),
     )
+    model_presets: list[ModelTierSummary] = Field(
+        default_factory=list,
+        description=(
+            "Specific models this profile may also be run on, in configured "
+            "order: exact-model presets with no fallback, so a turn sent with "
+            "one as its model_tier is answered by that model or fails visibly. "
+            "Kept apart from model_tiers because they are not capability "
+            "levels; a client offers them out of the way of the tier choice."
+        ),
+    )
     default_model_tier: str | None = Field(
         default=None,
         description=(
@@ -4283,6 +4293,17 @@ async def get_available_profiles(
                         description=option.description,
                     )
                     for option in eligibility.selectable
+                ],
+                # A person may name any preset a delegating model may: the
+                # admission gate already accepts them from a user.
+                model_presets=[
+                    ModelTierSummary(
+                        id=option.id,
+                        label=option.label,
+                        description=option.description,
+                    )
+                    for option in eligibility.delegation
+                    if option.id not in eligibility.selectable_ids
                 ],
                 default_model_tier=eligibility.default_tier,
                 # What this deployment will actually do, not what the profile

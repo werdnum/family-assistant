@@ -12713,6 +12713,7 @@ final class ChatViewModelTests: XCTestCase {
             ChatModelTier(id: "standard", label: "Standard", tierDescription: "Everyday"),
             ChatModelTier(id: "deep", label: "Deep", tierDescription: "Hard questions"),
         ],
+        presets: [ChatModelTier] = [],
         defaultTier: String? = "standard"
     ) -> ChatProfile {
         ChatProfile(
@@ -12723,6 +12724,7 @@ final class ChatViewModelTests: XCTestCase {
             enabledMCPServers: [],
             delegationOnly: false,
             modelTiers: tiers,
+            modelPresets: presets,
             defaultModelTier: defaultTier
         )
     }
@@ -12803,6 +12805,30 @@ final class ChatViewModelTests: XCTestCase {
             model.modelTierChoice,
             "A tier the active profile does not offer must never be sent."
         )
+    }
+
+    func testASpecificModelIsSentLikeAnyChosenTier() async throws {
+        let recorder = respondRecordingModelTiers(conversationID: "web_conv_preset")
+        let model = makeViewModel(conversationID: "web_conv_preset")
+        model.profiles = [Self.tieredProfile(
+            presets: [ChatModelTier(id: "kimi_k3", label: "Kimi K3", tierDescription: nil)]
+        )]
+
+        model.selectModelTier("kimi_k3")
+        model.draftText = "Ask Kimi"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertEqual(recorder.tiers, ["kimi_k3"])
+    }
+
+    func testOneTierWithASpecificModelIsAChoice() {
+        let profile = Self.tieredProfile(
+            tiers: [ChatModelTier(id: "standard", label: "Standard", tierDescription: nil)],
+            presets: [ChatModelTier(id: "kimi_k3", label: "Kimi K3", tierDescription: nil)]
+        )
+
+        XCTAssertTrue(profile.offersModelTierChoice)
     }
 
     func testChosenModelTierHoldsForEveryTurnOfTheConversation() async throws {

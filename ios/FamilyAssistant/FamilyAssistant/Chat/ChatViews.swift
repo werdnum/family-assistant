@@ -1726,7 +1726,7 @@ struct IntelligencePickerView: View {
         guard let choice else {
             return nil
         }
-        return viewModel.availableModelTiers.first { $0.id == choice }?.label ?? choice
+        return viewModel.selectableModelTiers.first { $0.id == choice }?.label ?? choice
     }
 
     var body: some View {
@@ -1738,6 +1738,20 @@ struct IntelligencePickerView: View {
                     }
                 }
                 .pickerStyle(.inline)
+                if !viewModel.availableModelPresets.isEmpty {
+                    // A submenu, so the everyday choice stays a short list.
+                    Menu {
+                        Picker("Specific model", selection: tierSelection) {
+                            ForEach(viewModel.availableModelPresets) { preset in
+                                tierRow(preset).tag(preset.id)
+                            }
+                        }
+                        .pickerStyle(.inline)
+                    } label: {
+                        Label("Specific model", systemImage: "cpu")
+                    }
+                    .accessibilityIdentifier("intelligence-specific-model")
+                }
             } label: {
                 label
             }
