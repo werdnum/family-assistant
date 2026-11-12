@@ -400,9 +400,13 @@ jobs:
           - suite: sqlite
             title: SQLite
             markers: not db_independent and not postgres and not playwright and not llm_integration and not gemini_live
+            runner: .venv/bin/python scripts/run_pytest_adaptive.py
+          # Thousands of fast tests: starting a pytest process per shard costs
+          # more than running them, so use four long-lived xdist workers.
           - suite: independent
             title: database-independent
             markers: db_independent and not playwright and not llm_integration and not gemini_live
+            runner: .venv/bin/pytest tests -n 4
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -442,7 +446,7 @@ jobs:
                 echo "No pre-built frontend assets found at /opt/frontend-dist"; \
               fi && \
               mkdir -p test-results && \
-              .venv/bin/python scripts/run_pytest_adaptive.py -q --timeout=300 --db sqlite -m "${{ matrix.markers }}" \
+              ${{ matrix.runner }} -q --timeout=300 --db sqlite -m "${{ matrix.markers }}" \
                 --json-report --json-report-file=test-results/backend-${{ matrix.suite }}-report.json'
       - name: Summarize backend test results (${{ matrix.title }})
         if: always()
