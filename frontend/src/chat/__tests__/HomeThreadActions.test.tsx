@@ -561,8 +561,8 @@ describe('Starting and moving threads from Home', () => {
     const homePane = await findPane(HOME);
 
     const pickTier = async (tier: RegExp) => {
-      await user.click(within(homePane).getByRole('combobox', { name: 'Intelligence' }));
-      await user.click(await screen.findByRole('option', { name: tier }));
+      await user.click(within(homePane).getByRole('button', { name: 'Intelligence' }));
+      await user.click(await screen.findByRole('menuitemradio', { name: tier }));
     };
     const send = () => user.click(within(homePane).getByTestId('send-button'));
     await pickTier(/Deep/);
@@ -590,11 +590,11 @@ describe('Starting and moving threads from Home', () => {
     const homePane = await findPane(HOME);
     await homeReply(GUTTER_REPLY);
 
-    const intelligence = within(homePane).getByRole('combobox', {
+    const intelligence = within(homePane).getByRole('button', {
       name: 'Intelligence',
     });
     await user.click(intelligence);
-    await user.click(await screen.findByRole('option', { name: /Deep/ }));
+    await user.click(await screen.findByRole('menuitemradio', { name: /Deep/ }));
     await user.type(within(homePane).getByTestId('chat-input'), 'Compare solar quotes');
     await user.upload(
       within(homePane).getByTestId('file-input'),
@@ -689,8 +689,8 @@ describe('Starting and moving threads from Home', () => {
     await renderChatApp({ waitForReady: true });
     const homePane = await findPane(HOME);
 
-    await user.click(within(homePane).getByRole('combobox', { name: 'Intelligence' }));
-    await user.click(await screen.findByRole('option', { name: /Deep/ }));
+    await user.click(within(homePane).getByRole('button', { name: 'Intelligence' }));
+    await user.click(await screen.findByRole('menuitemradio', { name: /Deep/ }));
     await user.type(within(homePane).getByTestId('chat-input'), 'Research heat pumps');
     await user.click(within(homePane).getByTestId('send-as-thread-button'));
     await user.click(await screen.findByTestId('send-as-thread-research'));

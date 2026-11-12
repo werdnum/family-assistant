@@ -95,7 +95,17 @@ that answer fails rather than quietly coming from a different model.
 You can also pin a specialist to a model in the same way: "have the complex tasks profile work on
 this using Gemini 4 Argon" runs that profile, with its usual tools, on the model you named.
 
-The models on offer are the ones your household's setup lists; these are not on the level picker.
+The models on offer are the ones your household's setup lists.
+
+### Choosing a model yourself
+
+To have one model answer a conversation yourself, open the intelligence control in the web app or
+the iOS app and pick from **Specific model** at the bottom of the menu. The **New thread** and
+**Continue in a thread** dialogs list the same models under **Specific model**. A model you pick
+works like a level: it stays for the rest of the conversation, the control shows its name, and
+picking a level (or the "Default" one) moves the conversation off it. If that model is unavailable
+the reply fails rather than coming from another model, so pick a level instead when you just want a
+good answer.
 
 A side-by-side is each model answering alone. When you want the models to research the question,
 read and criticise each other's answers and revise them before you get a combined answer, ask for a

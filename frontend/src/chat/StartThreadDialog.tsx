@@ -15,7 +15,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { generateUUID } from '../utils/uuid';
 import { useChatShell } from './chatShell';
 import { getProfileDisplayName } from './profileNames';
-import { type ServiceProfile, useProfiles } from './profilesContext';
+import { offersIntelligenceChoice, type ServiceProfile, useProfiles } from './profilesContext';
 import { type CarryCandidate, type ContinuePreview, fetchContinuePreview } from './threadsApi';
 
 /** The Home message a thread is continued from. */
@@ -152,6 +152,7 @@ export const StartThreadDialog: React.FC<StartThreadDialogProps> = ({
   const carriesContext = anchor !== null && receivesContext && withContext;
   const trimmedPrompt = prompt.trim();
   const tiers = profile?.model_tiers ?? [];
+  const presets = profile?.model_presets ?? [];
   const defaultTierId = profile?.default_model_tier ?? null;
   // A tier rides on the opening turn, so a start without a message has none to give.
   const modelTier = trimmedPrompt !== '' ? tierId : null;
@@ -292,7 +293,7 @@ export const StartThreadDialog: React.FC<StartThreadDialogProps> = ({
               ))}
             </NativeSelect>
           </div>
-          {tiers.length > 1 && (
+          {offersIntelligenceChoice(tiers, presets) && (
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="start-thread-tier">Intelligence</Label>
               <NativeSelect
@@ -310,6 +311,15 @@ export const StartThreadDialog: React.FC<StartThreadDialogProps> = ({
                     {tier.id === defaultTierId ? ' (default)' : ''}
                   </option>
                 ))}
+                {presets.length > 0 && (
+                  <optgroup label="Specific model">
+                    {presets.map((preset) => (
+                      <option key={preset.id} value={preset.id}>
+                        {preset.label}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </NativeSelect>
               {trimmedPrompt === '' && carriesContext && (
                 <p className="text-xs text-muted-foreground" data-testid="start-thread-tier-hint">

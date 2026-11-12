@@ -483,6 +483,9 @@ final class ChatAPIClientTests: XCTestCase {
                         {"id": "deep", "label": "Deep", "description": null},
                         {"id": "frontier", "label": "Max"}
                       ],
+                      "model_presets": [
+                        {"id": "kimi_k3", "label": "Kimi K3", "description": null}
+                      ],
                       "default_model_tier": "standard"
                     },
                     {
@@ -513,6 +516,8 @@ final class ChatAPIClientTests: XCTestCase {
         XCTAssertEqual(profiles.first?.modelTiers.first?.tierDescription, "Everyday requests")
         XCTAssertNil(profiles.first?.modelTiers[1].tierDescription)
         XCTAssertEqual(profiles.first?.defaultModelTier, "standard")
+        XCTAssertEqual(profiles.first?.modelPresets.map(\.label), ["Kimi K3"])
+        XCTAssertEqual(profiles.last?.modelPresets, [], "Absent presets decode as none.")
         XCTAssertEqual(profiles.first?.offersModelTierChoice, true)
         XCTAssertEqual(
             profiles.last?.offersModelTierChoice,

@@ -1,5 +1,6 @@
 """End-to-end tests for the chat UI - Basic chat flows."""
 
+import json
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -552,7 +553,8 @@ async def test_mobile_header_actions_stay_in_viewport(
     await expect(header.get_by_role("button", name="Share conversation")).to_be_visible(
         timeout=10000
     )
-    await expect(header.get_by_role("combobox")).to_have_count(2)
+    await expect(header.get_by_role("combobox")).to_have_count(1)
+    await expect(header.get_by_role("button", name="Intelligence")).to_be_visible()
 
     controls = header.locator("button, [role='combobox']")
     count = await controls.count()
@@ -572,3 +574,56 @@ async def test_mobile_header_actions_stay_in_viewport(
     await expect(page.get_by_role("button", name="Send message")).to_be_visible()
 
     await page.set_viewport_size({"width": 1280, "height": 720})
+
+
+@pytest.mark.playwright
+@pytest.mark.asyncio
+async def test_a_specific_model_is_chosen_from_the_intelligence_submenu(
+    web_test_fixture: WebTestFixture,
+) -> None:
+    """The submenu opens and takes a choice under a real pointer, which jsdom cannot model."""
+    page = web_test_fixture.page
+    chat_page = ChatPage(page, web_test_fixture.base_url)
+    sent_tiers: list[object] = []
+
+    async def add_model_choices(route: Route) -> None:
+        response = await route.fetch()
+        body = await response.json()
+        for profile in body["profiles"]:
+            profile["model_tiers"] = [
+                {"id": "standard", "label": "Standard", "description": None},
+                {"id": "deep", "label": "Deep", "description": None},
+            ]
+            profile["model_presets"] = [
+                {
+                    "id": "kimi_k3",
+                    "label": "Kimi K3",
+                    "description": "Moonshot's model.",
+                },
+            ]
+            profile["default_model_tier"] = "standard"
+        await route.fulfill(response=response, json=body)
+
+    async def record_turn(route: Route) -> None:
+        # The test server's profile has no such tier, so it is recorded here and
+        # not forwarded: what is under test is what the client sends.
+        body = dict(route.request.post_data_json or {})
+        sent_tiers.append(body.pop("model_tier", None))
+        await route.continue_(post_data=json.dumps(body))
+
+    await page.route("**/api/v1/profiles", add_model_choices)
+    await page.route("**/api/v1/chat/turns", record_turn)
+    await page.set_viewport_size({"width": 1280, "height": 720})
+    await chat_page.navigate_to_chat()
+
+    await page.get_by_role("button", name="Intelligence").first.click()
+    await expect(page.get_by_role("menuitemradio")).to_have_count(2)
+    await page.get_by_role("menuitem", name="Specific model").hover()
+    await page.get_by_role("menuitemradio", name="Kimi K3").click()
+
+    await expect(page.get_by_role("button", name="Intelligence").first).to_contain_text(
+        "Kimi K3"
+    )
+    await chat_page.send_message("which model are you")
+    await chat_page.wait_for_assistant_response(timeout=15000)
+    assert sent_tiers == ["kimi_k3"]

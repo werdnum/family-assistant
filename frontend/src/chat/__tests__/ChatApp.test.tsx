@@ -1039,8 +1039,8 @@ describe('ChatApp intelligence tier selection', () => {
 
   const chooseTier = async (user: ReturnType<typeof userEvent.setup>, name: RegExp) => {
     // The control appears with the profile list, which loads after the composer.
-    await user.click(await screen.findByRole('combobox', { name: 'Intelligence' }));
-    await user.click(await screen.findByRole('option', { name }));
+    await user.click(await screen.findByRole('button', { name: 'Intelligence' }));
+    await user.click(await screen.findByRole('menuitemradio', { name }));
   };
 
   const sendMessage = async (user: ReturnType<typeof userEvent.setup>, text: string) => {
@@ -1078,6 +1078,26 @@ describe('ChatApp intelligence tier selection', () => {
     await waitFor(() => expect(capturedTurnModelTiers).toEqual([undefined]), { timeout: 10000 });
   }, 30000);
 
+  it('sends a specific model chosen from the submenu as the turn model_tier', async () => {
+    const user = setupSelectUser();
+    await renderChatApp({ waitForReady: true });
+
+    await user.click(await screen.findByRole('button', { name: 'Intelligence' }));
+    // By keyboard: jsdom has no layout for Radix's submenu pointer grace area.
+    (await screen.findByRole('menuitem', { name: /Specific model/ })).focus();
+    await user.keyboard('{ArrowRight}');
+    (await screen.findByRole('menuitemradio', { name: /Gemini 4 Argon/ })).focus();
+    await user.keyboard('{Enter}');
+    await sendMessage(user, 'Ask Gemini');
+
+    await waitFor(() => expect(capturedTurnModelTiers).toEqual(['gemini_4_argon']), {
+      timeout: 10000,
+    });
+    expect(screen.getByRole('button', { name: 'Intelligence' })).toHaveTextContent(
+      'Gemini 4 Argon'
+    );
+  }, 30000);
+
   it('keeps a chosen tier for the conversation until a new chat', async () => {
     const user = setupSelectUser();
     await renderChatApp({ waitForReady: true });
@@ -1085,7 +1105,7 @@ describe('ChatApp intelligence tier selection', () => {
     await chooseTier(user, /Deep/);
     await sendMessage(user, 'A hard question');
     await waitFor(() => expect(capturedTurnModelTiers).toEqual(['deep']), { timeout: 10000 });
-    expect(screen.getByRole('combobox', { name: 'Intelligence' })).toHaveTextContent('Deep');
+    expect(screen.getByRole('button', { name: 'Intelligence' })).toHaveTextContent('Deep');
 
     await waitForTurnToSettle(1);
     await sendMessage(user, 'Another hard question');
@@ -1098,7 +1118,7 @@ describe('ChatApp intelligence tier selection', () => {
     await user.click(newChatButton);
 
     await waitFor(() => {
-      expect(screen.getByRole('combobox', { name: 'Intelligence' })).toHaveTextContent('Standard');
+      expect(screen.getByRole('button', { name: 'Intelligence' })).toHaveTextContent('Standard');
     });
 
     await sendMessage(user, 'A brand new question');
@@ -1142,7 +1162,7 @@ describe('ChatApp intelligence tier selection', () => {
     // The research profile pins its model, so there is no control to show at
     // all — and the choice made under the assistant is gone with it.
     await waitFor(() => {
-      expect(screen.queryByRole('combobox', { name: 'Intelligence' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Intelligence' })).not.toBeInTheDocument();
     });
 
     await sendMessage(user, 'Research this');
@@ -1182,7 +1202,7 @@ describe('ChatApp intelligence tier selection', () => {
     expect(await screen.findByText('Untangle this budget')).toBeInTheDocument();
 
     await waitFor(() => {
-      expect(screen.getByRole('combobox', { name: 'Intelligence' })).toHaveTextContent('Deep');
+      expect(screen.getByRole('button', { name: 'Intelligence' })).toHaveTextContent('Deep');
     });
     await sendMessage(user, 'Keep going');
     await waitFor(() => expect(capturedTurnModelTiers).toEqual(['deep']), { timeout: 10000 });

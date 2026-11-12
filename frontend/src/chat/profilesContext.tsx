@@ -9,6 +9,14 @@ export interface ModelTier {
   description: string | null;
 }
 
+/**
+ * Whether a profile offering these tiers and specific models gives the user
+ * anything to decide. One choice is not a choice, so no control is shown.
+ */
+export function offersIntelligenceChoice(tiers: ModelTier[], presets: ModelTier[]): boolean {
+  return tiers.length + presets.length > 1;
+}
+
 export interface ServiceProfile {
   id: string;
   description: string;
@@ -25,6 +33,11 @@ export interface ServiceProfile {
    * Empty for profiles whose model is pinned.
    */
   model_tiers?: ModelTier[];
+  /**
+   * Specific models this profile may also run on, sent as a model_tier like any
+   * tier. Kept apart from model_tiers because they are not capability levels.
+   */
+  model_presets?: ModelTier[];
   /** The tier used when the user chooses nothing. */
   default_model_tier?: string | null;
   /**
@@ -108,7 +121,7 @@ export const ProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const tierLabels: Record<string, string> = {};
     for (const profile of profiles) {
       profilesById[profile.id] = profile;
-      for (const tier of profile.model_tiers ?? []) {
+      for (const tier of [...(profile.model_tiers ?? []), ...(profile.model_presets ?? [])]) {
         tierLabels[tier.id] ??= tier.label;
       }
     }

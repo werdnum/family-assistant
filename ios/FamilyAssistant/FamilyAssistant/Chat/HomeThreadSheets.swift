@@ -247,6 +247,13 @@ struct StartThreadSheet: View {
                 Text(verbatim: tier.id == profile.defaultModelTier ? "\(tier.label) (Default)" : tier.label)
                     .tag(tier.id)
             }
+            if !profile.modelPresets.isEmpty {
+                Section("Specific model") {
+                    ForEach(profile.modelPresets) { preset in
+                        Text(verbatim: preset.label).tag(preset.id)
+                    }
+                }
+            }
         }
         .accessibilityIdentifier("start-thread-tier")
     }

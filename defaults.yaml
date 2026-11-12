@@ -199,16 +199,16 @@ model_tiers:
       - provider: "google"
         model: "gemini-3.8-flash"
         flex: true
-      #
-      # The Sonnet entry also carries a completion policy (`custom_instructions`,
-      # appended to the system prompt): at medium effort in everyday chat,
-      # Sonnet tends to name a check it could run with a read-only tool and
-      # then end the turn without running it, leaving the user to say "so check
-      # it". The anchor shares the entry with the `claude_sonnet_5_5` preset, so
-      # an experiment arm on the preset measures the same recipe this fallback
-      # runs. The `browser` tier's Sonnet fallback deliberately does not carry
-      # it: a browsing run is already a long tool loop with its own prompt.
       - &sonnet_5_5_chat
+        #
+        # The Sonnet entry also carries a completion policy (`custom_instructions`,
+        # appended to the system prompt): at medium effort in everyday chat,
+        # Sonnet tends to name a check it could run with a read-only tool and
+        # then end the turn without running it, leaving the user to say "so check
+        # it". The anchor shares the entry with the `claude_sonnet_5_5` preset, so
+        # an experiment arm on the preset measures the same recipe this fallback
+        # runs. The `browser` tier's Sonnet fallback deliberately does not carry
+        # it: a browsing run is already a long tool loop with its own prompt.
         provider: "anthropic"
         model: "claude-sonnet-5-5"
         llm_parameters:
@@ -288,8 +288,9 @@ model_tiers:
   # another model's answer under its name. They are for a delegating model that
   # wants a specific model on purpose, such as a "council" putting one question
   # to several models and comparing: a profile admits them through
-  # `delegation_model_tiers`, which neither the Auto classifier nor the tier
-  # picker reads. The label is what the delegating model sees.
+  # `delegation_model_tiers`, which the Auto classifier never reads and the
+  # web/iOS intelligence control offers only under "Specific model". The label
+  # is what the delegating model and that submenu show.
   gpt_6_1_sol:
     label: "GPT-6.1 Sol"
     description: "OpenAI's GPT-6.1 reasoning model, the deep tier's fallback."
@@ -327,7 +328,7 @@ model_tiers:
     label: "Claude Sonnet 5.5"
     description: "Anthropic's fast, mid-priced Claude model, with adaptive thinking at medium effort."
     chain:
-      - *sonnet_5_5_chat
+      - *sonnet_5_5_chat 
   claude_haiku_5_5:
     label: "Claude Haiku 5.5"
     description: "Anthropic's fastest, least expensive Claude model, at its default effort."
@@ -993,8 +994,9 @@ global_tools_policy:
 
 default_profile_settings:
   # Specific models a delegating model may pin any tiered profile to by name
-  # ("run complex_tasks on Gemini 4 Argon"). Auto never routes to these and the
-  # tier picker does not list them. A profile that names an inline model drops
+  # ("run complex_tasks on Gemini 4 Argon"), and a person may pick from the
+  # intelligence control's "Specific model" submenu. Auto never routes to these.
+  # A profile that names an inline model drops
   # this list, and one that declares its own replaces it.
   delegation_model_tiers: ["gpt_6_astra", "gpt_6_1_sol", "gpt_6_1_terra", "claude_opus_5_5", "claude_sonnet_5_5", "claude_haiku_5_5", "claude_fable_5_2", "kimi_k3", "gemini_4_argon", "gemini_4_carbon", "gemini_4_hydrogen"]
   processing_config:

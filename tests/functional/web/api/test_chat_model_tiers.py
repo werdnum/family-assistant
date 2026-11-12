@@ -43,6 +43,13 @@ _ELIGIBILITY = ModelTierEligibility(
     ),
     # `frontier` is deliberately absent: a person may choose it, a model may not.
     auto=frozenset({"standard", "deep"}),
+    delegation=(
+        # Also selectable, so it is listed once, as a tier.
+        ModelTierOption(id="deep", label="Deep"),
+        ModelTierOption(
+            id="exact_model", label="Exact Model", description="One model, no fallback."
+        ),
+    ),
 )
 
 
@@ -57,6 +64,7 @@ def tier_clients_fixture() -> dict[str, RuleBasedMockLLMClient]:
         "standard": _client_saying("standard served this"),
         "deep": _client_saying("deep served this"),
         "frontier": _client_saying("frontier served this"),
+        "exact_model": _client_saying("exact_model served this"),
     }
 
 
@@ -442,3 +450,43 @@ async def test_the_profile_listing_advertises_the_tiers_a_client_may_offer(
         {"id": "deep", "label": "Deep", "description": None},
         {"id": "frontier", "label": "Max", "description": None},
     ]
+
+
+@pytest.mark.usefixtures("tiered_app")
+async def test_the_profile_listing_advertises_specific_models_apart_from_tiers(
+    api_test_client: AsyncClient,
+) -> None:
+    """A preset is offered as a specific model, not as another intelligence level."""
+    response = await api_test_client.get("/api/v1/profiles")
+
+    assert response.status_code == 200
+    profiles = {profile["id"]: profile for profile in response.json()["profiles"]}
+    assert profiles["chat_api_test_profile"]["model_presets"] == [
+        {
+            "id": "exact_model",
+            "label": "Exact Model",
+            "description": "One model, no fallback.",
+        },
+    ]
+
+
+@pytest.mark.usefixtures("tiered_app")
+async def test_a_person_may_choose_a_specific_model(
+    api_test_client: AsyncClient,
+    db_engine: AsyncEngine,
+) -> None:
+    conversation_id = f"conv-{uuid.uuid4()}"
+
+    response = await api_test_client.post(
+        "/api/v1/chat/send_message",
+        json={
+            "prompt": "Answer with that model",
+            "conversation_id": conversation_id,
+            "model_tier": "exact_model",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["reply"] == "exact_model served this"
+    reasoning = await _assistant_reasoning_info(db_engine, conversation_id)
+    assert reasoning.get("model_tier_source") == "user"
