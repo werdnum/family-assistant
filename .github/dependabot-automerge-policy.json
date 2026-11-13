@@ -1,5 +1,5 @@
 {
-  "mode": "report-only",
+  "mode": "merge",
   "repository": "werdnum/family-assistant",
   "creator_id": 49699333,
   "commit_email": "49699333+dependabot[bot]@users.noreply.github.com",

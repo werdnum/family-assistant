@@ -1,8 +1,6 @@
 # Dependabot: review-gated automatic merging
 
-Status: shipped in `report-only` mode. Turning on merging is a one-line change to
-`.github/dependabot-automerge-policy.json`, made once the setup below is done and a few reports look
-right.
+Status: merging Dependabot PRs (`mode: merge`). Agent dependency fixes are still `report-only`.
 
 ## Why
 
