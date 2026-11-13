@@ -448,6 +448,17 @@ describe('Starting and moving threads from Home', () => {
     expect(screen.getByTestId(`thread-item-${NEW_THREAD}`)).toBeInTheDocument();
   });
 
+  it('makes the sidebar compose button start a thread, not a conversation of its own', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    serveHome();
+    await renderChatApp({ waitForReady: true });
+
+    await user.click(await screen.findByRole('button', { name: 'Start new thread' }));
+
+    expect(await screen.findByTestId('start-thread-dialog')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Start new chat' })).not.toBeInTheDocument();
+  });
+
   it('starts a new thread at the intelligence chosen beside its profile', async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     const home = serveHome();
