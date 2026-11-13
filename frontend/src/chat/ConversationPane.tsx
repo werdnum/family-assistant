@@ -707,10 +707,18 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
   // The profile the next send goes to as a new thread's opening message, set
   // by the composer's send-as-thread menu just before it sends.
   const sendAsThreadProfileRef = useRef<string | null>(null);
+  // The model the menu picked for that send, if it picked one: null names the
+  // profile's default; undefined leaves Home's own choice to carry over.
+  const sendAsThreadTierRef = useRef<string | null | undefined>(undefined);
   const homeProfileIdRef = useRef<string | null>(null);
   homeProfileIdRef.current = isHome ? lockedProfileId : null;
   const sendAsThreadRef = useRef<
-    (profileId: string, text: string, attachments: ThreadAttachment[]) => Promise<void>
+    (
+      profileId: string,
+      text: string,
+      attachments: ThreadAttachment[],
+      pickedTier: string | null | undefined
+    ) => Promise<void>
   >(async () => {});
   const abandonSendAsThreadRef = useRef<() => void>(() => {});
   const toolCallMessageIdRef = useRef<string | null>(null);
@@ -2407,7 +2415,9 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
       // Every send from Home starts a thread: on the assistant picked for this
       // message, or else on Home's own.
       const threadProfileId = sendAsThreadProfileRef.current ?? homeProfileIdRef.current;
+      const pickedTier = sendAsThreadTierRef.current;
       sendAsThreadProfileRef.current = null;
+      sendAsThreadTierRef.current = undefined;
       // An attachment whose upload failed at send has no content to send. The
       // runtime puts a draft refused with MessageNotSentError back into the
       // composer, where the attachment renders its upload error.
@@ -2458,7 +2468,8 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
         await sendAsThreadRef.current(
           threadProfileId,
           message.content.map((part) => part.text).join('\n'),
-          processedAttachments ?? []
+          processedAttachments ?? [],
+          pickedTier
         );
         // The runtime shows a send whose attachments it uploaded as "in
         // transit" in this thread until a new user message lands here or the
@@ -2628,10 +2639,11 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
   sendAsThreadRef.current = async (
     threadProfileId: string,
     text: string,
-    attachments: ThreadAttachment[]
+    attachments: ThreadAttachment[],
+    pickedTier: string | null | undefined
   ) => {
     const tierState = modelTierFor(modelTierStateRef.current, conversationId, currentProfileId);
-    const chosenTier = tierState?.selected ?? null;
+    const chosenTier = pickedTier !== undefined ? pickedTier : (tierState?.selected ?? null);
     const offersTier =
       chosenTier !== null &&
       [
@@ -2682,6 +2694,9 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
         .map((profile) => ({
           id: profile.id,
           label: getProfileDisplayName(profile.id),
+          tiers: profile.model_tiers ?? [],
+          presets: profile.model_presets ?? [],
+          defaultTierId: profile.default_model_tier ?? null,
         })),
     [profilesById, lockedProfileId]
   );
@@ -3159,8 +3174,9 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
       sendAsThread: isHome
         ? {
             profiles: sendAsThreadProfiles,
-            prepare: (threadProfileId: string) => {
+            prepare: (threadProfileId: string, tierId?: string | null) => {
               sendAsThreadProfileRef.current = threadProfileId;
+              sendAsThreadTierRef.current = tierId;
             },
             error: sendAsThreadError,
           }

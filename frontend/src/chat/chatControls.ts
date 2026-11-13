@@ -1,5 +1,6 @@
 import { createContext, useContext } from 'react';
 import type { PendingDelegation } from './usePendingDelegations';
+import type { ModelTier } from './profilesContext';
 
 /** Outcome of submitting a steer, so the composer knows whether to clear. */
 export type SteerResult = 'accepted' | 'finished' | 'error';
@@ -43,11 +44,26 @@ export interface ChatControls {
   sendAsThread: SendAsThreadControls | null;
 }
 
+export interface SendAsThreadProfile {
+  id: string;
+  label: string;
+  /** Intelligence levels the profile offers, in configured order. */
+  tiers: ModelTier[];
+  /** Specific models the profile may also run on. */
+  presets: ModelTier[];
+  /** The tier the profile runs at when none is named. */
+  defaultTierId: string | null;
+}
+
 export interface SendAsThreadControls {
   /** The profiles a thread can be started on, other than Home's own. */
-  profiles: { id: string; label: string }[];
-  /** Make the composer's next send start a thread on this profile. */
-  prepare: (profileId: string) => void;
+  profiles: SendAsThreadProfile[];
+  /**
+   * Make the composer's next send start a thread on this profile. `tierId` is
+   * a model picked for that send; left out, Home's own choice carries over
+   * where the profile offers it.
+   */
+  prepare: (profileId: string, tierId?: string | null) => void;
   /** Why the last send-as-thread didn't start one; its message is back in the composer. */
   error: string | null;
 }

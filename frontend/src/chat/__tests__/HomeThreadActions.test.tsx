@@ -2,6 +2,7 @@ import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { HttpResponse, http } from 'msw';
 import { vi } from 'vitest';
+import { MOCK_MODEL_PRESETS, MOCK_MODEL_TIERS } from '../../test/mocks/handlers';
 import { resetLocalStorageMock } from '../../test/mocks/localStorageMock';
 import { server } from '../../test/setup.js';
 import { renderChatApp } from '../../test/utils/renderChatApp';
@@ -448,6 +449,17 @@ describe('Starting and moving threads from Home', () => {
     expect(screen.getByTestId(`thread-item-${NEW_THREAD}`)).toBeInTheDocument();
   });
 
+  it('makes the sidebar compose button start a thread, not a conversation of its own', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    serveHome();
+    await renderChatApp({ waitForReady: true });
+
+    await user.click(await screen.findByRole('button', { name: 'Start new thread' }));
+
+    expect(await screen.findByTestId('start-thread-dialog')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Start new chat' })).not.toBeInTheDocument();
+  });
+
   it('starts a new thread at the intelligence chosen beside its profile', async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     const home = serveHome();
@@ -698,6 +710,84 @@ describe('Starting and moving threads from Home', () => {
     await findPane(NEW_THREAD);
     expect(home.starts[0]).not.toHaveProperty('model_tier');
     expect(home.starts[0].profile_id).toBe('research');
+  });
+
+  describe('picking a model for a send-as-thread', () => {
+    // Research, given a choice of model, so the menu has something to offer
+    // for an assistant other than Home's own.
+    const serveTieredResearch = () => {
+      server.use(
+        http.get('/api/v1/profiles', () =>
+          HttpResponse.json({
+            profiles: [
+              {
+                id: 'default_assistant',
+                description: 'Main assistant',
+                available_tools: [],
+                enabled_mcp_servers: [],
+                model_tiers: MOCK_MODEL_TIERS,
+                model_presets: MOCK_MODEL_PRESETS,
+                default_model_tier: 'standard',
+                receives_household_context: true,
+              },
+              {
+                id: 'research',
+                description: 'Research',
+                available_tools: [],
+                enabled_mcp_servers: [],
+                model_tiers: MOCK_MODEL_TIERS,
+                model_presets: MOCK_MODEL_PRESETS,
+                default_model_tier: 'standard',
+                receives_household_context: true,
+              },
+            ],
+            default_profile_id: 'default_assistant',
+          })
+        )
+      );
+    };
+
+    const sendTo = async (
+      user: ReturnType<typeof userEvent.setup>,
+      homePane: HTMLElement,
+      itemTestId: string
+    ) => {
+      await user.type(within(homePane).getByTestId('chat-input'), 'Research heat pumps');
+      await user.click(within(homePane).getByTestId('send-as-thread-button'));
+      // By keyboard: jsdom has no layout for Radix's submenu pointer grace area.
+      (await screen.findByTestId('send-as-thread-research')).focus();
+      await user.keyboard('{ArrowRight}');
+      (await screen.findByTestId(itemTestId)).focus();
+      await user.keyboard('{Enter}');
+    };
+
+    it('sends at a specific model picked for that assistant', async () => {
+      const user = userEvent.setup({ pointerEventsCheck: 0 });
+      serveTieredResearch();
+      const home = serveHome();
+      await renderChatApp({ waitForReady: true });
+      const homePane = await findPane(HOME);
+
+      await sendTo(user, homePane, 'send-as-thread-research-kimi_k3');
+
+      await findPane(NEW_THREAD);
+      expect(home.starts[0]).toMatchObject({ profile_id: 'research', model_tier: 'kimi_k3' });
+    });
+
+    it("names the assistant's default when that is picked, over Home's choice", async () => {
+      const user = userEvent.setup({ pointerEventsCheck: 0 });
+      serveTieredResearch();
+      const home = serveHome();
+      await renderChatApp({ waitForReady: true });
+      const homePane = await findPane(HOME);
+      await user.click(within(homePane).getByRole('button', { name: 'Intelligence' }));
+      await user.click(await screen.findByRole('menuitemradio', { name: /Deep/ }));
+
+      await sendTo(user, homePane, 'send-as-thread-research-standard');
+
+      await findPane(NEW_THREAD);
+      expect(home.starts[0]).toMatchObject({ profile_id: 'research', model_tier: 'standard' });
+    });
   });
 
   it('says why a send-as-thread was refused and puts the message back', async () => {

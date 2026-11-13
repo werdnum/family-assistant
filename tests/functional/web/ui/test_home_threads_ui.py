@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 
 import httpx
 import pytest
-from playwright.async_api import ViewportSize, expect
+from playwright.async_api import Route, ViewportSize, expect
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.llm.messages import AssistantMessage, ToolMessage, UserMessage
@@ -621,6 +621,70 @@ async def test_a_new_thread_opens_in_the_panel_and_streams_its_first_reply(
         .locator(chat.MESSAGE_USER)
         .filter(has_text="Plan the veggie garden")
     ).to_have_count(0)
+
+
+@pytest.mark.playwright
+@pytest.mark.asyncio
+async def test_the_sidebar_compose_button_starts_a_thread(
+    web_test_fixture: WebTestFixture,
+) -> None:
+    home = await _home_conversation_id(web_test_fixture.base_url)
+    await web_test_fixture.page.set_viewport_size(WIDE_VIEWPORT)
+    await _open_home(web_test_fixture, home)
+    page = web_test_fixture.page
+
+    await page.get_by_role("button", name="Start new thread").click()
+
+    await expect(page.get_by_test_id("start-thread-dialog")).to_be_visible()
+
+
+@pytest.mark.playwright
+@pytest.mark.asyncio
+async def test_a_send_to_another_assistant_can_pick_its_model(
+    web_test_fixture: WebTestFixture,
+) -> None:
+    """The per-assistant submenu opens and takes a choice under a real pointer."""
+    home = await _home_conversation_id(web_test_fixture.base_url)
+    page = web_test_fixture.page
+    started_tiers: list[object] = []
+
+    async def offer_models(route: Route) -> None:
+        response = await route.fetch()
+        body = await response.json()
+        for profile in body["profiles"]:
+            if profile["id"] == THREAD_PROFILE:
+                profile["model_tiers"] = [
+                    {"id": "standard", "label": "Standard", "description": None},
+                    {"id": "deep", "label": "Deep", "description": None},
+                ]
+                profile["model_presets"] = [
+                    {"id": "kimi_k3", "label": "Kimi K3", "description": None},
+                ]
+                profile["default_model_tier"] = "standard"
+        await route.fulfill(response=response, json=body)
+
+    async def record_start(route: Route) -> None:
+        if route.request.method != "POST":
+            await route.continue_()
+            return
+        # The test profile has no such tier, so it is recorded and not
+        # forwarded: what is under test is what the client sends.
+        body = dict(route.request.post_data_json or {})
+        started_tiers.append(body.pop("model_tier", None))
+        await route.continue_(post_data=json.dumps(body))
+
+    await page.route("**/api/v1/profiles", offer_models)
+    await page.route("**/api/v1/chat/home/threads", record_start)
+    await page.set_viewport_size(WIDE_VIEWPORT)
+    chat = await _open_home(web_test_fixture, home)
+
+    await chat.pane(home).get_by_test_id("chat-input").fill("Compare heat pump quotes")
+    await chat.pane(home).get_by_test_id("send-as-thread-button").click()
+    await page.get_by_test_id(f"send-as-thread-{THREAD_PROFILE}").hover()
+    await page.get_by_test_id(f"send-as-thread-{THREAD_PROFILE}-kimi_k3").click()
+
+    await expect(chat.side_pane()).to_be_visible(timeout=20000)
+    assert started_tiers == ["kimi_k3"]
 
 
 @pytest.mark.playwright

@@ -417,14 +417,16 @@ and each path is governed:
   scroll view's own visibility report, which iOS 17 lacks. There it falls back to the bottom of the
   transcript having appeared, which can stay true after scrolling up within the loaded page.
 
-- **iOS starts threads, not conversations.** Where Home exists, the app offers no way to create a
-  legacy conversation: the pencil on Home and on the switcher starts a thread, and a "new chat"
+- **The apps start threads, not conversations.** Where Home exists, the app offers no way to create
+  a legacy conversation: the pencil on Home and on the switcher starts a thread, and a "new chat"
   request from outside the app (the quick action, `/chat?new=1`) lands in Home's composer, or sends
   in Home if it carries a prompt. Conversations under Earlier stay readable and continuable on the
   profile they have, without a profile picker, because switching profile there would start another
-  one. The web keeps its new-chat button, and the Ask and Quick Capture intents still run in
-  conversations of their own. A hand-written `/chat?new=1&q=…` link is treated like `/chat?q=…`, so
-  repeating the same text in one session sends once; nothing in the app produces such a link.
+  one. The web does the same: with Home on, the compose button beside "Conversations" opens the New
+  thread dialog rather than a new conversation. The Ask and Quick Capture intents still run in
+  conversations of their own, as does a web `/chat?q=…` link. A hand-written `/chat?new=1&q=…` link
+  is treated like `/chat?q=…`, so repeating the same text in one session sends once; nothing in the
+  app produces such a link.
 
 - **iOS: overrides offer what the client can see, and the server decides.** "Move to thread…" is
   offered while Home looks at rest and lists threads as available from the state the client last

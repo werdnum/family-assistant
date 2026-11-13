@@ -295,15 +295,17 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
         <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider flex-1">
           Conversations
         </h2>
+        {/* With Home, new work starts as a thread of it, never as a conversation of its own. */}
         <Button
-          onClick={onNewChat}
-          aria-label="Start new chat"
+          onClick={home ? home.onNewThread : onNewChat}
+          aria-label={home ? 'Start new thread' : 'Start new chat'}
+          title={home ? 'New thread' : 'New chat'}
           data-testid="new-chat-button"
           variant="ghost"
           size="sm"
           className="h-8 w-8 p-0 rounded-lg hover:bg-primary/10 hover:text-primary"
         >
-          <MessageSquarePlusIcon size={18} />
+          {home ? <GitBranchPlusIcon size={18} /> : <MessageSquarePlusIcon size={18} />}
         </Button>
       </div>
 
