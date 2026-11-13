@@ -493,9 +493,9 @@ const SendAsThreadMenu: React.FC<{
                 {profile.tiers.map((tier) => (
                   <DropdownMenuItem
                     key={tier.id}
-                    onSelect={() =>
-                      onSend(profile.id, tier.id === profile.defaultTierId ? null : tier.id)
-                    }
+                    // Named even when it is the default: a start naming no tier
+                    // is Auto's to decide on a profile that routes.
+                    onSelect={() => onSend(profile.id, tier.id)}
                     data-testid={`send-as-thread-${profile.id}-${tier.id}`}
                   >
                     <span>{tier.label}</span>

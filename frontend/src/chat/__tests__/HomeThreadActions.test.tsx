@@ -774,7 +774,7 @@ describe('Starting and moving threads from Home', () => {
       expect(home.starts[0]).toMatchObject({ profile_id: 'research', model_tier: 'kimi_k3' });
     });
 
-    it("sends at the assistant's default when that is picked, over Home's choice", async () => {
+    it("names the assistant's default when that is picked, over Home's choice", async () => {
       const user = userEvent.setup({ pointerEventsCheck: 0 });
       serveTieredResearch();
       const home = serveHome();
@@ -786,8 +786,7 @@ describe('Starting and moving threads from Home', () => {
       await sendTo(user, homePane, 'send-as-thread-research-standard');
 
       await findPane(NEW_THREAD);
-      expect(home.starts[0].profile_id).toBe('research');
-      expect(home.starts[0]).not.toHaveProperty('model_tier');
+      expect(home.starts[0]).toMatchObject({ profile_id: 'research', model_tier: 'standard' });
     });
   });
 

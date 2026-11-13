@@ -60,8 +60,8 @@ export interface SendAsThreadControls {
   profiles: SendAsThreadProfile[];
   /**
    * Make the composer's next send start a thread on this profile. `tierId` is
-   * a model picked for that send, null for the profile's default; left out,
-   * Home's own choice carries over where the profile offers it.
+   * a model picked for that send; left out, Home's own choice carries over
+   * where the profile offers it.
    */
   prepare: (profileId: string, tierId?: string | null) => void;
   /** Why the last send-as-thread didn't start one; its message is back in the composer. */
