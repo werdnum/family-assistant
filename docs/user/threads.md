@@ -78,11 +78,14 @@ Besides sending a message directly in Home, you can direct work into threads in 
 the chosen assistant offers intelligence levels, you can pick one alongside the assistant):
 
 - **Pick a different assistant from Home:**
-  - *Web:* Use the arrow button beside Send in Home.
+  - *Web:* Use the arrow button beside Send in Home. An assistant that offers a choice of model
+    opens a submenu: pick its usual level, another level, or a specific model for this thread.
+    Picking an assistant with no choice carries over the level you picked in Home where it can.
   - *iOS:* Long-press the Send button (**Send To**).
 - **New thread:**
-  - *Web:* Select **New thread** in the sidebar under Home, choose an assistant, and write the
-    opening message.
+  - *Web:* Select **New thread** in the sidebar under Home (or the compose button beside
+    **Conversations**), choose an assistant and, below it, its intelligence level or a specific
+    model, and write the opening message.
   - *iOS:* Tap the pencil icon (**New Thread**) at the top of Home or the chat list.
 - **Continue in a thread:**
   - *Web:* Point at a reply in Home and select **Continue in a thread**. With **Bring the

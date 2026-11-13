@@ -44,10 +44,18 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { AssistantResponseImages } from './AssistantResponseImages';
-import { type ConversationLoadStatus, useChatControls } from './chatControls';
+import {
+  type ConversationLoadStatus,
+  type SendAsThreadProfile,
+  useChatControls,
+} from './chatControls';
 import { LOADING_MARKER } from './constants';
 import { DynamicToolUI } from './DynamicToolUI';
 import { useHomeTurnActions } from './homeTurnActions';
@@ -56,7 +64,7 @@ import { PendingDelegationsChip } from './PendingDelegationsChip';
 import { ThreadEchoHeader } from './ThreadEchoHeader';
 import { ThreadCard } from './StartThreadCard';
 import { useThreadsContext } from './threadsContext';
-import { useProfiles } from './profilesContext';
+import { offersIntelligenceChoice, useProfiles } from './profilesContext';
 import { ToolGroup } from './ToolGroup';
 import { TooltipIconButton } from './TooltipIconButton';
 import { useTurnFeedback } from './turnFeedback';
@@ -436,8 +444,8 @@ const Composer: React.FC = () => {
           <ThreadPrimitive.If running={false}>
             <SendAsThreadMenu
               profiles={controls.sendAsThread.profiles}
-              onSend={(profileId) => {
-                controls.sendAsThread?.prepare(profileId);
+              onSend={(profileId, tierId) => {
+                controls.sendAsThread?.prepare(profileId, tierId);
                 void aui.composer.send();
               }}
             />
@@ -448,10 +456,14 @@ const Composer: React.FC = () => {
   );
 };
 
-/** Sends what the composer holds to an assistant other than Home's own. */
+/**
+ * Sends what the composer holds to an assistant other than Home's own. An
+ * assistant that offers a choice of model opens a submenu of them; `tierId` is
+ * left out for one that doesn't, so Home's choice carries over where it can.
+ */
 const SendAsThreadMenu: React.FC<{
-  profiles: { id: string; label: string }[];
-  onSend: (profileId: string) => void;
+  profiles: SendAsThreadProfile[];
+  onSend: (profileId: string, tierId?: string | null) => void;
 }> = ({ profiles, onSend }) => {
   const canSend = useAuiState((s) => s.composer.canSend && s.composer.text.trim().length > 0);
   return (
@@ -471,15 +483,56 @@ const SendAsThreadMenu: React.FC<{
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" side="top">
         <DropdownMenuLabel>Send to</DropdownMenuLabel>
-        {profiles.map((profile) => (
-          <DropdownMenuItem
-            key={profile.id}
-            onSelect={() => onSend(profile.id)}
-            data-testid={`send-as-thread-${profile.id}`}
-          >
-            {profile.label}
-          </DropdownMenuItem>
-        ))}
+        {profiles.map((profile) =>
+          offersIntelligenceChoice(profile.tiers, profile.presets) ? (
+            <DropdownMenuSub key={profile.id}>
+              <DropdownMenuSubTrigger data-testid={`send-as-thread-${profile.id}`}>
+                {profile.label}
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="max-h-[60vh] overflow-y-auto">
+                {profile.tiers.map((tier) => (
+                  <DropdownMenuItem
+                    key={tier.id}
+                    onSelect={() =>
+                      onSend(profile.id, tier.id === profile.defaultTierId ? null : tier.id)
+                    }
+                    data-testid={`send-as-thread-${profile.id}-${tier.id}`}
+                  >
+                    <span>{tier.label}</span>
+                    {tier.id === profile.defaultTierId && (
+                      <span className="ml-auto text-xs text-muted-foreground">Default</span>
+                    )}
+                  </DropdownMenuItem>
+                ))}
+                {profile.presets.length > 0 && (
+                  <>
+                    {profile.tiers.length > 0 && <DropdownMenuSeparator />}
+                    <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                      Specific model
+                    </DropdownMenuLabel>
+                    {profile.presets.map((preset) => (
+                      <DropdownMenuItem
+                        key={preset.id}
+                        onSelect={() => onSend(profile.id, preset.id)}
+                        data-testid={`send-as-thread-${profile.id}-${preset.id}`}
+                      >
+                        {preset.label}
+                      </DropdownMenuItem>
+                    ))}
+                  </>
+                )}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+          ) : (
+            <DropdownMenuItem
+              key={profile.id}
+              onSelect={() => onSend(profile.id)}
+              data-testid={`send-as-thread-${profile.id}`}
+            >
+              {profile.label}
+            </DropdownMenuItem>
+          )
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );
