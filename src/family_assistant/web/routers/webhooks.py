@@ -2,10 +2,11 @@ import hashlib
 import hmac
 import json
 import logging
+import mimetypes
 import os
 import re
 import uuid
-from collections.abc import MutableMapping
+from collections.abc import Iterator, MutableMapping
 from datetime import UTC, datetime
 from email import policy
 from email.message import EmailMessage
@@ -17,6 +18,7 @@ from dateutil.parser import parse as parse_datetime
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from markdownify import markdownify
 from pydantic import BaseModel, ValidationError
+from starlette.datastructures import FormData
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from family_assistant.email_intake.actions import EMAIL_INTAKE_ACTION_TASK_TYPE
@@ -44,7 +46,7 @@ from family_assistant.web.dependencies import get_db
 from family_assistant.web.models import WebhookEventPayload
 
 if TYPE_CHECKING:
-    from family_assistant.config_models import AppConfig
+    from family_assistant.config_models import AppConfig, EmailIntakeConfig
     from family_assistant.events.webhook_source import WebhookEventSource
     from family_assistant.services.notifier import Notifier
 
@@ -143,6 +145,173 @@ def _populate_missing_body_fields_from_mime(
             form_data_dict["stripped-text"] = stripped_text_body
     if needs_stripped_html and mime_body.html is not None:
         form_data_dict["stripped-html"] = mime_body.html
+
+
+class InboundAttachment(BaseModel):
+    """An attachment received with an inbound email, before it is saved."""
+
+    filename: str
+    content_type: str
+    content: bytes
+
+
+def _safe_attachment_filename(filename: str | None, content_type: str) -> str:
+    safe_filename = os.path.basename(filename or "").strip()
+    if safe_filename:
+        return safe_filename
+    extension = mimetypes.guess_extension(content_type) or ".bin"
+    return f"attachment{extension}"
+
+
+def _iter_mime_leaf_parts(part: EmailMessage) -> Iterator[EmailMessage]:
+    # An attached ``message/rfc822`` is one attachment, so the walk does not
+    # descend into it the way ``EmailMessage.walk`` would.
+    if part.get_content_maintype() != "multipart":
+        yield part
+        return
+    for subpart in part.iter_parts():
+        if isinstance(subpart, EmailMessage):
+            yield from _iter_mime_leaf_parts(subpart)
+
+
+def _mime_part_bytes(part: EmailMessage) -> bytes | None:
+    if part.get_content_maintype() == "message":
+        payload = part.get_payload()
+        if isinstance(payload, list) and payload:
+            inner = payload[0]
+            if isinstance(inner, EmailMessage):
+                return inner.as_bytes()
+        return None
+    content = part.get_payload(decode=True)
+    return content if isinstance(content, bytes) else None
+
+
+def _extract_mime_attachments(raw_mime: bytes) -> list[InboundAttachment]:
+    """Return the attachments of a raw RFC 822 message.
+
+    A part is an attachment when its disposition says so or when it carries a
+    filename (an inline image, say); text bodies without one are left to
+    ``_extract_mime_body_content``.
+    """
+    message = BytesParser(policy=policy.default).parsebytes(raw_mime)
+    attachments: list[InboundAttachment] = []
+    for part in _iter_mime_leaf_parts(message):
+        filename = part.get_filename()
+        if part.get_content_disposition() != "attachment" and filename is None:
+            continue
+        content_type = part.get_content_type()
+        content = _mime_part_bytes(part)
+        if content is None:
+            logger.warning(
+                "Skipping undecodable %s MIME attachment part '%s'",
+                content_type,
+                filename,
+            )
+            continue
+        attachments.append(
+            InboundAttachment(
+                filename=_safe_attachment_filename(filename, content_type),
+                content_type=content_type,
+                content=content,
+            )
+        )
+    return attachments
+
+
+async def _read_form_attachments(
+    form_data: FormData, attachment_count: int
+) -> list[InboundAttachment]:
+    """Read Mailgun's ``attachment-N`` upload fields."""
+    attachments: list[InboundAttachment] = []
+    for i in range(1, attachment_count + 1):
+        attachment_field_name = f"attachment-{i}"
+        form_item = form_data.get(attachment_field_name)
+        if isinstance(form_item, StarletteUploadFile) and form_item.filename:
+            try:
+                await form_item.seek(0)
+                content = await form_item.read()
+            finally:
+                await form_item.close()
+            content_type = form_item.content_type or "application/octet-stream"
+            attachments.append(
+                InboundAttachment(
+                    filename=_safe_attachment_filename(
+                        form_item.filename, content_type
+                    ),
+                    content_type=content_type,
+                    content=content,
+                )
+            )
+        elif form_item:
+            detailed_reason = f"Type: {type(form_item)}"
+            if isinstance(form_item, StarletteUploadFile):
+                detailed_reason += f", Filename: '{form_item.filename}'"
+            else:
+                detailed_reason += f", Value: {str(form_item)[:100]}"
+            logger.warning(
+                "Skipping attachment field %s: not a valid UploadFile with "
+                "filename. Details: %s",
+                attachment_field_name,
+                detailed_reason,
+            )
+    return attachments
+
+
+async def _save_inbound_attachments(
+    attachments: list[InboundAttachment],
+    *,
+    attachment_storage_path: str,
+    email_intake_config: EmailIntakeConfig,
+) -> list[AttachmentData]:
+    """Write an email's attachments under one batch directory.
+
+    The returned ``storage_path`` is relative to ``attachment_storage_path``
+    so environment moves (mounts, restores) stay portable:
+    ``AttachmentRegistry.get_attachment_path`` rejoins it against
+    ``email_attachment_base_path`` at read time.
+    """
+    total_attachment_size = 0
+    for attachment in attachments:
+        total_attachment_size += len(attachment.content)
+        enforce_attachment_size_limits(
+            attachment_name=attachment.filename,
+            attachment_size=len(attachment.content),
+            total_attachment_size=total_attachment_size,
+            config=email_intake_config,
+        )
+
+    email_attachment_batch_id = str(uuid.uuid4())
+    base_attachment_dir = os.path.join(
+        attachment_storage_path, email_attachment_batch_id
+    )
+    os.makedirs(base_attachment_dir, exist_ok=True)
+    processed: list[AttachmentData] = []
+    for index, attachment in enumerate(attachments, start=1):
+        # The index prefix keeps two parts that share a filename from
+        # overwriting each other on disk and from collapsing to the same
+        # email-attachment dedup key (message_id, storage_path).
+        persisted_filename = f"{index}-{attachment.filename}"
+        disk_path = os.path.join(base_attachment_dir, persisted_filename)
+        persisted_storage_path = os.path.join(
+            email_attachment_batch_id, persisted_filename
+        )
+        async with aiofiles.open(disk_path, "wb") as f_out:
+            await f_out.write(attachment.content)
+        processed.append(
+            AttachmentData(
+                filename=attachment.filename,
+                content_type=attachment.content_type,
+                size=len(attachment.content),
+                storage_path=persisted_storage_path,
+            )
+        )
+        logger.info(
+            "Saved attachment '%s' to %s (stored path: %s)",
+            attachment.filename,
+            disk_path,
+            persisted_storage_path,
+        )
+    return processed
 
 
 async def _save_raw_mail_webhook(
@@ -330,22 +499,31 @@ async def handle_mail_webhook(
         # the email row. Registration with ``AttachmentRegistry`` happens later
         # in ``EmailIndexer.handle_index_email`` — a single-writer write path
         # that avoids race conditions.
-        processed_attachments: list[AttachmentData] = []
+        #
+        # Mailgun's parsed forwarding sends attachments as ``attachment-N``
+        # upload fields; MIME forwarding sends only ``body-mime`` and no
+        # ``attachment-count``, so the attachments are parsed out of the raw
+        # message instead.
+        inbound_attachments: list[InboundAttachment] = []
         attachment_count_str = form_data.get("attachment-count")
-        if (
-            isinstance(attachment_count_str, str)
-            and attachment_count_str.isdigit()
-            and int(attachment_count_str) > 0
-        ):
+        if isinstance(attachment_count_str, str) and attachment_count_str.isdigit():
+            inbound_attachments = await _read_form_attachments(
+                form_data, int(attachment_count_str)
+            )
+        elif raw_mime is not None:
+            inbound_attachments = _extract_mime_attachments(raw_mime)
+
+        processed_attachments: list[AttachmentData] = []
+        if inbound_attachments:
             if not attachment_storage_path:
                 # Only required when the email has attachments; attachment-
                 # free mail goes through without needing a mailbox dir.
                 logger.error(
-                    "/webhook/mail: attachment-count=%s but "
+                    "/webhook/mail: email has %d attachment(s) but "
                     "config.attachment_storage_path is not set; refusing "
                     "to accept inbound email with attachments without a "
                     "configured attachment directory.",
-                    attachment_count_str,
+                    len(inbound_attachments),
                 )
                 raise HTTPException(
                     status_code=503,
@@ -354,107 +532,11 @@ async def handle_mail_webhook(
                         "unconfigured but email has attachments"
                     ),
                 )
-            attachment_count = int(attachment_count_str)
-            # Generate a single UUID for this email's attachments directory
-            email_attachment_batch_id = str(uuid.uuid4())
-            total_attachment_size = 0
-
-            # On-disk write location for the batch: resolved against the
-            # configured mailbox base (validated non-empty just above).
-            # We persist a path *relative* to that base so environment
-            # moves (mounts, restores) stay portable:
-            # ``AttachmentRegistry.get_attachment_path`` rejoins the
-            # relative path against ``email_attachment_base_path`` at
-            # read time.
-            base_attachment_dir = os.path.join(
-                attachment_storage_path, email_attachment_batch_id
+            processed_attachments = await _save_inbound_attachments(
+                inbound_attachments,
+                attachment_storage_path=attachment_storage_path,
+                email_intake_config=email_intake_config,
             )
-
-            for i in range(1, attachment_count + 1):
-                attachment_field_name = f"attachment-{i}"
-                form_item = form_data.get(attachment_field_name)
-
-                if isinstance(form_item, StarletteUploadFile) and form_item.filename:
-
-                    async def save_attachment(
-                        current_form_item: StarletteUploadFile,
-                        attachment_index: int,
-                    ) -> None:
-                        nonlocal total_attachment_size
-                        assert current_form_item.filename is not None
-                        os.makedirs(base_attachment_dir, exist_ok=True)
-                        # Sanitize filename (basic)
-                        safe_filename = os.path.basename(current_form_item.filename)
-                        # Prefix the saved filename with the attachment index
-                        # so that two parts sharing the same filename don't
-                        # overwrite each other on disk and don't collapse to
-                        # the same email-attachment dedup key
-                        # (message_id, storage_path).
-                        persisted_filename = f"{attachment_index}-{safe_filename}"
-                        # Disk I/O happens at the absolute path; the
-                        # registry row stores the relative path so
-                        # environment moves (mounts, restores) stay
-                        # portable. ``AttachmentRegistry`` rejoins it
-                        # against ``email_attachment_base_path`` at read
-                        # time.
-                        disk_path = os.path.join(
-                            base_attachment_dir, persisted_filename
-                        )
-                        persisted_storage_path = os.path.join(
-                            email_attachment_batch_id, persisted_filename
-                        )
-
-                        # Save the uploaded file
-                        await current_form_item.seek(
-                            0
-                        )  # Ensure pointer is at the start
-                        content = await current_form_item.read()
-                        size = len(content)
-                        total_attachment_size += size
-                        enforce_attachment_size_limits(
-                            attachment_name=safe_filename,
-                            attachment_size=size,
-                            total_attachment_size=total_attachment_size,
-                            config=email_intake_config,
-                        )
-                        async with aiofiles.open(disk_path, "wb") as f_out:
-                            await f_out.write(content)
-
-                        attachment_mime_type = (
-                            current_form_item.content_type or "application/octet-stream"
-                        )
-                        processed_attachments.append(
-                            AttachmentData(
-                                filename=safe_filename,
-                                content_type=attachment_mime_type,
-                                size=size,
-                                storage_path=persisted_storage_path,
-                            )
-                        )
-                        logger.info(
-                            f"Saved attachment '{safe_filename}' to {disk_path} "
-                            f"(stored path: {persisted_storage_path})"
-                        )
-
-                    try:
-                        await save_attachment(form_item, i)
-                    except EmailIntakePayloadTooLargeError:
-                        raise
-                    except Exception as e:
-                        logger.exception(
-                            f"Failed to save attachment {form_item.filename}: {e}"
-                        )
-                    finally:
-                        await form_item.close()  # Close the upload file
-                elif form_item:  # Not an UploadFile or no filename
-                    detailed_reason = f"Type: {type(form_item)}"
-                    if isinstance(form_item, StarletteUploadFile):
-                        detailed_reason += f", Filename: '{form_item.filename}'"
-                    else:
-                        detailed_reason += f", Value: {str(form_item)[:100]}"  # Log first 100 chars if not UploadFile
-                    logger.warning(
-                        f"Skipping attachment field {attachment_field_name}: not a valid UploadFile with filename. Details: {detailed_reason}"
-                    )
 
         # --- Create Pydantic Model ---
         # Convert form_data (FormData) to a plain dict for Pydantic parsing

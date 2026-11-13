@@ -16,6 +16,7 @@ import hashlib
 import hmac
 import time
 import uuid
+from email.message import EmailMessage
 from pathlib import Path
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
@@ -402,6 +403,116 @@ async def test_webhook_persists_duplicate_filenames_as_distinct_parts(
         )
     )
     assert len(registry_rows) == 2
+
+
+def _mime_message_with_parts(message_id: str) -> EmailMessage:
+    message = EmailMessage()
+    message["From"] = f"Buyer <{SENDER}>"
+    message["To"] = f"Orders <{RECIPIENT}>"
+    message["Subject"] = "Ticket"
+    message["Message-ID"] = message_id
+    message.set_content("Please find your ticket attached.")
+    message.add_alternative("<p>Please find your ticket attached.</p>", subtype="html")
+    return message
+
+
+async def _stored_attachments(
+    db_engine: AsyncEngine, message_id: str
+) -> list[AttachmentData]:
+    db_context = Database(engine=db_engine)
+    email_row = await db_context.fetch_one(
+        select(received_emails_table.c.attachment_info).where(
+            received_emails_table.c.message_id_header == message_id
+        )
+    )
+    assert email_row is not None
+    return [
+        AttachmentData.model_validate(item)
+        for item in email_row["attachment_info"] or []
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_webhook_saves_attachments_from_mime_forwarded_email(
+    api_client: httpx.AsyncClient,
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """MIME forwarding sends no ``attachment-N`` fields, only ``body-mime``."""
+    _configure_app(monkeypatch, tmp_path)
+    message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
+    message = _mime_message_with_parts(message_id)
+    message.add_attachment(
+        b"%PDF-1.4 booking form",
+        maintype="application",
+        subtype="pdf",
+        filename="booking-form.pdf",
+    )
+    message.add_attachment(
+        b"\x89PNG inline logo",
+        maintype="image",
+        subtype="png",
+        filename="logo.png",
+        disposition="inline",
+    )
+    form = _mailgun_form(message_id=message_id)
+    form["body-mime"] = message.as_bytes().decode("utf-8")
+
+    response = await api_client.post("/webhook/mail/mime", data=form)
+
+    assert response.status_code == 200, response.text
+    stored = await _stored_attachments(db_engine, message_id)
+    assert [(a.filename, a.content_type, a.size) for a in stored] == [
+        ("booking-form.pdf", "application/pdf", len(b"%PDF-1.4 booking form")),
+        ("logo.png", "image/png", len(b"\x89PNG inline logo")),
+    ]
+    assert (tmp_path / "mailbox" / stored[0].storage_path).read_bytes() == (
+        b"%PDF-1.4 booking form"
+    )
+    assert (tmp_path / "mailbox" / stored[1].storage_path).read_bytes() == (
+        b"\x89PNG inline logo"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_webhook_saves_attached_message_from_mime_as_one_attachment(
+    api_client: httpx.AsyncClient,
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A forwarded email attached as ``message/rfc822`` is one ``.eml`` file,
+    not its own parts."""
+    _configure_app(monkeypatch, tmp_path)
+    message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
+    forwarded = EmailMessage()
+    forwarded["From"] = "School <office@school.example>"
+    forwarded["Subject"] = "Vacation care"
+    forwarded.set_content("Bookings open Monday.")
+    forwarded.add_attachment(
+        b"%PDF-1.4 program",
+        maintype="application",
+        subtype="pdf",
+        filename="program.pdf",
+    )
+    message = _mime_message_with_parts(message_id)
+    message.add_attachment(forwarded)
+    form = _mailgun_form(message_id=message_id)
+    form["body-mime"] = message.as_bytes().decode("utf-8")
+
+    response = await api_client.post("/webhook/mail/mime", data=form)
+
+    assert response.status_code == 200, response.text
+    stored = await _stored_attachments(db_engine, message_id)
+    assert [(a.filename, a.content_type) for a in stored] == [
+        ("attachment.eml", "message/rfc822")
+    ]
+    saved = (tmp_path / "mailbox" / stored[0].storage_path).read_bytes()
+    assert b"Subject: Vacation care" in saved
+    assert b"program.pdf" in saved
 
 
 @pytest.mark.asyncio
