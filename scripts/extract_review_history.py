@@ -87,8 +87,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import yaml
-from sqlalchemy.engine import make_url
 
+from family_assistant.eval.history_access import open_read_only_engine
 from family_assistant.eval.private_paths import (
     PRIVATE_EVAL_DIR_NAME,
     PrivateEvalPathError,
@@ -104,7 +104,6 @@ from family_assistant.eval.tool_call_review.scrub import (
     TemplatePrivacyError,
     declared_argument_shapes,
 )
-from family_assistant.storage.base import create_engine_with_sqlite_optimizations
 from family_assistant.storage.database import Database
 
 if TYPE_CHECKING:
@@ -391,42 +390,6 @@ def _partition_templates(
     return committable, rejected
 
 
-def _read_only_url(database_url: str) -> str:
-    """Rewrite a file-backed SQLite URL to open read-only.
-
-    Turning the tuning pragmas off stopped this rewriting the file it reads, but
-    not opening it for writing: SQLite *creates* a database that is not there,
-    so a typo in ``--database-url`` left a new empty file behind before the
-    query failed, under ``--dry-run`` too. Read-only mode is the rule the
-    earlier no-init and no-pragmas fixes were each an instance of -- the driver
-    refuses any write this tool could attempt, including one added later by
-    someone who did not read this docstring.
-
-    The URL is parsed and rebuilt rather than concatenated. Appending
-    ``?mode=ro&uri=true`` to a URL that already carries parameters produces a
-    second ``?``, which SQLAlchemy folds into the preceding value
-    (``timeout=5?mode=ro``) and then sees no ``mode`` at all -- the protection
-    silently absent exactly where a URL was most deliberately written.
-
-    Only file-backed SQLite is rewritten. ``:memory:`` has nothing to protect,
-    a URL already in URI form is left as the caller wrote it (see the known
-    limitation in the extraction runbook), and PostgreSQL grants read-only
-    access through its own role system rather than the URL.
-    """
-    url = make_url(database_url)
-    if not url.drivername.startswith("sqlite"):
-        return database_url
-    database = url.database
-    if not database or database.startswith("file:") or database == ":memory:":
-        return database_url
-    return str(
-        url.set(database=f"file:{database}").update_query_dict({
-            "mode": "ro",
-            "uri": "true",
-        })
-    )
-
-
 async def _collect_templates(
     database_url: str,
     *,
@@ -435,9 +398,7 @@ async def _collect_templates(
     since: datetime | None = None,
     descriptor_registry: Mapping[str, ToolDescriptor] | None = None,
 ) -> tuple[list[TaskTemplate], list[tuple[str, str]]]:
-    engine = create_engine_with_sqlite_optimizations(
-        _read_only_url(database_url), apply_sqlite_pragmas=False
-    )
+    engine = open_read_only_engine(database_url)
     try:
         db = Database(engine)
         grouped = await db.message_history.get_all_grouped(
