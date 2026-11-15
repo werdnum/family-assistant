@@ -162,6 +162,9 @@ class _ToolOutcome:
     event: LLMStreamEvent
     message: ToolMessage
     attachment_updates: Callable[[list[str]], None] | None = None
+    # Set once the loop's caller has taken the result, and so saved every row
+    # before it. Only then is the result returned to Claude Code.
+    handed_over: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 @dataclass
@@ -273,6 +276,8 @@ class _TurnContext:
 
 
 type _Output = tuple[LLMStreamEvent, LLMMessage | None]
+# An output item and the event its consumer sets on asking for the next one.
+type _Handoff = tuple[_Output, asyncio.Event]
 
 
 class _TurnSession:
@@ -287,7 +292,7 @@ class _TurnSession:
         loop: ClaudeAgentLoop,
         turn: _TurnContext,
         model: ClaudeAgentModel,
-        output: asyncio.Queue[_Output | _Done | _Failed],
+        output: asyncio.Queue[_Handoff | _Done | _Failed],
     ) -> None:
         self.loop = loop
         self.turn = turn
@@ -366,13 +371,13 @@ class _TurnSession:
 
         if self.turn_ending:
             text = "Not executed: this turn has already ended."
-            await self.inbox.put(_tool_outcome(call, text, tracker, error="turn_ended"))
+            await self._answer(_tool_outcome(call, text, tracker, error="turn_ended"))
             return _mcp_text(text, is_error=True)
 
         if self.turn.allow_quiet_end and name == END_TURN_QUIETLY_TOOL_NAME:
             self.quiet_reason = quiet_end_reason(call)
             self.turn_ending = True
-            await self.inbox.put(_tool_outcome(call, QUIET_END_TOOL_RESULT, tracker))
+            await self._answer(_tool_outcome(call, QUIET_END_TOOL_RESULT, tracker))
             return _mcp_text(QUIET_END_TOOL_RESULT)
 
         turn = self.turn
@@ -402,7 +407,7 @@ class _TurnSession:
         )
         if self.review_state.terminal_denial_escalation_message is not None:
             self.turn_ending = True
-        await self.inbox.put(
+        await self._answer(
             _ToolOutcome(
                 event=result.stream_event,
                 message=result.llm_message,
@@ -411,10 +416,24 @@ class _TurnSession:
         )
         return _mcp_result(result.llm_message)
 
+    async def _answer(self, outcome: _ToolOutcome) -> None:
+        """Queue a call's result, returning once its row has been handed over."""
+        await self.inbox.put(outcome)
+        await outcome.handed_over.wait()
+
     # -- output -------------------------------------------------------------
 
     async def _emit(self, event: LLMStreamEvent, message: LLMMessage | None) -> None:
-        await self.output.put((event, message))
+        """Output one item, returning once the caller has asked for the next.
+
+        The caller saves each message before asking for the next one, so when
+        this returns the message is durable. That is the ordinary loop's
+        back-pressure, which a queue would otherwise remove: no tool runs, and
+        no result reaches Claude Code, ahead of the rows that record them.
+        """
+        taken = asyncio.Event()
+        await self.output.put(((event, message), taken))
+        await taken.wait()
 
     async def _emit_done(
         self, message: AssistantMessage, reasoning: MessageReasoningInfo | None
@@ -555,6 +574,7 @@ class _TurnSession:
                 self.outstanding.discard(item.message.tool_call_id)
                 await self._emit(item.event, item.message)
                 self.turn.messages.append(item.message)
+                item.handed_over.set()
                 if self.turn_ending and not self.outstanding:
                     await client.interrupt()
                     return
@@ -759,7 +779,7 @@ class ClaudeAgentLoop(LLMStreamingLoop):
         if trailing_instruction:
             prompt.content.append({"type": "text", "text": trailing_instruction})
 
-        output: asyncio.Queue[_Output | _Done | _Failed] = asyncio.Queue()
+        output: asyncio.Queue[_Handoff | _Done | _Failed] = asyncio.Queue()
         session = _TurnSession(
             self,
             _TurnContext(
@@ -806,7 +826,9 @@ class ClaudeAgentLoop(LLMStreamingLoop):
                     return
                 if isinstance(item, _Failed):
                     raise item.error
-                yield item
+                output_item, taken = item
+                yield output_item
+                taken.set()
         finally:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)

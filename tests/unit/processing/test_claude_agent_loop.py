@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any, NoReturn
 from zoneinfo import ZoneInfo
 
@@ -12,8 +13,17 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.config_models import AppConfig, ClaudeAgentConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import LLMOutput
-from family_assistant.llm.messages import AssistantMessage, ToolMessage
-from family_assistant.llm.model_selection import ModelTierEligibility, ModelTierOption
+from family_assistant.llm.messages import (
+    AssistantMessage,
+    SystemMessage,
+    ToolMessage,
+    UserMessage,
+)
+from family_assistant.llm.model_selection import (
+    ModelTierEligibility,
+    ModelTierOption,
+    ResolvedModelSelection,
+)
 from family_assistant.llm.model_tiers import ClaudeAgentModel
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.processing.claude_agent_loop import (
@@ -311,3 +321,58 @@ async def test_review_of_a_later_call_sees_the_turn_so_far(
         for message in reviewed[1]
         if isinstance(message, ToolMessage)
     ] == [first.id]
+
+
+@pytest.mark.asyncio
+async def test_no_tool_runs_before_its_call_is_saved(db_engine: AsyncEngine) -> None:
+    """The caller saves each message before asking for the next.
+
+    Held on the assistant message that makes a call, the session must not
+    run the call: a crash then would leave a side effect with no row for it.
+    """
+    executed = asyncio.Event()
+
+    async def record(city: str, exec_context: ToolExecutionContext) -> str:
+        executed.set()
+        return f"Weather in {city}: 21C, sunny"
+
+    fake = FakeClaudeCode(
+        responses=[
+            FakeResponse([_weather_call()]),
+            FakeResponse([FakeText("Sunny.")]),
+        ]
+    )
+    service = _service(fake)
+    tools = service.tool_executor.tools_provider
+    assert isinstance(tools, MockToolsProvider)
+    tools.tools["get_weather"] = record
+    stream = service.llm_loop.run_stream(
+        db_context=Database(db_engine),
+        messages=[
+            SystemMessage(content="You are a household assistant."),
+            UserMessage(content="Weather in Paris?"),
+        ],
+        interface_type="test",
+        conversation_id="conv-1",
+        user_name="TestUser",
+        turn_id="turn-1",
+        chat_interface=None,
+        llm_client=service.llm_client,
+        model_selection=ResolvedModelSelection.unselected(TIER),
+    )
+    async for _event, message in stream:
+        if isinstance(message, AssistantMessage) and message.tool_calls:
+            break
+    held_executed = await _set_within(executed, seconds=1.0)
+    async for _ in stream:
+        pass
+
+    assert (held_executed, executed.is_set()) == (False, True)
+
+
+async def _set_within(event: asyncio.Event, *, seconds: float) -> bool:
+    try:
+        await asyncio.wait_for(event.wait(), timeout=seconds)
+    except TimeoutError:
+        return False
+    return True
