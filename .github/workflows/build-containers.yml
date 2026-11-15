@@ -278,7 +278,13 @@ jobs:
           set -e
 
           NEW_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}@${IMAGE_DIGEST}"
-          DEPLOYMENT_PATH="kubernetes/manifests/workloads/family-assistant/Deployment-family-assistant.yaml"
+          # The demo runs the same image as prod, so it moves with it rather than being pinned by hand.
+          # Its file holds several documents, hence the kind filter: without it yq adds an empty
+          # spec.template to every other document.
+          DEPLOYMENT_PATHS=(
+            "kubernetes/manifests/workloads/family-assistant/Deployment-family-assistant.yaml"
+            "kubernetes/manifests/workloads/family-assistant-demo/deployment.yaml"
+          )
 
           git clone "https://x-access-token:${GH_TOKEN}@github.com/werdnum/kube-config.git" kube-config
           cd kube-config
@@ -289,13 +295,15 @@ jobs:
           sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
           sudo chmod +x /usr/local/bin/yq
 
-          yq eval -i "(.spec.template.spec.containers[] | select(.name == \"family-assistant\") | .image) = \"${NEW_IMAGE}\"" \
-            "${DEPLOYMENT_PATH}"
+          for path in "${DEPLOYMENT_PATHS[@]}"; do
+            yq eval -i "(select(.kind == \"Deployment\") | .spec.template.spec.containers[] | select(.name == \"family-assistant\") | .image) = \"${NEW_IMAGE}\"" \
+              "${path}"
+          done
 
           if git diff --quiet; then
             echo "No changes to commit"
           else
-            git add "${DEPLOYMENT_PATH}"
+            git add "${DEPLOYMENT_PATHS[@]}"
             git commit -m "chore(family-assistant): update image to ${IMAGE_DIGEST:0:12}
 
           Source: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}"
