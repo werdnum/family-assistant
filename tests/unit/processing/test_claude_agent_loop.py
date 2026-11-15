@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any, NoReturn
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -33,6 +34,13 @@ from tests.mocks.fake_claude_code import (
 )
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
 from tests.mocks.mock_tools_provider import MockToolsProvider
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from family_assistant.llm.messages import LLMMessage
+    from family_assistant.llm.tool_call import ToolCallItem
+    from family_assistant.processing.types import ToolExecutionResult
 
 TIER = "claude_opus_5_5"
 
@@ -246,3 +254,60 @@ async def test_recorded_session_replays_into_history(db_engine: AsyncEngine) -> 
         for call in message.tool_calls or ()
     ]
     assert calls == [("get_weather", {"city": "Paris"})]
+
+
+@pytest.mark.asyncio
+async def test_executor_failure_fails_the_turn(
+    db_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeClaudeCode(
+        responses=[
+            FakeResponse([_weather_call()]),
+            FakeResponse([FakeText("This should never be reached.")]),
+        ]
+    )
+    service = _service(fake)
+
+    async def failing_execute(*_args: object, **_kwargs: object) -> NoReturn:
+        raise OSError("attachment storage is full")
+
+    monkeypatch.setattr(service.tool_executor, "execute", failing_execute)
+    result = await _interact(service, db_engine, "Weather in Paris?")
+
+    assert "attachment storage is full" in (result.error_traceback or "")
+
+
+@pytest.mark.asyncio
+async def test_review_of_a_later_call_sees_the_turn_so_far(
+    db_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first, second = (
+        _weather_call(),
+        FakeToolUse(name=mcp_tool_name("get_weather"), input={"city": "Rome"}),
+    )
+    fake = FakeClaudeCode(
+        responses=[
+            FakeResponse([first]),
+            FakeResponse([second]),
+            FakeResponse([FakeText("Both sunny.")]),
+        ]
+    )
+    service = _service(fake)
+    execute = service.tool_executor.execute
+    reviewed: list[Sequence[LLMMessage]] = []
+
+    async def recording_execute(
+        call: ToolCallItem,
+        **kwargs: Any,  # noqa: ANN401 - forwards the executor's keyword arguments unchanged
+    ) -> ToolExecutionResult:
+        reviewed.append(kwargs["tool_call_review_messages"])
+        return await execute(call, **kwargs)
+
+    monkeypatch.setattr(service.tool_executor, "execute", recording_execute)
+    await _interact(service, db_engine, "Weather in Paris and Rome?")
+
+    assert [
+        message.tool_call_id
+        for message in reviewed[1]
+        if isinstance(message, ToolMessage)
+    ] == [first.id]

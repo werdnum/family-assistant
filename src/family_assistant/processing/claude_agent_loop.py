@@ -334,6 +334,21 @@ class _TurnSession:
     async def call_tool(
         self, name: str, arguments: dict[str, object]
     ) -> mcp_types.CallToolResult:
+        """Run one of the session's tool calls, failing the turn if it cannot.
+
+        The MCP server answers a handler's exception to Claude as an error
+        result, so the session would carry on past a call whose result was
+        never saved. The turn fails instead, as it would on the ordinary loop.
+        """
+        try:
+            return await self._run_tool_call(name, arguments)
+        except Exception as exc:
+            await self.inbox.put(_Failed(exc))
+            raise
+
+    async def _run_tool_call(
+        self, name: str, arguments: dict[str, object]
+    ) -> mcp_types.CallToolResult:
         pending = self.tool_use_ids.get(self._call_key(name, arguments))
         if not pending:
             msg = f"Tool call to '{name}' arrived without a recorded tool_use id"
@@ -414,6 +429,8 @@ class _TurnSession:
             llm_client=self.turn.llm_client,
         )
         await self._emit(LLMStreamEvent(type="done", metadata=metadata), message)
+        # The turn so far, for the tool-call review of every later call.
+        self.turn.messages.append(message)
 
     async def _emit_closing(self, text: str, *, ended_quietly: bool = False) -> None:
         """A closing assistant message the loop writes itself."""
@@ -537,6 +554,7 @@ class _TurnSession:
                     item.attachment_updates(self.pending_attachment_ids)
                 self.outstanding.discard(item.message.tool_call_id)
                 await self._emit(item.event, item.message)
+                self.turn.messages.append(item.message)
                 if self.turn_ending and not self.outstanding:
                     await client.interrupt()
                     return
