@@ -25,11 +25,22 @@ OpenAI documents its errors and limits.
 
 ### One plan per deployment
 
-The deployment holds at most one active ChatGPT sign-in. Every model configured with
-`provider: chatgpt` uses it, whoever the acting user is. That includes scheduled automations, which
-have no acting user. It matches how the deployment's API keys already work, and a household shares
-one plan. Per-user plans would mean resolving credentials per turn and failing automations, which
-nobody has asked for.
+The deployment holds at most one active ChatGPT sign-in, and every direct-OpenAI chat model uses it,
+whoever the acting user is. That includes scheduled automations, which have no acting user. It
+matches how the deployment's API keys already work, and a household shares one plan. Per-user plans
+would mean resolving credentials per turn and failing automations, which nobody has asked for.
+
+### Signing in is the opt-in
+
+No model configuration names the plan. Once someone signs in, every chat model that calls OpenAI
+directly tries the plan first and keeps its API key as the fallback; signing out puts them all back
+on the key. Asking each deployment to rewrite its model tiers would make the sign-in do nothing
+until an operator also edited configuration, for the same models every time.
+
+The one switch is `chatgpt_plan.enabled` (default on). Off, there is no sign-in in the web app and
+no model is routed to the plan. Direct OpenAI means the `openai` provider at OpenAI's own endpoint:
+OpenRouter, other compatible endpoints (`base_url`, `OPENAI_BASE_URL`), embeddings and image
+generation stay on their keys, because the plan serves none of them.
 
 Any authenticated user may sign in or sign out. The app has no admin role, and these are household
 members.
@@ -80,35 +91,45 @@ the published revocation endpoint (best effort), then clears the tokens.
 
 ### Inference
 
-`provider: chatgpt` selects `ChatGPTPlanClient`, a subclass of `OpenAIClient` that is always on the
-Responses API. Its SDK client takes its bearer token from the credential store before each request.
-The route has some extra requirements:
+`ChatGPTPlanClient` is a subclass of `OpenAIClient` that is always on the Responses API. Its SDK
+client takes its bearer token from the credential store before each request. The route has some
+extra requirements:
 
 | Route requirement                                             | How the client meets it                                                                                                 |
 | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | `store: false`, `stream: true` on every request               | Forced. Non-streaming calls are streamed and collected through `response.completed`.                                    |
 | No `system` items                                             | System messages are sent as `developer` messages.                                                                       |
-| No `max_output_tokens`, `temperature`, `top_p`, `metadata`, … | A configured unsupported parameter is a startup error.                                                                  |
+| No `max_output_tokens`, `temperature`, `top_p`, `metadata`, … | A model configured with one stays on its API key; the plan client is never built for it.                                |
 | No Chat Completions                                           | Structured and JSON output use Responses `text.format`.                                                                 |
 | Function tools only inside a namespace or `additional_tools`  | Tools are declared in one `family_assistant` namespace; replayed calls name it, and the direct OpenAI client strips it. |
 | Usage-limit errors (`subscription_sharing_*`)                 | Mapped to the typed errors: limits to `RateLimitError`, eligibility to `AuthenticationError`, and so on.                |
 
-Not being signed in raises `AuthenticationError` with a message pointing at Settings. A
-`retry_config` whose fallback is an API-key model therefore keeps a profile working while the plan
-is exhausted or signed out. This is the recommended configuration. The fallback may be the same
-model on an API key: a retry fallback is skipped as redundant only when its configuration is
-identical to the primary's, not merely its model name.
+### Routing
 
-Models that only exist on the plan side are named as usual, for example
-`{model: gpt-6.1-sol, provider: chatgpt}`.
+The factory wraps each direct-OpenAI model in `PlanFirstClient`, holding the plan client and the
+model's ordinary API-key client:
+
+- Nobody signed in: straight to the API key, with no failed attempt first.
+- Signed in: the plan. A failure before anything was produced -- usage limit, refused model or
+  parameter, eligibility, a transient error -- is answered by the API key. Once the plan has started
+  streaming an answer, a later failure is that answer's, as on any provider.
+- A failure that will repeat pauses the plan for that model: an hour for a refusal, fifteen minutes
+  for a usage limit, which lifts on the plan's own window. That bounds the wasted attempts to one
+  per pause, not one per call.
+- No OpenAI key at all: the plan is the only route, and its error is the answer when it fails.
+
+The wrapper sits inside a tier's chain like any client, so the chain's own fallback (another
+provider) still follows when both the plan and the key fail. Flex applies to the API-key client
+only; the plan has no price class to choose.
 
 ## Deliberate simplifications
 
 - **No keep-alive refresh.** A refresh token lapses after 30 days unused. A deployment that leaves a
   plan model idle that long has to sign in again, which the settings page and the error message both
   say.
-- **No model picker.** Operators name models in configuration as they do for every provider. A model
-  the plan cannot use fails on its first request with OpenAI's own error.
+- **No model catalogue.** Every direct-OpenAI model is tried on the plan; one the plan does not
+  serve fails its first attempt, falls back to the key, and pauses for an hour. Reading the
+  account's model list would avoid that one attempt at the cost of keeping a catalogue fresh.
 - **Cache controls are unchanged.** `additional_tools` is documented as supported on this route. The
   client keeps the same cache-control behaviour as direct OpenAI.
 - **The paste step instead of a listener.** It costs the user one copy and paste, and needs no local

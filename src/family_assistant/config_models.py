@@ -1166,11 +1166,15 @@ class GoogleIntegrationConfig(OAuthIntegrationConfig):
 class ChatGPTPlanConfig(BaseModel):
     """Running OpenAI models on a ChatGPT plan (Sign in with ChatGPT).
 
-    Models opt in with ``provider: chatgpt``; the sign-in itself happens in the
-    web app. See docs/design/chatgpt-plan-usage.md.
+    Once someone signs in from the web app, every direct-OpenAI chat model
+    tries the plan before its API key. See docs/design/chatgpt-plan-usage.md.
     """
 
     model_config = ConfigDict(extra="forbid")
+
+    # Off removes the sign-in from the web app and keeps every OpenAI model on
+    # its API key.
+    enabled: bool = True
 
     # Fernet key for the stored tokens. Empty uses the Google integration's
     # key, which CREDENTIAL_ENCRYPTION_KEY sets for both.

@@ -36,6 +36,7 @@ CurrentUser = Annotated[dict, Depends(get_current_session_user)]
 
 class ChatGPTPlanStatusResponse(BaseModel):
     enabled: bool
+    reason: str | None
     status: str | None
     email: str | None
     connected_by_user_id: str | None
@@ -66,13 +67,16 @@ def _auth(request: Request) -> ChatGPTPlanAuth | None:
     return auth if isinstance(auth, ChatGPTPlanAuth) else None
 
 
+def _unavailable_reason(request: Request) -> str:
+    reason = getattr(request.app.state, "chatgpt_plan_unavailable_reason", None)
+    return reason if isinstance(reason, str) else "ChatGPT sign-in is not available."
+
+
 def _require_auth(request: Request) -> ChatGPTPlanAuth:
     auth = _auth(request)
     if auth is None:
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="ChatGPT sign-in is not available: CREDENTIAL_ENCRYPTION_KEY is "
-            "not set.",
+            status_code=status.HTTP_409_CONFLICT, detail=_unavailable_reason(request)
         )
     return auth
 
@@ -86,6 +90,7 @@ async def get_status(
     view = await auth.status() if auth is not None else None
     return ChatGPTPlanStatusResponse(
         enabled=auth is not None,
+        reason=None if auth is not None else _unavailable_reason(request),
         status=view.status if view else None,
         email=view.email if view else None,
         connected_by_user_id=view.connected_by_user_id if view else None,

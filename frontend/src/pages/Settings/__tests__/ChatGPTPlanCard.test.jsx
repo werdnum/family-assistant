@@ -8,6 +8,7 @@ import ChatGPTPlanCard from '../ChatGPTPlanCard';
 
 const STATUS = {
   enabled: true,
+  reason: null,
   status: null,
   email: null,
   connected_by_user_id: null,
@@ -73,12 +74,18 @@ describe('ChatGPTPlanCard', () => {
     expect(screen.getByRole('button', { name: 'Use a different account' })).toBeInTheDocument();
   });
 
-  it('explains when the deployment cannot store a sign-in', async () => {
+  it('explains why sign-in is unavailable', async () => {
     server.use(
-      http.get('/api/integrations/chatgpt', () => HttpResponse.json({ ...STATUS, enabled: false }))
+      http.get('/api/integrations/chatgpt', () =>
+        HttpResponse.json({
+          ...STATUS,
+          enabled: false,
+          reason: 'ChatGPT sign-in is turned off for this deployment.',
+        })
+      )
     );
     render(<ChatGPTPlanCard />);
 
-    expect(await screen.findByText(/ChatGPT sign-in is not available/)).toBeInTheDocument();
+    expect(await screen.findByText(/turned off for this deployment/)).toBeInTheDocument();
   });
 });

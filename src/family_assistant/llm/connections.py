@@ -45,6 +45,10 @@ class PlanCredentialError(Exception):
 class PlanTokenSource(Protocol):
     """Where a subscription-plan client gets its bearer token."""
 
+    async def available(self) -> bool:
+        """Whether someone is signed in, so a request is worth attempting."""
+        ...
+
     async def access_token(self) -> str:
         """A currently valid access token; raises PlanCredentialError."""
         ...
@@ -79,7 +83,7 @@ class ProviderConnections:
     def __init__(self) -> None:
         self._connections: dict[ConnectionKey, _Connection] = {}
         # The deployment's ChatGPT plan sign-in, installed once the database
-        # is up. `provider: chatgpt` clients cannot be built without it.
+        # is up. Direct-OpenAI models try it before their API key.
         self.chatgpt_plan: PlanTokenSource | None = None
         # Some clients are built off the event loop (the tool-call reviewer
         # builds its own in a worker thread), and two builders racing for one

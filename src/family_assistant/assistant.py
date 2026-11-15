@@ -1266,8 +1266,8 @@ class Assistant:
     def _setup_chatgpt_plan(self) -> None:
         """Make the deployment's ChatGPT sign-in available to clients and the web app.
 
-        Without an encryption key nothing can be stored, so the sign-in is
-        unavailable and a ``provider: chatgpt`` model fails to build.
+        Turned off, or without an encryption key to store it under, there is no
+        sign-in, and every OpenAI model stays on its API key.
         """
         assert self.fastapi_app is not None
         assert self.shared_httpx_client is not None
@@ -1276,8 +1276,17 @@ class Assistant:
             plan_config.credential_encryption_key.get_secret_value()
             or self.config.google_integration.credential_encryption_key.get_secret_value()
         )
+        self.fastapi_app.state.chatgpt_plan = None
+        if not plan_config.enabled:
+            self.fastapi_app.state.chatgpt_plan_unavailable_reason = (
+                "ChatGPT sign-in is turned off for this deployment."
+            )
+            return
         if not key:
-            self.fastapi_app.state.chatgpt_plan = None
+            self.fastapi_app.state.chatgpt_plan_unavailable_reason = (
+                "ChatGPT sign-in is not available: no credential encryption key is "
+                "configured."
+            )
             return
         auth = ChatGPTPlanAuth(
             self._database(),

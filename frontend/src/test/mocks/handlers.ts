@@ -675,6 +675,7 @@ export const handlers = [
   http.get('/api/integrations/chatgpt', () => {
     return HttpResponse.json({
       enabled: true,
+      reason: null,
       status: null,
       email: null,
       connected_by_user_id: null,

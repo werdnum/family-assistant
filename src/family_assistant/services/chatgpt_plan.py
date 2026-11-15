@@ -226,6 +226,11 @@ class ChatGPTPlanAuth:
 
     # -- inference ---------------------------------------------------------
 
+    async def available(self) -> bool:
+        """Whether an active sign-in exists (it may still fail to refresh)."""
+        row = await self._db.chatgpt_plan.get()
+        return row is not None and row.status == "active"
+
     async def access_token(self) -> str:
         """A currently valid access token, refreshing it if needed."""
         row = await self._usable_row()

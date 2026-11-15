@@ -14,7 +14,7 @@ from family_assistant.llm.custom_instructions import (
 
 if TYPE_CHECKING:
     from family_assistant.llm import LLMInterface
-    from family_assistant.llm.connections import ProviderConnections
+    from family_assistant.llm.connections import PlanTokenSource, ProviderConnections
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,6 @@ class LLMClientFactory:
         "openai": "family_assistant.llm.providers.openai_client.OpenAIClient",
         "google": "family_assistant.llm.providers.google_genai_client.GoogleGenAIClient",
         "anthropic": "family_assistant.llm.providers.anthropic_client.AnthropicClient",
-        "chatgpt": "family_assistant.llm.providers.chatgpt_plan_client.ChatGPTPlanClient",
     }
 
     @classmethod
@@ -106,10 +105,6 @@ class LLMClientFactory:
                 primary_model=primary_model,
                 fallback_client=fallback_client,
                 fallback_model=fallback_model,
-                fallback_is_distinct=(
-                    "fallback" in retry_config
-                    and retry_config["fallback"] != retry_config["primary"]
-                ),
             )
 
         # Simple configuration - create single client
@@ -121,8 +116,14 @@ class LLMClientFactory:
         # ast-grep-ignore: no-dict-any - LLM config dict has varying keys per provider/format
         config: dict[str, Any],
         connections: "ProviderConnections | None",
+        *,
+        try_plan: bool = True,
     ) -> "LLMInterface":
-        """Create a single LLM client (existing logic)."""
+        """Create a single LLM client.
+
+        A direct-OpenAI model tries the signed-in ChatGPT plan first unless
+        ``try_plan`` is off, which is how its API-key fallback is built.
+        """
         model = config.get("model")
         if not model:
             raise ValueError("Model must be specified in config")
@@ -150,23 +151,25 @@ class LLMClientFactory:
         # Detect OpenRouter models and configure accordingly
         is_openrouter = model.startswith("openrouter/")
 
+        plan_source = (
+            cls._plan_source(config, connections, provider, is_openrouter)
+            if try_plan
+            else None
+        )
+
         # Get API key
-        api_key = config.get("api_key")
-        if provider == "chatgpt":
-            if api_key:
-                raise ValueError(
-                    f"Model '{model}' uses provider 'chatgpt', which is billed to the "
-                    "signed-in ChatGPT plan; remove its api_key."
-                )
-            # The plan's OAuth token is fetched per request instead.
-            api_key = ""
-        elif not api_key:
+        api_key: str | None = config.get("api_key")
+        if not api_key:
             if is_openrouter:
                 api_key = os.getenv("OPENROUTER_API_KEY", "")
                 if not api_key:
                     raise ValueError(
                         "API key not found in environment: OPENROUTER_API_KEY"
                     )
+            elif plan_source is not None:
+                # With a ChatGPT sign-in available the key is only the
+                # fallback, so a deployment without one still runs.
+                api_key = os.getenv("OPENAI_API_KEY") or None
             else:
                 api_key = cls._get_api_key_for_provider(provider)
 
@@ -195,6 +198,18 @@ class LLMClientFactory:
         if flex:
             cls._validate_flex(provider, model, model_parameters, provider_params)
 
+        if plan_source is not None:
+            return cls._plan_first_client(
+                config,
+                connections,
+                plan_source,
+                api_key=api_key,
+                model_parameters=model_parameters,
+                custom_instructions=custom_instructions,
+                provider_params=provider_params,
+            )
+        assert api_key is not None
+
         # Import the provider class dynamically
         client_class_path = cls._provider_classes[provider]
         module_path, class_name = client_class_path.rsplit(".", 1)
@@ -219,6 +234,73 @@ class LLMClientFactory:
         from .flex import FlexClient  # noqa: PLC0415 - flex imports this package
 
         return FlexClient(client, model=model)
+
+    @staticmethod
+    def _plan_source(
+        # ast-grep-ignore: no-dict-any - LLM config dict has varying keys per provider/format
+        config: dict[str, Any],
+        connections: "ProviderConnections | None",
+        provider: str,
+        is_openrouter: bool,
+    ) -> "PlanTokenSource | None":
+        """The ChatGPT sign-in a model should try first, if it is plan-eligible.
+
+        Direct OpenAI only: OpenRouter and other compatible endpoints are not
+        served by the plan, and neither is a client pointed elsewhere by
+        ``OPENAI_BASE_URL``.
+        """
+        if connections is None or connections.chatgpt_plan is None:
+            return None
+        if provider != "openai" or is_openrouter:
+            return None
+        if "base_url" in config or "api_base" in config or os.getenv("OPENAI_BASE_URL"):
+            return None
+        return connections.chatgpt_plan
+
+    @classmethod
+    def _plan_first_client(
+        cls,
+        # ast-grep-ignore: no-dict-any - LLM config dict has varying keys per provider/format
+        config: dict[str, Any],
+        connections: "ProviderConnections | None",
+        source: "PlanTokenSource",
+        *,
+        api_key: str | None,
+        model_parameters: dict[str, dict[str, object]],
+        custom_instructions: str | None,
+        # ast-grep-ignore: no-dict-any - Provider kwargs have varying types.
+        provider_params: dict[str, Any],
+    ) -> "LLMInterface":
+        """An OpenAI model that tries the ChatGPT plan before its API key."""
+        from .plan_first import PlanFirstClient  # noqa: PLC0415 - provider modules load on demand
+        from .providers.chatgpt_plan_client import (  # noqa: PLC0415 - provider modules load on demand
+            ChatGPTPlanClient,
+        )
+
+        model = config["model"]
+        api = (
+            cls._create_single_client(
+                {**config, "api_key": api_key}, connections, try_plan=False
+            )
+            if api_key
+            else None
+        )
+        try:
+            plan: LLMInterface = ChatGPTPlanClient(
+                api_key="",
+                model=model,
+                model_parameters=model_parameters,
+                connections=connections,
+                **provider_params,
+            )
+        except ValueError as refused:
+            if api is None:
+                raise
+            logger.info("Model %s stays on its API key: %s", model, refused)
+            return api
+        if custom_instructions:
+            plan = CustomInstructionsClient(plan, instructions=custom_instructions)
+        return PlanFirstClient(plan, api, model=model, source=source)
 
     @classmethod
     def validate_flex_config(

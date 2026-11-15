@@ -900,39 +900,36 @@ being priced as API spend. `billing_refused` sessions mean Claude Code would hav
 
 ______________________________________________________________________
 
-### ChatGPT plan (`provider: chatgpt`)
+### ChatGPT plan (Sign in with ChatGPT)
 
-Runs an OpenAI model on a household member's ChatGPT Plus or Pro plan through OpenAI's
+Lets OpenAI models run on a household member's ChatGPT Plus or Pro plan through OpenAI's
 [Sign in with ChatGPT plan usage](https://developers.openai.com/siwc/token-sharing-open-source),
-instead of `OPENAI_API_KEY`. A model opts in by naming the provider:
+instead of billing `OPENAI_API_KEY`. There is nothing to configure per model: once someone signs in
+under Settings → Connected Accounts, every chat model that calls OpenAI directly tries the plan
+first and uses its API key only when the plan cannot serve the request.
 
-```yaml
-model_tiers:
-  gpt_6_1_sol:
-    chain:
-      - {provider: chatgpt, model: gpt-6.1-sol}
-      - {provider: openai, model: gpt-6.1-sol}  # API key, while the plan is exhausted or signed out
-```
+| Property  | Value                                                     |
+| --------- | --------------------------------------------------------- |
+| Required  | `CREDENTIAL_ENCRYPTION_KEY`, and a sign-in in the web app |
+| Default   | Available; unused until someone signs in                  |
+| Sensitive | Tokens are stored encrypted in `chatgpt_plan_credentials` |
 
-| Property  | Value                                                                          |
-| --------- | ------------------------------------------------------------------------------ |
-| Required  | `CREDENTIAL_ENCRYPTION_KEY`, and a sign-in under Settings → Connected Accounts |
-| Default   | Not used                                                                       |
-| Sensitive | Tokens are stored encrypted in `chatgpt_plan_credentials`                      |
-
-- The deployment holds **one** sign-in, used by every `provider: chatgpt` model whoever is acting,
-  automations included. Any signed-in user can sign in or out.
-- Startup fails if a `provider: chatgpt` model is configured and `CREDENTIAL_ENCRYPTION_KEY` is
-  unset, or if the model sets an `api_key`, `base_url`, or a parameter the route refuses:
-  `temperature`, `top_p`, `max_tokens`/`max_output_tokens`, `metadata`, `user`, `service_tier`,
-  `store: true`, `truncation`, `prompt_cache_retention`, `use_responses_api: false` and the other
-  fields OpenAI lists under its preview limitations. `flex` is not available.
-- Calls fail with an authentication error when nobody is signed in or the sign-in lapsed, and with a
-  rate-limit error when the plan's usage limit is reached. Both move a tier's `chain` (or a
-  `retry_config`) on to its fallback, so pairing the plan with an API-key fallback keeps the tier
-  working.
-- A refresh token lapses after 30 days without use; a deployment that leaves plan models idle that
-  long signs in again.
+- **`chatgpt_plan.enabled`** (default `true`) is the only switch. `false` removes the sign-in from
+  the web app and keeps every model on its API key.
+- The deployment holds **one** sign-in, used whoever is acting, automations included. Any signed-in
+  user can sign in or out.
+- Covered: the `openai` provider at OpenAI's own endpoint. Not covered: OpenRouter, a `base_url` or
+  `OPENAI_BASE_URL` endpoint, embeddings and image generation.
+- The plan is skipped for a model whose `llm_parameters` set something the route refuses
+  (`temperature`, `top_p`, `max_tokens`/`max_output_tokens`, `metadata`, `user`, `service_tier`,
+  `store: true`, `truncation`, `prompt_cache_retention`, `use_responses_api: false`, and the other
+  fields OpenAI lists under its preview limitations). `reasoning_effort` and `custom_instructions`
+  are fine.
+- Falls back to the API key, before anything has been streamed, when the plan's usage limit is
+  reached, the plan refuses the model, or the sign-in lapsed. A usage limit pauses the plan for that
+  model for 15 minutes, and a refusal pauses it for an hour. Without `OPENAI_API_KEY` the plan is
+  the only route, and its error reaches the user.
+- A refresh token lapses after 30 days without use, and someone signs in again.
 - `chatgpt_plan.agent_name` (default `Family Assistant`) is the app name shown on ChatGPT's consent
   screen. `chatgpt_plan.credential_encryption_key` overrides `CREDENTIAL_ENCRYPTION_KEY` for these
   tokens alone.
@@ -2249,7 +2246,7 @@ ______________________________________________________________________
 
 URL-safe base64-encoded Fernet key used to encrypt stored refresh tokens at rest. Maps to
 `google_integration.credential_encryption_key` and `chatgpt_plan.credential_encryption_key`, so it
-also enables the [ChatGPT plan sign-in](#chatgpt-plan-provider-chatgpt).
+also enables the [ChatGPT plan sign-in](#chatgpt-plan-sign-in-with-chatgpt).
 
 | Property  | Value                              |
 | --------- | ---------------------------------- |

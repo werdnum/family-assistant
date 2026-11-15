@@ -4,12 +4,9 @@
 to sign in from the web app, and what happens when the plan runs out.
 
 If your household pays for ChatGPT Plus or Pro, the assistant can run its OpenAI models on that
-plan's usage instead of a separately billed API key. One account serves the whole household: once
-someone signs in, every request that uses those models counts against that plan, including scheduled
-automations. It never reads your ChatGPT conversations.
-
-Whether any of the assistant's models use the plan is set up by whoever runs your Family Assistant.
-If none are, signing in changes nothing.
+plan's usage instead of a separately billed API key. Once someone signs in, the assistant uses the
+plan for every request that goes to an OpenAI model, including scheduled automations. One account
+serves the whole household. It never reads your ChatGPT conversations.
 
 ## Signing in
 

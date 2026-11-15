@@ -106,13 +106,13 @@ class ChatGPTPlanClient(OpenAIClient):
         del api_key  # the plan's OAuth token is the credential
         if connections is None or connections.chatgpt_plan is None:
             raise ValueError(
-                f"Model '{model}' uses provider 'chatgpt', which needs the running "
-                "application's ChatGPT sign-in (set CREDENTIAL_ENCRYPTION_KEY)."
+                f"Model '{model}' cannot run on the ChatGPT plan without the "
+                "running application's ChatGPT sign-in."
             )
         if "base_url" in kwargs:
             raise ValueError(
-                f"Model '{model}' uses provider 'chatgpt', whose endpoint is fixed; "
-                "remove base_url/api_base."
+                f"Model '{model}' points at another endpoint, which the ChatGPT "
+                "plan does not serve."
             )
         self._token_source = connections.chatgpt_plan
         super().__init__(
@@ -160,8 +160,8 @@ class ChatGPTPlanClient(OpenAIClient):
             refused.append("use_responses_api")
         if refused:
             raise ValueError(
-                f"Model '{self.model}' uses provider 'chatgpt', which does not accept "
-                f"{', '.join(refused)}. Remove them from its llm_parameters."
+                f"the ChatGPT plan does not accept {', '.join(refused)}, which its "
+                "llm_parameters set"
             )
 
     def _uses_responses_api(self) -> bool:

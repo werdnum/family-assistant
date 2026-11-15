@@ -116,8 +116,7 @@ const ChatGPTPlanCard = () => {
         {status && !status.enabled && (
           <Alert>
             <AlertDescription>
-              ChatGPT sign-in is not available in this deployment (no credential encryption key is
-              configured).
+              {status.reason ?? 'ChatGPT sign-in is not available in this deployment.'}
             </AlertDescription>
           </Alert>
         )}
@@ -125,8 +124,9 @@ const ChatGPTPlanCard = () => {
         {status?.enabled && (
           <>
             <p className="text-sm text-muted-foreground">
-              Sign in with a ChatGPT Plus or Pro account to run OpenAI models on that plan&apos;s
-              usage instead of an API key. One account serves the whole household.
+              Sign in with a ChatGPT Plus or Pro account and the assistant runs its OpenAI models on
+              that plan&apos;s usage, using the API key only when the plan can&apos;t serve a
+              request. One account serves the whole household.
             </p>
 
             {status.status === 'needs_reauth' && (

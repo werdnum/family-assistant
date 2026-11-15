@@ -20,7 +20,6 @@ from family_assistant.llm.base import (
     stream_error_to_exception,
 )
 from family_assistant.llm.connections import PlanCredentialError, ProviderConnections
-from family_assistant.llm.factory import LLMClientFactory
 from family_assistant.llm.messages import (
     AssistantMessage,
     SystemMessage,
@@ -29,7 +28,6 @@ from family_assistant.llm.messages import (
 )
 from family_assistant.llm.providers.chatgpt_plan_client import ChatGPTPlanClient
 from family_assistant.llm.providers.openai_client import OpenAIClient
-from family_assistant.llm.retrying_client import RetryingLLMClient
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 
 if TYPE_CHECKING:
@@ -45,6 +43,9 @@ class _TokenSource:
     def __init__(self, *, error: PlanCredentialError | None = None) -> None:
         self.error = error
         self.rejected = 0
+
+    async def available(self) -> bool:
+        return self.error is None
 
     async def access_token(self) -> str:
         if self.error is not None:
@@ -263,25 +264,6 @@ async def test_structured_output_uses_responses_text_format() -> None:
     assert text["format"]["type"] == "json_schema"
 
 
-def test_factory_builds_a_plan_client_for_provider_chatgpt() -> None:
-    connections = ProviderConnections()
-    connections.chatgpt_plan = _TokenSource()
-
-    client = LLMClientFactory.create_client(
-        {"model": MODEL, "provider": "chatgpt"}, connections
-    )
-
-    assert isinstance(client, ChatGPTPlanClient)
-
-
-def test_factory_refuses_an_api_key_for_provider_chatgpt() -> None:
-    with pytest.raises(ValueError, match="remove its api_key"):
-        LLMClientFactory.create_client(
-            {"model": MODEL, "provider": "chatgpt", "api_key": "sk-x"},
-            ProviderConnections(),
-        )
-
-
 TOOL: ToolDefinition = {
     "type": "function",
     "function": {
@@ -352,24 +334,6 @@ def test_direct_openai_replays_plan_calls_without_the_namespace() -> None:
 
     [call] = _function_calls(params)
     assert "namespace" not in call
-
-
-def test_api_key_fallback_for_the_same_model_is_kept() -> None:
-    connections = ProviderConnections()
-    connections.chatgpt_plan = _TokenSource()
-
-    client = LLMClientFactory.create_client(
-        {
-            "retry_config": {
-                "primary": {"model": MODEL, "provider": "chatgpt"},
-                "fallback": {"model": MODEL, "api_key": "sk-test"},
-            }
-        },
-        connections,
-    )
-
-    assert isinstance(client, RetryingLLMClient)
-    assert client._fallback_redundant is False
 
 
 def test_a_call_to_an_activated_tool_stays_standalone() -> None:
