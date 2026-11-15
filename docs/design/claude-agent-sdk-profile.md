@@ -96,6 +96,16 @@ the first message rather than as a resumed Claude Code session, so the history F
 saves stays the only copy, and windowing and compaction work unchanged. Within a turn the
 conversation is native: real tool calls, real results, Claude Code's own caching.
 
+### It is observable from outside
+
+Each model call inside a session is counted in the ordinary LLM call and token metrics, under
+provider `claude_agent_sdk`, so existing dashboards show it beside the API providers. A session
+counter records how each session ended, including the refusals and authentication failures that mean
+the deployment is misconfigured; Claude Code's own reports of the subscription's rate-limit windows
+are exported as gauges; and a startup check, which spends no quota, exports whether the binary runs
+and would use the subscription rather than an API key. Sessions log their start, the credential and
+Claude Code version they ran with, and how they ended.
+
 ### Reported usage is not spend
 
 Each saved message carries the usage Claude Code reports, under provider `claude_agent_sdk`, so cost
@@ -124,9 +134,9 @@ reason: it runs only where a token has been configured.
   named in the prompt by id, for the model to read with Family Assistant's attachment tools.
 - **One process per turn.** Starting the CLI adds a second or two to each turn, acceptable on a
   profile chosen for long tasks.
-- **No per-call LLM metrics.** A session's model calls happen inside Claude Code, so they do not
-  pass through the client wrapper that records per-call latency metrics; each saved message still
-  carries its call's usage, and the turn is still counted.
+- **The startup check cannot validate the token.** `claude auth status` reads local state only, so
+  it shows the binary runs and that a subscription credential is the one in use, not that the token
+  is accepted. A rejected token shows as `auth_failed` sessions.
 
 ## Not in this PR
 

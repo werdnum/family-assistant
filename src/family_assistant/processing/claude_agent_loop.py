@@ -15,11 +15,16 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import shutil
 import tempfile
+import time
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+import claude_agent_sdk
 import mcp.types as mcp_types
 from claude_agent_sdk import (
     AssistantMessage as SdkAssistantMessage,
@@ -28,6 +33,7 @@ from claude_agent_sdk import (
     ClaudeAgentOptions,
     ClaudeSDKClient,
     HookMatcher,
+    RateLimitEvent,
     ResultMessage,
     StreamEvent,
     TextBlock,
@@ -53,12 +59,19 @@ from family_assistant.llm.base import (
     RateLimitError,
     ServiceUnavailableError,
 )
+from family_assistant.llm.call_context import CallAttribution
 from family_assistant.llm.messages import (
     AssistantMessage,
     MessageReasoningInfo,
     ToolMessage,
 )
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
+from family_assistant.observability.metrics import (
+    record_claude_agent_ready,
+    record_claude_agent_session,
+    record_claude_subscription_rate_limit,
+    record_llm_call,
+)
 from family_assistant.security.taint import (
     InMemoryTurnTaintTracker,
     merge_taint_state_into_tracker,
@@ -136,6 +149,12 @@ TOOL_SEARCH_TOOL_NAME = "ToolSearch"
 _BLANKED_CREDENTIAL_ENV = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
 # What a session reports when no API key is in use: a subscription login.
 _SUBSCRIPTION_KEY_SOURCE = "none"
+# A server has no use for Claude Code's update checks, telemetry or error
+# reporting, and its own metrics come from this application instead.
+_SESSION_ENV = {
+    **dict.fromkeys(_BLANKED_CREDENTIAL_ENV, ""),
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+}
 
 type ClientFactory = Callable[[ClaudeAgentOptions], ClaudeSDKClient]
 
@@ -189,6 +208,8 @@ class _PendingResponse:
     text: list[str] = field(default_factory=list)
     tool_calls: list[ToolCallItem] = field(default_factory=list)
     usage: dict[str, object] | None = None
+    started_at: float = field(default_factory=time.monotonic)
+    first_output_at: float | None = None
 
 
 def _reasoning_info(
@@ -313,6 +334,8 @@ class _TurnSession:
         self.turn_ending = False
         self.quiet_reason: str | None = None
         self.result: ResultMessage | None = None
+        self.outcome = "error"
+        self.started_at = time.monotonic()
 
     # -- tool calls ---------------------------------------------------------
 
@@ -467,18 +490,21 @@ class _TurnSession:
         current, self.response = self.response, None
         if current is None:
             return
+        reasoning = None
+        if current.message_id not in self.reported_usage:
+            # Counted even when nothing is saved for it: a call that only
+            # searched for tools still spent subscription quota.
+            reasoning = _reasoning_info(
+                current.usage,
+                model=current.model,
+                message_id=current.message_id,
+                model_selection=self.turn.model_selection,
+            )
+            if current.message_id:
+                self.reported_usage.add(current.message_id)
+            self._record_call(current, reasoning, outcome="success")
         text = "".join(current.text)
         if text.strip() or current.tool_calls:
-            reasoning = None
-            if current.message_id not in self.reported_usage:
-                reasoning = _reasoning_info(
-                    current.usage,
-                    model=current.model,
-                    message_id=current.message_id,
-                    model_selection=self.turn.model_selection,
-                )
-                if current.message_id:
-                    self.reported_usage.add(current.message_id)
             await self._emit_done(
                 AssistantMessage(
                     content=text or None,
@@ -494,12 +520,51 @@ class _TurnSession:
             self.outstanding.add(call.id)
             self._recorded_event(call.id).set()
 
+    def _record_call(
+        self,
+        response: _PendingResponse,
+        reasoning: MessageReasoningInfo | None,
+        *,
+        outcome: str,
+        error_type: str | None = None,
+    ) -> None:
+        """Count one of the session's model calls in the LLM call metrics."""
+        now = time.monotonic()
+        record_llm_call(
+            attribution=CallAttribution(
+                profile_id=self.loop.config.id,
+                model_selection=self.turn.model_selection,
+            ),
+            provider=PROVIDER_NAME,
+            model=self.model.model,
+            resolved_model=response.model,
+            operation="agent_session",
+            outcome=outcome,
+            error_type=error_type,
+            duration_seconds=now - response.started_at,
+            time_to_first_output_seconds=(
+                response.first_output_at - response.started_at
+                if response.first_output_at is not None
+                else None
+            ),
+            reasoning_info=reasoning,
+        )
+
     async def _on_stream_event(self, item: StreamEvent) -> None:
         if item.parent_tool_use_id is not None:
             return
         event = item.event
         event_type = event.get("type")
-        if event_type == "content_block_delta":
+        if event_type == "message_start":
+            await self._flush()
+            message = event.get("message") or {}
+            self.response = _PendingResponse(
+                message_id=message.get("id"),
+                model=message.get("model") or self.model.model,
+            )
+        elif event_type == "content_block_delta":
+            if self.response is not None and self.response.first_output_at is None:
+                self.response.first_output_at = time.monotonic()
             delta = event.get("delta") or {}
             text = delta.get("text") if delta.get("type") == "text_delta" else None
             if text:
@@ -518,6 +583,14 @@ class _TurnSession:
             text = "".join(
                 block.text for block in item.content if isinstance(block, TextBlock)
             )
+            self._record_call(
+                self.response
+                or _PendingResponse(message_id=item.message_id, model=item.model),
+                None,
+                outcome="error",
+                error_type=item.error,
+            )
+            self.response = None
             raise _error_for(item.error, text, self.model.model)
         if self.response is not None and self.response.message_id != item.message_id:
             await self._flush()
@@ -580,7 +653,17 @@ class _TurnSession:
                     return
             elif isinstance(item, SdkSystemMessage):
                 if item.subtype == "init":
+                    logger.info(
+                        "Claude agent session %s on Claude Code %s, model %s, "
+                        "credential %s",
+                        item.data.get("session_id"),
+                        item.data.get("claude_code_version"),
+                        item.data.get("model"),
+                        item.data.get("apiKeySource"),
+                    )
                     _require_subscription(item.data, self.model.model)
+            elif isinstance(item, RateLimitEvent):
+                _record_rate_limit(item)
             elif isinstance(item, StreamEvent):
                 await self._on_stream_event(item)
             elif isinstance(item, SdkAssistantMessage):
@@ -614,9 +697,11 @@ class _TurnSession:
     async def _finish(self) -> None:
         terminal_text = self.review_state.terminal_denial_escalation_message
         if terminal_text is not None:
+            self.outcome = "review_terminated"
             await self._emit_closing(terminal_text)
             return
         if self.quiet_reason is not None:
+            self.outcome = "ended_quietly"
             logger.info(
                 "Turn %s ended quietly: %s", self.turn.turn_id, self.quiet_reason
             )
@@ -629,6 +714,7 @@ class _TurnSession:
             msg = "Claude Agent SDK session ended without a result."
             raise LLMProviderError(msg, PROVIDER_NAME, self.model.model)
         if result.subtype == "error_max_turns":
+            self.outcome = "max_turns"
             await self._emit_closing(
                 f"I stopped after {self.loop.config.max_iterations} steps, this "
                 "profile's limit, before finishing."
@@ -642,6 +728,71 @@ class _TurnSession:
                 detail,
                 self.model.model,
             )
+        self.outcome = "completed"
+
+    async def run_recorded(
+        self, prompt: SessionPrompt, definitions: list[ToolDefinition]
+    ) -> None:
+        """Run the session, counting and logging how it ended."""
+        profile = self.loop.config.id
+        logger.info(
+            "Claude agent session starting: profile=%s turn=%s model=%s effort=%s "
+            "tools=%d",
+            profile,
+            self.turn.turn_id,
+            self.model.model,
+            self.model.effort,
+            len(definitions),
+        )
+        try:
+            await self.run(prompt, definitions)
+        except BaseException as exc:
+            self.outcome = _failure_outcome(exc)
+            raise
+        finally:
+            record_claude_agent_session(profile, self.outcome)
+            result = self.result
+            logger.info(
+                "Claude agent session ended: profile=%s turn=%s outcome=%s "
+                "result=%s model_turns=%s seconds=%.1f api_seconds=%s",
+                profile,
+                self.turn.turn_id,
+                self.outcome,
+                result.subtype if result else None,
+                result.num_turns if result else None,
+                time.monotonic() - self.started_at,
+                f"{result.duration_api_ms / 1000:.1f}" if result else None,
+            )
+
+
+def _failure_outcome(exc: BaseException) -> str:
+    if isinstance(exc, ClaudeAgentBillingError):
+        return "billing_refused"
+    if isinstance(exc, RateLimitError):
+        return "rate_limited"
+    if isinstance(exc, AuthenticationError):
+        return "auth_failed"
+    if isinstance(exc, asyncio.CancelledError):
+        return "cancelled"
+    return "error"
+
+
+def _record_rate_limit(event: RateLimitEvent) -> None:
+    info = event.rate_limit_info
+    record_claude_subscription_rate_limit(
+        rate_limit_type=info.rate_limit_type,
+        status=info.status,
+        utilization=info.utilization,
+        resets_at=info.resets_at,
+    )
+    if info.status != "allowed":
+        logger.warning(
+            "Claude subscription %s window is %s (utilization %s, resets at %s)",
+            info.rate_limit_type,
+            info.status,
+            info.utilization,
+            info.resets_at,
+        )
 
 
 class ClaudeAgentLoop(LLMStreamingLoop):
@@ -693,7 +844,7 @@ class ClaudeAgentLoop(LLMStreamingLoop):
             model=model.model,
             effort=model.effort,
             max_turns=self.config.max_iterations,
-            env=dict.fromkeys(_BLANKED_CREDENTIAL_ENV, ""),
+            env=dict(_SESSION_ENV),
             hooks={"PreToolUse": [HookMatcher(matcher=None, hooks=[pre_tool_use])]},
             include_partial_messages=True,
             cli_path=self.agent_config.cli_path,
@@ -812,7 +963,7 @@ class ClaudeAgentLoop(LLMStreamingLoop):
 
         async def run_session() -> None:
             try:
-                await session.run(prompt, definitions)
+                await session.run_recorded(prompt, definitions)
             except BaseException as exc:
                 await output.put(_Failed(exc))
             else:
@@ -855,6 +1006,107 @@ def run_on_claude_agent(
         models=models,
         client_factory=client_factory or default_client_factory,
     )
+
+
+PROBE_TIMEOUT_SECONDS = 30.0
+# What `claude auth status` reports for a subscription credential: a
+# `claude setup-token` token, or an interactive claude.ai login.
+_SUBSCRIPTION_AUTH_METHODS = frozenset({"oauth_token", "claude.ai"})
+
+
+def claude_code_executable(agent_config: ClaudeAgentConfig) -> str | None:
+    """The Claude Code binary a session will run, as the SDK finds it."""
+    if agent_config.cli_path:
+        return agent_config.cli_path
+    bundled = Path(claude_agent_sdk.__file__).parent / "_bundled" / "claude"
+    if bundled.is_file():
+        return str(bundled)
+    return shutil.which("claude")
+
+
+async def probe_claude_code(profile_id: str, agent_config: ClaudeAgentConfig) -> bool:
+    """Check, without a model request, that a session could run on the subscription.
+
+    Runs ``claude auth status``, which reads local state only: it shows the
+    binary runs here and that the credential it would use is a subscription
+    one. It cannot tell a revoked or mistyped token from a good one; that shows
+    as ``auth_failed`` sessions. The result is logged and exported as
+    ``family_assistant_claude_agent_ready``; it never stops startup, since a
+    broken profile should not take the others down with it.
+    """
+    executable = claude_code_executable(agent_config)
+    problem: str | None = None
+    status: dict[str, object] = {}
+    if executable is None:
+        problem = "no Claude Code executable was found"
+    else:
+        # The API-key variables are removed rather than blanked: `auth status`
+        # reports an empty API key as the credential in use, though a session
+        # given the same environment uses the subscription.
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            if key not in _BLANKED_CREDENTIAL_ENV
+        }
+        env.update((key, value) for key, value in _SESSION_ENV.items() if value)
+        try:
+            process = await asyncio.create_subprocess_exec(
+                executable,
+                "auth",
+                "status",
+                env=env,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(), PROBE_TIMEOUT_SECONDS
+            )
+        except (OSError, TimeoutError) as exc:
+            problem = f"running {executable} failed: {exc!r}"
+        else:
+            problem, status = probe_verdict(process.returncode, stdout, stderr)
+    ready = problem is None
+    record_claude_agent_ready(profile_id, ready=ready)
+    if ready:
+        logger.info(
+            "Profile '%s' can run Claude Code sessions on the subscription "
+            "(executable %s, auth method %s).",
+            profile_id,
+            executable,
+            status.get("authMethod"),
+        )
+    else:
+        logger.error(
+            "Profile '%s' cannot run Claude Code sessions on the subscription: %s. "
+            "Its turns will fail until this is fixed; see CLAUDE_CODE_OAUTH_TOKEN "
+            "in docs/operations/CONFIGURATION_REFERENCE.md.",
+            profile_id,
+            problem,
+        )
+    return ready
+
+
+def probe_verdict(
+    returncode: int | None, stdout: bytes, stderr: bytes
+) -> tuple[str | None, dict[str, object]]:
+    """Why `claude auth status` output rules out a subscription session, if it does."""
+    if returncode != 0:
+        detail = stderr.decode(errors="replace").strip()[:500]
+        return f"`claude auth status` exited {returncode}: {detail}", {}
+    try:
+        parsed = json.loads(stdout)
+    except json.JSONDecodeError:
+        return "`claude auth status` did not print JSON", {}
+    if not isinstance(parsed, dict):
+        return "`claude auth status` did not print a JSON object", {}
+    status = cast("dict[str, object]", parsed)
+    method = status.get("authMethod")
+    if not status.get("loggedIn") or method not in _SUBSCRIPTION_AUTH_METHODS:
+        return (
+            f"Claude Code would authenticate with {method!r}, not a subscription token",
+            status,
+        )
+    return None, status
 
 
 def _require_subscription(init_data: Mapping[str, object], model: str) -> None:

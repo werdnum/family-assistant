@@ -66,6 +66,10 @@ class FakeClaudeCode(Transport):
     offered_tools: list[Frame] = field(default_factory=list)
     prompts: list[Frame] = field(default_factory=list)
     interrupted: bool = False
+    # Sent before the first response, as Claude Code does when a window's
+    # state changes, e.g. {"status": "allowed_warning", "rateLimitType":
+    # "five_hour", "utilization": 0.9, "resetsAt": 1794730800}.
+    rate_limit_info: Frame | None = None
 
     def __post_init__(self) -> None:
         self._out: asyncio.Queue[Frame | None] = asyncio.Queue()
@@ -201,6 +205,13 @@ class FakeClaudeCode(Transport):
             "plugins": [],
             "uuid": str(uuid.uuid4()),
         })
+        if self.rate_limit_info is not None:
+            await self._out.put({
+                "type": "rate_limit_event",
+                "rate_limit_info": self.rate_limit_info,
+                "uuid": str(uuid.uuid4()),
+                "session_id": SESSION_ID,
+            })
         for response in self.responses:
             await self._play(response)
         await self._emit_result(subtype=self.result_subtype)

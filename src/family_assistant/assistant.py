@@ -125,7 +125,10 @@ from family_assistant.processing.background_turns import BackgroundTurnRunner
 from family_assistant.processing.claude_agent_loop import (
     ClientFactory as ClaudeAgentClientFactory,
 )
-from family_assistant.processing.claude_agent_loop import run_on_claude_agent
+from family_assistant.processing.claude_agent_loop import (
+    probe_claude_code,
+    run_on_claude_agent,
+)
 from family_assistant.processing.delegation_turns import RunningDelegationTurns
 from family_assistant.processing.history_relevance import (
     JevTurnRelevance,
@@ -1793,6 +1796,8 @@ class Assistant:
                 },
                 client_factory=self.claude_agent_client_factory,
             )
+            if self.claude_agent_client_factory is None:
+                await probe_claude_code(profile_id, claude_agent_config)
 
         # Render once now so a template referencing a placeholder that no
         # longer exists -- {current_time} and {aggregated_other_context} moved

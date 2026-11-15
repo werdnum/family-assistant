@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+from prometheus_client import REGISTRY
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import AppConfig, ClaudeAgentConfig, ToolsConfig
@@ -29,6 +30,7 @@ from family_assistant.processing import ProcessingService, ProcessingServiceConf
 from family_assistant.processing.claude_agent_loop import (
     ClaudeAgentBillingError,
     mcp_tool_name,
+    probe_verdict,
     run_on_claude_agent,
 )
 from family_assistant.processing.quiet_turn import END_TURN_QUIETLY_TOOL_NAME
@@ -376,3 +378,122 @@ async def _set_within(event: asyncio.Event, *, seconds: float) -> bool:
     except TimeoutError:
         return False
     return True
+
+
+SESSIONS = "family_assistant_claude_agent_sessions_total"
+
+
+def _sample(name: str, **labels: str) -> float:
+    return REGISTRY.get_sample_value(name, labels) or 0.0
+
+
+@pytest.mark.asyncio
+async def test_completed_session_is_counted(db_engine: AsyncEngine) -> None:
+    labels = {"profile": "claude_agent", "outcome": "completed"}
+    before = _sample(SESSIONS, **labels)
+    fake = FakeClaudeCode(responses=[FakeResponse([FakeText("Hi.")])])
+    await _turn(_service(fake), db_engine, "Hello")
+
+    assert _sample(SESSIONS, **labels) == before + 1
+
+
+@pytest.mark.asyncio
+async def test_refused_session_is_counted_as_billing_refused(
+    db_engine: AsyncEngine,
+) -> None:
+    labels = {"profile": "claude_agent", "outcome": "billing_refused"}
+    before = _sample(SESSIONS, **labels)
+    fake = FakeClaudeCode(
+        responses=[FakeResponse([FakeText("Hi.")])],
+        api_key_source="ANTHROPIC_API_KEY",
+    )
+    await _interact(_service(fake), db_engine, "Hello")
+
+    assert _sample(SESSIONS, **labels) == before + 1
+
+
+@pytest.mark.asyncio
+async def test_model_calls_reach_the_llm_call_metrics(db_engine: AsyncEngine) -> None:
+    labels = {
+        "profile": "claude_agent",
+        "tier": TIER,
+        "provider": "claude_agent_sdk",
+        "model": "claude-opus-5-5",
+        "resolved_model": "claude-opus-5-5",
+        "operation": "agent_session",
+        "service_tier": "standard",
+        "outcome": "success",
+        "error_type": "",
+    }
+    before = _sample("family_assistant_llm_calls_total", **labels)
+    fake = FakeClaudeCode(
+        responses=[FakeResponse([_weather_call()]), FakeResponse([FakeText("Sunny.")])]
+    )
+    await _turn(_service(fake), db_engine, "Weather in Paris?")
+
+    assert _sample("family_assistant_llm_calls_total", **labels) == before + 2
+
+
+@pytest.mark.asyncio
+async def test_subscription_rate_limit_state_is_exported(
+    db_engine: AsyncEngine,
+) -> None:
+    fake = FakeClaudeCode(
+        responses=[FakeResponse([FakeText("Hi.")])],
+        rate_limit_info={
+            "status": "allowed_warning",
+            "rateLimitType": "seven_day",
+            "utilization": 0.91,
+            "resetsAt": 1794730800,
+        },
+    )
+    await _turn(_service(fake), db_engine, "Hello")
+
+    window = {"rate_limit_type": "seven_day"}
+    assert (
+        _sample("family_assistant_claude_subscription_rate_limit_status", **window),
+        _sample("family_assistant_claude_subscription_utilization", **window),
+    ) == (1.0, 0.91)
+
+
+@pytest.mark.parametrize(
+    ("returncode", "stdout", "ready"),
+    [
+        (0, b'{"loggedIn": true, "authMethod": "oauth_token"}', True),
+        (0, b'{"loggedIn": true, "authMethod": "api_key"}', False),
+        (0, b'{"loggedIn": false}', False),
+        (1, b"", False),
+        (0, b"not json", False),
+    ],
+)
+def test_probe_accepts_only_a_subscription_credential(
+    returncode: int, stdout: bytes, ready: bool
+) -> None:
+    problem, _ = probe_verdict(returncode, stdout, b"")
+
+    assert (problem is None) == ready
+
+
+@pytest.mark.asyncio
+async def test_a_call_that_only_searches_tools_is_counted(
+    db_engine: AsyncEngine,
+) -> None:
+    labels = {
+        "profile": "claude_agent",
+        "tier": TIER,
+        "provider": "claude_agent_sdk",
+        "model": "claude-opus-5-5",
+        "resolved_model": "claude-opus-5-5",
+        "operation": "agent_session",
+        "service_tier": "standard",
+        "outcome": "success",
+        "error_type": "",
+    }
+    before = _sample("family_assistant_llm_calls_total", **labels)
+    search = FakeToolUse(name="ToolSearch", input={"query": "weather"})
+    fake = FakeClaudeCode(
+        responses=[FakeResponse([search]), FakeResponse([FakeText("Sunny.")])]
+    )
+    await _turn(_service(fake), db_engine, "Weather in Paris?")
+
+    assert _sample("family_assistant_llm_calls_total", **labels) == before + 2
