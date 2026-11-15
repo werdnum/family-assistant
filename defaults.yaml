@@ -1380,6 +1380,30 @@ service_profiles:
     # and with it whatever an operator adds there.
     slash_commands:
       - "/complex"
+  # complex_tasks' job on the Claude subscription instead of the API: the turn
+  # runs in a Claude Agent SDK (Claude Code) session, with this application's
+  # tools offered to it and executed here under the same policy. Present only
+  # where CLAUDE_CODE_OAUTH_TOKEN is set, and refuses to run if the session
+  # would be billed to an API key. See docs/design/claude-agent-sdk-profile.md.
+  - id: "claude_agent"
+    user_selectable: true
+    description: "Long-running, multi-step work with the household's tools, run by Claude in a Claude Code session billed to the Claude subscription rather than per token. For the same kind of investigation as complex_tasks when it would otherwise run on an expensive Claude model."
+    processing_config:
+      include_aggregated_context: true
+      model_tier: "claude_opus_5_5"
+      max_iterations: 100
+      memory_read: true
+      memory_contribute: true
+      claude_agent_config: {}
+    # Every tier here is one Anthropic model with no fallback: the session
+    # runs exactly one model, and a fallback would never run.
+    allowed_model_tiers: ["claude_opus_5_5", "claude_fable_5_2", "claude_sonnet_5_5"]
+    delegation_model_tiers: ["claude_opus_5_5", "claude_fable_5_2", "claude_sonnet_5_5"]
+    # No tools_policy of its own: the same [BC] tool surface as complex_tasks.
+    # on_demand_* settings do not apply -- Claude Code finds tools by its own
+    # search instead of activation.
+    slash_commands:
+      - "/claude"
   - id: "research"
     user_selectable: true
     description: "Assistant profile for deep research, utilizing the Google Gemini Deep Research agent (regular tier). Faster turnaround; ideal for everyday research questions that benefit from web-grounded synthesis."

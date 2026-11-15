@@ -849,6 +849,39 @@ Required when using `provider: "anthropic"` in service profiles.
 
 ______________________________________________________________________
 
+### CLAUDE_CODE_OAUTH_TOKEN
+
+Claude subscription token for profiles that run on the Claude Agent SDK (`claude_agent_config`),
+such as the shipped `claude_agent` profile. Those profiles run their turns in a Claude Code session
+billed to the subscription instead of per token on the API.
+
+| Property  | Value                                         |
+| --------- | --------------------------------------------- |
+| Required  | No (the `claude_agent` profile needs it)      |
+| Default   | None                                          |
+| Sensitive | **Yes**                                       |
+| Example   | `sk-ant-oat01-...`, from `claude setup-token` |
+
+Generate it with `claude setup-token` (a one-year token; requires a Pro, Max, Ultra, Team or
+Enterprise plan) on any machine with Claude Code installed, and set it in the application's
+environment. Without it, Claude Agent SDK profiles are left out at startup — not offered to people
+or to delegating models — and the log says so.
+
+The session refuses to start a turn unless Claude Code reports that no API key is in use, so a
+deployment that would bill the API instead fails visibly. The application's own `ANTHROPIC_API_KEY`
+is blanked in the Claude Code subprocess's environment for this reason; it is still used by the
+`anthropic` provider everywhere else.
+
+Claude Code itself is the binary bundled with the `claude-agent-sdk` package, so its version follows
+the lockfile. `processing_config.claude_agent_config.cli_path` points a profile at another
+executable instead. A profile with `claude_agent_config` must name a `model_tier`, and every tier it
+can reach must be exactly one Anthropic model with no fallback, run with only adaptive thinking,
+`output_config.effort` and `custom_instructions` as parameters. See
+[claude-agent-sdk-profile.md](../design/claude-agent-sdk-profile.md), including its note on
+Anthropic's terms of use.
+
+______________________________________________________________________
+
 ### LLM_MODEL
 
 Default LLM model identifier.
@@ -1121,12 +1154,13 @@ automatically.
 
 The shipped presets — `gpt_6_astra`, `gpt_6_1_sol`, `gpt_6_1_terra`, `claude_opus_5_5`,
 `claude_sonnet_5_5`, `claude_haiku_5_5`, `claude_fable_5_2`, `kimi_k3`, `gemini_4_argon`,
-`gemini_4_carbon` and `gemini_4_hydrogen` — are listed once, in `default_profile_settings.delegation_model_tiers`, so a
-delegating model may pin any profile that has a tier to any of them without a confirmation ("run
-complex_tasks on Gemini 4 Argon"). A profile that names an inline model drops the inherited list,
-and a profile that declares its own replaces it, so `delegation_model_tiers: []` keeps a profile off
-presets entirely. Adding a preset is a `model_tiers` entry plus a name in that list. The profile
-catalog lists the presets most profiles share once, rather than under each profile.
+`gemini_4_carbon` and `gemini_4_hydrogen` — are listed once, in
+`default_profile_settings.delegation_model_tiers`, so a delegating model may pin any profile that
+has a tier to any of them without a confirmation ("run complex_tasks on Gemini 4 Argon"). A profile
+that names an inline model drops the inherited list, and a profile that declares its own replaces
+it, so `delegation_model_tiers: []` keeps a profile off presets entirely. Adding a preset is a
+`model_tiers` entry plus a name in that list. The profile catalog lists the presets most profiles
+share once, rather than under each profile.
 
 #### The council's seats
 
