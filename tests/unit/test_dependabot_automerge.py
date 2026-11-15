@@ -499,6 +499,7 @@ def test_only_oldest_eligible_pr_is_chosen_within_the_window() -> None:
 
 AGENT: Snapshot = POLICY["agent"]  # type: ignore[assignment]
 NOON = dt.datetime(2026, 10, 10, 2, tzinfo=dt.UTC)  # 13:00 in Sydney
+RELEASED = "2026-10-01T00:00:00Z"  # well before observed_at
 
 
 def _uv_entry(name: str, version: str, **overrides: object) -> dict[str, object]:
@@ -556,6 +557,11 @@ def agent_candidate(*files: dict[str, str]) -> Snapshot:
             ),
         )
     snap = candidate(*files)
+    try:
+        releases = lane.agent_releases(snap["files"])
+    except lane.EvidenceError:
+        releases = set()  # an unparseable lockfile is held before its age matters
+    snap["release_times"] = dict.fromkeys(releases, RELEASED)
     snap["pr"]["user"] = {"id": AGENT["creator_id"]}
     snap["pr"]["head"]["ref"] = "claude/project-thread-abc123"
     snap["pr"]["commits"] = 2
@@ -583,11 +589,14 @@ def agent_candidate(*files: dict[str, str]) -> Snapshot:
     return snap
 
 
+REPORTING_AGENT = dict(POLICY, agent=dict(AGENT, mode="report-only"))
+
+
 def test_agent_lockfile_fix_is_eligible_but_only_reported() -> None:
-    result = lane.evaluate(agent_candidate(), POLICY)
+    result = lane.evaluate(agent_candidate(), REPORTING_AGENT)
     assert result["kind"] == "agent"
     assert result["decision"] == "eligible", result
-    merging = dict(POLICY, mode="merge")
+    merging = dict(REPORTING_AGENT, mode="merge")
     assert (
         lane.choose([result], {"state": "clear", "reasons": []}, merging, NOON) is None
     )
@@ -597,14 +606,25 @@ def test_agent_lockfile_fix_is_eligible_but_only_reported() -> None:
 
 
 def test_report_only_agent_pr_does_not_take_the_merge_slot() -> None:
-    agent = lane.evaluate(agent_candidate(), POLICY)
+    agent = lane.evaluate(agent_candidate(), REPORTING_AGENT)
     agent["created_at"] = "2026-10-01T00:00:00Z"
-    dependabot = lane.evaluate(candidate(), POLICY)
-    merging = dict(POLICY, mode="merge")
+    dependabot = lane.evaluate(candidate(), REPORTING_AGENT)
+    merging = dict(REPORTING_AGENT, mode="merge")
     chosen = lane.choose(
         [agent, dependabot], {"state": "clear", "reasons": []}, merging, NOON
     )
     assert chosen is dependabot
+
+
+def test_merging_agent_pr_can_take_the_merge_slot() -> None:
+    merging = dict(POLICY, mode="merge")
+    agent = lane.evaluate(agent_candidate(), merging)
+    agent["created_at"] = "2026-10-01T00:00:00Z"
+    dependabot = lane.evaluate(candidate(), merging)
+    chosen = lane.choose(
+        [agent, dependabot], {"state": "clear", "reasons": []}, merging, NOON
+    )
+    assert chosen is agent
 
 
 def test_agent_manifest_change_must_be_version_only() -> None:
@@ -738,3 +758,61 @@ def test_agent_review_is_judged_against_the_head_commit() -> None:
     snap = agent_candidate()
     snap["reactions"][0]["created_at"] = "2026-10-09T23:00:00Z"  # before the head
     held(snap, "review-stale")
+
+
+def test_agent_release_younger_than_the_minimum_age_is_held() -> None:
+    snap = agent_candidate()
+    snap["release_times"]["pypi:pillow@11.3.1"] = "2026-10-09T12:00:00Z"
+    held(snap, "release too new: pypi:pillow@11.3.1")
+
+
+def test_agent_release_without_a_publish_time_is_held() -> None:
+    snap = agent_candidate()
+    snap["release_times"] = {}
+    held(snap, "no registry publish time for pypi:pillow@11.3.1")
+
+
+def test_only_the_releases_an_agent_added_are_looked_up() -> None:
+    lock = _file(
+        "uv.lock",
+        base_text=_uv_lock_entries(
+            _uv_entry("pillow", "11.3.0"), _uv_entry("idna", "3.10")
+        ),
+        head_text=_uv_lock_entries(
+            _uv_entry("pillow", "11.3.1"), _uv_entry("idna", "3.10")
+        ),
+    )
+    assert lane.agent_releases([lock]) == {"pypi:pillow@11.3.1"}
+
+
+def test_pypi_release_time_is_its_earliest_upload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    urls: list[str] = []
+
+    def registry(url: str) -> dict[str, object]:
+        urls.append(url)
+        return {
+            "urls": [
+                {"upload_time_iso_8601": "2026-10-02T03:00:00.123456Z"},
+                {"upload_time_iso_8601": "2026-10-02T01:00:00.000001Z"},
+            ]
+        }
+
+    monkeypatch.setattr(lane, "registry_json", registry)
+    assert lane.release_time("pypi:pillow@11.3.1", POLICY) == "2026-10-02T01:00:00Z"
+    assert urls == ["https://pypi.org/pypi/pillow/11.3.1/json"]
+
+
+def test_npm_release_time_reads_the_scoped_packument(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    urls: list[str] = []
+
+    def registry(url: str) -> dict[str, object]:
+        urls.append(url)
+        return {"time": {"1.2.3": "2026-10-02T01:00:00.000Z"}}
+
+    monkeypatch.setattr(lane, "registry_json", registry)
+    assert lane.release_time("npm:@types/node@1.2.3", POLICY) == "2026-10-02T01:00:00Z"
+    assert urls == ["https://registry.npmjs.org/@types%2Fnode"]

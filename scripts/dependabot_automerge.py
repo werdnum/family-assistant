@@ -26,7 +26,9 @@ import re
 import subprocess
 import sys
 import tomllib
+import urllib.error
 import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
@@ -388,11 +390,10 @@ def _npm_entry_ok(entry: Json, policy: Json) -> bool:
     ).startswith("sha512-")
 
 
-def agent_lock_rules(file: Json, policy: Json) -> None:
+def _parse_entries(file: Json) -> tuple[bool, str, Entries, str, Entries]:
     path = file["filename"]
     uv = path.rsplit("/", 1)[-1] == "uv.lock"
     parse = uv_entries if uv else npm_entries
-    entry_ok = _uv_entry_ok if uv else _npm_entry_ok
     try:
         base_header, before = parse(file["base_text"])
         head_header, after = parse(file["head_text"])
@@ -403,6 +404,32 @@ def agent_lock_rules(file: Json, policy: Json) -> None:
         TypeError,
     ) as error:
         raise EvidenceError("unparseable lockfile: " + path) from error
+    return uv, base_header, before, head_header, after
+
+
+def release_key(uv: bool, name: str, version: str) -> str:
+    return f"{'pypi' if uv else 'npm'}:{name}@{version}"
+
+
+def agent_releases(files: list[Json]) -> set[str]:
+    """The registry release behind every lockfile entry an agent added."""
+    keys: set[str] = set()
+    for file in files:
+        if not lockfile(file["filename"]):
+            continue
+        uv, _, before, _, after = _parse_entries(file)
+        for name, new in after.items():
+            for raw in set(new) - set(before.get(name, [])):
+                entry = json.loads(raw)
+                if not _project_entry(entry):
+                    keys.add(release_key(uv, name, str(entry.get("version"))))
+    return keys
+
+
+def agent_lock_rules(file: Json, snapshot: Json, policy: Json) -> None:
+    path = file["filename"]
+    uv, base_header, before, head_header, after = _parse_entries(file)
+    entry_ok = _uv_entry_ok if uv else _npm_entry_ok
     if base_header != head_header:
         raise EvidenceError("agent changed the lockfile header in " + path)
     for name in sorted(before.keys() | after.keys()):
@@ -424,6 +451,24 @@ def agent_lock_rules(file: Json, policy: Json) -> None:
                 raise EvidenceError(
                     f"agent lock entry for {name} is not from the registry"
                 )
+            release_age_rule(
+                release_key(uv, name, str(entry.get("version"))), snapshot, policy
+            )
+
+
+def release_age_rule(key: str, snapshot: Json, policy: Json) -> None:
+    """Hold a release younger than the policy's minimum age.
+
+    An agent chooses the version it moves to, so one steered by injected text
+    could pick a release published minutes ago by a compromised maintainer.
+    Waiting gives the registry and the ecosystem time to pull such a release.
+    """
+    published = snapshot.get("release_times", {}).get(key)
+    if published is None:
+        raise EvidenceError("no registry publish time for " + key)
+    minimum = dt.timedelta(hours=policy["agent"]["min_release_age_hours"])
+    if timestamp(snapshot["observed_at"]) - timestamp(published) < minimum:
+        raise EvidenceError(f"release too new: {key} published {published}")
 
 
 def denied_package(name: str, policy: Json) -> bool:
@@ -495,7 +540,7 @@ def lock_rules(snapshot: Json, policy: Json) -> None:
         if not lockfile(file["filename"]):
             continue
         if agent:
-            agent_lock_rules(file, policy)
+            agent_lock_rules(file, snapshot, policy)
         for name, (before, after) in sorted(lock_changes(file).items()):
             if denied_package(name, policy):
                 raise EvidenceError(f"denied package {name} in {file['filename']}")
@@ -1020,6 +1065,47 @@ def collect_files(prefix: str, pr: Json, policy: Json, snapshot: Json) -> None:
                 file[side + "_text"] = api(path, raw=True)
 
 
+MAX_RELEASE_LOOKUPS = 50
+
+
+def registry_json(url: str) -> Any:  # noqa: ANN401 - decoded registry JSON
+    request = urllib.request.Request(url, headers={"Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return json.load(response)
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
+        raise EvidenceError("registry read failed: " + url) from error
+
+
+def release_time(key: str, policy: Json) -> str:
+    """When the registry published this release (its earliest file)."""
+    ecosystem, rest = key.split(":", 1)
+    name, version = rest.rsplit("@", 1)
+    agent = policy["agent"]
+    if ecosystem == "pypi":
+        data = registry_json(
+            f"{agent['uv_json_api']}{quote(name)}/{quote(version)}/json"
+        )
+        uploads = [u["upload_time_iso_8601"] for u in data.get("urls", [])]
+        if not uploads:
+            raise EvidenceError("no published files for " + key)
+        return iso(min(timestamp(u) for u in uploads))
+    data = registry_json(agent["npm_registry"] + urllib.parse.quote(name, safe="@"))
+    published = data.get("time", {}).get(version)
+    if not published:
+        raise EvidenceError("no publish time for " + key)
+    return iso(timestamp(published))
+
+
+def collect_release_times(policy: Json, snapshot: Json) -> None:
+    if not all("head_text" in f for f in snapshot["files"] if lockfile(f["filename"])):
+        return  # disqualified before the lockfiles were read
+    keys = agent_releases(snapshot["files"])
+    if len(keys) > MAX_RELEASE_LOOKUPS:
+        raise EvidenceError("too many changed releases to check their age")
+    snapshot["release_times"] = {key: release_time(key, policy) for key in sorted(keys)}
+
+
 def gather(prefix: str, number: int, policy: Json, snapshot: Json) -> None:
     pr = snapshot["pr"] = api(f"{prefix}/pulls/{number}")
     admission(pr, policy)
@@ -1038,6 +1124,8 @@ def gather(prefix: str, number: int, policy: Json, snapshot: Json) -> None:
         for c in api(f"{prefix}/pulls/{number}/commits?per_page=100", True)
     ]
     collect_files(prefix, pr, policy, snapshot)
+    if kind_of(pr, policy) == "agent":
+        collect_release_times(policy, snapshot)
     collect_discussion(prefix, number, snapshot)
     collect_ci(prefix, pr["head"]["sha"], policy, snapshot)
     final = api(f"{prefix}/pulls/{number}")
