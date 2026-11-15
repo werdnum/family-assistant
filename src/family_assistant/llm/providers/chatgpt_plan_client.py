@@ -186,13 +186,18 @@ class ChatGPTPlanClient(OpenAIClient):
         )
         params["stream"] = True
         params["store"] = False
+        declared = params.get("tools")
+        namespaced = (
+            {tool.get("name") for tool in cast("list[dict[str, object]]", declared)}
+            if isinstance(declared, list)
+            else set()
+        )
         input_items = params.get("input")
         if isinstance(input_items, list):
             params["input"] = [
-                self._plan_input_item(item)
+                self._plan_input_item(item, namespaced)
                 for item in cast("list[object]", input_items)
             ]
-        declared = params.get("tools")
         if isinstance(declared, list) and declared:
             # The route takes function tools only inside a namespace (or as
             # `additional_tools` items, which activations already use).
@@ -207,19 +212,20 @@ class ChatGPTPlanClient(OpenAIClient):
         return params
 
     @staticmethod
-    def _plan_input_item(item: object) -> object:
+    def _plan_input_item(item: object, namespaced: set[object]) -> object:
         """An input item in the route's shape.
 
         System items are refused, so they go as developer messages. A replayed
-        call names the namespace its tool lives in, as the model's own call
-        did.
+        call to a tool declared in the namespace names it, as the model's own
+        call did; a call to a tool activated through ``additional_tools`` was
+        standalone and stays so.
         """
         if not isinstance(item, dict):
             return item
         typed = cast("dict[str, object]", item)
         if typed.get("role") == "system":
             return {**typed, "role": "developer"}
-        if typed.get("type") == "function_call":
+        if typed.get("type") == "function_call" and typed.get("name") in namespaced:
             return {**typed, "namespace": _TOOL_NAMESPACE}
         return typed
 

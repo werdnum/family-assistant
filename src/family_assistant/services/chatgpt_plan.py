@@ -572,20 +572,25 @@ class ChatGPTPlanAuth:
         Returns whether OpenAI confirmed the revocation. The tokens are cleared
         either way; an unconfirmed revocation can be finished from ChatGPT's
         own settings.
+
+        The tokens are cleared before the revocation round trip, and only if
+        they are still the ones read: a sign-in completed meanwhile wins. The
+        refresh lock keeps a refresh from rotating them in between.
         """
-        row = await self._db.chatgpt_plan.get()
-        if row is None or row.status == "signed_out":
-            return True
-        confirmed = False
-        if row.refresh_token_encrypted is not None:
-            try:
-                confirmed = await self._revoke(
-                    self._decrypt(row.refresh_token_encrypted), row.issued_client_id
-                )
-            except ChatGPTPlanError:
-                logger.warning("Could not decrypt the ChatGPT refresh token to revoke")
-        await self._db.chatgpt_plan.sign_out()
-        return confirmed
+        async with self._refresh_lock:
+            row = await self._db.chatgpt_plan.get()
+            if row is None or row.status == "signed_out":
+                return True
+            if not await self._db.chatgpt_plan.sign_out(row.credential_generation):
+                return True
+        if row.refresh_token_encrypted is None:
+            return False
+        try:
+            refresh_token = self._decrypt(row.refresh_token_encrypted)
+        except ChatGPTPlanError:
+            logger.warning("Could not decrypt the ChatGPT refresh token to revoke")
+            return False
+        return await self._revoke(refresh_token, row.issued_client_id)
 
     async def _revoke(self, refresh_token: str, client_id: str) -> bool:
         try:

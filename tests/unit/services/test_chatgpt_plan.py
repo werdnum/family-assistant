@@ -402,3 +402,19 @@ async def test_returning_sign_in_as_another_account_is_refused(
 
     with pytest.raises(ChatGPTPlanSignInError, match="different ChatGPT account"):
         await _sign_in(auth, server, use_saved_account=True, sub="someone-else")
+
+
+async def test_sign_out_leaves_a_sign_in_it_did_not_read(
+    auth: ChatGPTPlanAuth, server: _AuthServer, db_engine: AsyncEngine
+) -> None:
+    """A sign-in completed while a sign-out was in flight is the one kept."""
+    await _sign_in(auth, server)
+    db = Database(engine=db_engine)
+    stale = await db.chatgpt_plan.get()
+    assert stale is not None
+    await _sign_in(auth, server, use_saved_account=True, access="access-2")
+
+    cleared = await db.chatgpt_plan.sign_out(stale.credential_generation)
+
+    assert cleared is False
+    assert await auth.access_token() == "access-2"

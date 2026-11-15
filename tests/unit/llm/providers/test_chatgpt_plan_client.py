@@ -30,6 +30,7 @@ from family_assistant.llm.messages import (
 from family_assistant.llm.providers.chatgpt_plan_client import ChatGPTPlanClient
 from family_assistant.llm.providers.openai_client import OpenAIClient
 from family_assistant.llm.retrying_client import RetryingLLMClient
+from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -369,3 +370,56 @@ def test_api_key_fallback_for_the_same_model_is_kept() -> None:
 
     assert isinstance(client, RetryingLLMClient)
     assert client._fallback_redundant is False
+
+
+def test_a_call_to_an_activated_tool_stays_standalone() -> None:
+    """An `additional_tools` tool is outside the namespace, and so is its call."""
+    client, _ = _client(_Server(lambda _r: _completed("hi")))
+    deferred: ToolDefinition = {
+        "type": "function",
+        "function": {
+            "name": "set_lights",
+            "description": "Set the lights",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        "defer_loading": True,
+    }
+    messages: list[LLMMessage] = [
+        UserMessage(content="Lights on"),
+        AssistantMessage(
+            content=None,
+            tool_calls=[
+                ToolCallItem(
+                    id="call_1",
+                    type="function",
+                    function=ToolCallFunction(name="get_note", arguments="{}"),
+                )
+            ],
+        ),
+        ToolMessage(
+            tool_call_id="call_1",
+            name="get_note",
+            content="Activated tools: set_lights.",
+            activated_tools=["set_lights"],
+        ),
+        AssistantMessage(
+            content=None,
+            tool_calls=[
+                ToolCallItem(
+                    id="call_2",
+                    type="function",
+                    function=ToolCallFunction(name="set_lights", arguments="{}"),
+                )
+            ],
+        ),
+        ToolMessage(tool_call_id="call_2", name="set_lights", content="Done"),
+    ]
+
+    params = client._build_responses_params(
+        messages, [TOOL, deferred], "auto", stream=True
+    )
+
+    namespaces = {
+        str(call["name"]): call.get("namespace") for call in _function_calls(params)
+    }
+    assert namespaces == {"get_note": "family_assistant", "set_lights": None}

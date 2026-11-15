@@ -164,11 +164,18 @@ class ChatGPTPlanRepository(BaseRepository):
         )
         return result.rowcount > 0
 
-    async def sign_out(self) -> bool:
-        """Clear the tokens, keeping the registration for a later sign-in."""
+    async def sign_out(self, expected_generation: str) -> bool:
+        """Clear the tokens, keeping the registration for a later sign-in.
+
+        Conditional on the generation the caller read, so a sign-in completed
+        in between is left alone. Returns True iff the row was cleared.
+        """
         result = await self._db.execute(
             update(_table)
-            .where(_table.c.status != "signed_out")
+            .where(
+                _table.c.credential_generation == expected_generation,
+                _table.c.status != "signed_out",
+            )
             .values(
                 status="signed_out",
                 id_token_encrypted=None,
