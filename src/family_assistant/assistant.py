@@ -145,6 +145,7 @@ from family_assistant.services.attachment_registry import (
     AttachmentRegistry,
     AttachmentRegistryConfig,
 )
+from family_assistant.services.chatgpt_plan import ChatGPTPlanAuth
 from family_assistant.services.confirmation_service import (
     CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
     ConfirmationService,
@@ -911,6 +912,7 @@ class Assistant:
         await self._setup_application()
         self._setup_embedding_generator()
         await self._setup_database()
+        self._setup_chatgpt_plan()
         self._setup_confirmation_interfaces()
         self._setup_attachment_registry()
         self._setup_error_logging()
@@ -1260,6 +1262,40 @@ class Assistant:
             "Root ToolsProvider initialized with %s tools",
             len(self.fastapi_app.state.tool_definitions),
         )
+
+    def _setup_chatgpt_plan(self) -> None:
+        """Make the deployment's ChatGPT sign-in available to clients and the web app.
+
+        Turned off, or without an encryption key to store it under, there is no
+        sign-in, and every OpenAI model stays on its API key.
+        """
+        assert self.fastapi_app is not None
+        assert self.shared_httpx_client is not None
+        plan_config = self.config.chatgpt_plan
+        key = (
+            plan_config.credential_encryption_key.get_secret_value()
+            or self.config.google_integration.credential_encryption_key.get_secret_value()
+        )
+        self.fastapi_app.state.chatgpt_plan = None
+        if not plan_config.enabled:
+            self.fastapi_app.state.chatgpt_plan_unavailable_reason = (
+                "ChatGPT sign-in is turned off for this deployment."
+            )
+            return
+        if not key:
+            self.fastapi_app.state.chatgpt_plan_unavailable_reason = (
+                "ChatGPT sign-in is not available: no credential encryption key is "
+                "configured."
+            )
+            return
+        auth = ChatGPTPlanAuth(
+            self._database(),
+            CredentialEncryption(key),
+            self.shared_httpx_client,
+            agent_name=plan_config.agent_name,
+        )
+        self.llm_connections.chatgpt_plan = auth
+        self.fastapi_app.state.chatgpt_plan = auth
 
     def _setup_google_integration(self) -> OAuthIntegrationState:
         """Resolve and publish the Google integration state."""

@@ -1163,6 +1163,26 @@ class GoogleIntegrationConfig(OAuthIntegrationConfig):
     )
 
 
+class ChatGPTPlanConfig(BaseModel):
+    """Running OpenAI models on a ChatGPT plan (Sign in with ChatGPT).
+
+    Once someone signs in from the web app, every direct-OpenAI chat model
+    tries the plan before its API key. See docs/design/chatgpt-plan-usage.md.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Off removes the sign-in from the web app and keeps every OpenAI model on
+    # its API key.
+    enabled: bool = True
+
+    # Fernet key for the stored tokens. Empty uses the Google integration's
+    # key, which CREDENTIAL_ENCRYPTION_KEY sets for both.
+    credential_encryption_key: SecretStr = SecretStr("")
+    # The name the ChatGPT consent screen shows for this app.
+    agent_name: str = "Family Assistant"
+
+
 class GeminiVoiceConfig(BaseModel):
     """Gemini voice settings."""
 
@@ -2351,6 +2371,7 @@ class AppConfig(BaseSettings):
     google_integration: GoogleIntegrationConfig = Field(
         default_factory=GoogleIntegrationConfig
     )
+    chatgpt_plan: ChatGPTPlanConfig = Field(default_factory=ChatGPTPlanConfig)
     gemini_live_config: GeminiLiveConfig = Field(default_factory=GeminiLiveConfig)
     mcp_config: MCPConfig = Field(default_factory=MCPConfig)
     mcp_adapter: MCPAdapterConfig = Field(default_factory=MCPAdapterConfig)

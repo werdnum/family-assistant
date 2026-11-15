@@ -900,6 +900,44 @@ being priced as API spend. `billing_refused` sessions mean Claude Code would hav
 
 ______________________________________________________________________
 
+### ChatGPT plan (Sign in with ChatGPT)
+
+Lets OpenAI models run on a household member's ChatGPT Plus or Pro plan through OpenAI's
+[Sign in with ChatGPT plan usage](https://developers.openai.com/siwc/token-sharing-open-source),
+instead of billing `OPENAI_API_KEY`. There is nothing to configure per model: once someone signs in
+under Settings → Connected Accounts, every chat model that calls OpenAI directly tries the plan
+first and uses its API key only when the plan cannot serve the request.
+
+| Property  | Value                                                     |
+| --------- | --------------------------------------------------------- |
+| Required  | `CREDENTIAL_ENCRYPTION_KEY`, and a sign-in in the web app |
+| Default   | Available; unused until someone signs in                  |
+| Sensitive | Tokens are stored encrypted in `chatgpt_plan_credentials` |
+
+- **`chatgpt_plan.enabled`** (default `true`) is the only switch. `false` removes the sign-in from
+  the web app and keeps every model on its API key.
+- The deployment holds **one** sign-in, used whoever is acting, automations included. Any signed-in
+  user can sign in or out.
+- Covered: the `openai` provider at OpenAI's own endpoint. Not covered: OpenRouter, a `base_url` or
+  `OPENAI_BASE_URL` endpoint, embeddings and image generation.
+- The plan is skipped for a model whose `llm_parameters` set something the route refuses
+  (`temperature`, `top_p`, `max_tokens`/`max_output_tokens`, `metadata`, `user`, `service_tier`,
+  `store: true`, `truncation`, `prompt_cache_retention`, `use_responses_api: false`, and the other
+  fields OpenAI lists under its preview limitations). `reasoning_effort` and `custom_instructions`
+  are fine.
+- Falls back to the API key, before anything has been streamed, when the plan's usage limit is
+  reached, the plan refuses the model, or the sign-in lapsed. A usage limit pauses the plan for that
+  model for 15 minutes, and a refusal pauses it for an hour. Without `OPENAI_API_KEY` the plan is
+  the only route, and its error reaches the user.
+- A refresh token lapses after 30 days without use, and someone signs in again.
+- `chatgpt_plan.agent_name` (default `Family Assistant`) is the app name shown on ChatGPT's consent
+  screen. `chatgpt_plan.credential_encryption_key` overrides `CREDENTIAL_ENCRYPTION_KEY` for these
+  tokens alone.
+
+See [docs/design/chatgpt-plan-usage.md](../design/chatgpt-plan-usage.md).
+
+______________________________________________________________________
+
 ### LLM_MODEL
 
 Default LLM model identifier.
@@ -2207,7 +2245,8 @@ ______________________________________________________________________
 ### CREDENTIAL_ENCRYPTION_KEY
 
 URL-safe base64-encoded Fernet key used to encrypt stored refresh tokens at rest. Maps to
-`google_integration.credential_encryption_key`.
+`google_integration.credential_encryption_key` and `chatgpt_plan.credential_encryption_key`, so it
+also enables the [ChatGPT plan sign-in](#chatgpt-plan-sign-in-with-chatgpt).
 
 | Property  | Value                              |
 | --------- | ---------------------------------- |

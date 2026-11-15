@@ -670,6 +670,20 @@ export const handlers = [
   http.delete('/api/integrations/google', () => {
     return new HttpResponse(null, { status: 204 });
   }),
+
+  // Mock ChatGPT plan sign-in status (default: available, never signed in)
+  http.get('/api/integrations/chatgpt', () => {
+    return HttpResponse.json({
+      enabled: true,
+      reason: null,
+      status: null,
+      email: null,
+      connected_by_user_id: null,
+      last_used_at: null,
+      redirect_uri: 'http://127.0.0.1:1455/auth/callback',
+      usage_url: 'https://chatgpt.com/settings/usage',
+    });
+  }),
 ];
 
 // Helper function to generate test responses based on input

@@ -10,6 +10,7 @@ from .artifact_review_api import artifact_review_api_router
 from .attachments_api import attachments_api_router
 from .automations_api import automations_api_router
 from .chat_api import chat_api_router
+from .chatgpt_plan_api import chatgpt_plan_api_router
 from .context_viewer import context_viewer_router
 from .debug_api import debug_api_router
 from .diagnostics_api import diagnostics_api_router
@@ -69,6 +70,11 @@ api_router.include_router(
     create_oauth_integration_router(GOOGLE_PROVIDER),
     prefix=f"/integrations/{GOOGLE_PROVIDER.name}",
     tags=["Google Integration"],
+)
+api_router.include_router(
+    chatgpt_plan_api_router,
+    prefix="/integrations/chatgpt",
+    tags=["ChatGPT Plan"],
 )
 api_router.include_router(me_router, tags=["Identity"])
 api_router.include_router(a2a_router, prefix="/a2a", tags=["A2A Protocol"])

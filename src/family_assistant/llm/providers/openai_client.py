@@ -189,8 +189,22 @@ def _is_media_mime_type(mime_type: str) -> bool:
     )
 
 
+_STREAM_ERROR_TYPES: dict[type[LLMProviderError], str] = {
+    InvalidRequestError: "invalid_request",
+    AuthenticationError: "authentication",
+    RateLimitError: "rate_limit",
+    ModelNotFoundError: "model_not_found",
+    ContextLengthError: "context_length",
+    ProviderConnectionError: "connection",
+    ProviderTimeoutError: "timeout",
+}
+
+
 class OpenAIClient(BaseLLMClient):
     """Direct OpenAI API implementation."""
+
+    # The provider name errors and telemetry are labelled with.
+    _provider_name = "openai"
 
     def __init__(
         self,
@@ -213,14 +227,7 @@ class OpenAIClient(BaseLLMClient):
         """
         base_url = kwargs.pop("base_url", None)
         self._owns_client = connections is None
-        if connections is None:
-            self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
-        else:
-            self.client = connections.get(
-                ConnectionKey("openai", base_url, api_key),
-                lambda: AsyncOpenAI(api_key=api_key, base_url=base_url),
-                AsyncOpenAI.close,
-            )
+        self.client = self._sdk_client(api_key, base_url, model, connections)
         # Read the URL the SDK actually resolved, not the argument we passed.
         # `OPENAI_BASE_URL` in the environment redirects the client without ever
         # reaching this constructor, so trusting the argument would classify a
@@ -239,6 +246,23 @@ class OpenAIClient(BaseLLMClient):
         logger.info(
             f"OpenAIClient initialized for model: {model} with default kwargs: {kwargs}, "
             f"model-specific parameters: {model_parameters}"
+        )
+
+    @staticmethod
+    def _sdk_client(
+        api_key: str,
+        base_url: str | None,
+        model: str,
+        connections: ProviderConnections | None,
+    ) -> AsyncOpenAI:
+        """The SDK client for this endpoint, borrowed when a registry is given."""
+        del model  # every model on one endpoint and key shares a client
+        if connections is None:
+            return AsyncOpenAI(api_key=api_key, base_url=base_url)
+        return connections.get(
+            ConnectionKey("openai", base_url, api_key),
+            lambda: AsyncOpenAI(api_key=api_key, base_url=base_url),
+            AsyncOpenAI.close,
         )
 
     async def close(self) -> None:
@@ -420,7 +444,7 @@ class OpenAIClient(BaseLLMClient):
             raise InvalidRequestError(
                 "Invalid use_responses_api configuration for model "
                 f"'{self.model}': expected a boolean, got {configured!r}",
-                provider="openai",
+                provider=self._provider_name,
                 model=self.model,
             )
         return configured
@@ -519,7 +543,7 @@ class OpenAIClient(BaseLLMClient):
         if not isinstance(store, bool):
             raise InvalidRequestError(
                 "Invalid OpenAI Responses store configuration: expected a boolean",
-                provider="openai",
+                provider=self._provider_name,
                 model=self.model,
             )
         cache_controls = self._supports_cache_controls()
@@ -632,7 +656,7 @@ class OpenAIClient(BaseLLMClient):
         metadata: StreamEventMetadata = {
             "error_id": error_id,
             "error_type": error_type or self._classify_stream_error_type(error_message),
-            "provider": "openai",
+            "provider": self._provider_name,
             "model": self.model,
         }
         response_id = getattr(response, "id", None)
@@ -705,7 +729,7 @@ class OpenAIClient(BaseLLMClient):
             f"Cannot send content part of type '{part.type}' to the OpenAI "
             "Responses API; it should have been resolved before reaching the "
             "provider",
-            provider="openai",
+            provider=self._provider_name,
             model=self.model,
         )
 
@@ -966,6 +990,10 @@ class OpenAIClient(BaseLLMClient):
             reasoning_info["cache_write_tokens"] = cache_write
         return reasoning_info
 
+    def _structured_usage(self, response: object) -> MessageReasoningInfo | None:
+        """Token usage of a structured-output response (Chat Completions here)."""
+        return self._reasoning_info_from_chat_usage(getattr(response, "usage", None))
+
     async def _instrumented_structured_request[R](
         self,
         messages: Sequence[LLMMessage],
@@ -981,7 +1009,7 @@ class OpenAIClient(BaseLLMClient):
         span = tracer.start_span("llm.provider.structured")
         telemetry = LLMCallTelemetry(
             span,
-            provider="openai",
+            provider=self._provider_name,
             system="openai",
             requested_model=self.model,
             messages=messages,
@@ -997,9 +1025,7 @@ class OpenAIClient(BaseLLMClient):
                 resolved_model=getattr(response, "model", None),
                 response_id=getattr(response, "id", None),
             )
-            telemetry.record_usage(
-                self._reasoning_info_from_chat_usage(getattr(response, "usage", None))
-            )
+            telemetry.record_usage(self._structured_usage(response))
             telemetry.finish_success(None)
         except Exception as e:
             telemetry.finish_error(e)
@@ -1072,44 +1098,60 @@ class OpenAIClient(BaseLLMClient):
         ]
         return tool_calls or None
 
+    def _typed_error_for(self, error: Exception) -> LLMProviderError | None:
+        """A provider-specific typing of *error*, consulted before message matching."""
+        del error
+        return None
+
+    def _error_type_for_code(self, code: str | None) -> str | None:
+        """The stream error type for a failed response's ``error.code``, if known."""
+        del code
+        return None
+
     def _map_error_to_typed_exception(self, e: Exception) -> LLMProviderError:
         """Map a raw OpenAI exception to the typed provider error hierarchy."""
         if isinstance(e, LLMProviderError):
             return e
+        if (typed := self._typed_error_for(e)) is not None:
+            return typed
         error_message = str(e)
 
         if "401" in error_message or "authentication" in error_message.lower():
             return AuthenticationError(
-                error_message, provider="openai", model=self.model
+                error_message, provider=self._provider_name, model=self.model
             )
         if "429" in error_message or "rate limit" in error_message.lower():
-            return RateLimitError(error_message, provider="openai", model=self.model)
+            return RateLimitError(
+                error_message, provider=self._provider_name, model=self.model
+            )
         if "404" in error_message or "model not found" in error_message.lower():
             return ModelNotFoundError(
-                error_message, provider="openai", model=self.model
+                error_message, provider=self._provider_name, model=self.model
             )
         if (
             "context length" in error_message.lower()
             or "maximum" in error_message.lower()
         ):
             return ContextLengthError(
-                error_message, provider="openai", model=self.model
+                error_message, provider=self._provider_name, model=self.model
             )
         if "invalid" in error_message.lower() or "400" in error_message:
             return InvalidRequestError(
-                error_message, provider="openai", model=self.model
+                error_message, provider=self._provider_name, model=self.model
             )
         if "connection" in error_message.lower() or "network" in error_message.lower():
             return ProviderConnectionError(
-                error_message, provider="openai", model=self.model
+                error_message, provider=self._provider_name, model=self.model
             )
         if "timeout" in error_message.lower():
             return ProviderTimeoutError(
-                error_message, provider="openai", model=self.model
+                error_message, provider=self._provider_name, model=self.model
             )
 
         logger.error(f"OpenAI API error: {e}", exc_info=e)
-        return LLMProviderError(error_message, provider="openai", model=self.model)
+        return LLMProviderError(
+            error_message, provider=self._provider_name, model=self.model
+        )
 
     async def generate_response(
         self,
@@ -1124,7 +1166,7 @@ class OpenAIClient(BaseLLMClient):
         with tracer.start_as_current_span("llm.provider.generate") as span:
             telemetry = LLMCallTelemetry(
                 span,
-                provider="openai",
+                provider=self._provider_name,
                 system="openai",
                 requested_model=self.model,
                 messages=messages,
@@ -1146,6 +1188,10 @@ class OpenAIClient(BaseLLMClient):
                 # terminal path has recorded the call.
                 telemetry.finish_abandoned()
 
+    async def _create_response(self, params: dict[str, object]) -> Response:
+        """Issue one non-streamed Responses API request."""
+        return await cast("Any", self.client.responses.create)(**params)
+
     async def _generate_response_inner(
         self,
         messages: Sequence[LLMMessage],
@@ -1161,7 +1207,7 @@ class OpenAIClient(BaseLLMClient):
             params = self._build_responses_params(
                 processed_messages, tools, tool_choice, stream=False
             )
-            response = await cast("Any", self.client.responses.create)(**params)
+            response = await self._create_response(params)
             telemetry.record_response_metadata(
                 resolved_model=response.model,
                 response_id=response.id,
@@ -1346,7 +1392,7 @@ class OpenAIClient(BaseLLMClient):
 
         raise StructuredOutputError(
             message=f"Failed to generate valid structured output after {max_retries + 1} attempts",
-            provider="openai",
+            provider=self._provider_name,
             model=self.model,
             raw_response=raw_response,
             validation_error=last_error,
@@ -1436,7 +1482,7 @@ class OpenAIClient(BaseLLMClient):
 
         raise StructuredOutputError(
             message=f"Failed to generate valid JSON output after {max_retries + 1} attempts",
-            provider="openai",
+            provider=self._provider_name,
             model=self.model,
             raw_response=raw_response,
             validation_error=last_error,
@@ -1518,7 +1564,7 @@ class OpenAIClient(BaseLLMClient):
         span = tracer.start_span("llm.provider.generate_stream")
         telemetry = LLMCallTelemetry(
             span,
-            provider="openai",
+            provider=self._provider_name,
             system="openai",
             requested_model=self.model,
             messages=messages,
@@ -1791,8 +1837,12 @@ class OpenAIClient(BaseLLMClient):
 
             # Categorize the error type for metadata
             error_type = "unknown"
-            if isinstance(e, InvalidRequestError):
-                error_type = "invalid_request"
+            typed = e if isinstance(e, LLMProviderError) else self._typed_error_for(e)
+            if typed is not None:
+                # Already typed, so its message need not happen to say what it
+                # is. A class without a short name goes by the class name,
+                # which `stream_error_to_exception` also understands.
+                error_type = _STREAM_ERROR_TYPES.get(type(typed), type(typed).__name__)
             elif "401" in error_message or "authentication" in error_message.lower():
                 error_type = "authentication"
             elif "429" in error_message or "rate limit" in error_message.lower():
@@ -1821,7 +1871,7 @@ class OpenAIClient(BaseLLMClient):
                 metadata={
                     "error_id": str(e.__class__.__name__),
                     "error_type": error_type,
-                    "provider": "openai",
+                    "provider": self._provider_name,
                     "model": self.model,
                 },
             )
@@ -1884,6 +1934,7 @@ class OpenAIClient(BaseLLMClient):
                 yield self._stream_error_event(
                     message or f"OpenAI Responses request {event.type}",
                     error_id=event.type,
+                    error_type=self._error_type_for_code(getattr(error, "code", None)),
                     response=event.response,
                 )
                 return

@@ -5,6 +5,7 @@ from .artifact_review import ArtifactReviewRepository
 from .automations import AutomationsRepository
 from .base import BaseRepository
 from .calendar_provenance import CalendarProvenanceRepository
+from .chatgpt_plan import ChatGPTPlanRepository
 from .confirmation_requests import ConfirmationRequestsRepository
 from .conversation_shares import ConversationSharesRepository
 from .conversation_summaries import ConversationSummariesRepository
@@ -37,6 +38,7 @@ __all__ = [
     "AutomationsRepository",
     "BaseRepository",
     "CalendarProvenanceRepository",
+    "ChatGPTPlanRepository",
     "ConfirmationRequestsRepository",
     "ConversationSharesRepository",
     "ConversationSummariesRepository",
