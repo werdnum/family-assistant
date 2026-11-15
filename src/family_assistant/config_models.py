@@ -567,6 +567,23 @@ class AntigravityConfig(BaseModel):
     environment: AntigravityEnvironmentConfig | None = None
 
 
+class ClaudeAgentConfig(BaseModel):
+    """Runtime configuration for a profile that runs on the Claude Agent SDK.
+
+    Its presence is what makes a profile run its turns in a Claude Code
+    session, billed to the Claude subscription whose OAuth token the
+    deployment provides. The model is not configured here: it is the profile's
+    ``model_tier``, whose single Anthropic entry the session runs. See
+    docs/design/claude-agent-sdk-profile.md.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # The Claude Code executable. Unset means the one bundled with the
+    # claude-agent-sdk package, which is what pins its version to the lockfile.
+    cli_path: str | None = None
+
+
 # The `name` of every context provider the assistant can attach to a profile.
 # Duplicated here rather than imported so config validation does not depend on
 # the provider module; `test_context_provider_names_match_config` keeps the two
@@ -684,6 +701,10 @@ class ProcessingConfig(BaseModel):
     # model its tier names. Combinations the agent cannot honour (no tier, a
     # tier with a fallback, an inline model) are rejected at startup.
     antigravity_config: AntigravityConfig | None = None
+    # Runs the profile's turns in a Claude Agent SDK session, with this
+    # application's tools offered to it and executed here. The model is the
+    # profile's tier, which must be exactly one Anthropic model.
+    claude_agent_config: ClaudeAgentConfig | None = None
     # The runtime-taint sink class a whole turn on this profile counts as.
     # Set it on a profile whose turn is itself a privileged operation -- a
     # sandbox that runs code, say -- so the taint matrix gates reaching the

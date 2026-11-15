@@ -16,7 +16,8 @@ other entry.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Literal, cast, get_args
 
 from family_assistant.llm.providers.google_genai_client import (
     is_interactions_agent_model,
@@ -237,6 +238,15 @@ def validate_profile_model_tier(
     ):
         _reject_interactions_agent_tier(profile_id, selectable, model_tiers[selectable])
 
+    if processing_config.claude_agent_config is not None:
+        for reachable in sorted({
+            tier_name,
+            *(allowed or ()),
+            *(auto or ()),
+            *(delegation or ()),
+        }):
+            _reject_non_claude_agent_tier(profile_id, reachable, model_tiers[reachable])
+
     if processing_config.antigravity_config is not None:
         for reachable in sorted({
             tier_name,
@@ -356,6 +366,111 @@ def _reject_interactions_agent_tier(
             "configured inline on a profile, not as an interchangeable tier."
         )
         raise ValueError(msg)
+
+
+def _reject_non_claude_agent_tier(
+    profile_id: str,
+    tier_name: str,
+    tier: ModelTierConfig,
+) -> None:
+    """Refuse a tier a Claude Agent SDK session cannot run as configured.
+
+    A session takes one Claude model and an effort; it has no fallback, so a
+    second entry would never run, and a non-Anthropic model or a Flex price
+    class has no meaning there. Request parameters are checked when the model
+    is resolved, against the merged global map.
+    """
+    entry = tier.chain[0]
+    problem: str | None = None
+    if len(tier.chain) != 1:
+        problem = "its chain has a fallback, which the session cannot fall back to"
+    elif entry.provider != "anthropic" or not entry.model:
+        problem = (
+            f"its model is on provider '{entry.provider}', and Claude Code runs "
+            "only Anthropic models"
+        )
+    elif entry.flex:
+        problem = "its entry sets flex, a price class Claude Code does not accept"
+    if problem is not None:
+        msg = (
+            f"Profile '{profile_id}' runs on the Claude Agent SDK and can run "
+            f"on model_tier '{tier_name}', but {problem}. A tier on this profile "
+            "names the session's model, so it must be exactly one Anthropic model."
+        )
+        raise ValueError(msg)
+
+
+ClaudeAgentEffort = Literal["low", "medium", "high", "xhigh", "max"]
+
+
+@dataclass(frozen=True)
+class ClaudeAgentModel:
+    """What one tier runs as in a Claude Agent SDK session."""
+
+    model: str
+    effort: ClaudeAgentEffort | None
+    # Appended to the system prompt, as the chat clients do with an entry's
+    # `custom_instructions`.
+    custom_instructions: str | None
+
+
+def resolve_claude_agent_model(
+    tier_name: str,
+    tier: ModelTierConfig,
+    # ast-grep-ignore: no-dict-any - LLM params are provider-specific and genuinely arbitrary
+    global_llm_parameters: dict[str, dict[str, Any]],
+) -> ClaudeAgentModel:
+    """The model and effort a Claude Agent SDK session runs *tier* with.
+
+    Parameters resolve the way the Anthropic client resolves them -- every
+    global pattern the model id contains, in order, then the entry's own
+    overlay -- so a tier means the same recipe on this profile as on a chat
+    profile. Claude Code accepts only an effort and adaptive thinking, so any
+    other parameter is refused rather than dropped: a run would otherwise be
+    named for a recipe it did not execute.
+    """
+    entry = tier.chain[0]
+    model = entry.model
+    if not model:
+        msg = f"Model tier '{tier_name}' must name its model."
+        raise ValueError(msg)
+    # ast-grep-ignore: no-dict-any - LLM params are provider-specific and genuinely arbitrary
+    params: dict[str, Any] = {}
+    for pattern, pattern_params in resolve_entry_model_parameters(
+        entry, global_llm_parameters
+    ).items():
+        if pattern in model:
+            params.update(pattern_params)
+
+    effort: ClaudeAgentEffort | None = None
+    custom_instructions: str | None = None
+    for key, value in params.items():
+        if key == "thinking" and value == {"type": "adaptive"}:
+            continue
+        if (
+            key == "output_config"
+            and isinstance(value, dict)
+            and set(value) <= {"effort"}
+        ):
+            requested = value.get("effort")
+            if requested is not None and requested not in get_args(ClaudeAgentEffort):
+                msg = f"Model tier '{tier_name}' sets unknown effort {requested!r}."
+                raise ValueError(msg)
+            effort = cast("ClaudeAgentEffort | None", requested)
+            continue
+        if key == "custom_instructions" and isinstance(value, str):
+            custom_instructions = value
+            continue
+        msg = (
+            f"Model tier '{tier_name}' runs '{model}' with llm_parameters "
+            f"'{key}': {value!r}, which a Claude Agent SDK session cannot apply. "
+            "It accepts adaptive thinking, output_config.effort and "
+            "custom_instructions."
+        )
+        raise ValueError(msg)
+    return ClaudeAgentModel(
+        model=model, effort=effort, custom_instructions=custom_instructions
+    )
 
 
 def _reject_non_reasoning_model_tier(

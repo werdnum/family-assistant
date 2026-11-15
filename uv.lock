@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = "==3.14.*"
 resolution-markers = [
     "sys_platform == 'win32' and extra != 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings'",
@@ -585,7 +585,7 @@ name = "cffi"
 version = "2.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pycparser", marker = "implementation_name != 'PyPy'" },
+    { name = "pycparser", marker = "implementation_name != 'PyPy' or (extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/9e/ef/008a1939e372c06329a3fce4279c02f328488f3526744906eeec3da7ad5f/cffi-2.1.1.tar.gz", hash = "sha256:dd31f52ea1086513bb9df30f8fcee9b8918323ae067a3d5b78bc826a000712be", size = 530807, upload-time = "2026-08-03T21:21:18.939Z" }
 wheels = [
@@ -631,6 +631,25 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/e4/33/89c2ced2b67d1c2a61c19c6751aa8902d46ce3dacb23600a283619f5a12d/charset_normalizer-3.4.2.tar.gz", hash = "sha256:5baececa9ecba31eff645232d59845c07aa030f0c81ee70184a90d35099a0e63", size = 126367, upload-time = "2025-05-02T08:34:42.01Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/20/94/c5790835a017658cbfabd07f3bfb549140c3ac458cfc196323996b10095a/charset_normalizer-3.4.2-py3-none-any.whl", hash = "sha256:7f56930ab0abd1c45cd15be65cc741c28b1c9a34876ce8c17a2fa107810c0af0", size = 52626, upload-time = "2025-05-02T08:34:40.053Z" },
+]
+
+[[package]]
+name = "claude-agent-sdk"
+version = "0.2.182"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "jsonschema" },
+    { name = "mcp" },
+    { name = "sniffio" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9b/4a/df1ad0297835252305702129ad45668ed03a0ee316f5a6bb4c69d1672bd4/claude_agent_sdk-0.2.182.tar.gz", hash = "sha256:bcecafd906f2dcb6bb8aac0799ff2534a2b2ec0895d67e3bd5a909d5f5e3df98", size = 405839, upload-time = "2026-11-13T21:38:23.79Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2a/97/bc5c736260a3fe82b0595af81a037de8dd4c34e9a3e31ecc4d855a0eef47/claude_agent_sdk-0.2.182-py3-none-macosx_11_0_arm64.whl", hash = "sha256:05b1ebd637b379f95c7aebb4f40702db59b3e3a6795cf255d31a9b42594b2647", size = 149604102, upload-time = "2026-11-13T21:38:29.643Z" },
+    { url = "https://files.pythonhosted.org/packages/89/cb/1c7e1b9ebed8e239cb0a22b434335dfa976f20649bcb37857b624fcb747f/claude_agent_sdk-0.2.182-py3-none-macosx_11_0_x86_64.whl", hash = "sha256:24ccc1c37191ced8f6289f70a76d571b067d663040643e432c165d0c2756ef35", size = 157219706, upload-time = "2026-11-13T21:38:41.111Z" },
+    { url = "https://files.pythonhosted.org/packages/3c/47/bc5980bd0a026ac9d0e21a3348846b634e394c0a39a941ff70db77c3b11d/claude_agent_sdk-0.2.182-py3-none-manylinux_2_17_aarch64.whl", hash = "sha256:2c56dc3b9059e68df272977e85f314dce99b6c9680c313236ee31968c14a2b5b", size = 161147988, upload-time = "2026-11-13T21:38:46.281Z" },
+    { url = "https://files.pythonhosted.org/packages/c7/02/fea494afaf5a8870217afe29b0e2cabe768375d8770f30742ba92b639dde/claude_agent_sdk-0.2.182-py3-none-manylinux_2_17_x86_64.whl", hash = "sha256:f15e140913c67f45a5eb09e5793f785a2d05613fc911c14bc3f8d818bedf9d09", size = 161767971, upload-time = "2026-11-13T21:38:51.865Z" },
+    { url = "https://files.pythonhosted.org/packages/de/2b/e9ea64e4a3c624a3a9f94ab0408e6996c305529fbf35bd4a19fc313fefeb/claude_agent_sdk-0.2.182-py3-none-win_amd64.whl", hash = "sha256:dab32a5bbbe2c4199348bc12d5b92f6c7010458178d40964f1175221a8e61e97", size = 164252384, upload-time = "2026-11-13T21:38:58.291Z" },
 ]
 
 [[package]]
@@ -743,7 +762,7 @@ name = "cryptography"
 version = "50.0.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cffi", marker = "platform_python_implementation != 'PyPy'" },
+    { name = "cffi", marker = "platform_python_implementation != 'PyPy' or (extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/9d/af/182eb91b0df3fe75c4d9f26fe70684569566745f6ba7e5c9c73a862c5252/cryptography-50.0.2.tar.gz", hash = "sha256:7b46165bb56eb4704e2eaaf86f3c940d19154535d9b0ca7d6d590b04060e00d5", size = 880623, upload-time = "2026-09-30T15:30:04.884Z" }
 wheels = [
@@ -935,6 +954,7 @@ dependencies = [
     { name = "backoff" },
     { name = "bcrypt" },
     { name = "caldav" },
+    { name = "claude-agent-sdk" },
     { name = "cloudcoil-models-kubernetes" },
     { name = "cryptography" },
     { name = "dkimpy" },
@@ -1093,6 +1113,7 @@ requires-dist = [
     { name = "bcrypt", specifier = ">=4.0.0,<5.0.0" },
     { name = "browser-handoff-service", marker = "extra == 'dev'", git = "https://github.com/werdnum/browser-server.git?rev=bfa34c53c9d5b19a65b3ae7d3e3216934e475b08" },
     { name = "caldav", specifier = ">=1.2.0" },
+    { name = "claude-agent-sdk", specifier = ">=0.2.182" },
     { name = "cloudcoil-models-kubernetes", specifier = ">=1.32" },
     { name = "cryptography", specifier = ">=44.0.1" },
     { name = "dkimpy", specifier = ">=1.1.8" },
@@ -2074,7 +2095,7 @@ dependencies = [
     { name = "pluggy" },
     { name = "puremagic" },
     { name = "pydantic" },
-    { name = "pyreadline3", marker = "sys_platform == 'win32'" },
+    { name = "pyreadline3", marker = "sys_platform == 'win32' or (extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings')" },
     { name = "python-ulid" },
     { name = "pyyaml" },
     { name = "setuptools" },
@@ -2368,12 +2389,12 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "pyjwt", extra = ["crypto"] },
     { name = "python-multipart" },
-    { name = "pywin32", marker = "sys_platform == 'win32'" },
+    { name = "pywin32", marker = "sys_platform == 'win32' or (extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings')" },
     { name = "sse-starlette" },
     { name = "starlette" },
     { name = "typing-extensions" },
     { name = "typing-inspection" },
-    { name = "uvicorn", marker = "sys_platform != 'emscripten'" },
+    { name = "uvicorn", marker = "sys_platform != 'emscripten' or (extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/ba/93/0142dc84a666daf8ad51a34268f34c12fd6fda4f3810c4be2504eecc8212/mcp-1.30.0.tar.gz", hash = "sha256:445414625fce5c295faa505bb11bacece661ab6f4028d57c935db57820b7a3e4", size = 680511, upload-time = "2026-09-07T14:34:15.845Z" }
 wheels = [
@@ -2584,7 +2605,7 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "charset-normalizer" },
     { name = "urllib3-future" },
-    { name = "wassima", marker = "sys_platform != 'emscripten'" },
+    { name = "wassima", marker = "sys_platform != 'emscripten' or (extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/1c/2a/e368ec88a02c6bfc56c031ba6da9dd8099ad998fb818c28b687bee74c91a/niquests-3.21.2.tar.gz", hash = "sha256:586d6b9475c9018a42f19f1e4688077b8158101cbf40673c63d2c1a096cc7665", size = 1094494, upload-time = "2026-09-23T06:23:46.681Z" }
 wheels = [
@@ -3022,7 +3043,7 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
     { name = "python-dateutil" },
-    { name = "tzdata", marker = "sys_platform == 'emscripten' or sys_platform == 'win32'" },
+    { name = "tzdata", marker = "sys_platform == 'emscripten' or sys_platform == 'win32' or (extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/55/b1/a10c0d1a7e3ce44eb42635771004aa503e3b9ddde0bd39c524dda65f7eff/pandas-3.1.0.tar.gz", hash = "sha256:ecb9b2d8a817b1e1ba1fdb90c0abe9eab31b4fdf2562b7a56b86ac66ace17e49", size = 5933421, upload-time = "2026-10-22T11:57:03.087Z" }
 wheels = [
@@ -4547,7 +4568,7 @@ name = "sqlalchemy"
 version = "2.0.55"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "greenlet", marker = "platform_machine == 'AMD64' or platform_machine == 'WIN32' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'ppc64le' or platform_machine == 'win32' or platform_machine == 'x86_64'" },
+    { name = "greenlet", marker = "platform_machine == 'AMD64' or platform_machine == 'WIN32' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'ppc64le' or platform_machine == 'win32' or platform_machine == 'x86_64' or (extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings')" },
     { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/a5/bd/08864ddfffbb8914ee13b0c887d84b4b13bc8dd8da3077c0dace5a87699c/sqlalchemy-2.0.55.tar.gz", hash = "sha256:ae40c563bc10a8d56f1fd1f39f069aeb5eb85ca26913b2314dd8d190139258fa", size = 9997689, upload-time = "2026-10-16T20:45:32.724Z" }
@@ -4918,7 +4939,7 @@ name = "tqdm"
 version = "4.67.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/a8/4b/29b4ef32e036bb34e4ab51796dd745cdba7ed47ad142a9f4a1eb8e0c744d/tqdm-4.67.1.tar.gz", hash = "sha256:f8aef9c52c08c13a65f30ea34f4e5aac3fd1a34959879d7e59e63027286627f2", size = 169737, upload-time = "2024-11-24T20:12:22.481Z" }
 wheels = [
@@ -5095,7 +5116,7 @@ name = "tzlocal"
 version = "5.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "tzdata", marker = "sys_platform == 'win32'" },
+    { name = "tzdata", marker = "sys_platform == 'win32' or (extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/8b/2e/c14812d3d4d9cd1773c6be938f89e5735a1f11a9f184ac3639b93cef35d5/tzlocal-5.3.1.tar.gz", hash = "sha256:cceffc7edecefea1f595541dbd6e990cb1ea3d19bf01b2809f362a03dd7921fd", size = 30761, upload-time = "2025-03-05T21:17:41.549Z" }
 wheels = [
@@ -5130,7 +5151,7 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "h11" },
     { name = "jh2" },
-    { name = "qh3", marker = "(platform_machine == 'AMD64' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'ARM64' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'arm64' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'armv7l' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'i686' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'ppc64' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'ppc64le' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'riscv64' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'riscv64gc' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 's390x' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'x86' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'AMD64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'ARM64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'arm64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'armv7l' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'i686' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'ppc64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'ppc64le' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'riscv64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'riscv64gc' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 's390x' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'x86' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'AMD64' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 'ARM64' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 'arm64' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 'armv7l' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 'i686' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 'ppc64' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 'ppc64le' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 'riscv64' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 'riscv64gc' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 's390x' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 'x86' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'win32')" },
+    { name = "qh3", marker = "(platform_machine != 'AMD64' and platform_machine != 'ARM64' and platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l' and platform_machine != 'i686' and platform_machine != 'ppc64' and platform_machine != 'ppc64le' and platform_machine != 'riscv64' and platform_machine != 'riscv64gc' and platform_machine != 's390x' and platform_machine != 'x86' and platform_machine != 'x86_64' and sys_platform == 'darwin' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine != 'AMD64' and platform_machine != 'ARM64' and platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l' and platform_machine != 'i686' and platform_machine != 'ppc64' and platform_machine != 'ppc64le' and platform_machine != 'riscv64' and platform_machine != 'riscv64gc' and platform_machine != 's390x' and platform_machine != 'x86' and platform_machine != 'x86_64' and sys_platform == 'linux' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine != 'AMD64' and platform_machine != 'ARM64' and platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l' and platform_machine != 'i686' and platform_machine != 'ppc64' and platform_machine != 'ppc64le' and platform_machine != 'riscv64' and platform_machine != 'riscv64gc' and platform_machine != 's390x' and platform_machine != 'x86' and platform_machine != 'x86_64' and sys_platform == 'win32' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 'AMD64' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'ARM64' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'arm64' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'armv7l' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'i686' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'ppc64' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'ppc64le' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'riscv64' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'riscv64gc' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 's390x' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'x86' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'AMD64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'ARM64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'arm64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'armv7l' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'i686' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'ppc64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'ppc64le' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'riscv64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'riscv64gc' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 's390x' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'x86' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'AMD64' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 'ARM64' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 'arm64' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 'armv7l' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 'i686' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 'ppc64' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 'ppc64le' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 'riscv64' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 'riscv64gc' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 's390x' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 'x86' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 'AMD64' and sys_platform == 'darwin' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 'ARM64' and sys_platform == 'darwin' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 'aarch64' and sys_platform == 'darwin' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 'armv7l' and sys_platform == 'darwin' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 'i686' and sys_platform == 'darwin' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 'ppc64' and sys_platform == 'darwin' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 'ppc64le' and sys_platform == 'darwin' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 'riscv64' and sys_platform == 'darwin' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 'riscv64gc' and sys_platform == 'darwin' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 's390x' and sys_platform == 'darwin' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 'x86' and sys_platform == 'darwin' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 'x86_64' and sys_platform == 'darwin' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 'AMD64' and sys_platform == 'linux' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 'ARM64' and sys_platform == 'linux' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 'arm64' and sys_platform == 'linux' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 'armv7l' and sys_platform == 'linux' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 'i686' and sys_platform == 'linux' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 'ppc64' and sys_platform == 'linux' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 'ppc64le' and sys_platform == 'linux' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 'riscv64' and sys_platform == 'linux' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 'riscv64gc' and sys_platform == 'linux' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 's390x' and sys_platform == 'linux' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 'x86' and sys_platform == 'linux' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 'ARM64' and sys_platform == 'win32' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 'aarch64' and sys_platform == 'win32' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 'arm64' and sys_platform == 'win32' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 'armv7l' and sys_platform == 'win32' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 'i686' and sys_platform == 'win32' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 'ppc64' and sys_platform == 'win32' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 'ppc64le' and sys_platform == 'win32' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 'riscv64' and sys_platform == 'win32' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 'riscv64gc' and sys_platform == 'win32' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 's390x' and sys_platform == 'win32' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 'x86' and sys_platform == 'win32' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (platform_machine == 'x86_64' and sys_platform == 'win32' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/36/28/765b30ba80b434803d287f873453463d9eef9d5cb4e28004196460166976/urllib3_future-2.25.905.tar.gz", hash = "sha256:d5bd25dad01d7358b33f4c7b3f225506231158086ff790028c1de5b38c26e89e", size = 1704064, upload-time = "2026-10-28T13:20:47.275Z" }
 wheels = [
@@ -5155,7 +5176,7 @@ standard = [
     { name = "httptools" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
-    { name = "uvloop", marker = "platform_python_implementation != 'PyPy' and sys_platform != 'cygwin' and sys_platform != 'win32'" },
+    { name = "uvloop", marker = "(platform_python_implementation != 'PyPy' and sys_platform != 'cygwin' and sys_platform != 'win32') or (platform_python_implementation == 'PyPy' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (sys_platform == 'cygwin' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings') or (sys_platform == 'win32' and extra == 'extra-16-family-assistant-dev' and extra == 'extra-16-family-assistant-local-embeddings')" },
     { name = "watchfiles" },
     { name = "websockets" },
 ]
