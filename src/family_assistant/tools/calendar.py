@@ -204,6 +204,17 @@ async def _grade_google_item(
     await grade_calendar_events(exec_context, [candidate])
 
 
+# caldav searches for the UID before a no_overwrite save unless the server is
+# known to refuse a duplicate UID itself. The event UID is a fresh UUID4, so
+# that search cannot find anything, and iCloud refuses the search's
+# calendar-query REPORT with 412 Precondition Failed, which failed every
+# add_calendar_event there. Declaring the feature skips the search; the PUT
+# still carries If-None-Match: *. Only the client that creates events uses it.
+_CREATE_EVENT_FEATURES: dict[str, dict[str, str]] = {
+    "save.no-uid-conflict": {"support": "full"}
+}
+
+
 def _record_external_calendar_taint(
     exec_context: ToolExecutionContext, *, source_id: str, reason: str
 ) -> None:
@@ -1115,6 +1126,7 @@ async def add_calendar_event_tool(
                 username=username,
                 password=password,
                 timeout=30,
+                features=_CREATE_EVENT_FEATURES,
             ) as client:
                 # Get the specific calendar object using its full URL
                 target_calendar_obj: Calendar = client.calendar(
@@ -1126,7 +1138,8 @@ async def add_calendar_event_tool(
                     )
 
                 logger.info(f"Saving event to calendar: {target_calendar_obj.url}")
-                # Save event with no_overwrite=True to use If-None-Match:* for creation
+                # no_overwrite=True sends If-None-Match: *, so the server refuses
+                # the PUT if an object already exists at that URL.
                 new_event_resource = sync_result(
                     target_calendar_obj.add_event(event_data, no_overwrite=True)
                 )
