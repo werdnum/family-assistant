@@ -1,6 +1,6 @@
 # Dependabot: review-gated automatic merging
 
-Status: merging Dependabot PRs (`mode: merge`). Agent dependency fixes are still `report-only`.
+Status: merging (`mode: merge`), for Dependabot PRs and agent dependency fixes alike.
 
 ## Why
 
@@ -47,9 +47,9 @@ Missing or unreadable evidence is a hold, never a pass. In `merge` mode each PR 
 
 Coding agents open dependency fixes too, such as the security-fix tasks that kube-config's
 `vuln-tasks` job hands to `agent:claude-ai`. The lane also reports on those PRs, under the policy's
-`agent` section, which has its own `mode`. It ships as `report-only` and acts only once both it and
-the top-level mode are `merge`. Until then an eligible agent PR is reported as "would-merge" and is
-never the merge candidate, labelled or nudged.
+`agent` section, which has its own `mode`. It acts only when both it and the top-level mode are
+`merge`; in `report-only` an eligible agent PR is reported as "would-merge" and is never the merge
+candidate, labelled or nudged.
 
 An agent opens its PRs as the repository owner, so its identity proves nothing. An agent PR (head
 branch `claude/`, opened by the owner) qualifies only on what its diff shows:
@@ -66,6 +66,13 @@ branch `claude/`, opened by the owner) qualifies only on what its diff shows:
   integrity. A changed entry that keeps its version (a package repointed somewhere else) is held, as
   is any change to the file's header. No package may appear: the dependency list that would pull it
   in is unverified text in the lockfile, so a new package needs a person.
+- **Release age:** every release an agent's lockfile moves to must have been on the registry for at
+  least `min_release_age_hours` (72). An agent chooses its target version, so one steered by
+  injected text could pick a release a compromised maintainer published minutes earlier; the wait
+  gives the registry and the ecosystem time to pull it. The publish time is the release's earliest
+  file upload on PyPI, or the packument's `time` entry on npm, read during collection. A release
+  whose time cannot be read is held. Dependabot PRs have no age gate: Dependabot picks the version,
+  not text an agent read. An urgent fix younger than the minimum is merged by a person.
 - **Provenance:** every commit carries a valid signature. Review freshness is measured from the head
   commit.
 - Review, CI, pacing and the denied packages and paths work as they do for Dependabot. The major
@@ -110,10 +117,8 @@ Against #1534's lockfile, these rules accept all 15 upgraded packages and hold o
   guard, and kube-config's history shows no breakage from that class.
 - **Lockfile-only security fixes are not special-cased.** They go through the same gates as any
   other update, so a transitive security fix that crosses a major waits for a person.
-- **Agent PRs have no release-age gate.** A genuine registry release published that day passes, as
-  it does for Dependabot's security updates; the Codex review and CI are the guard. Hashes are not
-  re-fetched: the installer verifies them against the registry file at install time, so a forged
-  hash fails CI.
+- **Hashes are not re-fetched for agent PRs.** The installer verifies them against the registry file
+  at install time, so a forged hash fails CI.
 - **The script is a port, not a shared library.** Both repositories carry their own copy. They
   differ in the places listed above and in their CI wiring, and a shared copy would couple two
   repositories' merge credentials to one file.
