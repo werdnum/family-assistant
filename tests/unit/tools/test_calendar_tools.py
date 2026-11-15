@@ -539,6 +539,53 @@ async def test_add_calendar_event_targeting_succeeds_on_named_calendar(
 
 
 @pytest.mark.asyncio
+async def test_add_calendar_event_creates_with_one_conditional_put(
+    radicale_server: tuple[str, str, str, str],
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Creating an event sends no pre-save UID search, which iCloud refuses with 412."""
+    base_url, user, passwd, calendar_url = radicale_server
+    config: CalendarConfig = {
+        "caldav": {
+            "username": user,
+            "password": passwd,
+            "base_url": base_url,
+            "calendar_urls": [calendar_url],
+        },
+    }
+    sent: list[tuple[str, dict[str, str]]] = []
+    original_request = DAVClient.request
+
+    def recording_request(
+        self: DAVClient,
+        url: str,
+        method: str = "GET",
+        body: str = "",
+        headers: Mapping[str, str] | None = None,
+        **kwargs: object,
+    ) -> object:
+        sent.append((method, {k.lower(): v for k, v in (headers or {}).items()}))
+        return original_request(self, url, method, body, headers, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(DAVClient, "request", recording_request)
+    summary = f"Created Once {uuid.uuid4()}"
+
+    result = await add_calendar_event_tool(
+        exec_context=_create_context(db_engine),
+        calendar_config=config,
+        summary=summary,
+        start_time="2026-05-01T10:00:00Z",
+        end_time="2026-05-01T11:00:00Z",
+        bypass_duplicate_check=True,
+    )
+
+    assert "added to the calendar" in result
+    assert [method for method, _ in sent] == ["PUT"]
+    assert sent[0][1].get("if-none-match") == "*"
+
+
+@pytest.mark.asyncio
 async def test_modify_calendar_event_targeting_and_read_only(
     db_engine: AsyncEngine,
 ) -> None:
