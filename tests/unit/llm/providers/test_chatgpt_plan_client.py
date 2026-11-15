@@ -27,7 +27,6 @@ from family_assistant.llm.messages import (
     UserMessage,
 )
 from family_assistant.llm.providers.chatgpt_plan_client import ChatGPTPlanClient
-from family_assistant.llm.providers.openai_client import OpenAIClient
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 
 if TYPE_CHECKING:
@@ -274,81 +273,20 @@ TOOL: ToolDefinition = {
 }
 
 
-def _plan_output_after_tool_call() -> list[LLMMessage]:
+DEFERRED: ToolDefinition = {
+    "type": "function",
+    "function": {
+        "name": "set_lights",
+        "description": "Set the lights",
+        "parameters": {"type": "object", "properties": {}},
+    },
+    "defer_loading": True,
+}
+
+
+def _after_activation() -> list[LLMMessage]:
     return [
-        UserMessage(content="Read my note"),
-        AssistantMessage(
-            content=None,
-            provider_metadata={
-                "openai_response_output": [
-                    {
-                        "type": "function_call",
-                        "id": "fc_1",
-                        "call_id": "call_1",
-                        "name": "get_note",
-                        "namespace": "family_assistant",
-                        "arguments": "{}",
-                        "status": "completed",
-                    }
-                ],
-                "openai_response_stored": False,
-            },
-        ),
-        ToolMessage(tool_call_id="call_1", content="Buy milk", name="get_note"),
-    ]
-
-
-def _function_calls(params: dict[str, object]) -> list[dict[str, object]]:
-    items = cast("list[dict[str, object]]", params["input"])
-    return [item for item in items if item.get("type") == "function_call"]
-
-
-async def test_tools_are_declared_inside_a_namespace() -> None:
-    server = _Server(lambda _r: _completed("hi"))
-    client, _ = _client(server)
-
-    await client.generate_response(MESSAGES, [TOOL])
-
-    [namespace] = cast("list[dict[str, Any]]", server.body()["tools"])
-    assert namespace["type"] == "namespace"
-    assert [tool["name"] for tool in namespace["tools"]] == ["get_note"]
-
-
-def test_replayed_tool_calls_name_the_namespace() -> None:
-    client, _ = _client(_Server(lambda _r: _completed("hi")))
-
-    params = client._build_responses_params(
-        _plan_output_after_tool_call(), [TOOL], "auto", stream=True
-    )
-
-    [call] = _function_calls(params)
-    assert call["namespace"] == "family_assistant"
-
-
-def test_direct_openai_replays_plan_calls_without_the_namespace() -> None:
-    client = OpenAIClient(api_key="k", model=MODEL)
-
-    params = client._build_responses_params(
-        _plan_output_after_tool_call(), [TOOL], "auto", stream=True
-    )
-
-    [call] = _function_calls(params)
-    assert "namespace" not in call
-
-
-def test_a_call_to_an_activated_tool_stays_standalone() -> None:
-    """An `additional_tools` tool is outside the namespace, and so is its call."""
-    client, _ = _client(_Server(lambda _r: _completed("hi")))
-    deferred: ToolDefinition = {
-        "type": "function",
-        "function": {
-            "name": "set_lights",
-            "description": "Set the lights",
-            "parameters": {"type": "object", "properties": {}},
-        },
-        "defer_loading": True,
-    }
-    messages: list[LLMMessage] = [
+        SystemMessage(content="Stable prompt. Today is Sunday.", stable_prefix_len=14),
         UserMessage(content="Lights on"),
         AssistantMessage(
             content=None,
@@ -366,24 +304,45 @@ def test_a_call_to_an_activated_tool_stays_standalone() -> None:
             content="Activated tools: set_lights.",
             activated_tools=["set_lights"],
         ),
-        AssistantMessage(
-            content=None,
-            tool_calls=[
-                ToolCallItem(
-                    id="call_2",
-                    type="function",
-                    function=ToolCallFunction(name="set_lights", arguments="{}"),
-                )
-            ],
-        ),
-        ToolMessage(tool_call_id="call_2", name="set_lights", content="Done"),
     ]
 
+
+async def test_tools_are_sent_as_ordinary_functions() -> None:
+    server = _Server(lambda _r: _completed("hi"))
+    client, _ = _client(server)
+
+    await client.generate_response(MESSAGES, [TOOL])
+
+    tools = cast("list[dict[str, Any]]", server.body()["tools"])
+    assert [(tool["type"], tool["name"]) for tool in tools] == [
+        ("function", "get_note")
+    ]
+
+
+def test_requests_carry_no_explicit_cache_control() -> None:
+    """The route refuses prompt_cache_options and per-block breakpoints."""
+    client, _ = _client(_Server(lambda _r: _completed("hi")))
+
     params = client._build_responses_params(
-        messages, [TOOL, deferred], "auto", stream=True
+        _after_activation(), [TOOL, DEFERRED], "auto", stream=True
     )
 
-    namespaces = {
-        str(call["name"]): call.get("namespace") for call in _function_calls(params)
-    }
-    assert namespaces == {"get_note": "family_assistant", "set_lights": None}
+    sent = json.dumps(params)
+    assert "prompt_cache_options" not in sent
+    assert "prompt_cache_breakpoint" not in sent
+
+
+def test_an_activation_still_arrives_as_additional_tools() -> None:
+    """Activated tools stay out of the tools array, so its prefix is stable."""
+    client, _ = _client(_Server(lambda _r: _completed("hi")))
+
+    params = client._build_responses_params(
+        _after_activation(), [TOOL, DEFERRED], "auto", stream=True
+    )
+
+    items = cast("list[dict[str, Any]]", params["input"])
+    [addition] = [item for item in items if item.get("type") == "additional_tools"]
+    assert [tool["name"] for tool in addition["tools"]] == ["set_lights"]
+    assert [tool["name"] for tool in cast("list[dict[str, Any]]", params["tools"])] == [
+        "get_note"
+    ]

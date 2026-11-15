@@ -51,7 +51,6 @@ logger = logging.getLogger(__name__)
 
 _API_BASE_URL = "https://api.openai.com/v1"
 _USAGE_URL = "https://chatgpt.com/settings/usage"
-_TOOL_NAMESPACE = "family_assistant"
 
 # Request fields the route refuses. `max_tokens` is here because this client
 # sends it as `max_output_tokens`; `store` because it may only be false;
@@ -186,48 +185,51 @@ class ChatGPTPlanClient(OpenAIClient):
         )
         params["stream"] = True
         params["store"] = False
-        declared = params.get("tools")
-        namespaced = (
-            {tool.get("name") for tool in cast("list[dict[str, object]]", declared)}
-            if isinstance(declared, list)
-            else set()
-        )
+        # The route refuses explicit cache control (observed: "not supported
+        # on this model") but takes `additional_tools`, so an activation still
+        # leaves the tools array and the prefix before it unchanged.
+        params.pop("prompt_cache_options", None)
+        extra_body = params.get("extra_body")
+        if isinstance(extra_body, dict):
+            # The SDK does not model it, so the base client sends it here.
+            remaining = {
+                key: value
+                for key, value in cast("dict[str, object]", extra_body).items()
+                if key != "prompt_cache_options"
+            }
+            if remaining:
+                params["extra_body"] = remaining
+            else:
+                del params["extra_body"]
         input_items = params.get("input")
         if isinstance(input_items, list):
             params["input"] = [
-                self._plan_input_item(item, namespaced)
+                self._plan_input_item(item)
                 for item in cast("list[object]", input_items)
-            ]
-        if isinstance(declared, list) and declared:
-            # The route takes function tools only inside a namespace (or as
-            # `additional_tools` items, which activations already use).
-            params["tools"] = [
-                {
-                    "type": "namespace",
-                    "name": _TOOL_NAMESPACE,
-                    "description": "Family Assistant's tools.",
-                    "tools": declared,
-                }
             ]
         return params
 
     @staticmethod
-    def _plan_input_item(item: object, namespaced: set[object]) -> object:
+    def _plan_input_item(item: object) -> object:
         """An input item in the route's shape.
 
-        System items are refused, so they go as developer messages. A replayed
-        call to a tool declared in the namespace names it, as the model's own
-        call did; a call to a tool activated through ``additional_tools`` was
-        standalone and stays so.
+        System items are refused, so they go as developer messages, and cache
+        breakpoints are dropped from their content blocks.
         """
         if not isinstance(item, dict):
             return item
         typed = cast("dict[str, object]", item)
-        if typed.get("role") == "system":
-            return {**typed, "role": "developer"}
-        if typed.get("type") == "function_call" and typed.get("name") in namespaced:
-            return {**typed, "namespace": _TOOL_NAMESPACE}
-        return typed
+        if typed.get("role") != "system":
+            return typed
+        content = typed.get("content")
+        if isinstance(content, list):
+            content = [
+                {k: v for k, v in block.items() if k != "prompt_cache_breakpoint"}
+                if isinstance(block, dict)
+                else block
+                for block in cast("list[object]", content)
+            ]
+        return {**typed, "role": "developer", "content": content}
 
     async def _create_response(self, params: dict[str, object]) -> Response:
         """Stream the request and return the response it terminates with."""

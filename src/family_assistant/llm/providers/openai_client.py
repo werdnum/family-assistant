@@ -883,20 +883,10 @@ class OpenAIClient(BaseLLMClient):
                                 output_item.get("id"),
                             )
                             continue
-                        # A set `namespace` belongs to the request that
-                        # declared it (the ChatGPT plan route); this client
-                        # declares none, and a subclass that does adds its
-                        # own. An unset one stays, so history replays
-                        # byte-identically.
                         input_items.append({
                             key: value
                             for key, value in output_item.items()
                             if key != "status"
-                            and not (
-                                key == "namespace"
-                                and value is not None
-                                and output_item.get("type") == "function_call"
-                            )
                         })
                 else:
                     if message.content:

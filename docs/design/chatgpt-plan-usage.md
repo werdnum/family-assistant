@@ -95,14 +95,14 @@ the published revocation endpoint (best effort), then clears the tokens.
 client takes its bearer token from the credential store before each request. The route has some
 extra requirements:
 
-| Route requirement                                             | How the client meets it                                                                                                 |
-| ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `store: false`, `stream: true` on every request               | Forced. Non-streaming calls are streamed and collected through `response.completed`.                                    |
-| No `system` items                                             | System messages are sent as `developer` messages.                                                                       |
-| No `max_output_tokens`, `temperature`, `top_p`, `metadata`, … | A model configured with one stays on its API key; the plan client is never built for it.                                |
-| No Chat Completions                                           | Structured and JSON output use Responses `text.format`.                                                                 |
-| Function tools only inside a namespace or `additional_tools`  | Tools are declared in one `family_assistant` namespace; replayed calls name it, and the direct OpenAI client strips it. |
-| Usage-limit errors (`subscription_sharing_*`)                 | Mapped to the typed errors: limits to `RateLimitError`, eligibility to `AuthenticationError`, and so on.                |
+| Route requirement                                                                        | How the client meets it                                                                                    |
+| ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `store: false`, `stream: true` on every request                                          | Forced. Non-streaming calls are streamed and collected through `response.completed`.                       |
+| No `system` items                                                                        | System messages are sent as `developer` messages.                                                          |
+| No `max_output_tokens`, `temperature`, `top_p`, `metadata`, …                            | A model configured with one stays on its API key; the plan client is never built for it.                   |
+| No Chat Completions                                                                      | Structured and JSON output use Responses `text.format`.                                                    |
+| Explicit cache control refused (`prompt_cache_options`, block `prompt_cache_breakpoint`) | Both are dropped; `additional_tools` items (accepted) still keep the tools array fixed across activations. |
+| Usage-limit errors (`subscription_sharing_*`)                                            | Mapped to the typed errors: limits to `RateLimitError`, eligibility to `AuthenticationError`, and so on.   |
 
 ### Routing
 
@@ -130,8 +130,10 @@ only; the plan has no price class to choose.
 - **No model catalogue.** Every direct-OpenAI model is tried on the plan; one the plan does not
   serve fails its first attempt, falls back to the key, and pauses for an hour. Reading the
   account's model list would avoid that one attempt at the cost of keeping a catalogue fresh.
-- **Cache controls are unchanged.** `additional_tools` is documented as supported on this route. The
-  client keeps the same cache-control behaviour as direct OpenAI.
+- **Flat function tools.** OpenAI's preview notes say function tools go in a namespace or
+  `additional_tools`; a live request accepted plain top-level function tools, which keeps the
+  request identical to direct OpenAI and history replayable on either route. If OpenAI starts
+  enforcing the note, plan requests fail, fall back to the key, and the warning says why.
 - **The paste step instead of a listener.** It costs the user one copy and paste, and needs no local
   tool.
 
@@ -144,4 +146,7 @@ only; the plan has no price class to choose.
 - Unit tests for the request shape the client sends, and for streaming collection on the
   non-streaming paths.
 - A frontend test for the settings card.
-- A live end-to-end run needs a real ChatGPT account. It is not automated.
+- A live run against a real plan (not automated): sign-in, a plain reply, a forced tool call, a
+  streamed follow-up replaying it, and structured output all succeeded. Probing the route showed it
+  accepts `additional_tools`, `prompt_cache_key`, encrypted reasoning and flat or namespaced tools,
+  and refuses `prompt_cache_options` and `prompt_cache_breakpoint`.
