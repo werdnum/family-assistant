@@ -130,6 +130,9 @@ ENV_VAR_MAPPINGS: list[EnvVarMapping] = [
     EnvVarMapping(
         "CREDENTIAL_ENCRYPTION_KEY", "google_integration.credential_encryption_key"
     ),
+    EnvVarMapping(
+        "CREDENTIAL_ENCRYPTION_KEY", "chatgpt_plan.credential_encryption_key"
+    ),
     # Profile settings
     EnvVarMapping("DEFAULT_SERVICE_PROFILE_ID", "default_service_profile_id"),
     EnvVarMapping("TIMEZONE", "default_profile_settings.processing_config.timezone"),

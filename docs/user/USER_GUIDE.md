@@ -33,6 +33,7 @@ just the part you need.
 | [attachments.md](attachments.md)                     | Sending photos and files, and moving them between tools                   |
 | [email.md](email.md)                                 | Emailing or forwarding mail to the assistant, and what it may do with it  |
 | [google-workspace.md](google-workspace.md)           | Connecting your Google account for Gmail, Drive and Calendar access       |
+| [chatgpt-plan.md](chatgpt-plan.md)                   | Signing in with ChatGPT so OpenAI models run on your ChatGPT plan         |
 | [smart-home.md](smart-home.md)                       | Controlling Home Assistant devices, and who's home                        |
 | [automations.md](automations.md)                     | Automations that react to events or run on a schedule                     |
 | [research-and-browsing.md](research-and-browsing.md) | Web search, page summaries, browsing sites, and deep research             |

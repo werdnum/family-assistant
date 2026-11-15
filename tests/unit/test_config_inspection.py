@@ -26,6 +26,7 @@ from family_assistant.config_loader import expand_env_vars_in_dict
 from family_assistant.config_models import (
     ApnsConfig,
     AppConfig,
+    ChatGPTPlanConfig,
     MCPConfig,
     MCPServerConfig,
     TypeSafeConfig,
@@ -54,6 +55,9 @@ def test_declared_credential_fields_mask_themselves() -> None:
         telegram_token=SecretStr("telegram-secret"),
         openai_api_key=SecretStr("sk-live"),
         apns=ApnsConfig(team_id="TEAM123", auth_key=SecretStr(PEM_KEY)),
+        chatgpt_plan=ChatGPTPlanConfig(
+            credential_encryption_key=SecretStr("chatgpt-fernet-key")
+        ),
         plugins=PluginsConfig(
             trino={
                 "default": TrinoConfig(
@@ -67,7 +71,13 @@ def test_declared_credential_fields_mask_themselves() -> None:
 
     dumped = json.dumps(config.model_dump(mode="json"))
 
-    for secret in ("telegram-secret", "sk-live", "BEGIN PRIVATE KEY", "trino-secret"):
+    for secret in (
+        "telegram-secret",
+        "sk-live",
+        "BEGIN PRIVATE KEY",
+        "trino-secret",
+        "chatgpt-fernet-key",
+    ):
         assert secret not in dumped, secret
     assert "TEAM123" in dumped
     assert "trino-login" in dumped

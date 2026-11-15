@@ -42,6 +42,7 @@ class LLMClientFactory:
         "openai": "family_assistant.llm.providers.openai_client.OpenAIClient",
         "google": "family_assistant.llm.providers.google_genai_client.GoogleGenAIClient",
         "anthropic": "family_assistant.llm.providers.anthropic_client.AnthropicClient",
+        "chatgpt": "family_assistant.llm.providers.chatgpt_plan_client.ChatGPTPlanClient",
     }
 
     @classmethod
@@ -147,7 +148,15 @@ class LLMClientFactory:
 
         # Get API key
         api_key = config.get("api_key")
-        if not api_key:
+        if provider == "chatgpt":
+            if api_key:
+                raise ValueError(
+                    f"Model '{model}' uses provider 'chatgpt', which is billed to the "
+                    "signed-in ChatGPT plan; remove its api_key."
+                )
+            # The plan's OAuth token is fetched per request instead.
+            api_key = ""
+        elif not api_key:
             if is_openrouter:
                 api_key = os.getenv("OPENROUTER_API_KEY", "")
                 if not api_key:

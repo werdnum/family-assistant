@@ -17,14 +17,41 @@ import inspect
 import logging
 import threading
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["ConnectionKey", "ProviderConnections"]
+__all__ = [
+    "ConnectionKey",
+    "PlanCredentialError",
+    "PlanTokenSource",
+    "ProviderConnections",
+]
+
+
+class PlanCredentialError(Exception):
+    """A subscription plan's access token could not be produced.
+
+    The message is written for the user. ``transient`` failures may succeed on
+    retry; the rest need someone to sign in again.
+    """
+
+    transient: bool = False
+
+
+class PlanTokenSource(Protocol):
+    """Where a subscription-plan client gets its bearer token."""
+
+    async def access_token(self) -> str:
+        """A currently valid access token; raises PlanCredentialError."""
+        ...
+
+    def reject_access_token(self) -> None:
+        """Record that the provider refused the token last handed out."""
+        ...
 
 
 @dataclass(frozen=True)
@@ -51,6 +78,9 @@ class ProviderConnections:
 
     def __init__(self) -> None:
         self._connections: dict[ConnectionKey, _Connection] = {}
+        # The deployment's ChatGPT plan sign-in, installed once the database
+        # is up. `provider: chatgpt` clients cannot be built without it.
+        self.chatgpt_plan: PlanTokenSource | None = None
         # Some clients are built off the event loop (the tool-call reviewer
         # builds its own in a worker thread), and two builders racing for one
         # key would leave a connection nothing closes.

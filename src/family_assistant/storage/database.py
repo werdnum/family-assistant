@@ -71,6 +71,7 @@ if TYPE_CHECKING:
         ArtifactReviewRepository,
         AutomationsRepository,
         CalendarProvenanceRepository,
+        ChatGPTPlanRepository,
         ConfirmationRequestsRepository,
         ConversationSharesRepository,
         ConversationSummariesRepository,
@@ -571,6 +572,15 @@ class DatabaseExecutor(ABC):
         )
 
         return self._repository(NotesRepository)
+
+    @property
+    def chatgpt_plan(self) -> ChatGPTPlanRepository:
+        """Get the ChatGPT plan sign-in repository instance."""
+        from family_assistant.storage.repositories import (  # noqa: PLC0415
+            ChatGPTPlanRepository,
+        )
+
+        return self._repository(ChatGPTPlanRepository)
 
     @property
     def oauth_connections(self) -> OAuthConnectionsRepository:
