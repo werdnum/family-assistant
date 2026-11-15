@@ -25,6 +25,7 @@ Which commands exist depends on how your deployment is configured; these are the
 | `/research`             | In-depth research on a topic — the right default for research questions            |
 | `/research_max`         | The most thorough multi-source research, when depth matters more than speed        |
 | `/complex`              | Multi-step reasoning and planning that needs a long chain of work                  |
+| `/claude`               | The same kind of long task as `/complex`, run by Claude on the Claude subscription |
 | `/coder`                | Writing and running code, data crunching, and other self-contained computing tasks |
 | `/engineer`             | Diagnostics: "why did the assistant do that?"                                      |
 | `/interrupt`            | (Telegram) stop the request currently being processed in that chat                 |
@@ -55,6 +56,11 @@ first. An ordinary message is different — that gets folded into the request al
 - **`/research` for most research; `/research_max` when thoroughness beats turnaround.**
 - **`/complex` when a task needs sustained reasoning** over your notes, calendar, documents, and
   other assistant data.
+- **`/claude` for the same work as `/complex`, on Claude.** It has the same access to your notes,
+  calendar, documents and devices, and asks before the same actions. It runs on Claude Opus by
+  default; choose **Claude Fable 5.2** (strongest) or **Claude Sonnet 5.5** (quicker) from the level
+  control in the web or iOS app, or ask the assistant to hand a job to it on one of them. It is only
+  there when your deployment has a Claude subscription connected.
 - **`/coder` when you want code written and run, not explained,** and everything it needs is in your
   request. It works in a sandbox described below.
 - **For a hard design or open-ended question, ask the Assistant to convene the council** when

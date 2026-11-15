@@ -368,6 +368,18 @@ supervision requirements based on input trust level:
    carry neither (`allowed_delegation_sources: []`, `delegation_security_level: blocked`,
    `allow_wake_llm: false`, no slash command). See
    [docs/design/conversation-memory.md](docs/design/conversation-memory.md).
+9. **Claude Agent Profile [BC]**: `complex_tasks`' job and tool surface, with the turn run by the
+   Claude Agent SDK — a Claude Code session billed to the Claude subscription
+   (`CLAUDE_CODE_OAUTH_TOKEN`) instead of per token. Used via `/claude` or delegation, and present
+   only where that token is set. Claude Code runs the loop; **every tool it can call is one of
+   ours**, offered over an in-process MCP server and executed by `ToolExecutor`, so policy,
+   confirmation, taint and tool-call review apply per call as on any profile. Claude Code gets none
+   of its own built-ins except `ToolSearch` (which replaces on-demand activation), no settings,
+   hooks, skills or MCP servers from disk, and `verbatim_prompts` so rendered history cannot make it
+   read a local file — it runs in the application's container, so a built-in would act with the
+   application's privileges. A session that reports an API key in use is refused rather than billed.
+   Its tier is the session's model and must be exactly one Anthropic model. See
+   [docs/design/claude-agent-sdk-profile.md](docs/design/claude-agent-sdk-profile.md).
 
 The Rule of Two addresses prompt injection specifically; it complements rather than replaces
 least-privilege access, input validation, and defense in depth.

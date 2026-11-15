@@ -133,6 +133,60 @@ def _extract_activations_from_result(
     return tool_names, mcp_server_ids
 
 
+async def without_unavailable_thread_tools(
+    defs: list[ToolDefinition],
+    *,
+    db_context: Database,
+    processing_service: ProcessingService | None,
+    interface_type: str,
+    conversation_id: str,
+    subconversation_id: str | None,
+    user_id: str | None,
+) -> list[ToolDefinition]:
+    """*defs* without the thread tools this conversation cannot use.
+
+    Each thread tool belongs to one kind of conversation (Home, or a thread)
+    and refuses every call elsewhere, so it is not offered there: a dead end
+    advertised as a capability.
+    """
+    unavailable: set[str] = set()
+    for definition in defs:
+        name = definition.get("function", {}).get("name")
+        if name not in THREAD_TOOL_NAMES:
+            continue
+        refusal = await thread_tool_refusal(
+            name,
+            db_context,
+            app_config=(
+                processing_service.app_config
+                if processing_service is not None
+                else None
+            ),
+            async_delegation_enabled=(
+                processing_service is not None
+                and processing_service.service_config.tools_config.async_delegation_enabled
+            ),
+            in_script=False,
+            receives_household_context=(
+                processing_service is not None
+                and processing_service.service_config.receives_household_context
+            ),
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            subconversation_id=subconversation_id,
+            user_id=user_id,
+        )
+        if refusal is not None:
+            unavailable.add(name)
+    if not unavailable:
+        return defs
+    return [
+        definition
+        for definition in defs
+        if definition.get("function", {}).get("name") not in unavailable
+    ]
+
+
 class LLMStreamingLoop:
     """Core LLM interaction loop with retry logic."""
 
@@ -162,6 +216,94 @@ class LLMStreamingLoop:
         if mime_type == "application/pdf":
             return "document"
         return "file"
+
+    async def build_done_metadata(
+        self,
+        assistant_message: AssistantMessage,
+        reasoning_info: MessageReasoningInfo | None,
+        *,
+        pending_attachment_ids: list[str],
+        messages: Sequence[LLMMessage],
+        db_context: Database,
+        user_id: str | None,
+        llm_client: LLMInterface,
+    ) -> tuple[StreamEventMetadata, list[str]]:
+        """Final event metadata, with any attachments queued so far.
+
+        Returns the metadata and the queued attachment ids, which are narrowed
+        to a selection when more are queued than a response should carry.
+        """
+        if len(pending_attachment_ids) > self.app_config.attachment_selection_threshold:
+            original_query = ""
+            for msg in reversed(messages):
+                if is_turn_scaffolding(msg):
+                    continue
+                if isinstance(msg, UserMessage):
+                    if isinstance(msg.content, str):
+                        original_query = msg.content
+                    elif isinstance(msg.content, list) and msg.content:
+                        for part in msg.content:
+                            if isinstance(part, dict) and part.get("type") == "text":
+                                original_query = part.get("text", "")
+                                break
+                    if original_query:
+                        break
+
+            if original_query:
+                try:
+                    pending_attachment_ids = (
+                        await self.attachment_processor.select_for_response(
+                            pending_attachment_ids=pending_attachment_ids,
+                            original_query=original_query,
+                            acting_user_id=user_id,
+                            llm_client=llm_client,
+                        )
+                    )
+                except AttachmentSelectionError as exc:
+                    logger.warning(
+                        "Attachment selection failed; applying deterministic "
+                        "ID-sorted cap to auto-queued attachments. error=%s",
+                        exc,
+                    )
+                    pending_attachment_ids = sorted(pending_attachment_ids)[
+                        : self.app_config.max_response_attachments
+                    ]
+                logger.info(
+                    "Final queued attachments count for response: %d",
+                    len(pending_attachment_ids),
+                )
+
+        done_metadata: StreamEventMetadata = {"message": assistant_message}
+        if reasoning_info:
+            done_metadata["reasoning_info"] = reasoning_info
+        if pending_attachment_ids:
+            attachment_details = []
+            if self.attachment_processor.attachment_registry:
+                for att_id in pending_attachment_ids:
+                    metadata = await self.attachment_processor.attachment_registry.get_attachment(
+                        db_context, att_id, acting_user_id=user_id
+                    )
+                    if metadata is None:
+                        raise ValueError(
+                            f"Missing metadata for pending attachment '{att_id}'"
+                        )
+                    attachment_details.append({
+                        "id": att_id,
+                        "type": self._infer_attachment_type(metadata.mime_type),
+                        "name": metadata.description or "Attachment",
+                        "content": f"/api/attachments/{att_id}",
+                        "mime_type": metadata.mime_type,
+                        "size": metadata.size,
+                    })
+
+            done_metadata["attachment_ids"] = pending_attachment_ids
+            done_metadata["attachments"] = attachment_details
+            logger.info(
+                "Including %d attachment IDs and %d attachment details in done event",
+                len(pending_attachment_ids),
+                len(attachment_details),
+            )
+        return done_metadata, pending_attachment_ids
 
     async def run(
         self,
@@ -471,38 +613,6 @@ class LLMStreamingLoop:
             except ToolPolicyDeniedError as exc:
                 raise TaintedSinkRefusedError(str(exc)) from exc
 
-        thread_tools_available: dict[str, bool] = {}
-
-        async def thread_tool_available(tool_name: str) -> bool:
-            """Whether this turn could use a thread tool, decided once per turn."""
-            if tool_name not in thread_tools_available:
-                thread_tools_available[tool_name] = (
-                    await thread_tool_refusal(
-                        tool_name,
-                        db_context,
-                        app_config=(
-                            processing_service.app_config
-                            if processing_service is not None
-                            else None
-                        ),
-                        async_delegation_enabled=(
-                            processing_service is not None
-                            and processing_service.service_config.tools_config.async_delegation_enabled
-                        ),
-                        in_script=False,
-                        receives_household_context=(
-                            processing_service is not None
-                            and processing_service.service_config.receives_household_context
-                        ),
-                        interface_type=interface_type,
-                        conversation_id=conversation_id,
-                        subconversation_id=subconversation_id,
-                        user_id=user_id,
-                    )
-                    is None
-                )
-            return thread_tools_available[tool_name]
-
         async def declared_tools_and_catalog() -> tuple[
             list[ToolDefinition], str | None
         ]:
@@ -536,22 +646,15 @@ class LLMStreamingLoop:
                 if view_addition:
                     additions.append(view_addition)
             addition = "\n\n".join(additions) if additions else None
-            # Each thread tool belongs to one kind of conversation (Home, or a
-            # thread) and refuses every call elsewhere, so it is not offered
-            # there: a dead end advertised as a capability.
-            unavailable = {
-                name
-                for definition in defs
-                if (name := definition.get("function", {}).get("name"))
-                in THREAD_TOOL_NAMES
-                and not await thread_tool_available(name)
-            }
-            if unavailable:
-                defs = [
-                    definition
-                    for definition in defs
-                    if definition.get("function", {}).get("name") not in unavailable
-                ]
+            defs = await without_unavailable_thread_tools(
+                defs,
+                db_context=db_context,
+                processing_service=processing_service,
+                interface_type=interface_type,
+                conversation_id=conversation_id,
+                subconversation_id=subconversation_id,
+                user_id=user_id,
+            )
             if allow_quiet_end:
                 defs = [*defs, END_TURN_QUIETLY_TOOL_DEFINITION]
             return defs, addition
@@ -585,82 +688,15 @@ class LLMStreamingLoop:
         ) -> StreamEventMetadata:
             """Build final event metadata, including any attachments queued so far."""
             nonlocal pending_attachment_ids
-            if (
-                len(pending_attachment_ids)
-                > self.app_config.attachment_selection_threshold
-            ):
-                original_query = ""
-                for msg in reversed(messages):
-                    if is_turn_scaffolding(msg):
-                        continue
-                    if isinstance(msg, UserMessage):
-                        if isinstance(msg.content, str):
-                            original_query = msg.content
-                        elif isinstance(msg.content, list) and msg.content:
-                            for part in msg.content:
-                                if (
-                                    isinstance(part, dict)
-                                    and part.get("type") == "text"
-                                ):
-                                    original_query = part.get("text", "")
-                                    break
-                        if original_query:
-                            break
-
-                if original_query:
-                    try:
-                        pending_attachment_ids = (
-                            await self.attachment_processor.select_for_response(
-                                pending_attachment_ids=pending_attachment_ids,
-                                original_query=original_query,
-                                acting_user_id=user_id,
-                                llm_client=llm_client,
-                            )
-                        )
-                    except AttachmentSelectionError as exc:
-                        logger.warning(
-                            "Attachment selection failed; applying deterministic "
-                            "ID-sorted cap to auto-queued attachments. error=%s",
-                            exc,
-                        )
-                        pending_attachment_ids = sorted(pending_attachment_ids)[
-                            : self.app_config.max_response_attachments
-                        ]
-                    logger.info(
-                        "Final queued attachments count for response: %d",
-                        len(pending_attachment_ids),
-                    )
-
-            done_metadata: StreamEventMetadata = {"message": assistant_message}
-            if reasoning_info:
-                done_metadata["reasoning_info"] = reasoning_info
-            if pending_attachment_ids:
-                attachment_details = []
-                if self.attachment_processor.attachment_registry:
-                    for att_id in pending_attachment_ids:
-                        metadata = await self.attachment_processor.attachment_registry.get_attachment(
-                            db_context, att_id, acting_user_id=user_id
-                        )
-                        if metadata is None:
-                            raise ValueError(
-                                f"Missing metadata for pending attachment '{att_id}'"
-                            )
-                        attachment_details.append({
-                            "id": att_id,
-                            "type": self._infer_attachment_type(metadata.mime_type),
-                            "name": metadata.description or "Attachment",
-                            "content": f"/api/attachments/{att_id}",
-                            "mime_type": metadata.mime_type,
-                            "size": metadata.size,
-                        })
-
-                done_metadata["attachment_ids"] = pending_attachment_ids
-                done_metadata["attachments"] = attachment_details
-                logger.info(
-                    "Including %d attachment IDs and %d attachment details in done event",
-                    len(pending_attachment_ids),
-                    len(attachment_details),
-                )
+            done_metadata, pending_attachment_ids = await self.build_done_metadata(
+                assistant_message,
+                reasoning_info,
+                pending_attachment_ids=pending_attachment_ids,
+                messages=messages,
+                db_context=db_context,
+                user_id=user_id,
+                llm_client=llm_client,
+            )
             return done_metadata
 
         tools_for_llm, system_prompt_addition = await declared_tools_and_catalog()

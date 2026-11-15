@@ -849,6 +849,57 @@ Required when using `provider: "anthropic"` in service profiles.
 
 ______________________________________________________________________
 
+### CLAUDE_CODE_OAUTH_TOKEN
+
+Claude subscription token for profiles that run on the Claude Agent SDK (`claude_agent_config`),
+such as the shipped `claude_agent` profile. Those profiles run their turns in a Claude Code session
+billed to the subscription instead of per token on the API.
+
+| Property  | Value                                         |
+| --------- | --------------------------------------------- |
+| Required  | No (the `claude_agent` profile needs it)      |
+| Default   | None                                          |
+| Sensitive | **Yes**                                       |
+| Example   | `sk-ant-oat01-...`, from `claude setup-token` |
+
+Generate it with `claude setup-token` (a one-year token; requires a Pro, Max, Ultra, Team or
+Enterprise plan) on any machine with Claude Code installed, and set it in the application's
+environment. Without it, Claude Agent SDK profiles are left out at startup — not offered to people
+or to delegating models — and the log says so.
+
+The session refuses to start a turn unless Claude Code reports that no API key is in use, so a
+deployment that would bill the API instead fails visibly. The application's own `ANTHROPIC_API_KEY`
+is blanked in the Claude Code subprocess's environment for this reason; it is still used by the
+`anthropic` provider everywhere else.
+
+Claude Code itself is the binary bundled with the `claude-agent-sdk` package, so its version follows
+the lockfile. `processing_config.claude_agent_config.cli_path` points a profile at another
+executable instead. A profile with `claude_agent_config` must name a `model_tier`, and every tier it
+can reach must be exactly one Anthropic model with no fallback, run with only adaptive thinking,
+`output_config.effort` and `custom_instructions` as parameters. See
+[claude-agent-sdk-profile.md](../design/claude-agent-sdk-profile.md), including its note on
+Anthropic's terms of use.
+
+**Checking it works.** At startup the application runs `claude auth status` (no model request, no
+quota) and logs either `Profile 'claude_agent' can run Claude Code sessions on the subscription` or
+an error saying why not. It also exports these Prometheus metrics:
+
+| Metric                                                                    | Meaning                                                                                                                                                      |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `family_assistant_claude_agent_ready{profile}`                            | 1 when the startup check passed. It cannot prove the token is accepted.                                                                                      |
+| `family_assistant_claude_agent_sessions_total{profile,outcome}`           | Sessions by outcome: `completed`, `max_turns`, `ended_quietly`, `review_terminated`, `cancelled`, `billing_refused`, `auth_failed`, `rate_limited`, `error`. |
+| `family_assistant_claude_subscription_rate_limit_status{rate_limit_type}` | 0 allowed, 1 approaching the limit, 2 limit hit, as Claude Code last reported each window.                                                                   |
+| `family_assistant_claude_subscription_utilization{rate_limit_type}`       | Fraction of the window used, when Claude Code reports it.                                                                                                    |
+| `family_assistant_claude_subscription_resets_at_seconds{rate_limit_type}` | When the window resets.                                                                                                                                      |
+
+Each model call is also counted in `family_assistant_llm_calls_total` and
+`family_assistant_llm_tokens_total` with `provider="claude_agent_sdk"`, and saved messages carry
+that provider in their usage, so subscription turns are visible beside the API providers without
+being priced as API spend. `billing_refused` sessions mean Claude Code would have used an API key;
+`auth_failed` usually means the token was revoked, mistyped or expired (they last a year).
+
+______________________________________________________________________
+
 ### LLM_MODEL
 
 Default LLM model identifier.
@@ -1121,12 +1172,13 @@ automatically.
 
 The shipped presets — `gpt_6_astra`, `gpt_6_1_sol`, `gpt_6_1_terra`, `claude_opus_5_5`,
 `claude_sonnet_5_5`, `claude_haiku_5_5`, `claude_fable_5_2`, `kimi_k3`, `gemini_4_argon`,
-`gemini_4_carbon` and `gemini_4_hydrogen` — are listed once, in `default_profile_settings.delegation_model_tiers`, so a
-delegating model may pin any profile that has a tier to any of them without a confirmation ("run
-complex_tasks on Gemini 4 Argon"). A profile that names an inline model drops the inherited list,
-and a profile that declares its own replaces it, so `delegation_model_tiers: []` keeps a profile off
-presets entirely. Adding a preset is a `model_tiers` entry plus a name in that list. The profile
-catalog lists the presets most profiles share once, rather than under each profile.
+`gemini_4_carbon` and `gemini_4_hydrogen` — are listed once, in
+`default_profile_settings.delegation_model_tiers`, so a delegating model may pin any profile that
+has a tier to any of them without a confirmation ("run complex_tasks on Gemini 4 Argon"). A profile
+that names an inline model drops the inherited list, and a profile that declares its own replaces
+it, so `delegation_model_tiers: []` keeps a profile off presets entirely. Adding a preset is a
+`model_tiers` entry plus a name in that list. The profile catalog lists the presets most profiles
+share once, rather than under each profile.
 
 #### The council's seats
 

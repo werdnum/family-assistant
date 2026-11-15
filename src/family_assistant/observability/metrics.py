@@ -260,6 +260,54 @@ TURNS_IN_PROGRESS = Gauge(
     ("profile",),
 )
 
+CLAUDE_AGENT_SESSIONS = Counter(
+    "family_assistant_claude_agent_sessions",
+    (
+        "Claude Agent SDK sessions, by how they ended: completed, max_turns, "
+        "ended_quietly, review_terminated, cancelled, billing_refused (the "
+        "session would have been billed to an API key), auth_failed, "
+        "rate_limited or error."
+    ),
+    ("profile", "outcome"),
+)
+
+CLAUDE_AGENT_READY = Gauge(
+    "family_assistant_claude_agent_ready",
+    (
+        "1 when the startup check found Claude Code runnable and set to use the "
+        "subscription token rather than an API key, 0 when it did not. It does "
+        "not prove the token is valid; a rejected token shows as auth_failed "
+        "sessions."
+    ),
+    ("profile",),
+)
+
+CLAUDE_SUBSCRIPTION_UTILIZATION = Gauge(
+    "family_assistant_claude_subscription_utilization",
+    (
+        "Fraction of a Claude subscription rate-limit window used, as Claude "
+        "Code last reported it. Reported only when the window's state changes, "
+        "so it can lag."
+    ),
+    ("rate_limit_type",),
+)
+
+CLAUDE_SUBSCRIPTION_RATE_LIMIT_STATUS = Gauge(
+    "family_assistant_claude_subscription_rate_limit_status",
+    (
+        "A Claude subscription rate-limit window's state as Claude Code last "
+        "reported it: 0 allowed, 1 allowed_warning (approaching the limit), 2 "
+        "rejected (limit hit)."
+    ),
+    ("rate_limit_type",),
+)
+
+CLAUDE_SUBSCRIPTION_RESETS_AT = Gauge(
+    "family_assistant_claude_subscription_resets_at_seconds",
+    "Unix time a Claude subscription rate-limit window resets, as last reported.",
+    ("rate_limit_type",),
+)
+
 INDEXING_DOCUMENTS = Counter(
     "family_assistant_indexing_documents",
     (
@@ -443,7 +491,8 @@ TASK_DUE_LATENCY = Gauge(
 # reports the whole prompt in prompt_tokens with the cache numbers as subsets
 # of it. An unrecognised provider is assumed to follow the OpenAI convention,
 # which is what an OpenAI-compatible endpoint will do.
-_DISJOINT_PROMPT_PROVIDERS: Final = frozenset({"anthropic"})
+# Claude Code reports Anthropic's usage unchanged.
+_DISJOINT_PROMPT_PROVIDERS: Final = frozenset({"anthropic", "claude_agent_sdk"})
 
 # Google reports thoughts_token_count alongside a candidates_token_count that
 # excludes it; OpenAI and Anthropic fold reasoning/thinking into their output
@@ -601,6 +650,39 @@ def _record_llm_usage(
         LLM_TOKENS.labels(*labels, kind).inc(count)
     if reasoning_info and (reason := reasoning_info.get("cache_miss_reason")):
         LLM_CACHE_MISSES.labels(*labels, reason).inc()
+
+
+_RATE_LIMIT_STATUS_VALUES: Final = {"allowed": 0, "allowed_warning": 1, "rejected": 2}
+
+
+def record_claude_agent_session(profile: str, outcome: str) -> None:
+    """Count one Claude Agent SDK session by how it ended."""
+    try:
+        CLAUDE_AGENT_SESSIONS.labels(profile, outcome).inc()
+    except Exception:
+        logger.debug("Failed to record Claude agent session", exc_info=True)
+
+
+def record_claude_agent_ready(profile: str, *, ready: bool) -> None:
+    CLAUDE_AGENT_READY.labels(profile).set(1 if ready else 0)
+
+
+def record_claude_subscription_rate_limit(
+    *,
+    rate_limit_type: str | None,
+    status: str,
+    utilization: float | None,
+    resets_at: int | None,
+) -> None:
+    """Record what Claude Code last said about a subscription window."""
+    window = rate_limit_type or "unknown"
+    value = _RATE_LIMIT_STATUS_VALUES.get(status)
+    if value is not None:
+        CLAUDE_SUBSCRIPTION_RATE_LIMIT_STATUS.labels(window).set(value)
+    if utilization is not None:
+        CLAUDE_SUBSCRIPTION_UTILIZATION.labels(window).set(utilization)
+    if resets_at is not None:
+        CLAUDE_SUBSCRIPTION_RESETS_AT.labels(window).set(resets_at)
 
 
 def record_indexing_documents(
