@@ -401,6 +401,26 @@ async def test_same_model_fallback_skipped() -> None:
 
 
 @pytest.mark.no_db
+async def test_same_model_through_another_provider_is_a_real_fallback() -> None:
+    """A plan model falling back to the same model on an API key still falls back."""
+    error = RateLimitError("Usage limit reached", "chatgpt", "gpt-6.1-sol")
+    primary = ScriptedLLMClient(responses=[error, error])
+    fallback = ScriptedLLMClient(responses=[LLMOutput(content="From the API key")])
+
+    client = RetryingLLMClient(
+        primary_client=primary,
+        primary_model="gpt-6.1-sol",
+        fallback_client=fallback,
+        fallback_model="gpt-6.1-sol",
+        fallback_is_distinct=True,
+    )
+
+    response = await client.generate_response([create_user_message("test")])
+
+    assert response.content == "From the API key"
+
+
+@pytest.mark.no_db
 async def test_format_user_message_with_file() -> None:
     """Test that format_user_message_with_file delegates to primary."""
     expected_result = UserMessageDict(role="user", content="file content")

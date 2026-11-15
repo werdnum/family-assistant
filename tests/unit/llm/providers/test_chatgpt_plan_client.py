@@ -7,7 +7,7 @@ server-sent-event framing, so the assertions are about the bytes on the wire.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 import pytest
@@ -21,11 +21,21 @@ from family_assistant.llm.base import (
 )
 from family_assistant.llm.connections import PlanCredentialError, ProviderConnections
 from family_assistant.llm.factory import LLMClientFactory
-from family_assistant.llm.messages import SystemMessage, UserMessage
+from family_assistant.llm.messages import (
+    AssistantMessage,
+    SystemMessage,
+    ToolMessage,
+    UserMessage,
+)
 from family_assistant.llm.providers.chatgpt_plan_client import ChatGPTPlanClient
+from family_assistant.llm.providers.openai_client import OpenAIClient
+from family_assistant.llm.retrying_client import RetryingLLMClient
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from family_assistant.llm.messages import LLMMessage
+    from family_assistant.tools.types import ToolDefinition
 
 MODEL = "gpt-6.1-sol"
 
@@ -269,3 +279,93 @@ def test_factory_refuses_an_api_key_for_provider_chatgpt() -> None:
             {"model": MODEL, "provider": "chatgpt", "api_key": "sk-x"},
             ProviderConnections(),
         )
+
+
+TOOL: ToolDefinition = {
+    "type": "function",
+    "function": {
+        "name": "get_note",
+        "description": "Read a note",
+        "parameters": {"type": "object", "properties": {}},
+    },
+}
+
+
+def _plan_output_after_tool_call() -> list[LLMMessage]:
+    return [
+        UserMessage(content="Read my note"),
+        AssistantMessage(
+            content=None,
+            provider_metadata={
+                "openai_response_output": [
+                    {
+                        "type": "function_call",
+                        "id": "fc_1",
+                        "call_id": "call_1",
+                        "name": "get_note",
+                        "namespace": "family_assistant",
+                        "arguments": "{}",
+                        "status": "completed",
+                    }
+                ],
+                "openai_response_stored": False,
+            },
+        ),
+        ToolMessage(tool_call_id="call_1", content="Buy milk", name="get_note"),
+    ]
+
+
+def _function_calls(params: dict[str, object]) -> list[dict[str, object]]:
+    items = cast("list[dict[str, object]]", params["input"])
+    return [item for item in items if item.get("type") == "function_call"]
+
+
+async def test_tools_are_declared_inside_a_namespace() -> None:
+    server = _Server(lambda _r: _completed("hi"))
+    client, _ = _client(server)
+
+    await client.generate_response(MESSAGES, [TOOL])
+
+    [namespace] = cast("list[dict[str, Any]]", server.body()["tools"])
+    assert namespace["type"] == "namespace"
+    assert [tool["name"] for tool in namespace["tools"]] == ["get_note"]
+
+
+def test_replayed_tool_calls_name_the_namespace() -> None:
+    client, _ = _client(_Server(lambda _r: _completed("hi")))
+
+    params = client._build_responses_params(
+        _plan_output_after_tool_call(), [TOOL], "auto", stream=True
+    )
+
+    [call] = _function_calls(params)
+    assert call["namespace"] == "family_assistant"
+
+
+def test_direct_openai_replays_plan_calls_without_the_namespace() -> None:
+    client = OpenAIClient(api_key="k", model=MODEL)
+
+    params = client._build_responses_params(
+        _plan_output_after_tool_call(), [TOOL], "auto", stream=True
+    )
+
+    [call] = _function_calls(params)
+    assert "namespace" not in call
+
+
+def test_api_key_fallback_for_the_same_model_is_kept() -> None:
+    connections = ProviderConnections()
+    connections.chatgpt_plan = _TokenSource()
+
+    client = LLMClientFactory.create_client(
+        {
+            "retry_config": {
+                "primary": {"model": MODEL, "provider": "chatgpt"},
+                "fallback": {"model": MODEL, "api_key": "sk-test"},
+            }
+        },
+        connections,
+    )
+
+    assert isinstance(client, RetryingLLMClient)
+    assert client._fallback_redundant is False

@@ -106,6 +106,10 @@ class LLMClientFactory:
                 primary_model=primary_model,
                 fallback_client=fallback_client,
                 fallback_model=fallback_model,
+                fallback_is_distinct=(
+                    "fallback" in retry_config
+                    and retry_config["fallback"] != retry_config["primary"]
+                ),
             )
 
         # Simple configuration - create single client

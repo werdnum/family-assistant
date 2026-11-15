@@ -51,6 +51,7 @@ logger = logging.getLogger(__name__)
 
 _API_BASE_URL = "https://api.openai.com/v1"
 _USAGE_URL = "https://chatgpt.com/settings/usage"
+_TOOL_NAMESPACE = "family_assistant"
 
 # Request fields the route refuses. `max_tokens` is here because this client
 # sends it as `max_output_tokens`; `store` because it may only be false;
@@ -188,12 +189,39 @@ class ChatGPTPlanClient(OpenAIClient):
         input_items = params.get("input")
         if isinstance(input_items, list):
             params["input"] = [
-                {**item, "role": "developer"}
-                if isinstance(item, dict) and item.get("role") == "system"
-                else item
+                self._plan_input_item(item)
                 for item in cast("list[object]", input_items)
             ]
+        declared = params.get("tools")
+        if isinstance(declared, list) and declared:
+            # The route takes function tools only inside a namespace (or as
+            # `additional_tools` items, which activations already use).
+            params["tools"] = [
+                {
+                    "type": "namespace",
+                    "name": _TOOL_NAMESPACE,
+                    "description": "Family Assistant's tools.",
+                    "tools": declared,
+                }
+            ]
         return params
+
+    @staticmethod
+    def _plan_input_item(item: object) -> object:
+        """An input item in the route's shape.
+
+        System items are refused, so they go as developer messages. A replayed
+        call names the namespace its tool lives in, as the model's own call
+        did.
+        """
+        if not isinstance(item, dict):
+            return item
+        typed = cast("dict[str, object]", item)
+        if typed.get("role") == "system":
+            return {**typed, "role": "developer"}
+        if typed.get("type") == "function_call":
+            return {**typed, "namespace": _TOOL_NAMESPACE}
+        return typed
 
     async def _create_response(self, params: dict[str, object]) -> Response:
         """Stream the request and return the response it terminates with."""

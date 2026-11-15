@@ -84,17 +84,20 @@ the published revocation endpoint (best effort), then clears the tokens.
 Responses API. Its SDK client takes its bearer token from the credential store before each request.
 The route has some extra requirements:
 
-| Route requirement                                             | How the client meets it                                                                                  |
-| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `store: false`, `stream: true` on every request               | Forced. Non-streaming calls are streamed and collected through `response.completed`.                     |
-| No `system` items                                             | System messages are sent as `developer` messages.                                                        |
-| No `max_output_tokens`, `temperature`, `top_p`, `metadata`, … | A configured unsupported parameter is a startup error.                                                   |
-| No Chat Completions                                           | Structured and JSON output use Responses `text.format`.                                                  |
-| Usage-limit errors (`subscription_sharing_*`)                 | Mapped to the typed errors: limits to `RateLimitError`, eligibility to `AuthenticationError`, and so on. |
+| Route requirement                                             | How the client meets it                                                                                                 |
+| ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `store: false`, `stream: true` on every request               | Forced. Non-streaming calls are streamed and collected through `response.completed`.                                    |
+| No `system` items                                             | System messages are sent as `developer` messages.                                                                       |
+| No `max_output_tokens`, `temperature`, `top_p`, `metadata`, … | A configured unsupported parameter is a startup error.                                                                  |
+| No Chat Completions                                           | Structured and JSON output use Responses `text.format`.                                                                 |
+| Function tools only inside a namespace or `additional_tools`  | Tools are declared in one `family_assistant` namespace; replayed calls name it, and the direct OpenAI client strips it. |
+| Usage-limit errors (`subscription_sharing_*`)                 | Mapped to the typed errors: limits to `RateLimitError`, eligibility to `AuthenticationError`, and so on.                |
 
 Not being signed in raises `AuthenticationError` with a message pointing at Settings. A
 `retry_config` whose fallback is an API-key model therefore keeps a profile working while the plan
-is exhausted or signed out. This is the recommended configuration.
+is exhausted or signed out. This is the recommended configuration. The fallback may be the same
+model on an API key: a retry fallback is skipped as redundant only when its configuration is
+identical to the primary's, not merely its model name.
 
 Models that only exist on the plan side are named as usual, for example
 `{model: gpt-6.1-sol, provider: chatgpt}`.

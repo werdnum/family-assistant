@@ -155,6 +155,8 @@ class RetryingLLMClient:
         primary_model: str,
         fallback_client: "LLMInterface | None" = None,
         fallback_model: str | None = None,
+        *,
+        fallback_is_distinct: bool = False,
     ) -> None:
         """
         Initialize the retrying client.
@@ -164,6 +166,9 @@ class RetryingLLMClient:
             primary_model: Model name for the primary client (for logging)
             fallback_client: Optional fallback LLM client
             fallback_model: Model name for the fallback client (for logging)
+            fallback_is_distinct: The fallback is configured differently from
+                the primary even if the model name is the same -- the same
+                model through another provider or key -- so it is worth trying.
         """
         self.primary_client = primary_client
         self.primary_model = primary_model
@@ -171,6 +176,10 @@ class RetryingLLMClient:
         self.fallback_model = (
             fallback_model or "openai/gpt-5.6-terra"
         )  # Default fallback
+        # An identical fallback would only repeat the primary's failure.
+        self._fallback_redundant = (
+            self.fallback_model == primary_model and not fallback_is_distinct
+        )
 
         logger.info(
             f"RetryingLLMClient initialized with primary model: {primary_model}, "
@@ -304,7 +313,7 @@ class RetryingLLMClient:
             # Attempt 3: Fallback model (if configured and primary attempts failed)
             if self.fallback_client and last_exception:
                 # Check if fallback model is same as primary
-                if self.fallback_model == self.primary_model:
+                if self._fallback_redundant:
                     logger.warning(
                         f"Fallback model '{self.fallback_model}' is the same as the primary model '{self.primary_model}'. "
                         f"Skipping fallback."
@@ -470,7 +479,7 @@ class RetryingLLMClient:
 
                         if self.fallback_client:
                             # Check if fallback model is same as primary
-                            if self.fallback_model == self.primary_model:
+                            if self._fallback_redundant:
                                 logger.warning(
                                     f"Fallback model '{self.fallback_model}' is the same as the primary model '{self.primary_model}'. "
                                     f"Skipping fallback."
@@ -652,7 +661,7 @@ class RetryingLLMClient:
                     last_exception = e
 
             if self.fallback_client and last_exception:
-                if self.fallback_model == self.primary_model:
+                if self._fallback_redundant:
                     logger.warning(
                         f"Fallback model '{self.fallback_model}' is the same as the primary model "
                         f"'{self.primary_model}'. Skipping fallback."
