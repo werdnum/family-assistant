@@ -72,7 +72,11 @@ from family_assistant.storage.message_history import (
 from family_assistant.storage.repositories.base import BaseRepository
 from family_assistant.storage.tasks import TaskPriority
 from family_assistant.storage.turn_feedback import turn_feedback_table
-from family_assistant.storage.types import ConversationSummaryRow, MessageHistoryRow
+from family_assistant.storage.types import (
+    ConversationSummaryRow,
+    MessageHistoryRow,
+    ReviewRejectionNoticeDict,
+)
 from family_assistant.storage.vector import delete_documents_by_source
 
 logger = logging.getLogger(__name__)
@@ -2405,6 +2409,59 @@ class MessageHistoryRepository(BaseRepository):
         )
         return cast("int", result.scalar_one())
 
+    async def add_review_rejection_notice(
+        self,
+        *,
+        interface_type: str,
+        conversation_id: str,
+        notice: ReviewRejectionNoticeDict,
+        key: str,
+        content: str,
+        taint_metadata: TaintMetadata,
+        now: datetime,
+    ) -> int | None:
+        """Tell the user review refused to run an automation; returns the card's id.
+
+        Returns ``None`` without writing when the conversation already holds a
+        card with this ``key``: an unchanged automation refused on every firing
+        posts once. Like a thread-start marker the card belongs to no turn and
+        no profile, so no model's history window reads it.
+        """
+
+        async def _add(txn: DatabaseTransaction) -> int | None:
+            existing = await txn.fetch_one(
+                select(message_history_table.c.internal_id)
+                .where(
+                    message_history_table.c.conversation_id == conversation_id,
+                    message_history_table.c.review_rejection_key == key,
+                )
+                .limit(1)
+            )
+            if existing is not None:
+                return None
+            result = await txn.execute(
+                insert(message_history_table)
+                .values(
+                    interface_type=interface_type,
+                    conversation_id=conversation_id,
+                    turn_id=None,
+                    timestamp=now,
+                    role="assistant",
+                    content=content,
+                    processing_profile_id=None,
+                    subconversation_id=None,
+                    taint_metadata_json=taint_metadata,
+                    taint_metadata_version=TAINT_METADATA_VERSION,
+                    is_internal=False,
+                    review_rejection=notice,
+                    review_rejection_key=key,
+                )
+                .returning(message_history_table.c.internal_id)
+            )
+            return cast("int", result.scalar_one())
+
+        return await self._db.atomic(_add)
+
     async def recent_home_messages(
         self,
         *,
@@ -2429,6 +2486,7 @@ class MessageHistoryRepository(BaseRepository):
                 message_history_table.c.content.isnot(None),
                 message_history_table.c.moved_to_conversation_id.is_(None),
                 message_history_table.c.started_thread_conversation_id.is_(None),
+                message_history_table.c.review_rejection_key.is_(None),
             )
             .order_by(message_history_table.c.internal_id.desc())
             .limit(limit)

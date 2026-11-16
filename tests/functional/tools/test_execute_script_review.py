@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 import httpx
 import pytest
 from pydantic import SecretStr
-from sqlalchemy import update
+from sqlalchemy import select, update
 
 from family_assistant.config_models import (
     AppConfig,
@@ -56,6 +56,7 @@ from family_assistant.services.tool_call_review import (
     ToolCallReviewVerdict,
 )
 from family_assistant.storage.database import Database
+from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.repositories.notes import NoteReadPolicy
 from family_assistant.storage.scripts import scripts_table
 from family_assistant.task_worker import (
@@ -99,6 +100,7 @@ if TYPE_CHECKING:
     from family_assistant.llm import LLMInterface
     from family_assistant.llm.messages import LLMMessage
     from family_assistant.scripting.invocation import ScriptReviewContext
+    from family_assistant.storage.types import ReviewRejectionNoticeDict
 
 
 _TRUSTED_MESSAGES = (
@@ -2492,6 +2494,89 @@ async def test_unresolved_firing_that_is_not_allowed_does_not_run(
     assert effects == []
     assert note is not None
     assert note.startswith("Script was not run")
+
+
+async def _fire_unresolved_script_from_web(
+    db_engine: AsyncEngine,
+    reviewer: _RecordingReviewer,
+    *,
+    firings: int = 1,
+    taint_policy: TaintPolicyConfig | None = None,
+) -> tuple[int, list[dict[str, object]]]:
+    """Fire an unresolved stored script from a web conversation.
+
+    Returns the script's id and the rows of the conversation it fired from.
+    """
+    provider = _eink_provider([], reviewer, taint_policy=taint_policy)
+    context = _context(db_engine, provider)
+    await context.db_context.scripts.save(
+        name="update_eink_display",
+        description="Render and upload the e-ink image.",
+        script_code=_EINK_FIRING,
+        definition_taint_state=_unknown_external_state(),
+    )
+    stored = await context.db_context.scripts.get_by_name("update_eink_display")
+    assert stored is not None
+    payload: ScriptExecutionPayload = {
+        "script_name": "update_eink_display",
+        "conversation_id": "script-review-conversation",
+        "interface_type": "web",
+        "processing_profile_id": "script-review-profile",
+    }
+    for _ in range(firings):
+        await handle_script_execution(
+            _script_firing_context(context, provider), payload
+        )
+    await provider.close()
+    rows = await context.db_context.fetch_all(
+        select(message_history_table).where(
+            message_history_table.c.conversation_id == "script-review-conversation"
+        )
+    )
+    return stored.id, [dict(row) for row in rows]
+
+
+@pytest.mark.asyncio
+async def test_refused_firing_posts_a_card_linking_to_its_review(
+    db_engine: AsyncEngine,
+) -> None:
+    script_id, rows = await _fire_unresolved_script_from_web(
+        db_engine, _RecordingReviewer(ToolCallReviewVerdict.DENY)
+    )
+
+    (card,) = rows
+    notice = cast("ReviewRejectionNoticeDict", card["review_rejection"])
+    assert notice["automation_name"] == "update_eink_display"
+    assert notice["reason"]
+    assert notice["artifacts"] == [
+        {"kind": "script", "id": script_id, "name": "update_eink_display"}
+    ]
+    # No model's history window reads it: it belongs to no turn or profile.
+    assert (card["turn_id"], card["processing_profile_id"]) == (None, None)
+
+
+@pytest.mark.asyncio
+async def test_refusing_an_unchanged_automation_again_posts_no_second_card(
+    db_engine: AsyncEngine,
+) -> None:
+    _, rows = await _fire_unresolved_script_from_web(
+        db_engine,
+        _RecordingReviewer(ToolCallReviewVerdict.DENY, ToolCallReviewVerdict.DENY),
+        firings=2,
+    )
+
+    assert len(rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_observed_refusal_posts_no_card(db_engine: AsyncEngine) -> None:
+    _, rows = await _fire_unresolved_script_from_web(
+        db_engine,
+        _RecordingReviewer(*[ToolCallReviewVerdict.DENY] * 4),
+        taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.OBSERVE),
+    )
+
+    assert rows == []
 
 
 @pytest.mark.asyncio

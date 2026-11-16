@@ -6,10 +6,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from family_assistant.memory.invariants import MemoryWriteError
+from family_assistant.storage.artifact_review_status import ArtifactKind
 from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.artifact_review import (
     ArtifactChangedError,
-    ArtifactKind,
     ArtifactReview,
 )
 from family_assistant.web.dependencies import get_current_user, get_db

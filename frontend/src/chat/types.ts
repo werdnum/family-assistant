@@ -124,6 +124,8 @@ export interface Message {
   moved_to_thread?: string;
   /** On the Home marker left by a thread the user started: that thread's conversation. */
   started_thread?: string;
+  /** On a card telling the user script review refused to run an automation. */
+  review_rejection?: ReviewRejectionNotice;
   /** The user's thumbs up/down on the turn this message belongs to. */
   feedback?: TurnRating;
   /** A marker made here with no stored reply behind it, so nothing to rate. */
@@ -131,6 +133,19 @@ export interface Message {
 }
 
 export type TurnRating = 'up' | 'down';
+
+/** A firing script review refused to run, and the artifacts to review so it can. */
+export interface ReviewRejectionNotice {
+  automation_name: string;
+  reason: string;
+  artifacts: Array<{
+    kind: string;
+    id: number;
+    name: string;
+    /** App-relative link to the artifact review page, opened at this artifact. */
+    review_url: string;
+  }>;
+}
 
 export interface MessageContent {
   type: 'text' | 'tool-call';
@@ -211,6 +226,8 @@ export interface BackendConversationMessage extends Record<string, unknown> {
   moved_to_thread?: string | null;
   /** On the Home marker left by a thread the user started: that thread's conversation. */
   started_thread?: string | null;
+  /** On a card telling the user script review refused to run an automation. */
+  review_rejection?: ReviewRejectionNotice | null;
   feedback?: TurnRating | null;
 }
 

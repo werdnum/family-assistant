@@ -2,7 +2,7 @@
 
 import json
 import uuid
-from typing import Literal, cast
+from typing import cast
 
 from pydantic import BaseModel
 from sqlalchemy import Table, select, update
@@ -26,6 +26,7 @@ from family_assistant.security.taint import (
     TurnTaintState,
 )
 from family_assistant.security.taint_audit import taint_audit_sources
+from family_assistant.storage.artifact_review_status import ArtifactKind
 from family_assistant.storage.database import DatabaseTransaction
 from family_assistant.storage.events import event_listeners_table
 from family_assistant.storage.notes import notes_table
@@ -33,8 +34,6 @@ from family_assistant.storage.repositories.base import BaseRepository
 from family_assistant.storage.repositories.notes import NoteWritePolicy
 from family_assistant.storage.schedule_automations import schedule_automations_table
 from family_assistant.storage.scripts import scripts_table
-
-ArtifactKind = Literal["note", "script", "event", "schedule"]
 
 # These are the canonical definition fields hashed by definition_records.
 _TABLES: dict[ArtifactKind, Table] = {
@@ -163,6 +162,12 @@ class ArtifactReviewRepository(BaseRepository):
             rows = await self._db.fetch_all(select(table).order_by(table.c.id))
             artifacts.extend(_review(artifact_kind, row) for row in rows)
         return artifacts
+
+    async def get(self, kind: ArtifactKind, artifact_id: int) -> ArtifactReview | None:
+        """One artifact as the review page shows it, or ``None`` if it is gone."""
+        table = _TABLES[kind]
+        row = await self._db.fetch_one(select(table).where(table.c.id == artifact_id))
+        return _review(kind, row) if row is not None else None
 
     async def confirm(
         self, kind: ArtifactKind, artifact_id: int, *, content_hash: str, user_id: str

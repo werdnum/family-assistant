@@ -170,6 +170,8 @@ def _history_row(
         echoed_from_conversation_id=None,
         moved_to_conversation_id=None,
         started_thread_conversation_id=None,
+        review_rejection=None,
+        review_rejection_key=None,
     )
 
 

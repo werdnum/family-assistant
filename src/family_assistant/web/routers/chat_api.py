@@ -11,7 +11,7 @@ from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
@@ -64,6 +64,7 @@ from family_assistant.services.turn_resumption import (
 from family_assistant.services.user_identity import (
     UserIdentityResolver,
 )
+from family_assistant.storage.artifact_review_status import ArtifactKind, review_path
 from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.confirmation_requests import (
     ConfirmationRequestRow,
@@ -79,7 +80,10 @@ from family_assistant.storage.repositories.turn_feedback import (
     TurnFeedback,
     TurnRating,
 )
-from family_assistant.storage.types import MessageHistoryRow
+from family_assistant.storage.types import (
+    MessageHistoryRow,
+    ReviewRejectionNoticeDict,
+)
 from family_assistant.threads.home import viewer_for
 from family_assistant.threads.listing import (
     ThreadSummary,
@@ -527,6 +531,46 @@ class ConversationListResponse(BaseModel):
     count: int = Field(..., description="Total number of conversations")
 
 
+class ReviewRejectedArtifact(BaseModel):
+    """An artifact a review-rejection card links to."""
+
+    kind: ArtifactKind
+    id: int
+    name: str
+    review_url: str = Field(
+        description="App-relative link to the artifact review page, opened at it"
+    )
+
+
+class ReviewRejectionNotice(BaseModel):
+    """Script review refused to run an automation; what the user can do about it."""
+
+    automation_name: str
+    reason: str = Field(description="The reviewer's stated reason, for display")
+    artifacts: list[ReviewRejectedArtifact] = Field(
+        description="Artifacts still needing review; confirming them lets it run"
+    )
+
+    @classmethod
+    def from_stored(cls, stored: ReviewRejectionNoticeDict) -> "ReviewRejectionNotice":
+        """The card from what was stored, linking each artifact to its review."""
+        return cls(
+            automation_name=stored["automation_name"],
+            reason=stored["reason"],
+            artifacts=[
+                ReviewRejectedArtifact(
+                    kind=cast("ArtifactKind", artifact["kind"]),
+                    id=artifact["id"],
+                    name=artifact["name"],
+                    review_url=review_path(
+                        cast("ArtifactKind", artifact["kind"]), artifact["id"]
+                    ),
+                )
+                for artifact in stored["artifacts"]
+            ],
+        )
+
+
 class ConversationMessage(BaseModel):
     """A single message in a conversation."""
 
@@ -588,6 +632,14 @@ class ConversationMessage(BaseModel):
             "On a Home message marking a thread the user started: that "
             "thread's conversation id. Render it as the thread's card rather "
             "than showing its content"
+        ),
+    )
+    review_rejection: ReviewRejectionNotice | None = Field(
+        None,
+        description=(
+            "On a message telling the user script review refused to run one of "
+            "their automations: what to review. Render it as a card linking "
+            "each artifact's review_url rather than showing its content"
         ),
     )
     feedback: TurnRating | None = Field(
@@ -3390,6 +3442,11 @@ def serialize_conversation_messages(
                 echoed_from_thread=msg.get("echoed_from_conversation_id"),
                 moved_to_thread=msg.get("moved_to_conversation_id"),
                 started_thread=msg.get("started_thread_conversation_id"),
+                review_rejection=(
+                    ReviewRejectionNotice.from_stored(rejection)
+                    if (rejection := msg.get("review_rejection")) is not None
+                    else None
+                ),
                 feedback=feedback.rating if feedback is not None else None,
                 metadata=None,
             )

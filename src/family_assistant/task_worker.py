@@ -84,7 +84,10 @@ from family_assistant.security.definition_resolution import (
     ScheduleAutomationRef,
     resolve_definition_closure,
 )
-from family_assistant.security.script_closure import resolve_script_closure
+from family_assistant.security.script_closure import (
+    ScriptClosure,
+    resolve_script_closure,
+)
 from family_assistant.security.taint import (
     InMemoryTurnTaintTracker,
     SourceTrustTier,
@@ -141,6 +144,7 @@ if TYPE_CHECKING:
         ConfirmationResultWaiterRegistry,
     )
     from family_assistant.services.notifier import Notifier
+    from family_assistant.storage.artifact_review_status import ArtifactKind
     from family_assistant.storage.repositories.confirmation_requests import (
         ConfirmationRequestRow,
     )
@@ -189,6 +193,9 @@ from family_assistant.services.delegation_delivery import (
 )
 from family_assistant.services.notification_targets import notify_conversation
 from family_assistant.services.notifier import MESSAGE_CATEGORY, NotificationMetadata
+from family_assistant.services.review_rejection_notice import (
+    post_review_rejection_notice,
+)
 from family_assistant.services.tool_call_review import (
     TriggerReviewInput,
     build_delegation_review_trigger,
@@ -862,6 +869,84 @@ def _script_execution_definition_refs(
     if stored_script is not None:
         refs.append(LoadedScriptRef(script=stored_script))
     return tuple(refs)
+
+
+def _script_firing_artifact_refs(
+    payload: ScriptExecutionPayload,
+    *,
+    stored_script: ScriptRow | None,
+    script_closure: ScriptClosure,
+) -> list[tuple[ArtifactKind, int]]:
+    """The reviewable artifacts a script firing executes, invoking definition first.
+
+    The same closure ``_script_execution_definition_refs`` resolves, keyed as
+    the artifact review page keys it. A one-shot action's own record rides its
+    task and has no review page, so only its stored scripts appear.
+    """
+    refs: list[tuple[ArtifactKind, int]] = []
+    listener_id = payload.get("listener_id")
+    automation_id = payload.get("automation_id")
+    try:
+        if listener_id is not None:
+            refs.append(("event", int(listener_id)))
+        elif automation_id is not None and payload.get("automation_type") == "schedule":
+            refs.append(("schedule", int(automation_id)))
+    except TypeError, ValueError:
+        pass
+    if stored_script is not None:
+        refs.append(("script", stored_script.id))
+    refs.extend(("script", artifact.script.id) for artifact in script_closure.artifacts)
+    return refs
+
+
+async def _post_firing_rejection_notice(
+    exec_context: ToolExecutionContext,
+    payload: ScriptExecutionPayload,
+    *,
+    artifact_refs: list[tuple[ArtifactKind, int]],
+    source: str,
+    reason: str,
+) -> None:
+    """Show the automation's owner that review refused this firing, and what to review.
+
+    Lands where the script's own wakes and failure notices land. Posting is a
+    courtesy on a firing that has already been refused, so a failure to post
+    is logged rather than raised: raising would retry a refusal into a second
+    review of the same program.
+    """
+    conversation_id = payload.get("conversation_id")
+    interface_type = payload.get("interface_type")
+    if not conversation_id or not interface_type:
+        logger.warning(
+            "Review refused a script firing with no conversation to tell: %s", reason
+        )
+        return
+    processing_service = exec_context.processing_service
+    state = (
+        exec_context.taint_tracker.snapshot()
+        if exec_context.taint_tracker is not None
+        else TurnTaintState.empty()
+    )
+    try:
+        await post_review_rejection_notice(
+            exec_context.db_context,
+            processing_service.app_config if processing_service is not None else None,
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            home_owner_user_id=home_owner_for(
+                payload.get("config") or {}, payload.get("created_by_user_id")
+            ),
+            artifact_refs=artifact_refs,
+            fallback_name=payload.get("task_name")
+            or payload.get("script_name")
+            or "An automation",
+            source=source,
+            reason=reason,
+            taint_metadata=state.to_metadata(),
+            now=(exec_context.clock or SystemClock()).now(),
+        )
+    except Exception:
+        logger.exception("Failed to post the review rejection notice")
 
 
 def _callback_owes_user_reply(
@@ -8167,6 +8252,17 @@ async def handle_script_execution(
                     listener_id,
                     script_name or "inline",
                     refusal,
+                )
+                await _post_firing_rejection_notice(
+                    exec_context,
+                    payload,
+                    artifact_refs=_script_firing_artifact_refs(
+                        payload,
+                        stored_script=stored_script,
+                        script_closure=script_closure,
+                    ),
+                    source=script_code,
+                    reason=refusal,
                 )
                 return f"Script was not run: {refusal}"
 

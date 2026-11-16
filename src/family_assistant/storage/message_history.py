@@ -124,6 +124,12 @@ message_history_table = Table(
     # On a Home row marking a thread the user started: that thread, so clients
     # draw its card where it was started.
     Column("started_thread_conversation_id", String(255), nullable=True),
+    # On a row telling the user script review refused to run an automation:
+    # the artifacts to review (``ReviewRejectionNotice``), drawn as a card.
+    Column("review_rejection", JSON().with_variant(JSONB, "postgresql"), nullable=True),
+    # Identifies the refused content, so an unchanged automation refused on
+    # every firing posts one card rather than one per firing.
+    Column("review_rejection_key", String(64), nullable=True),
     # Backs the sole-owner predicate behind the conversation list, which asks
     # "does this conversation carry a user message owned by anyone other than
     # the caller?" as a correlated NOT EXISTS. Without it PostgreSQL answers
