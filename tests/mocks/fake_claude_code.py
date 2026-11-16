@@ -70,6 +70,11 @@ class FakeClaudeCode(Transport):
     # state changes, e.g. {"status": "allowed_warning", "rateLimitType":
     # "five_hour", "utilization": 0.9, "resetsAt": 1794730800}.
     rate_limit_info: Frame | None = None
+    # Where the session's transcript would be on disk. When set, the session
+    # mirrors a transcript of its prompts and responses there before its result,
+    # as Claude Code does for an SDK session store.
+    transcript_path: str | None = None
+    transcript: list[Frame] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self._out: asyncio.Queue[Frame | None] = asyncio.Queue()
@@ -214,6 +219,21 @@ class FakeClaudeCode(Transport):
             })
         for response in self.responses:
             await self._play(response)
+        if self.transcript_path is not None:
+            entries = [
+                {"type": "user", "uuid": str(uuid.uuid4()), "message": prompt}
+                for prompt in self.prompts[-1:]
+            ] + [
+                {"type": "assistant", "uuid": str(uuid.uuid4()), "text": text}
+                for response in self.responses
+                for text in (b.text for b in response.blocks if isinstance(b, FakeText))
+            ]
+            self.transcript.extend(entries)
+            await self._out.put({
+                "type": "transcript_mirror",
+                "filePath": self.transcript_path,
+                "entries": entries,
+            })
         await self._emit_result(subtype=self.result_subtype)
 
     async def _play(self, response: FakeResponse) -> None:

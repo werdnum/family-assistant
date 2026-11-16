@@ -3,13 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
 from zoneinfo import ZoneInfo
 
 import pytest
-from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+from claude_agent_sdk import (
+    ClaudeAgentOptions,
+    ClaudeSDKClient,
+    project_key_for_directory,
+)
 from prometheus_client import REGISTRY
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import AppConfig, ClaudeAgentConfig, ToolsConfig
@@ -34,13 +41,29 @@ from family_assistant.processing.claude_agent_loop import (
     probe_verdict,
     run_on_claude_agent,
 )
+from family_assistant.processing.claude_agent_sessions import (
+    database_session_store,
+    session_working_directory,
+)
 from family_assistant.processing.quiet_turn import END_TURN_QUIETLY_TOOL_NAME
 from family_assistant.processing.types import ChatInteractionResult
-from family_assistant.security.taint import TurnTaintState
+from family_assistant.security.taint import (
+    SourceTrustTier,
+    TaintSource,
+    TaintSourceType,
+    TurnTaintState,
+)
+from family_assistant.storage.claude_agent_sessions import (
+    claude_agent_session_turns_table,
+)
 from family_assistant.storage.database import Database
 from family_assistant.storage.delegation_runs import DELEGATION_CONTINUATION_TRIGGER
+from family_assistant.storage.repositories.claude_agent_sessions import (
+    ClaudeAgentSessionsRepository,
+)
 from family_assistant.tools.types import ToolExecutionContext
 from tests.mocks.fake_claude_code import (
+    SESSION_ID,
     FakeClaudeCode,
     FakeResponse,
     FakeText,
@@ -60,12 +83,28 @@ if TYPE_CHECKING:
 TIER = "claude_opus_5_5"
 
 
+@pytest.fixture(autouse=True)
+def _claude_config_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sessions write and resolve their transcripts here, not under ~/.claude."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-config"))
+
+
+# The taint each get_weather call ran under, most recent last.
+SEEN_TAINT: list[TurnTaintState] = []
+
+
 async def get_weather(city: str, exec_context: ToolExecutionContext) -> str:
+    if exec_context.taint_tracker is not None:
+        SEEN_TAINT.append(exec_context.taint_tracker.snapshot())
     return f"Weather in {city}: 21C, sunny"
 
 
 def _service(
-    fake: FakeClaudeCode | ReplayClaudeCode, *, max_iterations: int = 10
+    fake: FakeClaudeCode | ReplayClaudeCode,
+    *,
+    max_iterations: int = 10,
+    custom_instructions: str | None = None,
+    options_seen: list[ClaudeAgentOptions] | None = None,
 ) -> ProcessingService:
     tools = MockToolsProvider()
     tools.add_tool("get_weather", get_weather)
@@ -97,6 +136,15 @@ def _service(
     )
 
     def client_factory(options: ClaudeAgentOptions) -> ClaudeSDKClient:
+        if options_seen is not None:
+            options_seen.append(options)
+        if isinstance(fake, FakeClaudeCode):
+            fake.transcript_path = str(
+                Path(os.environ["CLAUDE_CONFIG_DIR"])
+                / "projects"
+                / project_key_for_directory(options.cwd)
+                / f"{SESSION_ID}.jsonl"
+            )
         return ClaudeSDKClient(options, transport=fake)
 
     run_on_claude_agent(
@@ -104,7 +152,9 @@ def _service(
         agent_config=ClaudeAgentConfig(),
         models={
             TIER: ClaudeAgentModel(
-                model="claude-opus-5-5", effort="high", custom_instructions=None
+                model="claude-opus-5-5",
+                effort="high",
+                custom_instructions=custom_instructions,
             )
         },
         client_factory=client_factory,
@@ -214,28 +264,31 @@ async def test_opening_message_carries_the_request(db_engine: AsyncEngine) -> No
 
 
 @pytest.mark.asyncio
-async def test_delegation_wake_opens_with_its_instruction(
-    db_engine: AsyncEngine,
+async def _add_row(
+    db_engine: AsyncEngine, content: str, *, turn_id: str, is_internal: bool = False
 ) -> None:
-    """A wake's trigger is a system row; its results arrive as history before it."""
-    db = Database(db_engine)
-    await db.message_history.add_message(
+    await Database(db_engine).message_history.add_message(
         UserMessage(
-            content="Engineer result: the cron job was disabled.",
+            content=content,
             taint_metadata=TurnTaintState.empty().to_metadata(),
             authorship_taint_metadata=TurnTaintState.empty().to_metadata(),
         ),
         interface_type="test",
         conversation_id="conv-1",
-        turn_id="wake-turn",
+        turn_id=turn_id,
         timestamp=datetime.now(UTC),
         processing_profile_id="claude_agent",
-        is_internal=True,
+        is_internal=is_internal,
     )
-    fake = FakeClaudeCode(responses=[FakeResponse([FakeText("It was disabled.")])])
 
-    reply = await _service(fake).handle_chat_interaction(
-        db_context=db,
+
+async def _wake(
+    service: ProcessingService, db_engine: AsyncEngine, child_result: str
+) -> ChatInteractionResult:
+    """A continuation wake: a child's result, then the system trigger."""
+    await _add_row(db_engine, child_result, turn_id="wake-turn", is_internal=True)
+    return await service.handle_chat_interaction(
+        db_context=Database(db_engine),
         interface_type="test",
         conversation_id="conv-1",
         trigger_content_parts=[
@@ -255,10 +308,157 @@ async def test_delegation_wake_opens_with_its_instruction(
         turn_id="wake-turn",
     )
 
-    texts = [block["text"] for block in fake.prompts[0]["content"]]
+
+def _opening_texts(fake: FakeClaudeCode) -> list[str]:
+    return [block["text"] for block in fake.prompts[0]["content"]]
+
+
+def _reply(text: str) -> FakeClaudeCode:
+    return FakeClaudeCode(responses=[FakeResponse([FakeText(text)])])
+
+
+@pytest.mark.asyncio
+async def test_delegation_wake_opens_with_its_instruction(
+    db_engine: AsyncEngine,
+) -> None:
+    """A wake's trigger is a system row; its results arrive as history before it."""
+    fake = _reply("It was disabled.")
+
+    reply = await _wake(
+        _service(fake), db_engine, "Engineer result: the cron job was disabled."
+    )
+
+    texts = _opening_texts(fake)
     assert reply.text_reply == "It was disabled."
     assert "the cron job was disabled" in texts[0]
     assert "Their results are provided as lower-priority data" in texts[-1]
+
+
+@pytest.mark.asyncio
+async def test_a_completed_turn_is_stored_for_resuming(db_engine: AsyncEngine) -> None:
+    fake = _reply("Looking into it.")
+    await _turn(_service(fake), db_engine, "Why is the cron job not running?")
+
+    stored = await database_session_store(Database(db_engine)).load({
+        "project_key": project_key_for_directory(session_working_directory()),
+        "session_id": SESSION_ID,
+    })
+    session = await Database(db_engine).claude_agent_sessions.latest_turn(
+        interface_type="test",
+        conversation_id="conv-1",
+        subconversation_id=None,
+        processing_profile_id="claude_agent",
+    )
+    assert stored == fake.transcript
+    assert session is not None
+    assert session.session_id == SESSION_ID
+
+
+@pytest.mark.asyncio
+async def test_a_turn_whose_transcript_was_not_stored_is_not_resumable(
+    db_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def fail(*_args: object, **_kwargs: object) -> None:
+        raise ConnectionError("database went away")
+
+    monkeypatch.setattr(ClaudeAgentSessionsRepository, "append_entries", fail)
+
+    reply = await _turn(_service(_reply("Looking into it.")), db_engine, "Why?")
+
+    session = await Database(db_engine).claude_agent_sessions.latest_turn(
+        interface_type="test",
+        conversation_id="conv-1",
+        subconversation_id=None,
+        processing_profile_id="claude_agent",
+    )
+    assert reply == "Looking into it."
+    assert session is None
+
+
+@pytest.mark.asyncio
+async def test_a_wake_resumes_the_session_that_delegated(
+    db_engine: AsyncEngine,
+) -> None:
+    await _turn(_service(_reply("Delegating.")), db_engine, "Check the cron job.")
+    options: list[ClaudeAgentOptions] = []
+    fake = _reply("It was disabled.")
+
+    await _wake(
+        _service(fake, options_seen=options),
+        db_engine,
+        "Engineer result: the cron job was disabled.",
+    )
+
+    texts = _opening_texts(fake)
+    assert options[0].resume == SESSION_ID
+    assert not any("<conversation_history>" in text for text in texts)
+    assert "the cron job was disabled" in texts[0]
+    assert "Their results are provided as lower-priority data" in texts[-1]
+
+
+@pytest.mark.asyncio
+async def test_a_wake_after_the_conversation_moved_on_rebuilds(
+    db_engine: AsyncEngine,
+) -> None:
+    await _turn(_service(_reply("Delegating.")), db_engine, "Check the cron job.")
+    await _add_row(db_engine, "Also, what's for dinner?", turn_id="later-turn")
+    options: list[ClaudeAgentOptions] = []
+    fake = _reply("It was disabled.")
+
+    await _wake(_service(fake, options_seen=options), db_engine, "Engineer result.")
+
+    assert options[0].resume is None
+    assert "<conversation_history>" in _opening_texts(fake)[0]
+
+
+@pytest.mark.asyncio
+async def test_a_wake_on_a_changed_system_prompt_rebuilds(
+    db_engine: AsyncEngine,
+) -> None:
+    await _turn(_service(_reply("Delegating.")), db_engine, "Check the cron job.")
+    options: list[ClaudeAgentOptions] = []
+
+    await _wake(
+        _service(
+            _reply("It was disabled."),
+            custom_instructions="Answer in one line.",
+            options_seen=options,
+        ),
+        db_engine,
+        "Engineer result.",
+    )
+
+    assert options[0].resume is None
+
+
+@pytest.mark.asyncio
+async def test_a_resumed_wake_keeps_the_taint_its_session_saw(
+    db_engine: AsyncEngine,
+) -> None:
+    """The session may hold content that has since left the history window."""
+    await _turn(_service(_reply("Delegating.")), db_engine, "Check my email.")
+    email = TaintSource(
+        source_type=TaintSourceType.EMAIL,
+        source_id="email-1",
+        tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+        labels=frozenset({"source_unknown_external"}),
+        reason="an email the session read",
+    )
+    await Database(db_engine).execute(
+        update(claude_agent_session_turns_table).values(
+            taint_metadata_json=TurnTaintState.empty().add_source(email).to_metadata()
+        )
+    )
+    fake = FakeClaudeCode(
+        responses=[
+            FakeResponse([_weather_call()]),
+            FakeResponse([FakeText("Done.")]),
+        ]
+    )
+
+    await _wake(_service(fake), db_engine, "Engineer result.")
+
+    assert "email-1" in [source.source_id for source in SEEN_TAINT[-1].sources]
 
 
 @pytest.mark.asyncio

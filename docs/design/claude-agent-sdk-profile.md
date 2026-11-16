@@ -54,8 +54,9 @@ with the application's privileges. It therefore gets none of it:
   merely denied.
 - **No filesystem configuration.** `setting_sources=[]`, `skills=[]` and `strict_mcp_config` mean no
   settings file, hook, plugin, skill, `CLAUDE.md` or MCP server from the container's disk is loaded;
-  the working directory is an empty temporary directory; `--no-session-persistence` keeps the
-  conversation off disk.
+  the working directory is an empty directory; the session's local transcript is removed when it
+  ends, and the copy kept for resuming a delegation wake lives in the database (see
+  [claude-agent-session-resume.md](claude-agent-session-resume.md)).
 - **Prompts delivered verbatim.** The opening message carries rendered history, which other people
   wrote. `verbatim_prompts` stops Claude Code expanding an `@/path` in it into a local file's
   contents, or reading a leading `/` as one of its own slash commands.
@@ -124,9 +125,10 @@ reason: it runs only where a token has been configured.
 
 ## Deliberate simplifications
 
-- **No resume across turns.** A fresh session per turn re-reads the rendered history, which costs
-  subscription quota rather than money. Resuming Claude Code sessions would need their transcripts
-  persisted alongside Family Assistant's history and kept consistent with it.
+- **No resume across ordinary turns.** A fresh session per turn re-reads the rendered history, which
+  costs subscription quota rather than money. A delegation wake is the exception: it resumes the
+  session that delegated, when that session provably agrees with the history (see
+  [claude-agent-session-resume.md](claude-agent-session-resume.md)).
 - **No mid-turn input.** A message sent while a turn runs waits for the next turn instead of being
   steered into this one. Claude Code accepts queued messages, so this is follow-up work, not a
   limitation of the runtime.

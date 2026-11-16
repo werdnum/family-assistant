@@ -247,6 +247,16 @@ TURNS = Counter(
     ("profile", "outcome"),
 )
 
+CLAUDE_AGENT_WAKES = Counter(
+    "family_assistant_claude_agent_wakes",
+    (
+        "Delegation wakes on a Claude Agent SDK profile, by whether they "
+        "resumed the stored session or why they rebuilt it from history: "
+        "resumed, no_session, conversation_moved_on or setup_changed."
+    ),
+    ("profile", "decision"),
+)
+
 TURN_DURATION = Histogram(
     "family_assistant_turn_duration_seconds",
     "Wall-clock duration of a processing turn, tools included.",
@@ -661,6 +671,14 @@ def record_claude_agent_session(profile: str, outcome: str) -> None:
         CLAUDE_AGENT_SESSIONS.labels(profile, outcome).inc()
     except Exception:
         logger.debug("Failed to record Claude agent session", exc_info=True)
+
+
+def record_claude_agent_wake(profile: str, decision: str) -> None:
+    """Count one delegation wake by whether it resumed its session."""
+    try:
+        CLAUDE_AGENT_WAKES.labels(profile, decision).inc()
+    except Exception:
+        logger.debug("Failed to record Claude agent wake", exc_info=True)
 
 
 def record_claude_agent_ready(profile: str, *, ready: bool) -> None:

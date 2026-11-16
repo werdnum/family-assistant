@@ -28,6 +28,10 @@ from family_assistant.storage.base import (
 )
 from family_assistant.storage.calendar_provenance import calendar_event_provenance_table
 from family_assistant.storage.chatgpt_plan import chatgpt_plan_credentials_table
+from family_assistant.storage.claude_agent_sessions import (
+    claude_agent_session_entries_table,
+    claude_agent_session_turns_table,
+)
 
 # Import table definitions for direct use
 from family_assistant.storage.confirmation_requests import confirmation_requests_table
@@ -371,6 +375,8 @@ __all__ = [
     "EventSourceType",
     "calendar_event_provenance_table",
     "chatgpt_plan_credentials_table",
+    "claude_agent_session_entries_table",
+    "claude_agent_session_turns_table",
     "confirmation_requests_table",
     "conversation_homes_table",
     "conversation_message_shares_table",

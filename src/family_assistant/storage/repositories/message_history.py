@@ -1754,6 +1754,37 @@ class MessageHistoryRepository(BaseRepository):
             )
         ]
 
+    async def latest_turn_id(
+        self,
+        *,
+        interface_type: str,
+        conversation_id: str,
+        subconversation_id: str | None,
+        processing_profile_id: str,
+        excluding_turn_id: str,
+    ) -> str | None:
+        """The turn of the newest row in this conversation for this profile.
+
+        Rows of ``excluding_turn_id`` are skipped, so a turn can ask what came
+        before it. None when the newest row has no turn, or there is none.
+        """
+        row = await self._db.fetch_one(
+            select(message_history_table.c.turn_id)
+            .where(
+                message_history_table.c.interface_type == interface_type,
+                message_history_table.c.conversation_id == conversation_id,
+                _exact_subconversation_condition(subconversation_id),
+                message_history_table.c.processing_profile_id == processing_profile_id,
+                or_(
+                    message_history_table.c.turn_id.is_(None),
+                    message_history_table.c.turn_id != excluding_turn_id,
+                ),
+            )
+            .order_by(message_history_table.c.internal_id.desc())
+            .limit(1)
+        )
+        return row["turn_id"] if row is not None else None
+
     async def get_turn_rows_with_metadata(
         self,
         *,

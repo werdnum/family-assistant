@@ -87,6 +87,21 @@ def build_session_prompt(
     return SessionPrompt(system_prompt="\n\n".join(system_parts), content=content)
 
 
+def resumed_opening(
+    added: Sequence[LLMMessage], instruction: str
+) -> list[SessionContentBlock]:
+    """The message that continues a resumed session.
+
+    ``added`` is what has reached the conversation since the session last ran
+    -- a wake's own rows -- rendered as the transcript renders it.
+    """
+    lines = [line for message in added for line in _transcript_lines(message)]
+    return [
+        {"type": "text", "text": "\n".join(lines)},
+        {"type": "text", "text": instruction},
+    ]
+
+
 def render_transcript(history: Sequence[LLMMessage]) -> str:
     """Earlier conversation as one deterministic text block."""
     lines = ["<conversation_history>", HISTORY_PREAMBLE, ""]
