@@ -100,7 +100,31 @@ def _history_row(timestamp: datetime) -> MessageHistoryRow:
         echoed_from_conversation_id=None,
         moved_to_conversation_id=None,
         started_thread_conversation_id=None,
+        review_rejection=None,
+        review_rejection_key=None,
     )
+
+
+def test_serialized_review_rejection_links_each_artifact_to_its_review() -> None:
+    row = _history_row(datetime(2026, 11, 16, 9, 0, tzinfo=UTC))
+    row["review_rejection"] = {
+        "stage": "firing",
+        "automation_name": "Porch light",
+        "reason": "Not aligned with the request.",
+        "artifacts": [
+            {"kind": "event", "id": 3, "name": "Porch light"},
+            {"kind": "script", "id": 9, "name": "notify_porch"},
+        ],
+    }
+
+    messages = serialize_conversation_messages([row])
+
+    rejection = messages[0].review_rejection
+    assert rejection is not None
+    assert [a.review_url for a in rejection.artifacts] == [
+        "/artifacts?kind=event&id=3",
+        "/artifacts?kind=script&id=9",
+    ]
 
 
 def test_serialized_message_timestamp_carries_utc_offset() -> None:

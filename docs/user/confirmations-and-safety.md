@@ -36,6 +36,26 @@ reviewed separately, and confirming a note does not approve its attachments. If 
 while you are reviewing it, confirmation is refused: close the dialog, reload the list, and review
 the updated content.
 
+### When script review doesn't approve an automation
+
+Script review checks scripts and automations the assistant saves for you, and checks unapproved ones
+again each time they fire. When it doesn't approve one, a card appears in the chat, in the web
+interface and the iOS app:
+
+- **When it was saved:** the card appears in the conversation where you asked for it, saying review
+  didn't approve it and why. The assistant may already have told you it was saved; the card is the
+  reviewer's later verdict.
+- **When it fired:** if review stops an automation from running, the card appears in the
+  conversation where that automation reports, and the automation is skipped that time.
+
+Each card has a **Review** button for every script or automation that still needs approval. The
+button opens Artifact review at that item. If it is what you wanted, confirm it there; it is then
+trusted, and its next firing runs.
+
+The same refusal of an unchanged automation does not post another card. If you edit it, or confirm
+only part of it, the next refusal posts a fresh card. Cards are not included when you share a
+conversation.
+
 ## Approving
 
 - **Telegram:** inline **✅ Confirm** and **❌ Cancel** buttons.

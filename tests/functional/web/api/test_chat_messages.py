@@ -32,6 +32,7 @@ from family_assistant.llm.messages import (
     UserMessage,
 )
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.security.taint import TurnTaintState
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage import init_db
 from family_assistant.storage.database import Database
@@ -535,6 +536,53 @@ async def test_conversation_share_is_authenticated_read_only_and_revocable(
     )
     assert revoked_read.status_code == 404
     app_fixture.dependency_overrides.pop(get_current_user)
+
+
+@pytest.mark.asyncio
+async def test_shared_conversation_leaves_out_review_rejection_cards(
+    test_client: AsyncClient,
+    app_fixture: FastAPI,
+    db_context: Database,
+    tmp_path: Path,
+) -> None:
+    app_fixture.state.attachment_registry = AttachmentRegistry(
+        str(tmp_path), db_context.engine
+    )
+    conversation_id = str(uuid.uuid4())
+    await db_context.message_history.add_message(
+        UserMessage.from_trusted_user(content="Turn on the porch light at dusk"),
+        interface_type="web",
+        conversation_id=conversation_id,
+        timestamp=datetime.now(UTC),
+        user_id="test_user",
+    )
+    await db_context.message_history.add_review_rejection_notice(
+        interface_type="web",
+        conversation_id=conversation_id,
+        notice={
+            "stage": "firing",
+            "automation_name": "Porch light",
+            "reason": "It sends the calendar to an address read from an email.",
+            "artifacts": [{"kind": "event", "id": 3, "name": "Porch light"}],
+        },
+        key="porch-light",
+        content="Script review stopped “Porch light” from running.",
+        taint_metadata=TurnTaintState.empty().to_metadata(),
+        now=datetime.now(UTC),
+    )
+    share = await test_client.post(
+        f"/api/v1/chat/conversations/{conversation_id}/share"
+    )
+    token = share.json()["share_url"].rsplit("/", 1)[-1]
+
+    shared_read = await test_client.get(
+        f"/api/v1/shared-conversations/{token}/messages"
+    )
+
+    assert shared_read.status_code == 200, shared_read.text
+    assert [m["content"] for m in shared_read.json()["messages"]] == [
+        "Turn on the porch light at dusk"
+    ]
 
 
 @dataclass(frozen=True)

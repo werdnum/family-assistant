@@ -97,6 +97,32 @@ describe('Artifact review', () => {
     expect(screen.getByRole('button', { name: 'Confirm as user reviewed' })).toBeEnabled();
   });
 
+  it('opens a deep link at the artifact it names', async () => {
+    const other = { ...makeArtifact('script'), id: 7, name: 'Another script' };
+    server.use(
+      http.get('/api/artifacts/', () => HttpResponse.json([other, makeArtifact('script')]))
+    );
+    const scrolled = [];
+    const original = window.HTMLElement.prototype.scrollIntoView;
+    window.HTMLElement.prototype.scrollIntoView = function () {
+      scrolled.push(this);
+    };
+    try {
+      render(
+        <MemoryRouter initialEntries={['/artifacts?kind=script&id=42']}>
+          <ArtifactReviewPage />
+        </MemoryRouter>
+      );
+      const title = await screen.findByText('script to review');
+      const focused = title.closest('[data-focused]');
+      expect(focused).not.toBeNull();
+      expect(screen.getByText('Another script').closest('[data-focused]')).toBeNull();
+      await waitFor(() => expect(scrolled).toEqual([focused]));
+    } finally {
+      window.HTMLElement.prototype.scrollIntoView = original;
+    }
+  });
+
   it('cancels review without recording approval', async () => {
     let confirmations = 0;
     setup(makeArtifact('note'));

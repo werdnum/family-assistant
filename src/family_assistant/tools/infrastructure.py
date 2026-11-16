@@ -75,6 +75,11 @@ from family_assistant.security.taint import (
     tier_merged_by_executing_tool,
 )
 from family_assistant.security.taint_audit import taint_audit_sources
+from family_assistant.services.review_rejection_notice import (
+    announce_review_rejection,
+    post_review_rejection_notice,
+    review_refs_for_writes,
+)
 from family_assistant.services.tool_call_review import (
     ACTION_REVIEW_VERDICTS,
     GATED_EXTERNAL_FUNCTIONS,
@@ -129,6 +134,7 @@ from family_assistant.tools.types import (
     ToolExecutionContext,
     ToolResult,
 )
+from family_assistant.utils.clock import SystemClock
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -3993,23 +3999,71 @@ class TaintTrackingToolsProvider(ToolsProvider):
         await pending.settled.wait()
         if not pending.writes:
             return result
-        await attach_pending_verdict(
+        disposition = {
+            ToolCallReviewVerdict.ALLOW: CreationDisposition.JUDGE_ALLOWED,
+            ToolCallReviewVerdict.CONFIRM: CreationDisposition.JUDGE_CONFIRM_REQUIRED,
+            ToolCallReviewVerdict.DENY: CreationDisposition.JUDGE_DENIED,
+        }[result.verdict]
+        attached = await attach_pending_verdict(
             context.db_context,
             pending,
-            disposition={
-                ToolCallReviewVerdict.ALLOW: CreationDisposition.JUDGE_ALLOWED,
-                ToolCallReviewVerdict.CONFIRM: (
-                    CreationDisposition.JUDGE_CONFIRM_REQUIRED
-                ),
-                ToolCallReviewVerdict.DENY: CreationDisposition.JUDGE_DENIED,
-            }[result.verdict],
+            disposition=disposition,
             gate=self._gate_provenance(
                 layer=GateLayer.TAINT_CELL,
                 taint_evaluation=taint_evaluation,
                 verdict_id=result.audit_event_id,
             ),
         )
+        if attached and not disposition.cures:
+            await self._post_admission_rejection(
+                context, pending=pending, reason=result.reason
+            )
         return result
+
+    async def _post_admission_rejection(
+        self,
+        context: ToolExecutionContext,
+        *,
+        pending: PendingDefinitionReview,
+        reason: str,
+    ) -> None:
+        """Show the user, where the definition was written, that review did not admit it.
+
+        The assistant has already reported the write a success: under
+        ``observe`` this verdict lands after the call returned. Posting is a
+        courtesy on a verdict already recorded, so a failure is logged rather
+        than raised into the detached review.
+        """
+        db = context.db_context
+        try:
+            posted = await post_review_rejection_notice(
+                db,
+                context.processing_service.app_config
+                if context.processing_service is not None
+                else None,
+                stage="admission",
+                interface_type=context.interface_type,
+                conversation_id=context.conversation_id,
+                home_owner_user_id=None,
+                artifact_refs=await review_refs_for_writes(db, pending.writes),
+                fallback_name="An automation",
+                source="",
+                reason=reason,
+                taint_metadata=(
+                    context.taint_tracker.snapshot()
+                    if context.taint_tracker is not None
+                    else TurnTaintState.empty()
+                ).to_metadata(),
+                now=(context.clock or SystemClock()).now(),
+            )
+            if posted is not None:
+                await announce_review_rejection(
+                    posted,
+                    chat_interfaces=context.chat_interfaces,
+                    chat_interface=context.chat_interface,
+                )
+        except Exception:
+            logger.exception("Failed to post the admission rejection notice")
 
     def _finish_shadow_review(self, task: asyncio.Task[object]) -> None:
         self._review_tasks.discard(task)

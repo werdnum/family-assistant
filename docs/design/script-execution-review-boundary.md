@@ -65,6 +65,16 @@ Nobody can confirm an unattended firing: a program that is not allowed (plainly 
 run, and a watched call whose own review would confirm is denied, recorded as unattended denials are
 today.
 
+What a person can do instead is cure the definition, so the hand-off is a card, not a prompt. The
+same card serves both gates that can leave a definition uncured: the creation gate, whose verdict
+under observe lands after the write has already been reported, and the firing review under enforce.
+An admission card goes to the conversation the definition was written from, a firing card to the one
+the automation's wakes land in. Each names the closure members the artifact review page still lists
+as needing review and links to them there; confirming them cures the closure. The card is written
+deterministically and belongs to no turn or profile, so the reviewer's reason it shows reaches the
+owner and no model, and conversation shares leave it out. It is keyed on the refused content, so an
+unchanged refusal posts once. A firing under observe posts nothing, because nothing was stopped.
+
 The lazy rule, under which the first nested review a program needs decides the whole program, is
 retired. A program that needs a decision gets it before it runs.
 

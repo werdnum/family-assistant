@@ -1827,6 +1827,7 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
               echoed_from_thread: msg.echoed_from_thread ?? undefined,
               moved_to_thread: msg.moved_to_thread ?? undefined,
               started_thread: msg.started_thread ?? undefined,
+              review_rejection: msg.review_rejection ?? undefined,
               feedback: msg.feedback ?? undefined,
             });
             return;
@@ -1898,6 +1899,7 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
             echoed_from_thread: msg.echoed_from_thread ?? undefined,
             moved_to_thread: msg.moved_to_thread ?? undefined,
             started_thread: msg.started_thread ?? undefined,
+            review_rejection: msg.review_rejection ?? undefined,
             feedback: msg.feedback ?? undefined,
           });
         });
@@ -2718,7 +2720,13 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
     const quotes = new Map<number, string>();
     for (const msg of messagesRef.current) {
       const text = messageText(msg);
-      if (msg.internalId !== undefined && !msg.moved_to_thread && !msg.started_thread && text) {
+      if (
+        msg.internalId !== undefined &&
+        !msg.moved_to_thread &&
+        !msg.started_thread &&
+        !msg.review_rejection &&
+        text
+      ) {
         quotes.set(msg.internalId, text);
       }
     }
@@ -2899,6 +2907,7 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
           echoed_from_thread: message.echoed_from_thread,
           moved_to_thread: message.moved_to_thread,
           started_thread: message.started_thread,
+          review_rejection: message.review_rejection,
           internal_id: message.internalId,
           has_own_attachments: message.hasOwnAttachments,
           turn_id: message.turnId,

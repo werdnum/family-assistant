@@ -12,6 +12,7 @@ from family_assistant.llm.messages import (
     AssistantMessage,
     SystemMessage,
     ToolMessage,
+    UserMessage,
 )
 from family_assistant.security.taint import (
     InMemoryTurnTaintTracker,
@@ -768,3 +769,65 @@ async def test_script_preparation_error_persists_taint_metadata(
             "post_epoch_missing_taint_metadata",
         )
     )
+
+
+async def _add_review_rejection_card(
+    db_context: Database, conversation_id: str
+) -> None:
+    await db_context.message_history.add_message(
+        UserMessage(
+            content="Turn on the porch light at dusk",
+            taint_metadata=TurnTaintState.empty().to_metadata(),
+            authorship_taint_metadata=TurnTaintState.empty().to_metadata(),
+        ),
+        interface_type="web",
+        conversation_id=conversation_id,
+        timestamp=datetime(2026, 11, 16, 8, 0, tzinfo=UTC),
+        processing_profile_id="default_assistant",
+        turn_id="turn-1",
+    )
+    card_id = await db_context.message_history.add_review_rejection_notice(
+        interface_type="web",
+        conversation_id=conversation_id,
+        notice={
+            "stage": "firing",
+            "automation_name": "Porch light",
+            "reason": "Not aligned with the request.",
+            "artifacts": [{"kind": "event", "id": 3, "name": "Porch light"}],
+        },
+        key="porch-light",
+        content="Script review stopped “Porch light” from running.",
+        taint_metadata=TurnTaintState.empty().to_metadata(),
+        now=datetime(2026, 11, 16, 9, 0, tzinfo=UTC),
+    )
+    assert card_id is not None
+
+
+@pytest.mark.asyncio
+async def test_review_rejection_card_is_outside_every_profile_history(
+    db_context: Database,
+) -> None:
+    await _add_review_rejection_card(db_context, "web_conv_card")
+
+    history = await db_context.message_history.get_recent(
+        interface_type="web",
+        conversation_id="web_conv_card",
+        processing_profile_id="default_assistant",
+    )
+
+    assert [message.content for message in history] == [
+        "Turn on the porch light at dusk"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_review_rejection_card_is_not_a_home_message(
+    db_context: Database,
+) -> None:
+    await _add_review_rejection_card(db_context, "web_conv_card")
+
+    rows = await db_context.message_history.recent_home_messages(
+        conversation_id="web_conv_card", limit=10, history_taint_epoch=None
+    )
+
+    assert [row.content for row in rows] == ["Turn on the porch light at dusk"]

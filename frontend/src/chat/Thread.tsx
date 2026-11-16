@@ -24,12 +24,14 @@ import {
   GitBranchPlusIcon,
   Loader2Icon,
   Share2Icon,
+  ShieldAlertIcon,
   StickyNoteIcon,
   SquareIcon,
   ThumbsDownIcon,
   ThumbsUpIcon,
 } from 'lucide-react';
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   ComposerAddAttachment,
   ComposerAttachments,
@@ -68,7 +70,7 @@ import { offersIntelligenceChoice, useProfiles } from './profilesContext';
 import { ToolGroup } from './ToolGroup';
 import { TooltipIconButton } from './TooltipIconButton';
 import { useTurnFeedback } from './turnFeedback';
-import type { MessageReasoningInfo, TurnRating } from './types';
+import type { MessageReasoningInfo, ReviewRejectionNotice, TurnRating } from './types';
 
 const messageContentComponents = {
   Text: MarkdownText,
@@ -699,6 +701,7 @@ const AssistantMessage: React.FC = () => {
     echoed_from_thread?: string;
     moved_to_thread?: string;
     started_thread?: string;
+    review_rejection?: ReviewRejectionNotice;
     internal_id?: number;
     has_own_attachments?: boolean;
     turn_id?: string;
@@ -710,6 +713,9 @@ const AssistantMessage: React.FC = () => {
   }
   if (custom.started_thread) {
     return <StartedThreadMarker threadConversationId={custom.started_thread} />;
+  }
+  if (custom.review_rejection) {
+    return <ReviewRejectionCard notice={custom.review_rejection} />;
   }
   // An echo of a thread's outcome is attributed to the thread rather than to
   // the Home profile and turn its copy was stored under.
@@ -959,6 +965,43 @@ const StartedThreadMarker: React.FC<{ threadConversationId: string }> = ({
     </MessagePrimitive.Root>
   );
 };
+
+const reviewRejectionHeadline = (notice: ReviewRejectionNotice): string =>
+  notice.stage === 'admission'
+    ? `Script review didn’t approve “${notice.automation_name}” when it was saved`
+    : `Script review stopped “${notice.automation_name}” from running`;
+
+/** Script review would not vouch for an automation: why, and where to review it. */
+const ReviewRejectionCard: React.FC<{ notice: ReviewRejectionNotice }> = ({ notice }) => (
+  <MessagePrimitive.Root className="px-4 py-1 md:px-6" data-testid="review-rejection-card">
+    <div className="max-w-3xl mx-auto">
+      <Card className="border-destructive/40 bg-destructive/5 p-4 gap-2">
+        <div className="flex items-start gap-2">
+          <ShieldAlertIcon className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />
+          <div className="min-w-0 space-y-1">
+            <p className="text-sm font-medium break-words">{reviewRejectionHeadline(notice)}</p>
+            {notice.reason && (
+              <p className="text-xs text-muted-foreground break-words">{notice.reason}</p>
+            )}
+          </div>
+        </div>
+        {notice.artifacts.length > 0 ? (
+          <div className="flex flex-wrap gap-2 pl-6">
+            {notice.artifacts.map((artifact) => (
+              <Button key={`${artifact.kind}:${artifact.id}`} variant="outline" size="sm" asChild>
+                <Link to={artifact.review_url}>Review “{artifact.name}”</Link>
+              </Button>
+            ))}
+          </div>
+        ) : (
+          <p className="pl-6 text-xs text-muted-foreground">
+            Nothing here can be reviewed, so it will not run as it is.
+          </p>
+        )}
+      </Card>
+    </div>
+  </MessagePrimitive.Root>
+);
 
 const AssistantActionBar: React.FC<{
   internalId?: number;

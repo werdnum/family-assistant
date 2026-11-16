@@ -1,7 +1,7 @@
 """Type definitions for storage layer return types."""
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypedDict
 
 if TYPE_CHECKING:
     from family_assistant.llm.google_types import GeminiProviderMetadata
@@ -229,6 +229,27 @@ class ScheduleExecutionStatsDict(TypedDict):
     recent_executions: list[dict[str, Any]]
 
 
+class ReviewRejectedArtifactDict(TypedDict):
+    """One artifact a review-rejection card links to, keyed as artifact review keys it."""
+
+    kind: str
+    id: int
+    name: str
+
+
+ReviewRejectionStage = Literal["admission", "firing"]
+"""Which review refused: the one judging a definition as it was saved, or as it fired."""
+
+
+class ReviewRejectionNoticeDict(TypedDict):
+    """What a review-rejection card shows: which automation, why, and what to review."""
+
+    stage: ReviewRejectionStage
+    automation_name: str
+    reason: str
+    artifacts: list[ReviewRejectedArtifactDict]
+
+
 class MessageHistoryRow(TypedDict):
     """Type definition for deserialized message history records.
 
@@ -265,6 +286,9 @@ class MessageHistoryRow(TypedDict):
     moved_to_conversation_id: str | None
     # The thread the user started, when a Home row marks one.
     started_thread_conversation_id: str | None
+    # What a review-rejection card names, when the row is one.
+    review_rejection: ReviewRejectionNoticeDict | None
+    review_rejection_key: str | None
     # The cursor of the transaction that last wrote the row (see
     # storage/sync_tracking.py). Absent on rows built outside a query.
     sync_cursor: NotRequired[int]

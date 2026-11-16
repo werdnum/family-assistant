@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { PageContainer, PageHeader } from '@/components/layout/PageHeader';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -19,6 +19,9 @@ const ArtifactReviewPage = () => {
   const [error, setError] = useState(null);
   const [params, setParams] = useSearchParams();
   const kind = params.get('kind') || 'all';
+  // A deep link (a review-rejection card in chat) opens the page at one artifact.
+  const focusedId = params.get('id');
+  const focusedRef = useRef(null);
   const [needsReviewOnly, setNeedsReviewOnly] = useState(false);
 
   const reload = async () => {
@@ -44,6 +47,17 @@ const ArtifactReviewPage = () => {
     }
     return () => root?.removeAttribute('data-app-ready');
   }, [loading]);
+
+  useEffect(() => {
+    if (!loading) {
+      focusedRef.current?.scrollIntoView?.({ block: 'center' });
+    }
+  }, [loading, focusedId]);
+
+  const isFocused = (artifact) =>
+    focusedId !== null &&
+    String(artifact.id) === focusedId &&
+    (kind === 'all' || kind === artifact.kind);
 
   const visible = artifacts.filter(
     (artifact) =>
@@ -98,7 +112,12 @@ const ArtifactReviewPage = () => {
       ) : (
         <div className="space-y-3">
           {visible.map((artifact) => (
-            <Card key={`${artifact.kind}:${artifact.id}`}>
+            <Card
+              key={`${artifact.kind}:${artifact.id}`}
+              ref={isFocused(artifact) ? focusedRef : undefined}
+              data-focused={isFocused(artifact) || undefined}
+              className={isFocused(artifact) ? 'ring-2 ring-primary' : undefined}
+            >
               <CardHeader className="pb-3">
                 <CardTitle className="text-lg break-words">{artifact.name}</CardTitle>
               </CardHeader>

@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 import httpx
 import pytest
 from pydantic import SecretStr
-from sqlalchemy import update
+from sqlalchemy import select, update
 
 from family_assistant.config_models import (
     AppConfig,
@@ -56,6 +56,7 @@ from family_assistant.services.tool_call_review import (
     ToolCallReviewVerdict,
 )
 from family_assistant.storage.database import Database
+from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.repositories.notes import NoteReadPolicy
 from family_assistant.storage.scripts import scripts_table
 from family_assistant.task_worker import (
@@ -96,9 +97,12 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncEngine
 
+    from family_assistant.interfaces import ChatInterface
     from family_assistant.llm import LLMInterface
     from family_assistant.llm.messages import LLMMessage
     from family_assistant.scripting.invocation import ScriptReviewContext
+    from family_assistant.security.taint import TaintMetadata
+    from family_assistant.storage.types import ReviewRejectionNoticeDict
 
 
 _TRUSTED_MESSAGES = (
@@ -2494,6 +2498,139 @@ async def test_unresolved_firing_that_is_not_allowed_does_not_run(
     assert note.startswith("Script was not run")
 
 
+class _AnnouncingChatInterface:
+    """A history-backed interface that records what it was told about."""
+
+    def __init__(self) -> None:
+        self.announced: list[tuple[str, str]] = []
+
+    async def send_message(
+        self,
+        conversation_id: str,
+        text: str,
+        parse_mode: str | None = None,
+        reply_to_interface_id: str | None = None,
+        attachment_ids: list[str] | None = None,
+        on_behalf_of_user_id: str | None = None,
+        taint_metadata: TaintMetadata | None = None,
+    ) -> str:
+        raise AssertionError("a persisted card must not be sent again")
+
+    async def announce_persisted_message(self, conversation_id: str, text: str) -> None:
+        self.announced.append((conversation_id, text))
+
+
+async def _fire_unresolved_script_from_web(
+    db_engine: AsyncEngine,
+    reviewer: _RecordingReviewer,
+    *,
+    firings: int = 1,
+    taint_policy: TaintPolicyConfig | None = None,
+    chat_interface: _AnnouncingChatInterface | None = None,
+) -> tuple[int, list[dict[str, object]]]:
+    """Fire an unresolved stored script from a web conversation.
+
+    Returns the script's id and the rows of the conversation it fired from.
+    """
+    provider = _eink_provider([], reviewer, taint_policy=taint_policy)
+    context = _context(db_engine, provider)
+    await context.db_context.scripts.save(
+        name="update_eink_display",
+        description="Render and upload the e-ink image.",
+        script_code=_EINK_FIRING,
+        definition_taint_state=_unknown_external_state(),
+    )
+    stored = await context.db_context.scripts.get_by_name("update_eink_display")
+    assert stored is not None
+    payload: ScriptExecutionPayload = {
+        "script_name": "update_eink_display",
+        "conversation_id": "script-review-conversation",
+        "interface_type": "web",
+        "processing_profile_id": "script-review-profile",
+    }
+    firing_context = _script_firing_context(context, provider)
+    if chat_interface is not None:
+        firing_context = replace(
+            firing_context,
+            chat_interfaces={"web": cast("ChatInterface", chat_interface)},
+        )
+    for _ in range(firings):
+        await handle_script_execution(firing_context, payload)
+    await provider.close()
+    rows = await context.db_context.fetch_all(
+        select(message_history_table).where(
+            message_history_table.c.conversation_id == "script-review-conversation"
+        )
+    )
+    return stored.id, [dict(row) for row in rows]
+
+
+@pytest.mark.asyncio
+async def test_refused_firing_posts_a_card_linking_to_its_review(
+    db_engine: AsyncEngine,
+) -> None:
+    script_id, rows = await _fire_unresolved_script_from_web(
+        db_engine, _RecordingReviewer(ToolCallReviewVerdict.DENY)
+    )
+
+    (card,) = rows
+    notice = cast("ReviewRejectionNoticeDict", card["review_rejection"])
+    assert notice["stage"] == "firing"
+    assert notice["automation_name"] == "update_eink_display"
+    assert notice["reason"]
+    assert notice["artifacts"] == [
+        {"kind": "script", "id": script_id, "name": "update_eink_display"}
+    ]
+    # No model's history window reads it: it belongs to no turn or profile.
+    assert (card["turn_id"], card["processing_profile_id"]) == (None, None)
+
+
+@pytest.mark.asyncio
+async def test_a_new_card_is_announced_to_the_conversations_clients(
+    db_engine: AsyncEngine,
+) -> None:
+    chat_interface = _AnnouncingChatInterface()
+
+    await _fire_unresolved_script_from_web(
+        db_engine,
+        _RecordingReviewer(ToolCallReviewVerdict.DENY, ToolCallReviewVerdict.DENY),
+        firings=2,
+        chat_interface=chat_interface,
+    )
+
+    assert chat_interface.announced == [
+        (
+            "script-review-conversation",
+            "Script review stopped \u201cupdate_eink_display\u201d from running. "
+            "Review and confirm \u201cupdate_eink_display\u201d to let it run.",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_refusing_an_unchanged_automation_again_posts_no_second_card(
+    db_engine: AsyncEngine,
+) -> None:
+    _, rows = await _fire_unresolved_script_from_web(
+        db_engine,
+        _RecordingReviewer(ToolCallReviewVerdict.DENY, ToolCallReviewVerdict.DENY),
+        firings=2,
+    )
+
+    assert len(rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_observed_refusal_posts_no_card(db_engine: AsyncEngine) -> None:
+    _, rows = await _fire_unresolved_script_from_web(
+        db_engine,
+        _RecordingReviewer(*[ToolCallReviewVerdict.DENY] * 4),
+        taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.OBSERVE),
+    )
+
+    assert rows == []
+
+
 @pytest.mark.asyncio
 async def test_observe_firing_review_never_stops_the_firing(
     db_engine: AsyncEngine,
@@ -3737,6 +3874,71 @@ async def test_forecast_approval_stamps_no_definition(
         "execute_script",
         "save_script",
     ]
+
+
+async def _save_script_under_observe(
+    db_engine: AsyncEngine, verdict: ToolCallReviewVerdict
+) -> tuple[ToolExecutionContext, _AnnouncingChatInterface]:
+    """Save a script from a tainted turn under observe; its verdict lands later."""
+    provider = _provider(
+        [_real_registration("save_script")],
+        reviewer=_RecordingReviewer(verdict),
+        rules=[],
+        taint_policy=_observe_policy(),
+    )
+    chat_interface = _AnnouncingChatInterface()
+    context = replace(
+        _context(db_engine, provider, state=_unknown_external_state()),
+        interface_type="web",
+        chat_interfaces={"web": cast("ChatInterface", chat_interface)},
+    )
+    await provider.execute_tool(
+        "save_script",
+        {"name": "porch_light", "description": "Porch light", "code": "print(1)"},
+        context,
+        "save-call",
+    )
+    await provider.close()
+    return context, chat_interface
+
+
+async def _conversation_rows(context: ToolExecutionContext) -> list[dict[str, object]]:
+    rows = await context.db_context.fetch_all(
+        select(message_history_table).where(
+            message_history_table.c.conversation_id == context.conversation_id
+        )
+    )
+    return [dict(row) for row in rows]
+
+
+@pytest.mark.asyncio
+async def test_admission_denial_landing_late_posts_a_card_where_it_was_written(
+    db_engine: AsyncEngine,
+) -> None:
+    context, chat_interface = await _save_script_under_observe(
+        db_engine, ToolCallReviewVerdict.DENY
+    )
+
+    script = await context.db_context.scripts.get_by_name("porch_light")
+    assert script is not None
+    (card,) = await _conversation_rows(context)
+    notice = cast("ReviewRejectionNoticeDict", card["review_rejection"])
+    assert notice["stage"] == "admission"
+    assert notice["artifacts"] == [
+        {"kind": "script", "id": script.id, "name": "porch_light"}
+    ]
+    assert [conversation for conversation, _ in chat_interface.announced] == [
+        context.conversation_id
+    ]
+
+
+@pytest.mark.asyncio
+async def test_admission_approval_posts_no_card(db_engine: AsyncEngine) -> None:
+    context, _ = await _save_script_under_observe(
+        db_engine, ToolCallReviewVerdict.ALLOW
+    )
+
+    assert await _conversation_rows(context) == []
 
 
 @pytest.mark.asyncio

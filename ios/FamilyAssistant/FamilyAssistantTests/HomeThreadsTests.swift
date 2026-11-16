@@ -1918,6 +1918,47 @@ final class HomeThreadsTests: XCTestCase {
         XCTAssertEqual(message.startedThread, "t1")
     }
 
+    func testAReviewRejectionCardRendersWithItsReviewLinks() throws {
+        let json = """
+        {"internal_id": 6, "turn_id": null, "role": "assistant",
+         "content": "Script review stopped \\u201cPorch light\\u201d from running.",
+         "timestamp": "2026-11-16T09:00:00Z",
+         "review_rejection": {
+           "stage": "firing",
+           "automation_name": "Porch light",
+           "reason": "Sends calendar data to an address read from an email.",
+           "artifacts": [
+             {"kind": "event", "id": 3, "name": "Porch light",
+              "review_url": "/artifacts?kind=event&id=3"},
+             {"kind": "script", "id": 3, "name": "notify_porch",
+              "review_url": "/artifacts?kind=script&id=3"}
+           ]
+         }}
+        """
+        let backend = try JSONDecoder.chatDecoder.decode(ChatBackendMessage.self, from: Data(json.utf8))
+
+        let rejection = try XCTUnwrap(ChatViewModel.renderMessages(from: [backend]).first?.reviewRejection)
+
+        XCTAssertEqual(rejection.automationName, "Porch light")
+        XCTAssertEqual(rejection.headline, "Script review stopped \u{201C}Porch light\u{201D} from running")
+        XCTAssertEqual(rejection.artifacts.map(\.reviewURL), [
+            "/artifacts?kind=event&id=3",
+            "/artifacts?kind=script&id=3",
+        ])
+        // Kinds share an id space per table, so the card keys links by both.
+        XCTAssertEqual(Set(rejection.artifacts.map(\.identity)).count, 2)
+    }
+
+    func testAReviewRejectionLinkOpensTheReviewPageInApp() throws {
+        let router = AppRouter()
+        let baseURL = try XCTUnwrap(URL(string: "https://fa.example"))
+
+        XCTAssertTrue(router.open(try XCTUnwrap(URL(string: "/artifacts?kind=event&id=3")), relativeTo: baseURL))
+
+        XCTAssertEqual(router.selectedTab, .more)
+        XCTAssertEqual(router.morePath, [.web(WebRoute(path: "/artifacts?kind=event&id=3"))])
+    }
+
     func testSendAsThreadNeedsTextAndIsHomeOnly() async throws {
         let model = try await makeHomeModelWithProfiles()
         model.draftAttachments = [uploadedAttachment()]
