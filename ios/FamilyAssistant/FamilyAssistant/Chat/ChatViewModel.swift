@@ -6273,6 +6273,7 @@ final class ChatViewModel {
                 echoedFromThread: backend.echoedFromThread,
                 movedToThread: backend.movedToThread,
                 startedThread: backend.startedThread,
+                reviewRejection: backend.reviewRejection,
                 feedback: backend.feedback
             )
         }

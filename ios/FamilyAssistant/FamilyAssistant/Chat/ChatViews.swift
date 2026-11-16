@@ -694,6 +694,9 @@ struct MessageBubble: View {
         } else if let threadID = message.startedThread, let homeThreads {
             ThreadCardView(threadID: threadID, store: homeThreads)
                 .padding(.vertical, 4)
+        } else if let rejection = message.reviewRejection {
+            ReviewRejectionCardView(rejection: rejection)
+                .padding(.vertical, 4)
         } else {
             bubble
         }
@@ -2909,4 +2912,62 @@ struct ShareSheet: UIViewControllerRepresentable {
 
 private extension UTType {
     static let markdown = UTType(filenameExtension: "md") ?? .plainText
+}
+
+/// Script review refused to run one of the user's automations. Each button opens
+/// the artifact review page at an artifact whose confirmation lets it run; the
+/// relative link goes through the app's `openURL` handler, so it opens in-app.
+struct ReviewRejectionCardView: View {
+    let rejection: ChatReviewRejection
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "exclamationmark.shield")
+                    .foregroundStyle(.red)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(verbatim: "Script review stopped \u{201C}\(rejection.automationName)\u{201D} from running")
+                        .font(.subheadline.weight(.semibold))
+                    if !rejection.reason.isEmpty {
+                        Text(verbatim: rejection.reason)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            if rejection.artifacts.isEmpty {
+                Text(verbatim: "Nothing here can be reviewed, so it will not run as it is.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(rejection.artifacts, id: \.identity) { artifact in
+                    Button {
+                        if let url = URL(string: artifact.reviewURL) {
+                            openURL(url)
+                        }
+                    } label: {
+                        Label {
+                            Text(verbatim: "Review \u{201C}\(artifact.name)\u{201D}")
+                        } icon: {
+                            Image(systemName: "checkmark.shield")
+                        }
+                        .font(.footnote.weight(.semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("review-rejection-link-\(artifact.identity)")
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.red.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(Color.red.opacity(0.3))
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("review-rejection-card")
+    }
 }

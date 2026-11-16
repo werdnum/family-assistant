@@ -465,8 +465,41 @@ struct ChatMessage: Identifiable, Equatable {
     /// On a Home message marking a thread the user started: that thread's
     /// conversation id. Shown as the thread's card in place of its text.
     var startedThread: String? = nil
+    /// On a message telling the user script review refused to run one of their
+    /// automations: what to review. Shown as a card in place of its text.
+    var reviewRejection: ChatReviewRejection? = nil
     /// The user's thumbs up or down on the turn this message belongs to.
     var feedback: ChatTurnRating? = nil
+}
+
+/// Script review refused to run an automation: why, and the artifacts whose
+/// review lets it run. `reviewURL` is app-relative, opened through the router.
+struct ChatReviewRejection: Decodable, Equatable {
+    struct Artifact: Decodable, Equatable {
+        let kind: String
+        let id: Int
+        let name: String
+        let reviewURL: String
+
+        var identity: String { "\(kind):\(id)" }
+
+        enum CodingKeys: String, CodingKey {
+            case kind
+            case id
+            case name
+            case reviewURL = "review_url"
+        }
+    }
+
+    let automationName: String
+    let reason: String
+    let artifacts: [Artifact]
+
+    enum CodingKeys: String, CodingKey {
+        case automationName = "automation_name"
+        case reason
+        case artifacts
+    }
 }
 
 /// A thumbs up or down on an assistant turn.
@@ -1182,6 +1215,8 @@ struct ChatBackendMessage: Decodable, Equatable {
     let movedToThread: String?
     /// On a Home row marking a thread the user started: that thread.
     let startedThread: String?
+    /// On a row telling the user script review refused to run an automation.
+    let reviewRejection: ChatReviewRejection?
     /// The caller's rating of the row's turn, on every row of a rated turn.
     let feedback: ChatTurnRating?
 
@@ -1202,6 +1237,7 @@ struct ChatBackendMessage: Decodable, Equatable {
         case echoedFromThread = "echoed_from_thread"
         case movedToThread = "moved_to_thread"
         case startedThread = "started_thread"
+        case reviewRejection = "review_rejection"
         case feedback
     }
 
@@ -1228,6 +1264,7 @@ struct ChatBackendMessage: Decodable, Equatable {
         echoedFromThread = try container.decodeIfPresent(String.self, forKey: .echoedFromThread)
         movedToThread = try container.decodeIfPresent(String.self, forKey: .movedToThread)
         startedThread = try container.decodeIfPresent(String.self, forKey: .startedThread)
+        reviewRejection = try container.decodeIfPresent(ChatReviewRejection.self, forKey: .reviewRejection)
         feedback = try container.decodeIfPresent(ChatTurnRating.self, forKey: .feedback)
 
         if let content = try? container.decode(String.self, forKey: .content) {
