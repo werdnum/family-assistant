@@ -313,7 +313,7 @@ async def get_home_threads(
     current_user: Annotated[dict, Depends(get_current_user)],
     db_context: Annotated[Database, Depends(get_db)],
 ) -> HomeThreadsResponse:
-    """The threads of the caller's web Home, newest first.
+    """The threads of the caller's web Home, most recently active first.
 
     Only the caller's own Home is ever read: it is looked up from their
     identity, never named by the request.

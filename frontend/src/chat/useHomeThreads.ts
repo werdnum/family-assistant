@@ -5,7 +5,7 @@ import type { ThreadSummary } from './types';
 const NO_THREADS: ThreadSummary[] = [];
 
 /**
- * The threads of Home, newest first. Fetched once Home is known (null while
+ * The threads of Home, most recently active first. Fetched once Home is known (null while
  * threads are disabled or Home is still being looked up); `refresh` refetches,
  * superseding any request still in flight, and is stable so it can be handed
  * to activity pings. `updateThread` patches one thread from what an action on
