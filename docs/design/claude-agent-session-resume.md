@@ -22,8 +22,11 @@ call in a probe), so resume is no more expensive than rebuilding and usually che
 
 The saved message history remains the record of the conversation. A stored Claude Code session is a
 **fidelity cache** over it: used only when it provably agrees with the history, and otherwise
-ignored in favour of today's rebuild. Every doubt resolves to rebuilding, so a defect in this
-mechanism costs fidelity, never correctness or safety.
+ignored in favour of today's rebuild. The two ways to be wrong are not symmetric. Rebuilding when
+the session could have been resumed only costs fidelity. Resuming a session that is incomplete,
+altered, or from another conversation is a correctness failure: the model acts, tools included, on a
+past that did not happen. Every rule below therefore requires positive evidence to resume, and the
+verification in the milestones is aimed at ruling out that second kind of error.
 
 A wake resumes the session of the turn that started its delegations when all of these hold, and
 rebuilds otherwise:
@@ -60,15 +63,18 @@ subtly wrong (reordered, truncated, an entry altered) resumes into a session tha
 mistaken about its own past. Three separate properties are required, and each has its own evidence:
 
 1. **The adapter returns exactly what it was given.** `load` returns entries deep-equal to those
-   appended, in append order, across separate `append` calls, with retried batches deduplicated by
-   entry `uuid` and entries without one kept. Entries are stored as their serialised JSON text, not
-   as a JSON column: the SDK's contract is only deep-equality, but PostgreSQL's `JSONB` rejects a
-   `\u0000` escape outright, and text storage gives the same exact round trip on SQLite and
-   PostgreSQL.
+   appended, in append order, across separate `append` calls. Entries are stored as their serialised
+   JSON text, not as a JSON column: the SDK's contract is only deep-equality, but PostgreSQL's
+   `JSONB` rejects a `\u0000` escape outright, and text storage gives the same exact round trip on
+   SQLite and PostgreSQL.
 2. **The store holds the whole session.** The SDK's mirror is best-effort: a batch that fails three
    times is dropped and reported as a `MirrorErrorMessage`, and the session carries on. A session is
-   therefore resumable only with positive evidence of completeness: its turn ended cleanly, the
-   final flush completed, and no mirror error was seen. Absence of evidence means rebuild.
+   therefore resumable only with positive evidence that its stored transcript is exactly what was
+   mirrored: its turn ended cleanly, the final flush completed, and **every append for it succeeded
+   the first time**. A failed append disqualifies the session even if the SDK's retry then succeeds,
+   because an append that committed but reported failure is retried in full, and entries without a
+   `uuid` cannot be told apart from their duplicates. Retries are rare, so a rebuild is the right
+   answer for them, not deduplication machinery.
 3. **Resuming from our store is the same as resuming from the CLI's own file.** The CLI does not
    mirror everything it writes locally: request diagnostics and cost records (`api-request`,
    `api-request-blob`, `api-request-shape`, `cost-state`) stay local, while every conversational
@@ -109,9 +115,10 @@ judgements on old history; a session that ran under an earlier epoch is not resu
 2. **Sessions are mirrored and their completeness recorded.** Turns on the `claude` profile mirror
    to the store with the CLI's local copy in a temporary config directory, and each session records
    its scope, the last history row it covers, its final taint state and whether it is complete.
-   Verified by tests that a clean session is marked complete, that a mirror error or an interrupted
-   turn leaves it incomplete, that nothing is left under the container's Claude config directory,
-   and by a real session whose stored transcript loads back deep-equal to what was mirrored.
+   Verified by tests that a clean session is marked complete, that a failed append, a mirror error
+   or an interrupted turn leaves it incomplete, that nothing is left under the container's Claude
+   config directory, and by a real session whose stored transcript loads back deep-equal to what was
+   mirrored.
 3. **Wakes resume.** The eligibility rules above, the resumed opening message and the taint
    inheritance. Verified by tests that each ineligibility rebuilds; that a resumed wake's taint is
    at least the rebuild path's; a test with a real Claude Code session that resuming from the store
