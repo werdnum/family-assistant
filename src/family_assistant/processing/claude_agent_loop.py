@@ -64,6 +64,7 @@ from family_assistant.llm.messages import (
     AssistantMessage,
     MessageReasoningInfo,
     ToolMessage,
+    UserMessage,
 )
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.observability.metrics import (
@@ -918,8 +919,16 @@ class ClaudeAgentLoop(LLMStreamingLoop):
         )
         if allow_quiet_end:
             definitions.append(END_TURN_QUIETLY_TOOL_DEFINITION)
+        # A delegation wake's trigger is a system row, so its instruction is
+        # what opens the session; the wake and the results it announces reach
+        # the session as transcript, as they do on every later turn.
         prompt = build_session_prompt(
-            messages,
+            [
+                *messages,
+                UserMessage(content=trailing_instruction, is_turn_scaffolding=True),
+            ]
+            if trailing_instruction
+            else messages,
             system_prompt_additions=(
                 await collect_system_prompt_addition(
                     tools_provider, can_confirm=can_confirm
@@ -927,8 +936,6 @@ class ClaudeAgentLoop(LLMStreamingLoop):
                 model.custom_instructions,
             ),
         )
-        if trailing_instruction:
-            prompt.content.append({"type": "text", "text": trailing_instruction})
 
         output: asyncio.Queue[_Handoff | _Done | _Failed] = asyncio.Queue()
         session = _TurnSession(
