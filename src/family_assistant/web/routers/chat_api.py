@@ -1570,6 +1570,7 @@ async def _shareable_message_row(
         or row["role"] not in {"user", "assistant"}
         or row["moved_to_conversation_id"] is not None
         or row["started_thread_conversation_id"] is not None
+        or row["review_rejection_key"] is not None
         or not (row["content"] or row["attachments"])
     ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
@@ -3736,6 +3737,9 @@ async def get_shared_conversation_messages(
             ), conversation_messages in history_by_chat.items()
             if conversation_id == share.conversation_id
             for message in conversation_messages
+            # A review-rejection card is addressed to the owner: its reason can
+            # quote what the refused script read, and its links are theirs.
+            if message.get("review_rejection_key") is None
         ]
         messages.sort(
             key=lambda message: message.get(
