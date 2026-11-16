@@ -884,13 +884,14 @@ Anthropic's terms of use.
 quota) and logs either `Profile 'claude_agent' can run Claude Code sessions on the subscription` or
 an error saying why not. It also exports these Prometheus metrics:
 
-| Metric                                                                    | Meaning                                                                                                                                                      |
-| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `family_assistant_claude_agent_ready{profile}`                            | 1 when the startup check passed. It cannot prove the token is accepted.                                                                                      |
-| `family_assistant_claude_agent_sessions_total{profile,outcome}`           | Sessions by outcome: `completed`, `max_turns`, `ended_quietly`, `review_terminated`, `cancelled`, `billing_refused`, `auth_failed`, `rate_limited`, `error`. |
-| `family_assistant_claude_subscription_rate_limit_status{rate_limit_type}` | 0 allowed, 1 approaching the limit, 2 limit hit, as Claude Code last reported each window.                                                                   |
-| `family_assistant_claude_subscription_utilization{rate_limit_type}`       | Fraction of the window used, when Claude Code reports it.                                                                                                    |
-| `family_assistant_claude_subscription_resets_at_seconds{rate_limit_type}` | When the window resets.                                                                                                                                      |
+| Metric                                                                    | Meaning                                                                                                                                                         |
+| ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `family_assistant_claude_agent_ready{profile}`                            | 1 when the startup check passed. It cannot prove the token is accepted.                                                                                         |
+| `family_assistant_claude_agent_sessions_total{profile,outcome}`           | Sessions by outcome: `completed`, `max_turns`, `ended_quietly`, `review_terminated`, `cancelled`, `billing_refused`, `auth_failed`, `rate_limited`, `error`.    |
+| `family_assistant_claude_agent_wakes_total{profile,decision}`             | Delegation wakes: `resumed` the stored session, or rebuilt it from history because there was `no_session`, the `conversation_moved_on`, or the `setup_changed`. |
+| `family_assistant_claude_subscription_rate_limit_status{rate_limit_type}` | 0 allowed, 1 approaching the limit, 2 limit hit, as Claude Code last reported each window.                                                                      |
+| `family_assistant_claude_subscription_utilization{rate_limit_type}`       | Fraction of the window used, when Claude Code reports it.                                                                                                       |
+| `family_assistant_claude_subscription_resets_at_seconds{rate_limit_type}` | When the window resets.                                                                                                                                         |
 
 Each model call is also counted in `family_assistant_llm_calls_total` and
 `family_assistant_llm_tokens_total` with `provider="claude_agent_sdk"`, and saved messages carry

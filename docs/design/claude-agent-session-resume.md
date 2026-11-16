@@ -23,7 +23,9 @@ materialises it from the store into a temporary config directory before starting
 Assistant implements that store over its own database, in tables of its own, so a session survives a
 restart or redeploy between the delegation and its wake. Entries are Claude Code's own transcript
 lines, kept as opaque JSON text in append order and never interpreted; the CLI's resume code is the
-only reader.
+only reader. Besides the conversation, they carry what Claude Code records about the session: the
+subscription account's email address and account and organisation ids among it. That is the same
+material Claude Code writes to its own local files, now held with the rest of the household's data.
 
 The CLI's local copy goes to the same place it does today, the session's working directory under the
 CLI's config directory, and is removed when the session ends, so transcripts are not left on the

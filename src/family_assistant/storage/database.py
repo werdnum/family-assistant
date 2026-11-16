@@ -99,6 +99,9 @@ if TYPE_CHECKING:
         WorkerTasksRepository,
     )
     from family_assistant.storage.repositories.a2a_tasks import A2ATasksRepository
+    from family_assistant.storage.repositories.claude_agent_sessions import (
+        ClaudeAgentSessionsRepository,
+    )
     from family_assistant.storage.repositories.sync import SyncRepository
 
 logger = logging.getLogger(__name__)
@@ -581,6 +584,15 @@ class DatabaseExecutor(ABC):
         )
 
         return self._repository(ChatGPTPlanRepository)
+
+    @property
+    def claude_agent_sessions(self) -> ClaudeAgentSessionsRepository:
+        """Get the stored Claude Code sessions repository instance."""
+        from family_assistant.storage.repositories.claude_agent_sessions import (  # noqa: PLC0415
+            ClaudeAgentSessionsRepository,
+        )
+
+        return self._repository(ClaudeAgentSessionsRepository)
 
     @property
     def oauth_connections(self) -> OAuthConnectionsRepository:

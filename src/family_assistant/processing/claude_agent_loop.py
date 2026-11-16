@@ -17,7 +17,6 @@ import json
 import logging
 import os
 import shutil
-import tempfile
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
@@ -33,8 +32,10 @@ from claude_agent_sdk import (
     ClaudeAgentOptions,
     ClaudeSDKClient,
     HookMatcher,
+    MirrorErrorMessage,
     RateLimitEvent,
     ResultMessage,
+    SessionStore,
     StreamEvent,
     TextBlock,
     ToolUseBlock,
@@ -70,11 +71,13 @@ from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.observability.metrics import (
     record_claude_agent_ready,
     record_claude_agent_session,
+    record_claude_agent_wake,
     record_claude_subscription_rate_limit,
     record_llm_call,
 )
 from family_assistant.security.taint import (
     InMemoryTurnTaintTracker,
+    TurnTaintState,
     merge_taint_state_into_tracker,
     prompt_window_taint,
 )
@@ -89,6 +92,15 @@ from .claude_agent_prompt import (
     SessionContentBlock,
     SessionPrompt,
     build_session_prompt,
+    resumed_opening,
+)
+from .claude_agent_sessions import (
+    WakeScope,
+    database_session_store,
+    record_session_turn,
+    remove_local_transcript,
+    session_to_resume,
+    session_working_directory,
 )
 from .llm_loop import LLMStreamingLoop, without_unavailable_thread_tools
 from .quiet_turn import (
@@ -315,11 +327,19 @@ class _TurnSession:
         turn: _TurnContext,
         model: ClaudeAgentModel,
         output: asyncio.Queue[_Handoff | _Done | _Failed],
+        *,
+        scope: WakeScope,
+        resume: str | None,
     ) -> None:
         self.loop = loop
         self.turn = turn
         self.model = model
         self.output = output
+        self.scope = scope
+        self.resume = resume
+        self.session_store = database_session_store(turn.db_context)
+        self.session_id: str | None = None
+        self.mirror_failed = False
         self.review_state = ToolCallReviewTurnState()
         # Everything the session reports and every tool result, in arrival
         # order, for the one consumer that turns them into output.
@@ -652,8 +672,14 @@ class _TurnSession:
                 if self.turn_ending and not self.outstanding:
                     await client.interrupt()
                     return
+            elif isinstance(item, MirrorErrorMessage):
+                self.mirror_failed = True
+                logger.warning(
+                    "Claude agent session transcript batch dropped: %s", item.error
+                )
             elif isinstance(item, SdkSystemMessage):
                 if item.subtype == "init":
+                    self.session_id = item.data.get("session_id")
                     logger.info(
                         "Claude agent session %s on Claude Code %s, model %s, "
                         "credential %s",
@@ -676,14 +702,17 @@ class _TurnSession:
         self, prompt: SessionPrompt, definitions: list[ToolDefinition]
     ) -> None:
         server = _mcp_server(definitions, self.call_tool)
-        with tempfile.TemporaryDirectory(prefix="fa-claude-agent-") as cwd:
-            options = self.loop.options_for(
-                model=self.model,
-                system_prompt=prompt.system_prompt,
-                server=server,
-                cwd=cwd,
-                pre_tool_use=self.pre_tool_use,
-            )
+        cwd = session_working_directory()
+        options = self.loop.options_for(
+            model=self.model,
+            system_prompt=prompt.system_prompt,
+            server=server,
+            cwd=cwd,
+            pre_tool_use=self.pre_tool_use,
+            session_store=self.session_store,
+            resume=self.resume,
+        )
+        try:
             async with self.loop.client_factory(options) as client:
                 await client.query(_opening_message(prompt.content))
                 pump = asyncio.create_task(self._pump(client))
@@ -692,8 +721,43 @@ class _TurnSession:
                 finally:
                     pump.cancel()
                     await asyncio.gather(pump, return_exceptions=True)
+        finally:
+            # A resumed session runs in a config directory the SDK removes.
+            if self.session_id is not None and self.resume is None:
+                remove_local_transcript(self.session_id, cwd)
         await self._flush()
         await self._finish()
+        await self._record_session(prompt.system_prompt)
+
+    async def _record_session(self, system_prompt: str) -> None:
+        """Make the session resumable, if the store holds all of it."""
+        if self.outcome != "completed" or self.session_id is None:
+            return
+        if self.session_store.write_failed or self.mirror_failed:
+            logger.warning(
+                "Claude agent session %s of turn %s is not resumable: part of "
+                "its transcript did not reach the store.",
+                self.session_id,
+                self.turn.turn_id,
+            )
+            return
+        # The turn's reply is already saved; failing to record the session
+        # only means a later wake rebuilds instead of resuming.
+        try:
+            await record_session_turn(
+                self.turn.db_context,
+                self.scope,
+                session_id=self.session_id,
+                model=self.model,
+                system_prompt=system_prompt,
+                taint_metadata=self.turn.taint_tracker.snapshot().to_metadata(),
+            )
+        except Exception:
+            logger.exception(
+                "Failed to record Claude agent session %s of turn %s",
+                self.session_id,
+                self.turn.turn_id,
+            )
 
     async def _finish(self) -> None:
         terminal_text = self.review_state.terminal_denial_escalation_message
@@ -823,6 +887,8 @@ class ClaudeAgentLoop(LLMStreamingLoop):
         server: Server,
         cwd: str,
         pre_tool_use: HookCallback,
+        session_store: SessionStore,
+        resume: str | None,
     ) -> ClaudeAgentOptions:
         """The session's options: our tools, and nothing of Claude Code's own."""
         return ClaudeAgentOptions(
@@ -850,7 +916,8 @@ class ClaudeAgentLoop(LLMStreamingLoop):
             include_partial_messages=True,
             cli_path=self.agent_config.cli_path,
             client_app="family-assistant",
-            extra_args={"no-session-persistence": None},
+            session_store=session_store,
+            resume=resume,
         )
 
     async def _run_stream(
@@ -936,6 +1003,47 @@ class ClaudeAgentLoop(LLMStreamingLoop):
                 model.custom_instructions,
             ),
         )
+        scope = WakeScope(
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            subconversation_id=subconversation_id,
+            profile_id=self.config.id,
+            turn_id=turn_id,
+        )
+        resumed_session_id: str | None = None
+        if trailing_instruction:
+            stored, decision = await session_to_resume(
+                db_context, scope, model=model, system_prompt=prompt.system_prompt
+            )
+            record_claude_agent_wake(self.config.id, decision)
+            logger.info(
+                "Claude agent wake %s on profile %s: %s",
+                turn_id,
+                self.config.id,
+                decision,
+            )
+            if stored is not None:
+                resumed_session_id = stored.session_id
+                # The session holds everything its earlier turns saw, some of
+                # which may have left the history window since.
+                merge_taint_state_into_tracker(
+                    taint_tracker,
+                    TurnTaintState.from_metadata(
+                        stored.taint_metadata_json, preserve_origin=True
+                    ),
+                )
+                added = await db_context.message_history.get_turn_rows_with_metadata(
+                    interface_type=interface_type,
+                    conversation_id=conversation_id,
+                    subconversation_id=subconversation_id,
+                    turn_ids=[turn_id],
+                )
+                prompt = SessionPrompt(
+                    system_prompt=prompt.system_prompt,
+                    content=resumed_opening(
+                        [row.message for row in added], trailing_instruction
+                    ),
+                )
 
         output: asyncio.Queue[_Handoff | _Done | _Failed] = asyncio.Queue()
         session = _TurnSession(
@@ -966,6 +1074,8 @@ class ClaudeAgentLoop(LLMStreamingLoop):
             ),
             model,
             output,
+            scope=scope,
+            resume=resumed_session_id,
         )
 
         async def run_session() -> None:
