@@ -560,6 +560,7 @@ async def test_shared_conversation_leaves_out_review_rejection_cards(
         interface_type="web",
         conversation_id=conversation_id,
         notice={
+            "stage": "firing",
             "automation_name": "Porch light",
             "reason": "It sends the calendar to an address read from an email.",
             "artifacts": [{"kind": "event", "id": 3, "name": "Porch light"}],

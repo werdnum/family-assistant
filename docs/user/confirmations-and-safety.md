@@ -36,17 +36,25 @@ reviewed separately, and confirming a note does not approve its attachments. If 
 while you are reviewing it, confirmation is refused: close the dialog, reload the list, and review
 the updated content.
 
-### When an automation is stopped by script review
+### When script review doesn't approve an automation
 
-An automation or event listener whose script has not been approved is checked by script review each
-time it fires, and nobody is there to approve it at that moment. If the review decides it should not
-run, it is skipped and a card appears in the conversation where that automation reports, in the web
-interface and the iOS app. The card says which automation was stopped and why, and has a **Review**
-button for each script or automation that still needs approval. The button opens Artifact review at
-that item. Confirm it there, and the next time the automation fires it runs.
+Script review checks scripts and automations the assistant saves for you, and checks unapproved ones
+again each time they fire. When it doesn't approve one, a card appears in the chat, in the web
+interface and the iOS app:
 
-An automation stopped again with nothing changed does not post another card. If you edit it, or
-confirm only part of it, the next refusal posts a fresh card.
+- **When it was saved:** the card appears in the conversation where you asked for it, saying review
+  didn't approve it and why. The assistant may already have told you it was saved; the card is the
+  reviewer's later verdict.
+- **When it fired:** if review stops an automation from running, the card appears in the
+  conversation where that automation reports, and the automation is skipped that time.
+
+Each card has a **Review** button for every script or automation that still needs approval. The
+button opens Artifact review at that item. If it is what you wanted, confirm it there; it is then
+trusted, and its next firing runs.
+
+The same refusal of an unchanged automation does not post another card. If you edit it, or confirm
+only part of it, the next refusal posts a fresh card. Cards are not included when you share a
+conversation.
 
 ## Approving
 

@@ -790,6 +790,7 @@ async def _add_review_rejection_card(
         interface_type="web",
         conversation_id=conversation_id,
         notice={
+            "stage": "firing",
             "automation_name": "Porch light",
             "reason": "Not aligned with the request.",
             "artifacts": [{"kind": "event", "id": 3, "name": "Porch light"}],

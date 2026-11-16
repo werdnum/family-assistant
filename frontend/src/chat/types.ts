@@ -136,6 +136,8 @@ export type TurnRating = 'up' | 'down';
 
 /** A firing script review refused to run, and the artifacts to review so it can. */
 export interface ReviewRejectionNotice {
+  /** admission: not approved as it was saved; firing: stopped from running. */
+  stage: 'admission' | 'firing';
   automation_name: string;
   reason: string;
   artifacts: Array<{

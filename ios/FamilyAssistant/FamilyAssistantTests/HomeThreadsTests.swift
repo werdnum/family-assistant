@@ -1924,6 +1924,7 @@ final class HomeThreadsTests: XCTestCase {
          "content": "Script review stopped \\u201cPorch light\\u201d from running.",
          "timestamp": "2026-11-16T09:00:00Z",
          "review_rejection": {
+           "stage": "firing",
            "automation_name": "Porch light",
            "reason": "Sends calendar data to an address read from an email.",
            "artifacts": [
@@ -1939,6 +1940,7 @@ final class HomeThreadsTests: XCTestCase {
         let rejection = try XCTUnwrap(ChatViewModel.renderMessages(from: [backend]).first?.reviewRejection)
 
         XCTAssertEqual(rejection.automationName, "Porch light")
+        XCTAssertEqual(rejection.headline, "Script review stopped \u{201C}Porch light\u{201D} from running")
         XCTAssertEqual(rejection.artifacts.map(\.reviewURL), [
             "/artifacts?kind=event&id=3",
             "/artifacts?kind=script&id=3",

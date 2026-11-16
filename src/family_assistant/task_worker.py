@@ -194,6 +194,7 @@ from family_assistant.services.delegation_delivery import (
 from family_assistant.services.notification_targets import notify_conversation
 from family_assistant.services.notifier import MESSAGE_CATEGORY, NotificationMetadata
 from family_assistant.services.review_rejection_notice import (
+    announce_review_rejection,
     post_review_rejection_notice,
 )
 from family_assistant.services.tool_call_review import (
@@ -931,6 +932,7 @@ async def _post_firing_rejection_notice(
         posted = await post_review_rejection_notice(
             exec_context.db_context,
             processing_service.app_config if processing_service is not None else None,
+            stage="firing",
             interface_type=interface_type,
             conversation_id=conversation_id,
             home_owner_user_id=home_owner_for(
@@ -945,17 +947,11 @@ async def _post_firing_rejection_notice(
             taint_metadata=state.to_metadata(),
             now=(exec_context.clock or SystemClock()).now(),
         )
-        if posted is None:
-            return
-        # The card is already in history, so its clients are only told about
-        # it: sending would save it a second time. An interface whose clients
-        # do not read history (Telegram) is not told.
-        chat_interface = (exec_context.chat_interfaces or {}).get(
-            posted.interface_type, exec_context.chat_interface
-        )
-        if isinstance(chat_interface, HistoryBackedChatInterface):
-            await chat_interface.announce_persisted_message(
-                posted.conversation_id, posted.content
+        if posted is not None:
+            await announce_review_rejection(
+                posted,
+                chat_interfaces=exec_context.chat_interfaces,
+                chat_interface=exec_context.chat_interface,
             )
     except Exception:
         logger.exception("Failed to post the review rejection notice")

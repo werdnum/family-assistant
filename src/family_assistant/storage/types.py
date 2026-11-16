@@ -1,7 +1,7 @@
 """Type definitions for storage layer return types."""
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypedDict
 
 if TYPE_CHECKING:
     from family_assistant.llm.google_types import GeminiProviderMetadata
@@ -237,9 +237,14 @@ class ReviewRejectedArtifactDict(TypedDict):
     name: str
 
 
+ReviewRejectionStage = Literal["admission", "firing"]
+"""Which review refused: the one judging a definition as it was saved, or as it fired."""
+
+
 class ReviewRejectionNoticeDict(TypedDict):
     """What a review-rejection card shows: which automation, why, and what to review."""
 
+    stage: ReviewRejectionStage
     automation_name: str
     reason: str
     artifacts: list[ReviewRejectedArtifactDict]

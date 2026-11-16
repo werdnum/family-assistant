@@ -108,6 +108,7 @@ def _history_row(timestamp: datetime) -> MessageHistoryRow:
 def test_serialized_review_rejection_links_each_artifact_to_its_review() -> None:
     row = _history_row(datetime(2026, 11, 16, 9, 0, tzinfo=UTC))
     row["review_rejection"] = {
+        "stage": "firing",
         "automation_name": "Porch light",
         "reason": "Not aligned with the request.",
         "artifacts": [

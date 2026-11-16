@@ -83,6 +83,7 @@ from family_assistant.storage.repositories.turn_feedback import (
 from family_assistant.storage.types import (
     MessageHistoryRow,
     ReviewRejectionNoticeDict,
+    ReviewRejectionStage,
 )
 from family_assistant.threads.home import viewer_for
 from family_assistant.threads.listing import (
@@ -543,8 +544,14 @@ class ReviewRejectedArtifact(BaseModel):
 
 
 class ReviewRejectionNotice(BaseModel):
-    """Script review refused to run an automation; what the user can do about it."""
+    """Script review would not vouch for an automation; what the user can do about it."""
 
+    stage: ReviewRejectionStage = Field(
+        description=(
+            "admission: review did not approve it as it was saved; "
+            "firing: review stopped it from running"
+        )
+    )
     automation_name: str
     reason: str = Field(description="The reviewer's stated reason, for display")
     artifacts: list[ReviewRejectedArtifact] = Field(
@@ -555,6 +562,7 @@ class ReviewRejectionNotice(BaseModel):
     def from_stored(cls, stored: ReviewRejectionNoticeDict) -> "ReviewRejectionNotice":
         """The card from what was stored, linking each artifact to its review."""
         return cls(
+            stage=stored["stage"],
             automation_name=stored["automation_name"],
             reason=stored["reason"],
             artifacts=[
@@ -637,9 +645,9 @@ class ConversationMessage(BaseModel):
     review_rejection: ReviewRejectionNotice | None = Field(
         None,
         description=(
-            "On a message telling the user script review refused to run one of "
-            "their automations: what to review. Render it as a card linking "
-            "each artifact's review_url rather than showing its content"
+            "On a message telling the user script review would not vouch for "
+            "one of their automations: what to review. Render it as a card "
+            "linking each artifact's review_url rather than showing its content"
         ),
     )
     feedback: TurnRating | None = Field(

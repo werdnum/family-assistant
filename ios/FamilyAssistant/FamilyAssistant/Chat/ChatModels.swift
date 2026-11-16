@@ -491,11 +491,21 @@ struct ChatReviewRejection: Decodable, Equatable {
         }
     }
 
+    /// `admission`: review did not approve it as it was saved; `firing`:
+    /// review stopped it from running.
+    let stage: String
     let automationName: String
     let reason: String
     let artifacts: [Artifact]
 
+    var headline: String {
+        stage == "admission"
+            ? "Script review didn\u{2019}t approve \u{201C}\(automationName)\u{201D} when it was saved"
+            : "Script review stopped \u{201C}\(automationName)\u{201D} from running"
+    }
+
     enum CodingKeys: String, CodingKey {
+        case stage
         case automationName = "automation_name"
         case reason
         case artifacts

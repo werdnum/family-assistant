@@ -966,7 +966,12 @@ const StartedThreadMarker: React.FC<{ threadConversationId: string }> = ({
   );
 };
 
-/** Script review refused to run an automation: why, and where to review it. */
+const reviewRejectionHeadline = (notice: ReviewRejectionNotice): string =>
+  notice.stage === 'admission'
+    ? `Script review didn’t approve “${notice.automation_name}” when it was saved`
+    : `Script review stopped “${notice.automation_name}” from running`;
+
+/** Script review would not vouch for an automation: why, and where to review it. */
 const ReviewRejectionCard: React.FC<{ notice: ReviewRejectionNotice }> = ({ notice }) => (
   <MessagePrimitive.Root className="px-4 py-1 md:px-6" data-testid="review-rejection-card">
     <div className="max-w-3xl mx-auto">
@@ -974,9 +979,7 @@ const ReviewRejectionCard: React.FC<{ notice: ReviewRejectionNotice }> = ({ noti
         <div className="flex items-start gap-2">
           <ShieldAlertIcon className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />
           <div className="min-w-0 space-y-1">
-            <p className="text-sm font-medium break-words">
-              Script review stopped “{notice.automation_name}” from running
-            </p>
+            <p className="text-sm font-medium break-words">{reviewRejectionHeadline(notice)}</p>
             {notice.reason && (
               <p className="text-xs text-muted-foreground break-words">{notice.reason}</p>
             )}

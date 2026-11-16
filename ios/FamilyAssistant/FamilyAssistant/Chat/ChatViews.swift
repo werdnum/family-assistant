@@ -2928,7 +2928,7 @@ struct ReviewRejectionCardView: View {
                     .foregroundStyle(.red)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(verbatim: "Script review stopped \u{201C}\(rejection.automationName)\u{201D} from running")
+                    Text(verbatim: rejection.headline)
                         .font(.subheadline.weight(.semibold))
                     if !rejection.reason.isEmpty {
                         Text(verbatim: rejection.reason)

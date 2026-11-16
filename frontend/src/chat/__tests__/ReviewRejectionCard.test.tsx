@@ -56,6 +56,7 @@ describe('review rejection card', () => {
 
   it('says why the automation did not run and links each artifact to its review', async () => {
     serveCard({
+      stage: 'firing',
       automation_name: 'Porch light',
       reason: 'The script sends calendar data to an address it reads from an email.',
       artifacts: [
@@ -84,9 +85,33 @@ describe('review rejection card', () => {
   });
 
   it('says so when nothing can be reviewed', async () => {
-    serveCard({ automation_name: 'One-off check', reason: 'Not aligned.', artifacts: [] });
+    serveCard({
+      stage: 'firing',
+      automation_name: 'One-off check',
+      reason: 'Not aligned.',
+      artifacts: [],
+    });
     const card = await openCard();
     expect(card.queryByRole('link')).not.toBeInTheDocument();
     expect(card.getByText(/Nothing here can be reviewed/)).toBeInTheDocument();
+  });
+
+  it('says an automation was not approved as it was saved', async () => {
+    serveCard({
+      stage: 'admission',
+      automation_name: 'Porch light',
+      reason: 'The script was written from an email it quotes.',
+      artifacts: [
+        { kind: 'script', id: 9, name: 'porch_light', review_url: '/artifacts?kind=script&id=9' },
+      ],
+    });
+    const card = await openCard();
+    expect(
+      card.getByText(/Script review didn.t approve .Porch light. when it was saved/)
+    ).toBeInTheDocument();
+    expect(card.getByRole('link', { name: 'Review \u201cporch_light\u201d' })).toHaveAttribute(
+      'href',
+      '/artifacts?kind=script&id=9'
+    );
   });
 });
