@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, NoReturn
 from zoneinfo import ZoneInfo
 
@@ -35,7 +36,9 @@ from family_assistant.processing.claude_agent_loop import (
 )
 from family_assistant.processing.quiet_turn import END_TURN_QUIETLY_TOOL_NAME
 from family_assistant.processing.types import ChatInteractionResult
+from family_assistant.security.taint import TurnTaintState
 from family_assistant.storage.database import Database
+from family_assistant.storage.delegation_runs import DELEGATION_CONTINUATION_TRIGGER
 from family_assistant.tools.types import ToolExecutionContext
 from tests.mocks.fake_claude_code import (
     FakeClaudeCode,
@@ -208,6 +211,54 @@ async def test_opening_message_carries_the_request(db_engine: AsyncEngine) -> No
 
     texts = [block["text"] for block in fake.prompts[0]["content"]]
     assert any("Hello there" in text for text in texts)
+
+
+@pytest.mark.asyncio
+async def test_delegation_wake_opens_with_its_instruction(
+    db_engine: AsyncEngine,
+) -> None:
+    """A wake's trigger is a system row; its results arrive as history before it."""
+    db = Database(db_engine)
+    await db.message_history.add_message(
+        UserMessage(
+            content="Engineer result: the cron job was disabled.",
+            taint_metadata=TurnTaintState.empty().to_metadata(),
+            authorship_taint_metadata=TurnTaintState.empty().to_metadata(),
+        ),
+        interface_type="test",
+        conversation_id="conv-1",
+        turn_id="wake-turn",
+        timestamp=datetime.now(UTC),
+        processing_profile_id="claude_agent",
+        is_internal=True,
+    )
+    fake = FakeClaudeCode(responses=[FakeResponse([FakeText("It was disabled.")])])
+
+    reply = await _service(fake).handle_chat_interaction(
+        db_context=db,
+        interface_type="test",
+        conversation_id="conv-1",
+        trigger_content_parts=[
+            {
+                "type": "text",
+                "text": (
+                    f"{DELEGATION_CONTINUATION_TRIGGER}\n\n"
+                    "Their results are provided as lower-priority data in the "
+                    "message history for this turn. Continue the task."
+                ),
+            }
+        ],
+        trigger_interface_message_id=None,
+        user_name="TestUser",
+        trigger_is_internal=True,
+        trigger_role="system",
+        turn_id="wake-turn",
+    )
+
+    texts = [block["text"] for block in fake.prompts[0]["content"]]
+    assert reply.text_reply == "It was disabled."
+    assert "the cron job was disabled" in texts[0]
+    assert "Their results are provided as lower-priority data" in texts[-1]
 
 
 @pytest.mark.asyncio
