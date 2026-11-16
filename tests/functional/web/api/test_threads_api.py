@@ -161,6 +161,48 @@ async def test_threads_list_what_home_shows_about_each_thread(
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("threads_enabled")
+async def test_threads_list_most_recently_active_first(
+    api_test_client: AsyncClient, db_engine: AsyncEngine
+) -> None:
+    home = (await api_test_client.get("/api/v1/chat/home")).json()["conversation_id"]
+    db = Database(engine=db_engine)
+    for conversation_id, created in (
+        ("web_conv_older", NOW - timedelta(minutes=30)),
+        ("web_conv_newer", NOW - timedelta(minutes=20)),
+        ("web_conv_quiet", NOW - timedelta(minutes=10)),
+    ):
+        await db.conversation_threads.create_thread(
+            conversation_id=conversation_id,
+            home_conversation_id=home,
+            interface_type="web",
+            owner_user_id=CALLER,
+            profile_id="browser_profile",
+            title=conversation_id,
+            title_taint=None,
+            anchor_message_id=None,
+            delegation_id=None,
+            now=created,
+            source_tool_call_id=None,
+        )
+    await db.message_history.add_message(
+        AssistantMessage(content="Gas or heat pump?"),
+        interface_type="web",
+        conversation_id="web_conv_older",
+        timestamp=NOW,
+        processing_profile_id="browser_profile",
+    )
+
+    body = (await api_test_client.get("/api/v1/chat/home/threads")).json()
+
+    assert [entry["conversation_id"] for entry in body["threads"]] == [
+        "web_conv_older",
+        "web_conv_quiet",
+        "web_conv_newer",
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("threads_enabled")
 async def test_threads_never_list_another_users_home(
     app_fixture: FastAPI, api_test_client: AsyncClient, db_engine: AsyncEngine
 ) -> None:

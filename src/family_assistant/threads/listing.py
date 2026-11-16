@@ -184,14 +184,19 @@ async def list_home_threads(
     turn_running: Callable[[str], bool],
     viewer: Viewer | None,
 ) -> list[ThreadSummary]:
-    """The threads of a Home, newest first.
+    """The threads of a Home, most recently active first.
+
+    Activity is a summary's ``updated_at``: the later of the thread record's
+    last change and its latest visible message.
 
     ``turn_running`` says whether a conversation has a turn in progress, which
     only the live stream hub knows.
     """
     threads = await db.conversation_threads.list_for_home(home_conversation_id)
-    return await summarize_threads(
-        db, threads, turn_running=turn_running, viewer=viewer
+    return sorted(
+        await summarize_threads(db, threads, turn_running=turn_running, viewer=viewer),
+        key=lambda summary: summary.updated_at,
+        reverse=True,
     )
 
 
