@@ -97,9 +97,11 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncEngine
 
+    from family_assistant.interfaces import ChatInterface
     from family_assistant.llm import LLMInterface
     from family_assistant.llm.messages import LLMMessage
     from family_assistant.scripting.invocation import ScriptReviewContext
+    from family_assistant.security.taint import TaintMetadata
     from family_assistant.storage.types import ReviewRejectionNoticeDict
 
 
@@ -2496,12 +2498,35 @@ async def test_unresolved_firing_that_is_not_allowed_does_not_run(
     assert note.startswith("Script was not run")
 
 
+class _AnnouncingChatInterface:
+    """A history-backed interface that records what it was told about."""
+
+    def __init__(self) -> None:
+        self.announced: list[tuple[str, str]] = []
+
+    async def send_message(
+        self,
+        conversation_id: str,
+        text: str,
+        parse_mode: str | None = None,
+        reply_to_interface_id: str | None = None,
+        attachment_ids: list[str] | None = None,
+        on_behalf_of_user_id: str | None = None,
+        taint_metadata: TaintMetadata | None = None,
+    ) -> str:
+        raise AssertionError("a persisted card must not be sent again")
+
+    async def announce_persisted_message(self, conversation_id: str, text: str) -> None:
+        self.announced.append((conversation_id, text))
+
+
 async def _fire_unresolved_script_from_web(
     db_engine: AsyncEngine,
     reviewer: _RecordingReviewer,
     *,
     firings: int = 1,
     taint_policy: TaintPolicyConfig | None = None,
+    chat_interface: _AnnouncingChatInterface | None = None,
 ) -> tuple[int, list[dict[str, object]]]:
     """Fire an unresolved stored script from a web conversation.
 
@@ -2523,10 +2548,14 @@ async def _fire_unresolved_script_from_web(
         "interface_type": "web",
         "processing_profile_id": "script-review-profile",
     }
-    for _ in range(firings):
-        await handle_script_execution(
-            _script_firing_context(context, provider), payload
+    firing_context = _script_firing_context(context, provider)
+    if chat_interface is not None:
+        firing_context = replace(
+            firing_context,
+            chat_interfaces={"web": cast("ChatInterface", chat_interface)},
         )
+    for _ in range(firings):
+        await handle_script_execution(firing_context, payload)
     await provider.close()
     rows = await context.db_context.fetch_all(
         select(message_history_table).where(
@@ -2553,6 +2582,28 @@ async def test_refused_firing_posts_a_card_linking_to_its_review(
     ]
     # No model's history window reads it: it belongs to no turn or profile.
     assert (card["turn_id"], card["processing_profile_id"]) == (None, None)
+
+
+@pytest.mark.asyncio
+async def test_a_new_card_is_announced_to_the_conversations_clients(
+    db_engine: AsyncEngine,
+) -> None:
+    chat_interface = _AnnouncingChatInterface()
+
+    await _fire_unresolved_script_from_web(
+        db_engine,
+        _RecordingReviewer(ToolCallReviewVerdict.DENY, ToolCallReviewVerdict.DENY),
+        firings=2,
+        chat_interface=chat_interface,
+    )
+
+    assert chat_interface.announced == [
+        (
+            "script-review-conversation",
+            "Script review stopped \u201cupdate_eink_display\u201d from running. "
+            "Review and confirm \u201cupdate_eink_display\u201d to let it run.",
+        )
+    ]
 
 
 @pytest.mark.asyncio

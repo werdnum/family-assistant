@@ -65,6 +65,14 @@ Nobody can confirm an unattended firing: a program that is not allowed (plainly 
 run, and a watched call whose own review would confirm is denied, recorded as unattended denials are
 today.
 
+What a person can do instead is cure the definition, so the hand-off is a card, not a prompt. A
+refused firing under enforce posts one to the conversation the automation's wakes land in, naming
+each closure member the artifact review page still lists as needing review and linking to it there;
+confirming them cures the closure and the next firing runs. The card is written deterministically
+and belongs to no turn or profile, so the reviewer's reason it shows reaches the user and no model.
+It is keyed on the refused content, so an unchanged automation refused on every firing posts once.
+Observe mode posts nothing, because nothing was stopped.
+
 The lazy rule, under which the first nested review a program needs decides the whole program, is
 retired. A program that needs a decision gets it before it runs.
 

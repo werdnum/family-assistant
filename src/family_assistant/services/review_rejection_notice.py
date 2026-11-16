@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from family_assistant.actions import resolve_home_target
@@ -34,6 +35,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 REVIEW_REJECTION_REASON_MAX_CHARS = 600
+
+
+@dataclass(frozen=True, slots=True)
+class PostedReviewRejection:
+    """Where a new card landed, so its clients can be told about it."""
+
+    interface_type: str
+    conversation_id: str
+    content: str
 
 
 def _notice_key(
@@ -72,8 +82,8 @@ async def post_review_rejection_notice(
     reason: str,
     taint_metadata: TaintMetadata,
     now: datetime,
-) -> int | None:
-    """Post a card naming what to review; returns its id, or ``None`` if already posted.
+) -> PostedReviewRejection | None:
+    """Post a card naming what to review; ``None`` if this card was already posted.
 
     ``artifact_refs`` is the firing's executable closure, invoking definition
     first. The card names the automation after that definition, and links to
@@ -105,12 +115,13 @@ async def post_review_rejection_notice(
             home_owner_user_id=home_owner_user_id,
             now=now,
         )
+    content = _content(automation_name, pending)
     notice_id = await db.message_history.add_review_rejection_notice(
         interface_type=interface_type,
         conversation_id=conversation_id,
         notice=notice,
         key=_notice_key(automation_name, source, pending),
-        content=_content(automation_name, pending),
+        content=content,
         taint_metadata=taint_metadata,
         now=now,
     )
@@ -121,4 +132,9 @@ async def post_review_rejection_notice(
             interface_type,
             conversation_id,
         )
-    return notice_id
+        return None
+    return PostedReviewRejection(
+        interface_type=interface_type,
+        conversation_id=conversation_id,
+        content=content,
+    )

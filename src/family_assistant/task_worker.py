@@ -928,7 +928,7 @@ async def _post_firing_rejection_notice(
         else TurnTaintState.empty()
     )
     try:
-        await post_review_rejection_notice(
+        posted = await post_review_rejection_notice(
             exec_context.db_context,
             processing_service.app_config if processing_service is not None else None,
             interface_type=interface_type,
@@ -945,6 +945,18 @@ async def _post_firing_rejection_notice(
             taint_metadata=state.to_metadata(),
             now=(exec_context.clock or SystemClock()).now(),
         )
+        if posted is None:
+            return
+        # The card is already in history, so its clients are only told about
+        # it: sending would save it a second time. An interface whose clients
+        # do not read history (Telegram) is not told.
+        chat_interface = (exec_context.chat_interfaces or {}).get(
+            posted.interface_type, exec_context.chat_interface
+        )
+        if isinstance(chat_interface, HistoryBackedChatInterface):
+            await chat_interface.announce_persisted_message(
+                posted.conversation_id, posted.content
+            )
     except Exception:
         logger.exception("Failed to post the review rejection notice")
 
