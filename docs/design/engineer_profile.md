@@ -180,8 +180,9 @@ engineer itself.
 
 Repository history, pull requests and issues come from GitHub's hosted read-only MCP servers
 (`github-repos`, `github-pull-requests`, `github-issues`) rather than from local tools. They are
-granted by server id, loaded on demand, and reachable by no other profile. See **Repository History,
-Pull Requests and Issues** above, and
+granted by server id and loaded on demand. `default_assistant` and `complex_tasks` reach them too,
+through `default_profile_settings`, so a quick lookup does not need a delegation here. See
+**Repository History, Pull Requests and Issues** above, and
 [CONFIGURATION_REFERENCE.md](../operations/CONFIGURATION_REFERENCE.md) for the token an operator
 sets.
 

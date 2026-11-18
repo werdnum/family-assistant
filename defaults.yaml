@@ -690,6 +690,12 @@ mcp_config:
       command: "python"
       args:
         - "contrib/scrape_mcp.py"
+      # scrape_url fetches an arbitrary model-supplied URL and returns the
+      # page, so it is both an untrusted source and a high-bandwidth egress
+      # channel: open_world keeps it off the bare read_only branch and on the
+      # arbitrary_external_message sink.
+      tool_metadata:
+        "*": ["read_only", "open_world", "output_untrusted"]
     google-maps:
       command: "deno"
       args:
@@ -1096,8 +1102,16 @@ default_profile_settings:
       - "get_live_camera_snapshot"
       - "scan_camera_frames"
       - "find_camera_change"
+    # GitHub and scrape are lookups a turn reaches for now and then: "did that
+    # PR merge?", "open the page that search result points at". Loaded on
+    # demand so they cost nothing on turns that don't use them, rather than
+    # costing a delegation on turns that do.
     on_demand_mcp_server_ids:
       - "homeassistant"
+      - "github-repos"
+      - "github-issues"
+      - "github-pull-requests"
+      - "scrape"
   tools_policy:
     default_decision: "deny"
     rules:
@@ -1213,6 +1227,13 @@ default_profile_settings:
             - "brave"
             - "homeassistant"
             - "google-maps"
+            # Read-only GitHub (enforced by the `/readonly` endpoints) and
+            # single-page fetches. Both return externally authored text, so
+            # taint gates whatever a turn does after reading them.
+            - "github-repos"
+            - "github-issues"
+            - "github-pull-requests"
+            - "scrape"
         decision: "allow"
         priority: 10
       # Per-target delegation rules match the delegation tag rather than a tool
@@ -1815,8 +1836,8 @@ service_profiles:
         # adds tools on its own schedule, and a name list would decay into
         # silently withdrawing access the profile is meant to have. Read-only
         # is enforced by the `/readonly` endpoints these ids point at, not by
-        # this rule. No other profile names these ids, and every profile is
-        # deny-by-default, so nothing else in the deployment can reach them.
+        # this rule. default_profile_settings grants the same ids, but this
+        # profile replaces that policy, so it names them itself.
         - match:
             mcp_server_ids:
               - "github-repos"

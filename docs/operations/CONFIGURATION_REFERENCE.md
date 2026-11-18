@@ -4539,12 +4539,14 @@ userinfo password or a `token=`-style query parameter in a `url`, and the same i
 but it does not, for instance, pair `args: ["--token", "secret"]` with its value. Keep credentials
 in `env` and `token`.
 
-#### GitHub history for the engineer profile
+#### Read-only GitHub access
 
 `defaults.yaml` ships three hosted GitHub MCP servers — `github-repos`, `github-issues` and
-`github-pull-requests` — which give the engineer profile the repository history the running
-application cannot see for itself. The production image excludes `.git`, so without them the only
-version fact available is the `GIT_COMMIT` baked in at build time, which `get_system_info` reports.
+`github-pull-requests`. They give the engineer profile the repository history the running
+application cannot see for itself, and they let `default_assistant` and `complex_tasks` answer
+repository questions without delegating. All three are loaded on demand. The production image
+excludes `.git`, so without them the only version fact available is the `GIT_COMMIT` baked in at
+build time, which `get_system_info` reports.
 
 Set one variable to turn them on:
 
@@ -4556,7 +4558,7 @@ The token is required, including for a public repository. The hosted endpoint au
 session itself, before any repository is named, and answers an unauthenticated `initialize` with
 `401` — so there is no anonymous mode to fall back on, unlike GitHub's REST API. Without the
 variable the servers are marked `failed` like any other server missing its credential; the
-application still starts, and the engineer simply has no history tools.
+application still starts, and no profile has GitHub tools.
 
 Give the token read access only: repository contents, issues, pull requests and metadata. It is a
 separate credential from the `GITHUB_TOKEN` that `create_github_issue` uses, which needs write scope
