@@ -464,6 +464,14 @@ def delegation_sink_class(
     return RuntimeSinkClass.USER_LOCAL
 
 
+# Envoy Gateway keeps pooled upstream connections for up to an hour (Envoy's
+# default cluster idle timeout). If uvicorn closes an idle connection first,
+# Envoy can dispatch a request onto it as it closes and return a 503 that never
+# reached the app; uvicorn's 5s default made that race routine. Outlasting the
+# proxy's idle timeout leaves the close to the proxy.
+UVICORN_KEEP_ALIVE_SECONDS = 3660
+
+
 class ShutdownForwardingServer(uvicorn.Server):
     """A uvicorn server whose exit signal also starts the app's own shutdown.
 
@@ -2467,13 +2475,20 @@ class Assistant:
         if self.server_socket is not None:
             # Use the pre-bound socket to avoid race conditions
             uvicorn_config = uvicorn.Config(
-                self.fastapi_app, fd=self.server_socket.fileno(), log_level="info"
+                self.fastapi_app,
+                fd=self.server_socket.fileno(),
+                log_level="info",
+                timeout_keep_alive=UVICORN_KEEP_ALIVE_SECONDS,
             )
             logger.info(f"Web server using pre-bound socket on port {server_port}")
         else:
             # Use normal host/port binding
             uvicorn_config = uvicorn.Config(
-                self.fastapi_app, host="0.0.0.0", port=server_port, log_level="info"
+                self.fastapi_app,
+                host="0.0.0.0",
+                port=server_port,
+                log_level="info",
+                timeout_keep_alive=UVICORN_KEEP_ALIVE_SECONDS,
             )
             logger.info(f"Web server running on http://0.0.0.0:{server_port}")
 
