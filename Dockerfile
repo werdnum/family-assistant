@@ -213,13 +213,19 @@ RUN uv sync --locked --extra local-embeddings
 USER root
 RUN rm -rf /app/frontend
 
-# uv-managed Python interpreters ship pip in their base site-packages, and pip vendors its own
-# copies of certifi, urllib3, msgpack and setuptools (pkg_resources), which vulnerability scanners
-# report and which no uv sync can upgrade. Nothing here runs pip: the app venv and the uv tool
-# environments are created by uv and are not seeded with it. Remove it from every managed
-# interpreter, both root's (used by the app venv) and appuser's (if uv tool installed its own).
-# HOME is set explicitly because the earlier `ENV HOME=/home/appuser` also applies to root.
+# pip vendors its own copies of certifi, urllib3, msgpack and setuptools (pkg_resources), which
+# vulnerability scanners report and which no uv sync can upgrade. Nothing here runs pip, but it
+# reaches the image three ways: uv-managed Python interpreters ship it in their base
+# site-packages; llm and sqlite-utils depend on it (only for their `install` subcommands, which
+# the application never calls), so `uv sync` puts it in the app venv; and that sync leaves its
+# unpacked wheel in the uv cache. Remove it from all three. HOME is set explicitly because the
+# earlier `ENV HOME=/home/appuser` also applies to root.
 RUN set -eu; \
+    venv_purelib="$(/app/.venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"; \
+    rm -rf "$venv_purelib/pip" "$venv_purelib"/pip-*.dist-info /app/.venv/bin/pip /app/.venv/bin/pip3*; \
+    if /app/.venv/bin/python -c 'import pip' 2>/dev/null; then echo "pip still importable from the app venv" >&2; exit 1; fi; \
+    uv cache clean pip; \
+    if find "$UV_CACHE_DIR" -path '*/pip/_vendor/vendor.txt' | grep -q .; then echo "pip still in the uv cache" >&2; exit 1; fi; \
     found=0; \
     for dir in "$(HOME=/root uv python dir)" "$(HOME=/home/appuser uv python dir)"; do \
         for py in "$dir"/*/bin/python3; do \
