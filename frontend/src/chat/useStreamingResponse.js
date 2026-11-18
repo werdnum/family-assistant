@@ -3,6 +3,40 @@ import { useCallback, useRef, useState } from 'react';
 import { generateUUID } from '../utils/uuid';
 import { conversationStreamUrl, redirectToLogin } from './conversationStream';
 
+// A proxy can reset a pooled connection just as the backend closes it for being
+// idle, which surfaces as a 502/503/504 or a network error before the request
+// reached the app. The kickoff is idempotent on turn_id, so one retry is safe.
+const KICKOFF_RETRY_STATUSES = new Set([502, 503, 504]);
+export const kickoffRetryTuning = { delayMs: 250 };
+
+const postTurnKickoff = async (body, signal) => {
+  const post = () =>
+    fetch('/api/v1/chat/turns', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+      signal,
+    });
+  let response;
+  try {
+    response = await post();
+  } catch (e) {
+    if (signal?.aborted) {
+      throw e;
+    }
+    console.warn('Turn kickoff request failed, retrying once:', e);
+  }
+  if (response && !KICKOFF_RETRY_STATUSES.has(response.status)) {
+    return response;
+  }
+  if (response) {
+    console.warn(`Turn kickoff failed: HTTP ${response.status}, retrying once`);
+  }
+  await new Promise((resolve) => setTimeout(resolve, kickoffRetryTuning.delayMs));
+  signal?.throwIfAborted();
+  return post();
+};
+
 // Resume tuning for a dropped/interrupted reply stream. The producer keeps
 // running server-side and the hub replays events from any seq, so a drop is
 // resumed rather than failed. Give-up is liveness-aware: only an instant
@@ -193,12 +227,8 @@ export const useStreamingResponse = ({
         // turn_started event, and starts the background producer.
         const startResponse = existingTurn
           ? null
-          : await fetch('/api/v1/chat/turns', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
+          : await postTurnKickoff(
+              JSON.stringify({
                 turn_id: effectiveTurnId,
                 prompt,
                 conversation_id: conversationId,
@@ -207,8 +237,8 @@ export const useStreamingResponse = ({
                 attachments: attachments,
                 ...(modelTier ? { model_tier: modelTier } : {}),
               }),
-              signal: abortControllerRef.current.signal,
-            });
+              abortControllerRef.current.signal
+            );
 
         // A conversation runs one turn at a time, so the server refuses this one
         // if it already has a running turn (409) and names the turn instead. We

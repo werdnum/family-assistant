@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetLocalStorageMock } from '../../test/mocks/localStorageMock';
 import { server } from '../../test/setup.js';
 import { renderChatApp } from '../../test/utils/renderChatApp';
-import { streamResumeTuning } from '../useStreamingResponse';
+import { kickoffRetryTuning, streamResumeTuning } from '../useStreamingResponse';
 
 const STREAM_URL = '/api/v1/chat/conversations/:conversationId/stream';
 // getTestResponse in the shared handlers answers a prompt without "hello",
@@ -51,6 +51,7 @@ function captureTurnId(onCapture: (id: string) => void) {
 // Run sequentially to avoid MSW handler conflicts with parallel tests
 describe('ErrorHandling', () => {
   const originalTuning = { ...streamResumeTuning };
+  const originalKickoffTuning = { ...kickoffRetryTuning };
 
   beforeEach(() => {
     resetLocalStorageMock();
@@ -58,10 +59,12 @@ describe('ErrorHandling', () => {
     // Exercise every resume attempt without waiting through production backoff.
     streamResumeTuning.initialDelayMs = 1;
     streamResumeTuning.maxDelayMs = 2;
+    kickoffRetryTuning.delayMs = 1;
   });
 
   afterEach(() => {
     Object.assign(streamResumeTuning, originalTuning);
+    Object.assign(kickoffRetryTuning, originalKickoffTuning);
   });
 
   it('surfaces an unconfirmed-reply error when every subscribe hits a network error', async () => {
@@ -257,6 +260,66 @@ describe('ErrorHandling', () => {
       expect(screen.getByRole('button', { name: 'Approve' })).toBeEnabled();
     });
   }, 30000);
+
+  it.each([
+    ['a 503 from the proxy', () => HttpResponse.json({}, { status: 503 })],
+    ['a network error', () => HttpResponse.error()],
+  ])(
+    'retries the kickoff once with the same turn id after %s',
+    async (_label, failure) => {
+      const kickoffTurnIds: string[] = [];
+      server.use(
+        http.post('/api/v1/chat/turns', async ({ request }) => {
+          const body = (await request.clone().json()) as { turn_id: string };
+          kickoffTurnIds.push(body.turn_id);
+          // Fall through to the shared handler once the first attempt has failed.
+          return kickoffTurnIds.length === 1 ? failure() : undefined;
+        })
+      );
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const messageInput = await findMessageInput();
+      await user.type(messageInput, SEND_PROMPT);
+      await user.keyboard('{Enter}');
+
+      expect(await screen.findByText(DEFAULT_REPLY, {}, { timeout: 5000 })).toBeInTheDocument();
+      expect(kickoffTurnIds).toHaveLength(2);
+      expect(kickoffTurnIds[1]).toBe(kickoffTurnIds[0]);
+      expect(screen.queryByText(/encountered an error/i)).not.toBeInTheDocument();
+    },
+    30000
+  );
+
+  it.each([
+    ['a second 503', 503, 2],
+    ['a 500, which is not retried', 500, 1],
+  ])(
+    'surfaces a kickoff failure after %s',
+    async (_label, status, expectedAttempts) => {
+      let kickoffs = 0;
+      server.use(
+        http.post('/api/v1/chat/turns', () => {
+          kickoffs += 1;
+          return HttpResponse.json({ detail: 'unavailable' }, { status });
+        })
+      );
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const messageInput = await findMessageInput();
+      await user.type(messageInput, SEND_PROMPT);
+      await user.keyboard('{Enter}');
+
+      expect(
+        await screen.findByText(/encountered an error/i, {}, { timeout: 5000 })
+      ).toBeInTheDocument();
+      expect(kickoffs).toBe(expectedAttempts);
+    },
+    30000
+  );
 
   it('retries the subscribe after a network error and renders the reply', async () => {
     let ourTurnId = '';
