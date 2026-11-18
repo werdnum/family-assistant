@@ -828,6 +828,79 @@ class OpenAIClient(BaseLLMClient):
             blocks.append({"type": "input_text", "text": message.content[stable:]})
         return {"role": "system", "content": blocks}
 
+    def _assistant_message_to_responses_input(
+        self, message: AssistantMessage
+    ) -> list[dict[str, object]]:
+        """Replay an assistant turn, preferring the provider's own output items.
+
+        The stored ``openai_response_output`` is replayed verbatim because it
+        carries reasoning items and ids the provider wants back. It is not
+        trusted to be complete, though: a stream has been seen to finish with
+        an empty ``response.completed`` output after emitting tool calls, and
+        replaying that as authoritative leaves the following tool outputs
+        without a matching call, which the API rejects on every later request
+        in the thread. So the text and tool calls the message itself records
+        are added for whatever the stored output does not cover.
+        """
+        items: list[dict[str, object]] = []
+        provider_metadata = message.provider_metadata
+        if isinstance(provider_metadata, dict) and isinstance(
+            provider_metadata.get("openai_response_output"), list
+        ):
+            originating_response_stored = (
+                provider_metadata.get("openai_response_stored") is True
+            )
+            for output_item in provider_metadata["openai_response_output"]:
+                if not isinstance(output_item, dict):
+                    raise TypeError(
+                        "OpenAI Responses output metadata must contain objects"
+                    )
+                if not self._is_replayable_reasoning_item(
+                    output_item,
+                    originating_response_stored=originating_response_stored,
+                ):
+                    logger.debug(
+                        "Dropping reasoning item %s with no encrypted_content",
+                        output_item.get("id"),
+                    )
+                    continue
+                items.append({
+                    key: value for key, value in output_item.items() if key != "status"
+                })
+
+        if message.content and not any(item.get("type") == "message" for item in items):
+            # No synthesized `id`. A fabricated one matches nothing server-side,
+            # and because it differs on every request it changes the input
+            # prefix each time, defeating OpenAI's automatic prompt caching for
+            # the whole conversation after this point.
+            items.append({
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "text": message.content,
+                        "annotations": [],
+                    }
+                ],
+            })
+        replayed_call_ids = {
+            item.get("call_id") for item in items if item.get("type") == "function_call"
+        }
+        for tool_call in message.tool_calls or []:
+            if tool_call.id in replayed_call_ids:
+                continue
+            arguments = tool_call.function.arguments
+            if isinstance(arguments, dict):
+                arguments = json.dumps(arguments)
+            items.append({
+                "type": "function_call",
+                "call_id": tool_call.id,
+                "name": tool_call.function.name,
+                "arguments": arguments,
+            })
+        return items
+
     def _messages_to_responses_input(
         self,
         messages: Sequence[LLMMessage],
@@ -862,60 +935,7 @@ class OpenAIClient(BaseLLMClient):
             elif message.role == "system":
                 input_items.append({"role": "system", "content": message.content})
             elif message.role == "assistant":
-                provider_metadata = message.provider_metadata
-                if isinstance(provider_metadata, dict) and isinstance(
-                    provider_metadata.get("openai_response_output"), list
-                ):
-                    originating_response_stored = (
-                        provider_metadata.get("openai_response_stored") is True
-                    )
-                    for output_item in provider_metadata["openai_response_output"]:
-                        if not isinstance(output_item, dict):
-                            raise TypeError(
-                                "OpenAI Responses output metadata must contain objects"
-                            )
-                        if not self._is_replayable_reasoning_item(
-                            output_item,
-                            originating_response_stored=originating_response_stored,
-                        ):
-                            logger.debug(
-                                "Dropping reasoning item %s with no encrypted_content",
-                                output_item.get("id"),
-                            )
-                            continue
-                        input_items.append({
-                            key: value
-                            for key, value in output_item.items()
-                            if key != "status"
-                        })
-                else:
-                    if message.content:
-                        # No synthesized `id`. A fabricated one matches nothing
-                        # server-side, and because it differs on every request
-                        # it changes the input prefix each time, defeating
-                        # OpenAI's automatic prompt caching for the whole
-                        # conversation after this point.
-                        input_items.append({
-                            "type": "message",
-                            "role": "assistant",
-                            "content": [
-                                {
-                                    "type": "output_text",
-                                    "text": message.content,
-                                    "annotations": [],
-                                }
-                            ],
-                        })
-                    for tool_call in message.tool_calls or []:
-                        arguments = tool_call.function.arguments
-                        if isinstance(arguments, dict):
-                            arguments = json.dumps(arguments)
-                        input_items.append({
-                            "type": "function_call",
-                            "call_id": tool_call.id,
-                            "name": tool_call.function.name,
-                            "arguments": arguments,
-                        })
+                input_items.extend(self._assistant_message_to_responses_input(message))
             elif message.role == "tool":
                 input_items.append({
                     "type": "function_call_output",
@@ -1897,6 +1917,7 @@ class OpenAIClient(BaseLLMClient):
         stream = await cast("Any", self.client.responses.create)(**params)
         originating_response_stored = params["store"] is True
         response: Any | None = None
+        streamed_output: list[dict[str, object]] = []
         vcr_events = await self._maybe_parse_vcr_stream(stream)
         if vcr_events is not None:
             async for event in self._emit_events_from_responses_dicts(
@@ -1907,6 +1928,8 @@ class OpenAIClient(BaseLLMClient):
             return
 
         async for event in stream:
+            if event.type == "response.output_item.done":
+                streamed_output.append(event.item.model_dump(mode="json"))
             if event.type == "response.output_text.delta":
                 yield LLMStreamEvent(type="content", content=event.delta)
             elif (
@@ -1958,12 +1981,36 @@ class OpenAIClient(BaseLLMClient):
             if response.status:
                 metadata["finish_reason"] = response.status
             metadata["provider_metadata"] = {
-                "openai_response_output": [
-                    item.model_dump(mode="json") for item in response.output
-                ],
+                "openai_response_output": self._complete_response_output(
+                    [item.model_dump(mode="json") for item in response.output],
+                    streamed_output,
+                ),
                 "openai_response_stored": originating_response_stored,
             }
         yield LLMStreamEvent(type="done", metadata=metadata)
+
+    @staticmethod
+    def _complete_response_output(
+        final_output: list[dict[str, object]],
+        streamed_output: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        """Add streamed output items the terminal response left out.
+
+        ``response.completed`` normally repeats every item the stream already
+        finished, but it has been seen to arrive with an empty ``output`` after
+        several ``function_call`` items were streamed. Each finished item is
+        kept as it streamed and used when the final output is empty, or
+        appended when the final output lacks its id.
+        """
+        if not final_output:
+            return list(streamed_output)
+        final_ids = {item.get("id") for item in final_output}
+        missing = [
+            item
+            for item in streamed_output
+            if item.get("id") is not None and item.get("id") not in final_ids
+        ]
+        return [*final_output, *missing]
 
     async def _emit_events_from_responses_dicts(
         self,
@@ -1973,6 +2020,7 @@ class OpenAIClient(BaseLLMClient):
     ) -> AsyncIterator[LLMStreamEvent]:
         """Emit common stream events from VCR-replayed Responses API frames."""
         metadata: StreamEventMetadata = {}
+        streamed_output: list[dict[str, object]] = []
         for event in event_dicts:
             event_type = event.get("type")
             if event_type == "response.output_text.delta":
@@ -1981,6 +2029,8 @@ class OpenAIClient(BaseLLMClient):
                     yield LLMStreamEvent(type="content", content=delta)
             elif event_type == "response.output_item.done":
                 item = event.get("item")
+                if isinstance(item, dict):
+                    streamed_output.append(item)
                 if isinstance(item, dict) and item.get("type") == "function_call":
                     call_id = item.get("call_id")
                     name = item.get("name")
@@ -2023,7 +2073,9 @@ class OpenAIClient(BaseLLMClient):
                     output = response.get("output")
                     if isinstance(output, list):
                         metadata["provider_metadata"] = {
-                            "openai_response_output": output,
+                            "openai_response_output": self._complete_response_output(
+                                output, streamed_output
+                            ),
                             "openai_response_stored": originating_response_stored,
                         }
             elif event_type in {"response.failed", "response.incomplete"}:

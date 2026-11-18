@@ -1,8 +1,11 @@
 """Regression tests for OpenAI Responses API input conversion."""
 
 import json
+from collections.abc import AsyncIterator
 
 import pytest
+from openai.types.responses import ResponseStreamEvent
+from pydantic import TypeAdapter
 
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.llm.base import InvalidRequestError
@@ -12,6 +15,7 @@ from family_assistant.llm.messages import (
     ImageUrlContentPart,
     LLMMessage,
     TextContentPart,
+    ToolMessage,
     UserMessage,
 )
 from family_assistant.llm.providers.openai_client import OpenAIClient
@@ -596,3 +600,237 @@ def test_injected_pdf_on_a_compatible_endpoint_stays_text() -> None:
     assert isinstance(parts, list)
     assert [part["type"] for part in parts] == ["text", "text"]
     assert "PDF Document" in parts[1]["text"]
+
+
+_PARALLEL_SEARCH_CALLS = [
+    ToolCallItem(
+        id=f"call_search_{index}",
+        type="function",
+        function=ToolCallFunction(
+            name="find_tasks", arguments=json.dumps({"query": query})
+        ),
+    )
+    for index, query in enumerate(["invoice", "school", "dentist"])
+]
+
+
+def _search_turn(
+    response_output: list[dict[str, object]],
+    *,
+    content: str = "",
+) -> list[LLMMessage]:
+    """An assistant turn of three parallel calls, its outputs, and a follow-up."""
+    return [
+        UserMessage(content="Review the inbox"),
+        AssistantMessage(
+            content=content,
+            tool_calls=list(_PARALLEL_SEARCH_CALLS),
+            provider_metadata={
+                "openai_response_output": response_output,
+                "openai_response_stored": False,
+            },
+        ),
+        *[
+            ToolMessage(tool_call_id=call.id, name="find_tasks", content="[]")
+            for call in _PARALLEL_SEARCH_CALLS
+        ],
+        UserMessage(content="Carry on"),
+    ]
+
+
+def _assert_every_output_has_its_call(input_items: list[dict[str, object]]) -> None:
+    """The invariant the Responses API enforces with an HTTP 400."""
+    seen_calls: list[object] = []
+    for item in input_items:
+        if item.get("type") == "function_call":
+            seen_calls.append(item["call_id"])
+        elif item.get("type") == "function_call_output":
+            assert item["call_id"] in seen_calls, item
+    assert len(seen_calls) == len(set(seen_calls)), seen_calls
+
+
+def _function_call_item(call: ToolCallItem) -> dict[str, object]:
+    return {
+        "type": "function_call",
+        "id": f"fc_{call.id}",
+        "status": "completed",
+        "call_id": call.id,
+        "name": call.function.name,
+        "arguments": call.function.arguments,
+    }
+
+
+def test_empty_stored_output_still_replays_the_tool_calls() -> None:
+    """A stream that completed with ``output: []`` must not orphan its outputs.
+
+    The shape of the history that wedged a thread: three streamed tool calls
+    recorded on the message, an empty final output in the provider metadata,
+    and every later request rejected with "No tool call found for function
+    call output".
+    """
+    client = OpenAIClient(api_key="test-key", model="gpt-5.6-sol")
+
+    input_items = client._messages_to_responses_input(_search_turn([]))
+
+    _assert_every_output_has_its_call(input_items)
+    assert [item["call_id"] for item in input_items[1:4]] == [
+        call.id for call in _PARALLEL_SEARCH_CALLS
+    ]
+
+
+def test_partially_stored_output_adds_only_the_missing_calls() -> None:
+    """Stored items are replayed verbatim; only what they lack is rebuilt."""
+    client = OpenAIClient(api_key="test-key", model="gpt-5.6-sol")
+    reasoning: dict[str, object] = {
+        "type": "reasoning",
+        "id": "rs_1",
+        "summary": [],
+        "encrypted_content": "opaque",
+    }
+    stored = [reasoning, _function_call_item(_PARALLEL_SEARCH_CALLS[0])]
+
+    input_items = client._messages_to_responses_input(_search_turn(stored))
+
+    _assert_every_output_has_its_call(input_items)
+    assert input_items[1] == reasoning
+    assert input_items[2]["id"] == "fc_call_search_0"
+    assert [item.get("call_id") for item in input_items[3:5]] == [
+        "call_search_1",
+        "call_search_2",
+    ]
+    assert "id" not in input_items[3]
+
+
+def test_complete_stored_output_is_replayed_unchanged() -> None:
+    """Nothing is added when the stored output already covers the turn."""
+    client = OpenAIClient(api_key="test-key", model="gpt-5.6-sol")
+    message_item: dict[str, object] = {
+        "type": "message",
+        "id": "msg_1",
+        "role": "assistant",
+        "content": [{"type": "output_text", "text": "Searching", "annotations": []}],
+    }
+    stored = [message_item, *map(_function_call_item, _PARALLEL_SEARCH_CALLS)]
+
+    input_items = client._messages_to_responses_input(
+        _search_turn(stored, content="Searching")
+    )
+
+    assert input_items[1:5] == [
+        {key: value for key, value in item.items() if key != "status"}
+        for item in stored
+    ]
+    assert input_items[5]["type"] == "function_call_output"
+
+
+def test_empty_stored_output_still_replays_the_text() -> None:
+    """The assistant's words survive an empty stored output too."""
+    client = OpenAIClient(api_key="test-key", model="gpt-5.6-sol")
+
+    input_items = client._messages_to_responses_input(
+        _search_turn([], content="Let me look")
+    )
+
+    assert input_items[1]["type"] == "message"
+    assert input_items[1]["content"] == [
+        {"type": "output_text", "text": "Let me look", "annotations": []}
+    ]
+    _assert_every_output_has_its_call(input_items)
+
+
+def _streamed_call_frames(
+    final_output: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Responses stream frames: three finished calls, then a terminal response."""
+    frames: list[dict[str, object]] = [
+        {
+            "type": "response.output_item.done",
+            "output_index": index,
+            "sequence_number": index,
+            "item": _function_call_item(call),
+        }
+        for index, call in enumerate(_PARALLEL_SEARCH_CALLS)
+    ]
+    frames.append({
+        "type": "response.completed",
+        "sequence_number": len(frames),
+        "response": {
+            "id": "resp_1",
+            "object": "response",
+            "created_at": 0,
+            "model": "gpt-5.6-sol",
+            "status": "completed",
+            "output": final_output,
+            "parallel_tool_calls": True,
+            "tool_choice": "auto",
+            "tools": [],
+            "usage": {
+                "input_tokens": 10,
+                "output_tokens": 5,
+                "total_tokens": 15,
+                "input_tokens_details": {"cached_tokens": 0},
+                "output_tokens_details": {"reasoning_tokens": 0},
+            },
+        },
+    })
+    return frames
+
+
+@pytest.mark.parametrize(
+    "final_output",
+    [
+        pytest.param([], id="empty"),
+        pytest.param(
+            [_function_call_item(_PARALLEL_SEARCH_CALLS[1])], id="partially-missing"
+        ),
+        pytest.param(
+            [_function_call_item(call) for call in _PARALLEL_SEARCH_CALLS],
+            id="complete",
+        ),
+    ],
+)
+@pytest.mark.parametrize("live", [True, False], ids=["sdk-stream", "vcr-frames"])
+async def test_streamed_calls_survive_an_incomplete_final_output(
+    final_output: list[dict[str, object]],
+    live: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every finished call reaches the stored output, exactly once."""
+    client = OpenAIClient(api_key="test-key", model="gpt-5.6-sol")
+    frames = _streamed_call_frames(final_output)
+
+    if live:
+        adapter: TypeAdapter[ResponseStreamEvent] = TypeAdapter(ResponseStreamEvent)
+        typed_events = [adapter.validate_python(frame) for frame in frames]
+
+        async def _stream() -> AsyncIterator[ResponseStreamEvent]:
+            for event in typed_events:
+                yield event
+
+        async def _create(**_params: object) -> AsyncIterator[ResponseStreamEvent]:
+            return _stream()
+
+        monkeypatch.setattr(client.client.responses, "create", _create)
+        events = [
+            event
+            async for event in client._generate_responses_stream(
+                [UserMessage(content="Review the inbox")], None, None
+            )
+        ]
+    else:
+        events = [
+            event
+            async for event in client._emit_events_from_responses_dicts(
+                frames, originating_response_stored=False
+            )
+        ]
+
+    done = events[-1]
+    assert done.type == "done"
+    assert done.metadata is not None
+    provider_metadata = done.metadata.get("provider_metadata")
+    assert isinstance(provider_metadata, dict)
+    stored = provider_metadata["openai_response_output"]
+    assert sorted(item["call_id"] for item in stored) == [
+        call.id for call in _PARALLEL_SEARCH_CALLS
+    ]
