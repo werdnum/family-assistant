@@ -1994,23 +1994,27 @@ class OpenAIClient(BaseLLMClient):
         final_output: list[dict[str, object]],
         streamed_output: list[dict[str, object]],
     ) -> list[dict[str, object]]:
-        """Add streamed output items the terminal response left out.
+        """Restore streamed output items the terminal response left out.
 
         ``response.completed`` normally repeats every item the stream already
         finished, but it has been seen to arrive with an empty ``output`` after
-        several ``function_call`` items were streamed. Each finished item is
-        kept as it streamed and used when the final output is empty, or
-        appended when the final output lacks its id.
+        several ``function_call`` items were streamed. The result follows the
+        stream's order, because replayed history must keep output items where
+        the model produced them (a reasoning item before the calls it led to),
+        taking the terminal copy of each item it has and appending any terminal
+        item the stream never finished.
         """
-        if not final_output:
-            return list(streamed_output)
-        final_ids = {item.get("id") for item in final_output}
-        missing = [
-            item
-            for item in streamed_output
-            if item.get("id") is not None and item.get("id") not in final_ids
+        if not streamed_output:
+            return final_output
+        if any(item.get("id") is None for item in streamed_output):
+            # Without ids the two lists cannot be matched item by item.
+            return final_output or list(streamed_output)
+        final_by_id = {item.get("id"): item for item in final_output}
+        streamed_ids = {item.get("id") for item in streamed_output}
+        return [
+            *(final_by_id.get(item.get("id"), item) for item in streamed_output),
+            *(item for item in final_output if item.get("id") not in streamed_ids),
         ]
-        return [*final_output, *missing]
 
     async def _emit_events_from_responses_dicts(
         self,

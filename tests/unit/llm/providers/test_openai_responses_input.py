@@ -834,3 +834,44 @@ async def test_streamed_calls_survive_an_incomplete_final_output(
     assert sorted(item["call_id"] for item in stored) == [
         call.id for call in _PARALLEL_SEARCH_CALLS
     ]
+
+
+async def test_restored_output_keeps_the_streamed_order() -> None:
+    """A reasoning item stays ahead of the calls it led to.
+
+    Replayed history has to keep output items in the order the model produced
+    them; appending what the terminal output omitted would put the reasoning
+    after a call that followed it.
+    """
+    client = OpenAIClient(api_key="test-key", model="gpt-5.6-sol")
+    reasoning: dict[str, object] = {
+        "type": "reasoning",
+        "id": "rs_1",
+        "summary": [],
+        "encrypted_content": "opaque",
+    }
+    frames = _streamed_call_frames([_function_call_item(_PARALLEL_SEARCH_CALLS[1])])
+    frames.insert(
+        0,
+        {
+            "type": "response.output_item.done",
+            "output_index": 0,
+            "sequence_number": 0,
+            "item": reasoning,
+        },
+    )
+
+    events = [
+        event
+        async for event in client._emit_events_from_responses_dicts(
+            frames, originating_response_stored=False
+        )
+    ]
+
+    assert events[-1].metadata is not None
+    provider_metadata = events[-1].metadata.get("provider_metadata")
+    assert isinstance(provider_metadata, dict)
+    assert [item["id"] for item in provider_metadata["openai_response_output"]] == [
+        "rs_1",
+        *(f"fc_{call.id}" for call in _PARALLEL_SEARCH_CALLS),
+    ]
