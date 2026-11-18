@@ -187,6 +187,17 @@ def test_complex_tasks_runs_the_opus_sol_chain(shipped_config: AppConfig) -> Non
     }
 
 
+@pytest.mark.parametrize("preset", ["gemini_4_argon", "gemini_4_neon"])
+def test_complex_tasks_can_run_the_deep_candidate_presets(
+    shipped_config: AppConfig, preset: str
+) -> None:
+    """An experiment arm must be a tier the profile can run on."""
+    profile = shipped_profile(shipped_config, "complex_tasks")
+    eligibility = ModelTierEligibility.from_profile(profile, shipped_config.model_tiers)
+
+    assert preset in {option.id for option in eligibility.runnable}
+
+
 def test_engineer_offers_every_tier_with_standard_as_its_default(
     shipped_config: AppConfig,
 ) -> None:

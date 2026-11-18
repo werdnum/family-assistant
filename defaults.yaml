@@ -356,6 +356,15 @@ model_tiers:
     chain:
       - provider: "google"
         model: "gemini-4-argon"
+  # Google's fast frontier reasoning model, at its default `high` thinking
+  # level, at $3 / $15 per million input / output tokens. Trialled as an
+  # experiment arm on complex_tasks before it replaces anything.
+  gemini_4_neon:
+    label: "Gemini 4 Neon"
+    description: "Google's fast frontier-level Gemini 4 model, at its default thinking level."
+    chain:
+      - provider: "google"
+        model: "gemini-4-neon"
   # Google's recommended successor to 3.8 Flash, at its default `high`
   # thinking level. Twice Flash's introductory price per token (the same as
   # Flash's from 2027), so it is trialled as an arm before it replaces Flash
@@ -998,7 +1007,7 @@ default_profile_settings:
   # intelligence control's "Specific model" submenu. Auto never routes to these.
   # A profile that names an inline model drops
   # this list, and one that declares its own replaces it.
-  delegation_model_tiers: ["gpt_6_astra", "gpt_6_1_sol", "gpt_6_1_terra", "claude_opus_5_5", "claude_sonnet_5_5", "claude_haiku_5_5", "claude_fable_5_2", "kimi_k3", "gemini_4_argon", "gemini_4_carbon", "gemini_4_hydrogen"]
+  delegation_model_tiers: ["gpt_6_astra", "gpt_6_1_sol", "gpt_6_1_terra", "claude_opus_5_5", "claude_sonnet_5_5", "claude_haiku_5_5", "claude_fable_5_2", "kimi_k3", "gemini_4_argon", "gemini_4_carbon", "gemini_4_hydrogen", "gemini_4_neon"]
   processing_config:
     # Inherited by every profile that does not select its own tier or name an
     # inline model.
