@@ -2,7 +2,8 @@
 
 These servers give the ``engineer`` profile the version history the running
 application cannot see for itself: the production image excludes ``.git``, so
-without them a regression can only be guessed at from logs. What keeps that
+without them a regression can only be guessed at from logs. The main assistant
+profiles get them too, on demand, so a repository question needs no delegation. What keeps that
 access safe is not our tool policy -- GitHub enforces read-only server-side
 when the URL says so -- which is exactly why the URL is worth a test.
 """
@@ -51,9 +52,23 @@ GITHUB_MCP_SERVER_IDS = (
     "github-pull-requests",
 )
 
-# The profile these servers exist for. Every other shipped profile must be
-# unable to reach them; see test_no_other_profile_can_reach_github.
+# The profile these servers exist for.
 GITHUB_READER_PROFILE_ID = "engineer"
+
+# Every shipped profile that may reach them: the engineer, and the profiles that
+# inherit default_profile_settings' policy (claude_agent shares complex_tasks'
+# surface). Any other profile must be unable to; see
+# test_only_named_profiles_can_reach_github.
+GITHUB_REACHING_PROFILE_IDS = frozenset({
+    GITHUB_READER_PROFILE_ID,
+    "default_assistant",
+    "complex_tasks",
+    "claude_agent",
+})
+
+# Profiles that defer GitHub and scrape behind on-demand activation. claude_agent
+# is absent because Claude Code finds tools with its own ToolSearch.
+ON_DEMAND_LOOKUP_PROFILE_IDS = ("default_assistant", "complex_tasks")
 
 
 def _load_defaults() -> dict[str, object]:
@@ -238,21 +253,33 @@ def test_engineer_can_read_github() -> None:
     assert _advertises_github(engineer, global_policy)
 
 
-def test_no_other_profile_can_reach_github() -> None:
-    """Repository access is the engineer's alone.
+def test_only_named_profiles_can_reach_github() -> None:
+    """Repository access is granted to named profiles, not inherited by accident.
 
-    Every shipped profile is deny-by-default, so this holds without a deny
-    rule anywhere -- which is the point: a future profile has to name these
-    server ids on purpose to reach them, rather than inheriting them.
+    Every confined profile replaces the default policy and is deny-by-default,
+    so this holds without a deny rule anywhere -- which is the point: a future
+    profile has to name these server ids, or inherit the default policy, to
+    reach them.
     """
     global_policy = _load_global_tools_policy()
     reachable = {
         profile.id
         for profile in _resolved_profiles()
-        if profile.id != GITHUB_READER_PROFILE_ID
-        and _advertises_github(profile, global_policy)
+        if _advertises_github(profile, global_policy)
     }
-    assert not reachable, f"profiles unexpectedly reaching GitHub: {sorted(reachable)}"
+    assert reachable == GITHUB_REACHING_PROFILE_IDS
+
+
+@pytest.mark.parametrize("profile_id", ON_DEMAND_LOOKUP_PROFILE_IDS)
+def test_main_profiles_load_lookup_servers_on_demand(profile_id: str) -> None:
+    """GitHub and page scraping are occasional lookups on the main profiles.
+
+    Advertising three GitHub toolsets and scrape on every turn would cost
+    prompt space on the many turns that never use them.
+    """
+    profiles = {profile.id: profile for profile in _resolved_profiles()}
+    on_demand = set(profiles[profile_id].tools_config.get_on_demand_mcp_server_ids())
+    assert {*GITHUB_MCP_SERVER_IDS, "scrape"} <= on_demand
 
 
 def test_engineer_loads_github_servers_on_demand() -> None:

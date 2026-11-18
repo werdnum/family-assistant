@@ -19,6 +19,17 @@ browsing, and deep research.
 Always give the full address starting with `http://` or `https://`. For a straightforward page the
 assistant fetches the content directly — no special command needed.
 
+## GitHub lookups
+
+Where the setup has GitHub access configured, the assistant can read repositories, issues and pull
+requests directly — read only, it can't comment, merge or push:
+
+- "Did my pull request for the calendar fix merge?"
+- "What issues are open on the tuit repository?"
+- "Show me the last few commits to main."
+
+For changing code, use the coding agent instead (see [slash-commands.md](slash-commands.md)).
+
 ## Interactive browsing (`/browse`)
 
 When a page needs navigation, forms, logins, or heavy JavaScript, use the browsing mode. In Telegram
