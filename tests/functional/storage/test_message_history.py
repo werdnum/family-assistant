@@ -813,6 +813,7 @@ async def test_review_rejection_card_is_outside_every_profile_history(
         interface_type="web",
         conversation_id="web_conv_card",
         processing_profile_id="default_assistant",
+        current_time=datetime(2026, 11, 16, 10, 0, tzinfo=UTC),
     )
 
     assert [message.content for message in history] == [
