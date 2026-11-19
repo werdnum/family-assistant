@@ -32,7 +32,6 @@ from .config_sources import deep_merge_dicts, load_yaml_file
 
 if TYPE_CHECKING:
     import pathlib
-    from collections.abc import Mapping
 
 logger = logging.getLogger(__name__)
 
@@ -700,7 +699,6 @@ PROFILE_OVERRIDABLE_PROCESSING_KEYS: tuple[str, ...] = (
     "enable_computer_use",
     "computer_use_excluded_functions",
     "antigravity_config",
-    "claude_agent_config",
     "taint_sink_class",
     "excluded_context_providers",
     "include_aggregated_context",
@@ -1049,39 +1047,6 @@ def _clear_inherited_model_selection_for_remote(
         resolved[key] = None
     for key in unstated_processing:
         resolved["processing_config"][key] = _tier_qualifier_default(key)
-
-
-CLAUDE_CODE_OAUTH_TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
-
-
-def drop_unavailable_claude_agent_profiles(
-    # ast-grep-ignore: no-dict-any - resolved profiles are raw config dicts until AppConfig validates them
-    profiles: list[dict[str, Any]],
-    environ: Mapping[str, str],
-    # ast-grep-ignore: no-dict-any - resolved profiles are raw config dicts until AppConfig validates them
-) -> list[dict[str, Any]]:
-    """Leave out Claude Agent SDK profiles when no subscription token is set.
-
-    Such a profile runs on the Claude subscription whose token the deployment
-    provides, and refuses to run on an API key. Without a token it could only
-    fail, so it is not offered to anyone -- people or delegating models --
-    rather than advertised and refused on every turn.
-    """
-    if environ.get(CLAUDE_CODE_OAUTH_TOKEN_ENV):
-        return profiles
-    kept = []
-    for profile in profiles:
-        processing_config = profile.get("processing_config") or {}
-        if processing_config.get("claude_agent_config") is not None:
-            logger.info(
-                "Profile '%s' runs on the Claude Agent SDK and %s is not set; "
-                "leaving it out.",
-                profile.get("id"),
-                CLAUDE_CODE_OAUTH_TOKEN_ENV,
-            )
-            continue
-        kept.append(profile)
-    return kept
 
 
 def resolve_all_service_profiles(
@@ -1606,9 +1571,8 @@ def load_config(
     load_indexing_pipeline_config(config_data)
 
     # 6. Resolve service profiles
-    config_data["service_profiles"] = drop_unavailable_claude_agent_profiles(
-        resolve_all_service_profiles(config_data, service_profile_prompts),
-        os.environ,
+    config_data["service_profiles"] = resolve_all_service_profiles(
+        config_data, service_profile_prompts
     )
 
     # 7. Final validation and logging

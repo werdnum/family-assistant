@@ -851,38 +851,48 @@ ______________________________________________________________________
 
 ### CLAUDE_CODE_OAUTH_TOKEN
 
-Claude subscription token for profiles that run on the Claude Agent SDK (`claude_agent_config`),
-such as the shipped `claude_agent` profile. Those profiles run their turns in a Claude Code session
-billed to the subscription instead of per token on the API.
+Claude subscription token for model tiers whose `runtime` is `claude_code`. A turn on such a tier
+runs in a Claude Code session, on the tier's primary model, billed to the subscription instead of
+per token on the API. The shipped `deep` (Opus 5.5) and `frontier` (Fable 5.2) tiers are both
+`claude_code`, so on a deployment with a token every turn on Deep or Max runs on the subscription,
+whichever profile it is on.
 
 | Property  | Value                                         |
 | --------- | --------------------------------------------- |
-| Required  | No (the `claude_agent` profile needs it)      |
+| Required  | No (without it the tiers run on the API)      |
 | Default   | None                                          |
 | Sensitive | **Yes**                                       |
 | Example   | `sk-ant-oat01-...`, from `claude setup-token` |
 
 Generate it with `claude setup-token` (a one-year token; requires a Pro, Max, Ultra, Team or
 Enterprise plan) on any machine with Claude Code installed, and set it in the application's
-environment. Without it, Claude Agent SDK profiles are left out at startup — not offered to people
-or to delegating models — and the log says so.
+environment. Without it, a `claude_code` tier runs on its `chain` like any other tier, and the log
+says so at startup.
 
-The session refuses to start a turn unless Claude Code reports that no API key is in use, so a
-deployment that would bill the API instead fails visibly. The application's own `ANTHROPIC_API_KEY`
-is blanked in the Claude Code subprocess's environment for this reason; it is still used by the
-`anthropic` provider everywhere else.
+**Fallback.** When a session fails before it has produced anything — the subscription's window is
+exhausted, the token is rejected, the CLI will not start, or Claude Code reports that it would bill
+an API key — the turn reruns on the tier's `chain` through the ordinary API clients, and a warning
+is logged. A session that fails after producing output fails the turn, because rerunning it could
+repeat a tool call that already took effect. A fallback costs API money, so watch the session
+outcomes below.
 
-Claude Code itself is the binary bundled with the `claude-agent-sdk` package, so its version follows
-the lockfile. `processing_config.claude_agent_config.cli_path` points a profile at another
-executable instead. A profile with `claude_agent_config` must name a `model_tier`, and every tier it
-can reach must be exactly one Anthropic model with no fallback, run with only adaptive thinking,
-`output_config.effort` and `custom_instructions` as parameters. See
+The session refuses to start a turn unless Claude Code reports that no API key is in use. The
+application's own `ANTHROPIC_API_KEY` is blanked in the Claude Code subprocess's environment for
+this reason; it is still used by the `anthropic` provider everywhere else, including the fallback.
+
+**Configuring a tier.** `runtime: "claude_code"` requires the chain's primary to be an `anthropic`
+model without `flex`, run with only adaptive thinking, `output_config.effort` and
+`custom_instructions` as parameters; the chain may keep a fallback, which serves the API path. A
+profile that can reach such a tier may not set `taint_sink_class`. Claude Code itself is the binary
+bundled with the `claude-agent-sdk` package, so its version follows the lockfile; the top-level
+`claude_code.cli_path` points at another executable instead. See
 [claude-agent-sdk-profile.md](../design/claude-agent-sdk-profile.md), including its note on
 Anthropic's terms of use.
 
 **Checking it works.** At startup the application runs `claude auth status` (no model request, no
-quota) and logs either `Profile 'claude_agent' can run Claude Code sessions on the subscription` or
-an error saying why not. It also exports these Prometheus metrics:
+quota) and logs, for each profile that reaches a `claude_code` tier, either
+`Profile '<id>' can run Claude Code sessions on the subscription` or an error saying why not. It
+also exports these Prometheus metrics:
 
 | Metric                                                                    | Meaning                                                                                                                                                         |
 | ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |

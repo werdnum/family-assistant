@@ -123,11 +123,12 @@ from family_assistant.processing import (
 )
 from family_assistant.processing.background_turns import BackgroundTurnRunner
 from family_assistant.processing.claude_agent_loop import (
-    ClientFactory as ClaudeAgentClientFactory,
+    CLAUDE_CODE_OAUTH_TOKEN_ENV,
+    build_claude_agent_loop,
+    probe_claude_code,
 )
 from family_assistant.processing.claude_agent_loop import (
-    probe_claude_code,
-    run_on_claude_agent,
+    ClientFactory as ClaudeAgentClientFactory,
 )
 from family_assistant.processing.delegation_turns import RunningDelegationTurns
 from family_assistant.processing.history_relevance import (
@@ -629,39 +630,19 @@ def validate_antigravity_agent_config(
         )
 
 
-def validate_claude_agent_config(
-    profile_id: str, processing_config: ProcessingConfig
+def validate_claude_code_profile(
+    profile_id: str, processing_config: ProcessingConfig, tiers: Sequence[str]
 ) -> None:
-    """Reject Claude Agent SDK profile settings that would be silently ignored.
+    """Reject a profile setting a Claude Code turn would silently ignore.
 
-    The session's model is the profile's tier, so an inline model would be
-    discarded, and a profile with no tier has no model at all. The loop that
-    replaces the ordinary one does not evaluate a profile-level taint sink or
-    drive computer use, so either setting would be dropped. What a tier must
-    look like is checked with the rest of tier eligibility.
+    A turn on a ``runtime: "claude_code"`` tier is run by the Claude Agent SDK
+    loop, which does not evaluate a profile-level taint sink.
     """
-    if processing_config.claude_agent_config is None:
-        return
-    unsupported = [
-        key
-        for key in ("provider", "llm_model", "retry_config", "antigravity_config")
-        if getattr(processing_config, key) is not None
-    ]
     if processing_config.taint_sink_class is not None:
-        unsupported.append("taint_sink_class")
-    if processing_config.enable_computer_use:
-        unsupported.append("enable_computer_use")
-    if unsupported:
         raise ValueError(
-            f"Profile '{profile_id}' sets claude_agent_config alongside "
-            f"{', '.join(unsupported)}, which a Claude Agent SDK session does "
-            "not honour."
-        )
-    if processing_config.model_tier is None:
-        raise ValueError(
-            f"Profile '{profile_id}' sets claude_agent_config without a "
-            "model_tier, so the session has no model. Name a tier whose chain "
-            "is a single Anthropic model."
+            f"Profile '{profile_id}' sets taint_sink_class and can run on "
+            f"{', '.join(tiers)}, whose runtime is claude_code. A Claude Code "
+            "session does not evaluate a profile-level taint sink."
         )
 
 
@@ -1825,23 +1806,36 @@ class Assistant:
             ),
             delegation_turns=self.delegation_turns,
         )
-        claude_agent_config = profile_proc_conf.claude_agent_config
-        if claude_agent_config is not None:
-            run_on_claude_agent(
-                processing_service_instance,
-                agent_config=claude_agent_config,
-                models={
-                    option.id: resolve_claude_agent_model(
-                        option.id,
-                        self.config.model_tiers[option.id],
-                        self.config.llm_parameters,
-                    )
-                    for option in tier_eligibility.runnable
-                },
-                client_factory=self.claude_agent_client_factory,
+        claude_code_models = {
+            option.id: resolve_claude_agent_model(
+                option.id,
+                self.config.model_tiers[option.id],
+                self.config.llm_parameters,
             )
-            if self.claude_agent_client_factory is None:
-                await probe_claude_code(profile_id, claude_agent_config)
+            for option in tier_eligibility.runnable
+            if self.config.model_tiers[option.id].runtime == "claude_code"
+        }
+        if claude_code_models:
+            validate_claude_code_profile(
+                profile_id, profile_proc_conf, sorted(claude_code_models)
+            )
+            if os.environ.get(CLAUDE_CODE_OAUTH_TOKEN_ENV):
+                processing_service_instance.claude_agent_loop = build_claude_agent_loop(
+                    processing_service_instance,
+                    agent_config=self.config.claude_code,
+                    models=claude_code_models,
+                    client_factory=self.claude_agent_client_factory,
+                )
+                if self.claude_agent_client_factory is None:
+                    await probe_claude_code(profile_id, self.config.claude_code)
+            else:
+                logger.info(
+                    "Profile '%s' runs tiers %s on their API chain: their "
+                    "runtime is claude_code and %s is not set.",
+                    profile_id,
+                    ", ".join(sorted(claude_code_models)),
+                    CLAUDE_CODE_OAUTH_TOKEN_ENV,
+                )
 
         # Render once now so a template referencing a placeholder that no
         # longer exists -- {current_time} and {aggregated_other_context} moved
@@ -2009,7 +2003,6 @@ class Assistant:
             validate_antigravity_agent_config(
                 profile_id, profile_conf.processing_config, self.config.model
             )
-            validate_claude_agent_config(profile_id, profile_conf.processing_config)
 
         default_tier = tier_eligibility.default_tier
         if default_tier is None:

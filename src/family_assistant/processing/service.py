@@ -13,6 +13,7 @@ from opentelemetry import trace
 from opentelemetry.trace import StatusCode
 
 from family_assistant.llm import LLMInterface, LLMStreamEvent
+from family_assistant.llm.base import LLMProviderError
 from family_assistant.llm.call_context import CallAttribution, attributed_call
 from family_assistant.llm.experiments import assign_arm
 from family_assistant.llm.messages import (
@@ -74,7 +75,7 @@ from family_assistant.utils.text_normalization import normalize_latex_to_unicode
 from .attachments import AttachmentProcessor
 from .context import ContextPreparer
 from .household_context import render_household_context_section
-from .llm_loop import LLMStreamingLoop
+from .llm_loop import LLMStreamingLoop, collect_turn
 from .message_time import MESSAGE_TIME_GUIDANCE
 from .tool_execution import ToolExecutor
 from .types import (
@@ -109,6 +110,7 @@ if TYPE_CHECKING:
     from family_assistant.llm.typesafe import JevClient
     from family_assistant.memory.review_context import MemoryReviewContext
     from family_assistant.plugins.runtime import ProfilePlugins
+    from family_assistant.processing.claude_agent_loop import ClaudeAgentLoop
     from family_assistant.processing.delegation_turns import RunningDelegationTurns
     from family_assistant.processing.history_relevance import TurnRelevance
     from family_assistant.processing.protocol import DelegatableService
@@ -424,6 +426,10 @@ class ProcessingService:
             self.tool_executor,
             self.attachment_processor,
         )
+        # Runs the turns whose tier's runtime is claude_code, where the
+        # deployment provides a subscription token; set by the assistant at
+        # startup. Every other turn runs on llm_loop.
+        self.claude_agent_loop: ClaudeAgentLoop | None = None
 
     def sink_refusal_reason(
         self,
@@ -2312,31 +2318,30 @@ class ProcessingService:
             - A dictionary containing reasoning/usage info from the final LLM call (or None).
             - A list of attachment IDs to send with the response (or None).
         """
-        return await self.llm_loop.run(
-            db_context=db_context,
-            messages=messages,
-            interface_type=interface_type,
-            conversation_id=conversation_id,
-            user_name=user_name,
-            turn_id=turn_id,
-            chat_interface=chat_interface,
-            llm_client=llm_client,
-            model_selection=model_selection,
-            user_id=user_id,
-            chat_interfaces=chat_interfaces,
-            confirmation_ui_managers=confirmation_ui_managers,
-            request_confirmation_callback=request_confirmation_callback,
-            subconversation_id=subconversation_id,
-            processing_service=self,
-            plugins=self.plugins,
-            event_sources=self.event_sources,
-            mid_turn_input_provider=mid_turn_input_provider,
-            initial_taint_sources=initial_taint_sources,
-            taint_tracker=taint_tracker,
-            tool_call_review_trigger=tool_call_review_trigger,
-            memory_review=memory_review,
-            allow_quiet_end=allow_quiet_end,
-            context_length_compactor=context_length_compactor,
+        return await collect_turn(
+            self.process_message_stream(
+                db_context=db_context,
+                messages=messages,
+                interface_type=interface_type,
+                conversation_id=conversation_id,
+                user_name=user_name,
+                turn_id=turn_id,
+                chat_interface=chat_interface,
+                llm_client=llm_client,
+                model_selection=model_selection,
+                user_id=user_id,
+                chat_interfaces=chat_interfaces,
+                confirmation_ui_managers=confirmation_ui_managers,
+                request_confirmation_callback=request_confirmation_callback,
+                subconversation_id=subconversation_id,
+                mid_turn_input_provider=mid_turn_input_provider,
+                initial_taint_sources=initial_taint_sources,
+                taint_tracker=taint_tracker,
+                tool_call_review_trigger=tool_call_review_trigger,
+                memory_review=memory_review,
+                allow_quiet_end=allow_quiet_end,
+                context_length_compactor=context_length_compactor,
+            )
         )
 
     async def process_message_stream(
@@ -2374,34 +2379,83 @@ class ProcessingService:
 
         This generator handles the same logic as process_message but yields events incrementally.
         """
-        async for item in self.llm_loop.run_stream(
-            db_context=db_context,
-            messages=messages,
-            interface_type=interface_type,
-            conversation_id=conversation_id,
-            user_name=user_name,
-            turn_id=turn_id,
-            chat_interface=chat_interface,
-            llm_client=llm_client,
-            model_selection=model_selection,
-            user_id=user_id,
-            chat_interfaces=chat_interfaces,
-            confirmation_ui_managers=confirmation_ui_managers,
-            request_confirmation_callback=request_confirmation_callback,
-            subconversation_id=subconversation_id,
-            processing_service=self,
-            plugins=self.plugins,
-            event_sources=self.event_sources,
-            mid_turn_input_provider=mid_turn_input_provider,
-            initial_taint_sources=initial_taint_sources,
-            taint_tracker=taint_tracker,
-            tool_call_review_trigger=tool_call_review_trigger,
-            memory_review=memory_review,
-            allow_quiet_end=allow_quiet_end,
-            completed_iterations=completed_iterations,
-            context_length_compactor=context_length_compactor,
-            trailing_instruction=trailing_instruction,
-        ):
+
+        def start(
+            loop: LLMStreamingLoop,
+        ) -> AsyncIterator[tuple[LLMStreamEvent, LLMMessage | None]]:
+            return loop.run_stream(
+                db_context=db_context,
+                messages=messages,
+                interface_type=interface_type,
+                conversation_id=conversation_id,
+                user_name=user_name,
+                turn_id=turn_id,
+                chat_interface=chat_interface,
+                llm_client=llm_client,
+                model_selection=model_selection,
+                user_id=user_id,
+                chat_interfaces=chat_interfaces,
+                confirmation_ui_managers=confirmation_ui_managers,
+                request_confirmation_callback=request_confirmation_callback,
+                subconversation_id=subconversation_id,
+                processing_service=self,
+                plugins=self.plugins,
+                event_sources=self.event_sources,
+                mid_turn_input_provider=mid_turn_input_provider,
+                initial_taint_sources=initial_taint_sources,
+                taint_tracker=taint_tracker,
+                tool_call_review_trigger=tool_call_review_trigger,
+                memory_review=memory_review,
+                allow_quiet_end=allow_quiet_end,
+                completed_iterations=completed_iterations,
+                context_length_compactor=context_length_compactor,
+                trailing_instruction=trailing_instruction,
+            )
+
+        async for item in self._run_turn_on_its_runtime(model_selection, start):
+            yield item
+
+    async def _run_turn_on_its_runtime(
+        self,
+        model_selection: ResolvedModelSelection,
+        start: Callable[
+            [LLMStreamingLoop], AsyncIterator[tuple[LLMStreamEvent, LLMMessage | None]]
+        ],
+    ) -> AsyncIterator[tuple[LLMStreamEvent, LLMMessage | None]]:
+        """Run a turn on the loop its tier's runtime names.
+
+        A turn on a claude_code tier runs in a Claude Code session. If the
+        session fails before producing anything -- the subscription's window is
+        exhausted, the token is rejected, the CLI will not start -- nothing has
+        been shown, saved or executed, so the turn runs on the tier's API chain
+        instead. Once it has produced output, a failure is the turn's: running
+        it again could repeat a tool call that already took effect.
+        """
+        agent = self.claude_agent_loop
+        if agent is None or model_selection.tier not in agent.models:
+            async for item in start(self.llm_loop):
+                yield item
+            return
+        produced = False
+        session = start(agent)
+        try:
+            async for item in session:
+                produced = True
+                yield item
+        except LLMProviderError as exc:
+            if produced:
+                raise
+            logger.warning(
+                "Profile '%s': Claude Code session on tier '%s' failed before "
+                "producing anything (%s); running the turn on the tier's API "
+                "chain.",
+                self.service_config.id,
+                model_selection.tier,
+                exc,
+            )
+        else:
+            return
+        async for item in start(self.llm_loop):
             yield item
 
     async def handle_chat_interaction(

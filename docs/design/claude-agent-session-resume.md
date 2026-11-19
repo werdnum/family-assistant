@@ -2,7 +2,7 @@
 
 ## Context
 
-The `claude` profile runs each turn as a fresh Claude Code session, with earlier conversation
+A turn on a `claude_code` tier runs as a fresh Claude Code session, with earlier conversation
 rendered into the opening message as a transcript (see
 [claude-agent-sdk-profile.md](claude-agent-sdk-profile.md)). That suits a new request. It suits a
 **delegation wake** badly: the profile was mid-task, handed work to a background delegation, and is

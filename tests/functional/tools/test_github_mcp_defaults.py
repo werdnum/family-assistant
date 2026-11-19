@@ -56,18 +56,16 @@ GITHUB_MCP_SERVER_IDS = (
 GITHUB_READER_PROFILE_ID = "engineer"
 
 # Every shipped profile that may reach them: the engineer, and the profiles that
-# inherit default_profile_settings' policy (claude_agent shares complex_tasks'
-# surface). Any other profile must be unable to; see
+# inherit default_profile_settings' policy. Any other profile must be unable
+# to; see
 # test_only_named_profiles_can_reach_github.
 GITHUB_REACHING_PROFILE_IDS = frozenset({
     GITHUB_READER_PROFILE_ID,
     "default_assistant",
     "complex_tasks",
-    "claude_agent",
 })
 
-# Profiles that defer GitHub and scrape behind on-demand activation. claude_agent
-# is absent because Claude Code finds tools with its own ToolSearch.
+# Profiles that defer GitHub and scrape behind on-demand activation.
 ON_DEMAND_LOOKUP_PROFILE_IDS = ("default_assistant", "complex_tasks")
 
 

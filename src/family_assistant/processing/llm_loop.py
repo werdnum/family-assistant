@@ -187,6 +187,24 @@ async def without_unavailable_thread_tools(
     ]
 
 
+async def collect_turn(
+    stream: AsyncIterator[tuple[LLMStreamEvent, LLMMessage | None]],
+) -> tuple[list[LLMMessage], MessageReasoningInfo | None, list[str] | None]:
+    """A turn's messages, final reasoning info and attachment ids, from its stream."""
+    turn_messages: list[LLMMessage] = []
+    final_reasoning_info: MessageReasoningInfo | None = None
+    final_attachment_ids: list[str] | None = None
+    async for event, message in stream:
+        if message is not None:
+            turn_messages.append(message)
+        if event.metadata:
+            if "reasoning_info" in event.metadata:
+                final_reasoning_info = event.metadata["reasoning_info"]
+            if "attachment_ids" in event.metadata:
+                final_attachment_ids = event.metadata["attachment_ids"]
+    return turn_messages, final_reasoning_info, final_attachment_ids
+
+
 class LLMStreamingLoop:
     """Core LLM interaction loop with retry logic."""
 
@@ -342,46 +360,34 @@ class LLMStreamingLoop:
             - A dictionary containing reasoning/usage info from the final LLM call (or None).
             - A list of attachment IDs to send with the response (or None).
         """
-        turn_messages: list[LLMMessage] = []
-        final_reasoning_info: MessageReasoningInfo | None = None
-        final_attachment_ids: list[str] | None = None
-
-        async for event, message in self.run_stream(
-            db_context=db_context,
-            messages=messages,
-            interface_type=interface_type,
-            conversation_id=conversation_id,
-            user_name=user_name,
-            user_id=user_id,
-            turn_id=turn_id,
-            chat_interface=chat_interface,
-            llm_client=llm_client,
-            model_selection=model_selection,
-            chat_interfaces=chat_interfaces,
-            confirmation_ui_managers=confirmation_ui_managers,
-            request_confirmation_callback=request_confirmation_callback,
-            subconversation_id=subconversation_id,
-            processing_service=processing_service,
-            plugins=plugins,
-            event_sources=event_sources,
-            mid_turn_input_provider=mid_turn_input_provider,
-            initial_taint_sources=initial_taint_sources,
-            taint_tracker=taint_tracker,
-            tool_call_review_trigger=tool_call_review_trigger,
-            memory_review=memory_review,
-            allow_quiet_end=allow_quiet_end,
-            context_length_compactor=context_length_compactor,
-        ):
-            if message is not None:
-                turn_messages.append(message)
-
-            if event.metadata:
-                if "reasoning_info" in event.metadata:
-                    final_reasoning_info = event.metadata["reasoning_info"]
-                if "attachment_ids" in event.metadata:
-                    final_attachment_ids = event.metadata["attachment_ids"]
-
-        return turn_messages, final_reasoning_info, final_attachment_ids
+        return await collect_turn(
+            self.run_stream(
+                db_context=db_context,
+                messages=messages,
+                interface_type=interface_type,
+                conversation_id=conversation_id,
+                user_name=user_name,
+                user_id=user_id,
+                turn_id=turn_id,
+                chat_interface=chat_interface,
+                llm_client=llm_client,
+                model_selection=model_selection,
+                chat_interfaces=chat_interfaces,
+                confirmation_ui_managers=confirmation_ui_managers,
+                request_confirmation_callback=request_confirmation_callback,
+                subconversation_id=subconversation_id,
+                processing_service=processing_service,
+                plugins=plugins,
+                event_sources=event_sources,
+                mid_turn_input_provider=mid_turn_input_provider,
+                initial_taint_sources=initial_taint_sources,
+                taint_tracker=taint_tracker,
+                tool_call_review_trigger=tool_call_review_trigger,
+                memory_review=memory_review,
+                allow_quiet_end=allow_quiet_end,
+                context_length_compactor=context_length_compactor,
+            )
+        )
 
     async def run_stream(
         self,

@@ -177,6 +177,13 @@ class ModelTierConfig(BaseModel):
     # command are separate commands rather than a combinatorial set, so a
     # message carries one or the other.
     slash_command: str | None = None
+    # Where a turn on this tier runs. Unset is the ordinary loop, calling the
+    # chain's models through their API clients. "claude_code" runs the turn in
+    # a Claude Code session on the primary's model, billed to the Claude
+    # subscription, wherever the deployment provides a subscription token; the
+    # chain still serves the turn without a token, and when a session fails
+    # before it produces anything.
+    runtime: Literal["claude_code"] | None = None
 
     @field_validator("slash_command")
     @classmethod
@@ -202,6 +209,27 @@ class ModelTierConfig(BaseModel):
             msg = "Every model tier chain entry must set 'model'."
             raise ValueError(msg)
         return v
+
+    @model_validator(mode="after")
+    def validate_runtime(self) -> ModelTierConfig:
+        if self.runtime != "claude_code":
+            return self
+        primary = self.chain[0]
+        problem: str | None = None
+        if primary.provider != "anthropic":
+            problem = (
+                f"its primary is on provider '{primary.provider}', and Claude "
+                "Code runs only Anthropic models"
+            )
+        elif primary.flex:
+            problem = "its primary sets flex, a price class Claude Code does not accept"
+        if problem is not None:
+            msg = (
+                f"A model tier with runtime 'claude_code' runs its primary in a "
+                f"Claude Code session, but {problem}."
+            )
+            raise ValueError(msg)
+        return self
 
 
 class JevFilterConfig(BaseModel):
@@ -568,13 +596,12 @@ class AntigravityConfig(BaseModel):
 
 
 class ClaudeAgentConfig(BaseModel):
-    """Runtime configuration for a profile that runs on the Claude Agent SDK.
+    """Deployment-wide settings for turns run in Claude Code sessions.
 
-    Its presence is what makes a profile run its turns in a Claude Code
+    Which turns run there is decided by the tier: a tier with
+    ``runtime: "claude_code"`` runs its primary model in a Claude Agent SDK
     session, billed to the Claude subscription whose OAuth token the
-    deployment provides. The model is not configured here: it is the profile's
-    ``model_tier``, whose single Anthropic entry the session runs. See
-    docs/design/claude-agent-sdk-profile.md.
+    deployment provides. See docs/design/claude-agent-sdk-profile.md.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -701,10 +728,6 @@ class ProcessingConfig(BaseModel):
     # model its tier names. Combinations the agent cannot honour (no tier, a
     # tier with a fallback, an inline model) are rejected at startup.
     antigravity_config: AntigravityConfig | None = None
-    # Runs the profile's turns in a Claude Agent SDK session, with this
-    # application's tools offered to it and executed here. The model is the
-    # profile's tier, which must be exactly one Anthropic model.
-    claude_agent_config: ClaudeAgentConfig | None = None
     # The runtime-taint sink class a whole turn on this profile counts as.
     # Set it on a profile whose turn is itself a privileged operation -- a
     # sandbox that runs code, say -- so the taint matrix gates reaching the
@@ -2385,6 +2408,8 @@ class AppConfig(BaseSettings):
         default_factory=MessageBatchingConfig
     )
     keychute_config: KeychuteConfig = Field(default_factory=KeychuteConfig)
+    # Settings for turns on a `runtime: "claude_code"` tier.
+    claude_code: ClaudeAgentConfig = Field(default_factory=ClaudeAgentConfig)
     browser_handoff_config: BrowserHandoffConfig = Field(
         default_factory=BrowserHandoffConfig
     )
