@@ -33,7 +33,7 @@ def _client_for(config: AppConfig, model: str) -> OpenAIClient:
 @pytest.mark.parametrize(
     "model",
     [
-        pytest.param("gpt-6.1-sol", id="complex-tasks-fallback"),
+        pytest.param("gpt-6.2-sol", id="complex-tasks-fallback"),
         pytest.param("gpt-5.5", id="retry-fallback"),
         pytest.param("gpt-4.1", id="unconfigured-model"),
     ],
