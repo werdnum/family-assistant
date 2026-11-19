@@ -33,6 +33,11 @@ enum VoiceProfile {
 enum ChatConstants {
     static let interfaceType = "web"
     static let conversationPrefix = "web_conv_"
+
+    /// Written without dashes so a double-click selects the whole id.
+    static func newConversationID() -> String {
+        conversationPrefix + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+    }
     static let maxAttachmentSizeBytes = 100 * 1024 * 1024
     static let photoPickerTranscodedMIMETypes: Set<String> = [
         "image/heic",

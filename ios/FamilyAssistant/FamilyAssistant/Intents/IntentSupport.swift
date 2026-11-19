@@ -63,7 +63,7 @@ enum IntentSupport {
     /// A fresh conversation ID using the same prefix as the native chat client so
     /// intent-started conversations appear in the Chat tab's conversation list.
     static func newConversationID() -> String {
-        "\(ChatConstants.conversationPrefix)\(UUID().uuidString)"
+        ChatConstants.newConversationID()
     }
 
     /// Wraps captured content with an instruction asking the assistant to file it.

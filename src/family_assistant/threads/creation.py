@@ -57,7 +57,7 @@ def title_from_text(text: str) -> str:
 def new_thread_conversation_id(interface_type: str) -> str:
     """A fresh conversation id for a thread on ``interface_type``."""
     if interface_type == "web":
-        return f"web_conv_{uuid.uuid4()}"
+        return f"web_conv_{uuid.uuid4().hex}"
     return f"thread_{uuid.uuid4().hex}"
 
 

@@ -78,6 +78,6 @@ async def ensure_web_home(
     return await db.conversation_threads.designate_home(
         user_id=home_owner_id(app_config, user_id),
         interface_type="web",
-        conversation_id=f"web_conv_{uuid.uuid4()}",
+        conversation_id=f"web_conv_{uuid.uuid4().hex}",
         now=now,
     )

@@ -657,7 +657,9 @@ async def start_home_thread(
     turn_id = payload.turn_id or str(uuid.uuid4())
     # Named after the request, so a retry finds the thread it started whether
     # or not that start wrote a turn.
-    conversation_id = f"web_conv_{uuid.uuid5(uuid.NAMESPACE_URL, f'{home}/{turn_id}')}"
+    conversation_id = (
+        f"web_conv_{uuid.uuid5(uuid.NAMESPACE_URL, f'{home}/{turn_id}').hex}"
+    )
 
     copied: list[int] = []
     created = await db_context.conversation_threads.get_thread(conversation_id) is None

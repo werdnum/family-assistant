@@ -6189,7 +6189,7 @@ final class ChatViewModel {
     }
 
     static func generateConversationID() -> String {
-        "\(ChatConstants.conversationPrefix)\(UUID().uuidString)"
+        ChatConstants.newConversationID()
     }
 
     private func shouldProcessInitialPrompt(_ prompt: String?) -> Bool {
