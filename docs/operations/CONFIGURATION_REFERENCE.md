@@ -854,8 +854,9 @@ ______________________________________________________________________
 Claude subscription token for model tiers whose `runtime` is `claude_code`. A turn on such a tier
 runs in a Claude Code session, on the tier's primary model, billed to the subscription instead of
 per token on the API. The shipped `deep` (Opus 5.5) and `frontier` (Fable 5.2) tiers are both
-`claude_code`, so on a deployment with a token every turn on Deep or Max runs on the subscription,
-whichever profile it is on.
+`claude_code`, as are the Claude presets (`claude_opus_5_5`, `claude_sonnet_5_5`,
+`claude_fable_5_2`), so on a deployment with a token every turn on Deep, Max or a Claude preset runs
+on the subscription, whichever profile it is on.
 
 | Property  | Value                                         |
 | --------- | --------------------------------------------- |
