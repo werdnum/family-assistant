@@ -35,6 +35,7 @@ from typing import (
     runtime_checkable,
 )
 
+from family_assistant.llm.genai_sdk import new_genai_client
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.observability.metrics import instrumented_llm_request
 
@@ -149,11 +150,7 @@ def _lazy_import_genai_types() -> types.ModuleType:
 
 def _create_genai_client(api_key: str) -> genai.Client:
     """Create a genai Client with lazy import to avoid xdist worker crashes."""
-    from google import (  # noqa: PLC0415 - intentional lazy import
-        genai,
-    )
-
-    return genai.Client(api_key=api_key)
+    return new_genai_client(api_key=api_key)
 
 
 class MockVideoBackend:

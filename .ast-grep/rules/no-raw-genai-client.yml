@@ -1,0 +1,21 @@
+id: no-raw-genai-client
+language: python
+severity: error
+message: "Build google.genai clients with new_genai_client(), not genai.Client()"
+note: |
+  google-genai 3 sends Gemini Developer API calls to v1 unless told
+  otherwise, and models, request fields and the -latest aliases this
+  application uses exist only on v1beta. Every client comes from the factory,
+  which pins v1beta unless the caller names another version:
+
+    from family_assistant.llm.genai_sdk import gemini_http_options, new_genai_client
+
+    client = new_genai_client(api_key=api_key)
+    live = new_genai_client(
+        api_key=api_key, http_options=gemini_http_options(api_version="v1alpha")
+    )
+
+  Tests that stand up a raw client to inspect SDK types or request shapes are
+  exempt in .ast-grep/exemptions.yml.
+rule:
+  pattern: genai.Client($$$)

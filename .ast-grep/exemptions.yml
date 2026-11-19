@@ -223,3 +223,18 @@ exemptions:
       The positive fixture exists to violate the rule, which is what proves the rule
       still fires.
     ticket: null
+
+  # ===========================================================================
+  # Raw google.genai clients - the factory, its fixture, and SDK-shape tests
+  # ===========================================================================
+  - rule: no-raw-genai-client
+    files:
+      - src/family_assistant/llm/genai_sdk.py
+      - .ast-grep/tests/conformance/no-raw-genai-client-positive.py
+      - test_*.py
+    reason: |
+      genai_sdk.py is the factory the rule points to. The positive fixture exists
+      to violate the rule. Test files build throwaway clients to read SDK types
+      or to capture request shapes; neither reaches the API, so the version a
+      raw client defaults to never matters there.
+    ticket: null

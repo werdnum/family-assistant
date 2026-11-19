@@ -28,8 +28,9 @@ import sys
 import wave
 from pathlib import Path
 
-from google import genai
 from google.genai import types
+
+from family_assistant.llm.genai_sdk import new_genai_client
 
 GEMINI_OUTPUT_SAMPLE_RATE = 24000
 TARGET_SAMPLE_RATE = 16000
@@ -80,7 +81,7 @@ def generate_greeting(
         print("Error: GEMINI_API_KEY environment variable not set", file=sys.stderr)
         sys.exit(1)
 
-    client = genai.Client(api_key=api_key)
+    client = new_genai_client(api_key=api_key)
 
     print(f"Generating TTS with voice={voice}, model={model}...")
     print(f"Text: {text!r}")

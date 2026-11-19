@@ -200,6 +200,20 @@ web notes admin API, the notes indexer, the memory apply path, and the confirmat
 existence lookup. Each reads on nobody's behalf, so there is no profile whose confinement could
 apply; a new surface of that kind belongs there with a justification.
 
+## Gemini SDK Clients
+
+### `no-raw-genai-client`
+
+**Pattern**: any call to `genai.Client(...)`.
+
+**Why it's banned**: google-genai 3 sends Gemini Developer API calls to `v1` by default, and the
+models, request fields and `-latest` aliases this application uses exist only on `v1beta`. A client
+built with the SDK's defaults fails on some of them, depending on the model.
+
+**Replacement**: `new_genai_client(api_key=...)` from `src/family_assistant/llm/genai_sdk.py`, which
+pins `v1beta` unless the caller passes `gemini_http_options(api_version=...)` (Gemini Live uses
+`v1alpha`). The factory and test files are exempted in `.ast-grep/exemptions.yml`.
+
 ## Database Engine Construction
 
 ### `no-raw-create-async-engine`

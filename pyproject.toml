@@ -23,7 +23,7 @@ dependencies = [
     # Direct provider SDKs
     "openai>=2.44.0,<3.0.0",
     # OpenAI SDK for direct API access
-    "google-genai>=2.24.0",
+    "google-genai>=3.6.1",
     # Google Gemini SDK for direct API access
     "python-dotenv>=1.2.2",
     # Pinned to >= 1.2.2 for CVE-2026-28684 (set_key follows symlinks)
@@ -161,6 +161,7 @@ dependencies = [
     "typing-extensions>=4.15.0",
     "pillow-heif>=1.8.1",
     "claude-agent-sdk>=0.2.182",
+    "httpx2>=2.16.2",
 ]
 
 [project.optional-dependencies]

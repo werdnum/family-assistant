@@ -36,12 +36,14 @@ class GoogleGeminiLiveClient:
     def _get_client(self) -> genai.Client:
         """Get or create the genai client (lazy initialization)."""
         if self._client is None:
-            from google import (  # noqa: PLC0415 - google-genai is an optional dependency
-                genai,
+            from family_assistant.llm.genai_sdk import (  # noqa: PLC0415 - google-genai is an optional dependency
+                gemini_http_options,
+                new_genai_client,
             )
 
-            self._client = genai.Client(
-                api_key=self.api_key, http_options={"api_version": "v1alpha"}
+            self._client = new_genai_client(
+                api_key=self.api_key,
+                http_options=gemini_http_options(api_version="v1alpha"),
             )
         return self._client
 

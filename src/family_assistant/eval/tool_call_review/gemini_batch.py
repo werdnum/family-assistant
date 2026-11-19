@@ -17,7 +17,6 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
 import httpx
-from google import genai
 from google.genai import errors as genai_errors
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -32,6 +31,7 @@ from family_assistant.eval.tool_call_review.registry_snapshot import registry_di
 from family_assistant.eval.tool_call_review.report import EvalReport, SkippedCase
 from family_assistant.eval.tool_call_review.schema import EvalCase
 from family_assistant.eval.tool_call_review.scoring import TrialRecord
+from family_assistant.llm.genai_sdk import new_genai_client
 from family_assistant.llm.messages import (
     LLMMessage,
     SystemMessage,
@@ -573,7 +573,7 @@ class GeminiBatchClient:
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         self._api_key = api_key or os.environ.get("GEMINI_API_KEY")
-        self._client = genai.Client(api_key=self._api_key)
+        self._client = new_genai_client(api_key=self._api_key)
         self.aio = self._client.aio
         self._http = http_client or httpx.AsyncClient(timeout=60.0)
         self._owns_http = http_client is None
