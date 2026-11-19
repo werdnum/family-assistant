@@ -995,7 +995,7 @@ llm_parameters:
 ```
 
 - Every pattern that matches the model contributes, in map order, separated by a blank line, so a
-  broad entry (`"gpt-"`) and a specific one (`"gpt-6.1-sol"`) combine. Identical text is included
+  broad entry (`"gpt-"`) and a specific one (`"gpt-6.2-sol"`) combine. Identical text is included
   once.
 - The text goes at the end of the first system message, inside its prompt-cache prefix; a request
   with no system message gets one. It therefore reaches background calls on that model too
@@ -1220,7 +1220,7 @@ request *is* the authorization. A model choosing it is not, which is why the shi
 `default_assistant` allows `standard`, `deep` and `frontier` but admits only `standard` and `deep`
 automatically.
 
-The shipped presets — `gpt_6_astra`, `gpt_6_1_sol`, `gpt_6_1_terra`, `claude_opus_5_5`,
+The shipped presets — `gpt_6_2_astra`, `gpt_6_2_sol`, `gpt_6_1_terra`, `claude_opus_5_5`,
 `claude_sonnet_5_5`, `claude_haiku_5_5`, `claude_fable_5_2`, `kimi_k3`, `gemini_4_argon`,
 `gemini_4_carbon`, `gemini_4_hydrogen` and `gemini_4_neon` — are listed once, in
 `default_profile_settings.delegation_model_tiers`, so a delegating model may pin any profile that
@@ -1237,7 +1237,7 @@ exact-model preset per seat (see [the user guide](../user/council.md) and
 [the design doc](../design/council.md)). Two settings have to agree:
 
 - **The roster** is in the `council` profile's system prompt: which preset sits in seats A, B, C and
-  D, and which preset is the alternative Anthropic seat. The shipped roster is `gpt_6_astra`,
+  D, and which preset is the alternative Anthropic seat. The shipped roster is `gpt_6_2_astra`,
   `claude_fable_5_2`, `kimi_k3` and `gemini_4_carbon`, with `claude_opus_5_5` as the alternative.
   `council_member` also admits `gemini_4_argon`, so the Gemini seat can be moved back to it by
   editing the roster alone.
@@ -4505,12 +4505,12 @@ Settings currently shipped in `defaults.yaml`:
 | ----------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `claude-opus-5`   | `thinking: {type: adaptive}`, `output_config: {effort: high}` | The recipe Opus 5 gets wherever a deployment names it; no shipped tier runs Opus 5 itself. Thinking on for the long tool loops it suits. See the comment in `defaults.yaml`.                                  |
 | `claude-opus-5-5` | `thinking: {type: adaptive}`, `output_config: {effort: high}` | The `deep` tier's primary, which `complex_tasks` runs on and the assistant and `engineer` reach by request. Restated rather than inherited from `claude-opus-5` because Opus 5.5 defaults to `medium` effort. |
-| `gpt-6.1-sol`     | `reasoning_effort: high`                                      | The `deep` tier's fallback, so it can afford to think longer. The `browser` tier sets `medium` on its own entry.                                                                                              |
+| `gpt-6.2-sol`     | `reasoning_effort: high`                                      | The `deep` tier's fallback, so it can afford to think longer. The `browser` tier sets `medium` on its own entry.                                                                                              |
 
 `reasoning_effort` accepts `none`, `low`, `medium`, `high`, `xhigh` or `max` on GPT-6 and GPT-5.6
-models and defaults to `medium` when unset. Raising it trades latency and tokens for capability; it
-is the first dial to turn when a profile's agentic performance falls short, ahead of changing the
-model.
+models (GPT-6.2 rejects `none`) and defaults to `medium` when unset. Raising it trades latency and
+tokens for capability; it is the first dial to turn when a profile's agentic performance falls
+short, ahead of changing the model.
 
 ### mcp_config.json
 

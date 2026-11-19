@@ -180,7 +180,7 @@ def test_complex_tasks_runs_the_opus_sol_chain(shipped_config: AppConfig) -> Non
             },
             "fallback": {
                 "provider": "openai",
-                "model": "gpt-6.1-sol",
+                "model": "gpt-6.2-sol",
                 "model_parameters": shipped_config.llm_parameters,
             },
         }
@@ -247,7 +247,7 @@ def test_deep_tier_reasoning_still_comes_from_the_global_map(
     deep = shipped_config.model_tiers["deep"]
 
     assert all(entry.llm_parameters is None for entry in deep.chain)
-    assert shipped_config.llm_parameters["gpt-6.1-sol"]["reasoning_effort"] == "high"
+    assert shipped_config.llm_parameters["gpt-6.2-sol"]["reasoning_effort"] == "high"
     assert shipped_config.llm_parameters["claude-opus-5-5"]["output_config"] == {
         "effort": "high"
     }
@@ -382,7 +382,7 @@ def test_browser_tier_runs_sol_with_a_sonnet_fallback_at_medium_effort(
     """End to end: shipped tier -> factory -> the params each entry's request carries.
 
     Sonnet 5.5 rejects `enabled` + `budget_tokens` mid-conversation, and the
-    browser entry's medium must win over the global `gpt-6.1-sol` high, so both
+    browser entry's medium must win over the global `gpt-6.2-sol` high, so both
     entries' parameters are asserted where they land.
     """
     resolved = resolve_tier_client_config(
@@ -398,7 +398,7 @@ def test_browser_tier_runs_sol_with_a_sonnet_fallback_at_medium_effort(
     })
 
     assert isinstance(primary, OpenAIClient)
-    assert primary.model == "gpt-6.1-sol"
+    assert primary.model == "gpt-6.2-sol"
     assert primary._get_model_specific_params(primary.model) == {
         "reasoning_effort": "medium"
     }

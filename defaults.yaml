@@ -153,7 +153,7 @@ llm_parameters:
   # multi-step work, so it can afford to think longer; the `browser` tier sets
   # medium on its own entry. high is a step up from the default without max's tendency to
   # overthink; xhigh and max are the next dials if it still falls short.
-  "gpt-6.1-sol":
+  "gpt-6.2-sol":
     reasoning_effort: "high"
 # Named model recipes. A tier says how inference runs (which model, which
 # availability fallback, at what effort); a profile says how the agent operates
@@ -238,7 +238,7 @@ model_tiers:
       - provider: "anthropic"
         model: "claude-opus-5-5"
       - provider: "openai"
-        model: "gpt-6.1-sol"
+        model: "gpt-6.2-sol"
   frontier:
     label: "Max"
     description: "The strongest configured recipe, for the hardest requests."
@@ -248,9 +248,7 @@ model_tiers:
     runtime: "claude_code"
     chain:
       # No fallback: this tier is chosen for its capability, and a weaker
-      # stand-in would answer the request the tier was not chosen for. A future
-      # gpt-6-astra is the intended primary here once it is available, with
-      # Fable moving to the fallback slot.
+      # stand-in would answer the request the tier was not chosen for.
       #
       # Fable takes the `adaptive` + output_config shape and rejects the
       # previous generation's `enabled` + `budget_tokens`. This entry is the
@@ -281,7 +279,7 @@ model_tiers:
     description: "Web browsing over accessibility snapshots."
     chain:
       - provider: "openai"
-        model: "gpt-6.1-sol"
+        model: "gpt-6.2-sol"
         llm_parameters:
           reasoning_effort: "medium"
       - provider: "anthropic"
@@ -299,18 +297,27 @@ model_tiers:
   # `delegation_model_tiers`, which the Auto classifier never reads and the
   # web/iOS intelligence control offers only under "Specific model". The label
   # is what the delegating model and that submenu show.
+  gpt_6_2_sol:
+    label: "GPT-6.2 Sol"
+    description: "OpenAI's everyday GPT-6.2 reasoning model, the deep tier's fallback."
+    chain:
+      - provider: "openai"
+        model: "gpt-6.2-sol"
+  # Kept only while kube-config's live experiments name it as an arm; an
+  # experiment naming a tier the image lacks fails startup. Remove once they
+  # move to gpt_6_2_sol.
   gpt_6_1_sol:
     label: "GPT-6.1 Sol"
-    description: "OpenAI's GPT-6.1 reasoning model, the deep tier's fallback."
+    description: "OpenAI's previous GPT-6.1 reasoning model."
     chain:
       - provider: "openai"
         model: "gpt-6.1-sol"
-  gpt_6_astra:
-    label: "GPT-6 Astra"
-    description: "OpenAI's strongest GPT-6 model, reasoning at high effort."
+  gpt_6_2_astra:
+    label: "GPT-6.2 Astra"
+    description: "OpenAI's strongest GPT-6.2 model, reasoning at high effort."
     chain:
       - provider: "openai"
-        model: "gpt-6-astra"
+        model: "gpt-6.2-astra"
         # Set here rather than in the global map: no tier runs Astra yet, and
         # the default medium effort undersells it for a council seat.
         llm_parameters:
@@ -1029,7 +1036,7 @@ default_profile_settings:
   # intelligence control's "Specific model" submenu. Auto never routes to these.
   # A profile that names an inline model drops
   # this list, and one that declares its own replaces it.
-  delegation_model_tiers: ["gpt_6_astra", "gpt_6_1_sol", "gpt_6_1_terra", "claude_opus_5_5", "claude_sonnet_5_5", "claude_haiku_5_5", "claude_fable_5_2", "kimi_k3", "gemini_4_argon", "gemini_4_carbon", "gemini_4_hydrogen", "gemini_4_neon"]
+  delegation_model_tiers: ["gpt_6_2_astra", "gpt_6_2_sol", "gpt_6_1_terra", "claude_opus_5_5", "claude_sonnet_5_5", "claude_haiku_5_5", "claude_fable_5_2", "kimi_k3", "gemini_4_argon", "gemini_4_carbon", "gemini_4_hydrogen", "gemini_4_neon"]
   processing_config:
     # Inherited by every profile that does not select its own tier or name an
     # inline model.
@@ -1578,7 +1585,7 @@ service_profiles:
   # taint policy gates as it does everywhere else.
   - id: "council"
     user_selectable: true
-    description: "Use for an explicit multi-model council, broad exploratory work, or a difficult design or speculative question where independent proposals and critical review are valuable. Several strong models (GPT-6 Astra, Claude Fable 5.2, Kimi K3 and Gemini 4 Carbon) each research the question independently, review and revise against each other over two rounds, and the council returns a synthesis with evidence, alternatives and remaining uncertainties. Slow and expensive. Not the default for routine lookups, straightforward coding or implementation. It can read the household's notes, documents, calendar and conversation history, so describe the question fully and pass relevant attachments."
+    description: "Use for an explicit multi-model council, broad exploratory work, or a difficult design or speculative question where independent proposals and critical review are valuable. Several strong models (GPT-6.2 Astra, Claude Fable 5.2, Kimi K3 and Gemini 4 Carbon) each research the question independently, review and revise against each other over two rounds, and the council returns a synthesis with evidence, alternatives and remaining uncertainties. Slow and expensive. Not the default for routine lookups, straightforward coding or implementation. It can read the household's notes, documents, calendar and conversation history, so describe the question fully and pass relevant attachments."
     # Household notes as the assistant sees them, plus the council's own
     # skill: no other profile holds the `council` grant.
     visibility_grants: ["default", "council"]
@@ -1607,7 +1614,7 @@ service_profiles:
           Load the "Council Deliberation" skill with get_note before anything else and follow it.
 
           Council roster -- use exactly these, each through the council_member profile with its model_tier:
-          - Member A: model_tier "gpt_6_astra" (GPT-6 Astra)
+          - Member A: model_tier "gpt_6_2_astra" (GPT-6.2 Astra)
           - Member B: model_tier "claude_fable_5_2" (Claude Fable 5.2)
           - Member C: model_tier "kimi_k3" (Kimi K3)
           - Member D: model_tier "gemini_4_carbon" (Gemini 4 Carbon)
@@ -2747,7 +2754,7 @@ service_profiles:
     # The seats. A profile admits presets for itself -- default_assistant's
     # list does not reach here -- and every one is a single model with no
     # fallback, so a seat answers as the model it names or fails visibly.
-    delegation_model_tiers: ["gpt_6_astra", "gpt_6_1_sol", "claude_opus_5_5", "claude_fable_5_2", "kimi_k3", "gemini_4_argon", "gemini_4_carbon"]
+    delegation_model_tiers: ["gpt_6_2_astra", "gpt_6_2_sol", "claude_opus_5_5", "claude_fable_5_2", "kimi_k3", "gemini_4_argon", "gemini_4_carbon"]
     tools_policy:
       default_decision: "deny"
       rules:

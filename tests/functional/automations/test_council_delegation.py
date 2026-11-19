@@ -76,7 +76,7 @@ INTERFACE_TYPE = "test_interface"
 CONVERSATION_ID = "council_conversation"
 USER_NAME = "CouncilTester"
 TOPIC = "garden"
-SEATS = {"A": "gpt_6_astra", "B": "claude_fable_5_2", "C": "kimi_k3"}
+SEATS = {"A": "gpt_6_2_astra", "B": "claude_fable_5_2", "C": "kimi_k3"}
 PHASES = ("independent proposal", "first review", "second review")
 WAKE_TRIGGER = "System: Delegations you started have finished."
 WAKE_INSTRUCTION = "Their results are provided as lower-priority data"
@@ -578,7 +578,7 @@ async def test_the_council_waits_for_its_slowest_member(
     """Neither the coordinator's first turn nor its first finished member is an answer."""
     gate = asyncio.Event()
     seats = _seats()
-    seats["gpt_6_astra"] = Seat("gpt_6_astra", gate)
+    seats["gpt_6_2_astra"] = Seat("gpt_6_2_astra", gate)
     council = _build_council(db_engine, seats)
 
     async def others_done_while_sol_runs() -> bool:
@@ -590,7 +590,7 @@ async def test_the_council_waits_for_its_slowest_member(
             len(runs) == len(SEATS)
             and runs["claude_fable_5_2"]["status"] == "completed"
             and runs["kimi_k3"]["status"] == "completed"
-            and runs["gpt_6_astra"]["status"] == "running"
+            and runs["gpt_6_2_astra"]["status"] == "running"
         )
 
     async with _workers(council, task_worker_manager, db_engine, mock_clock):
@@ -635,6 +635,6 @@ async def test_a_failed_seat_reaches_the_coordinator_with_the_others(
 
     [partial] = [text for text in council.chat.texts if "PARTIAL" in text]
     assert "member C failed" in partial
-    assert "REPORT[gpt_6_astra:independent proposal]" in partial
+    assert "REPORT[gpt_6_2_astra:independent proposal]" in partial
     assert "REPORT[claude_fable_5_2:independent proposal]" in partial
     assert len(council.coordinator.wakes) == 1
