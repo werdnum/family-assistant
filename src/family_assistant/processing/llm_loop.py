@@ -1007,6 +1007,7 @@ class LLMStreamingLoop:
                 taint_metadata=taint_tracker.snapshot().to_metadata(),
             )
             messages.append(llm_context_assistant_message)
+            tool_results_start = len(messages)
 
             # Break if no tool calls
             if not tool_calls_from_stream:
@@ -1230,8 +1231,23 @@ class LLMStreamingLoop:
                 if tool_execution_tasks:
                     await asyncio.gather(*tool_execution_tasks, return_exceptions=True)
 
-            # Add tool responses to messages for next iteration
+            # Results are streamed and saved as they finish, but the next
+            # request must carry them in call order: that is the order history
+            # replay emits them in, and Anthropic binds the next thinking block
+            # to the exact history before it.
             messages.extend(tool_response_messages_for_llm)
+            call_index = {
+                tool_call.id: index
+                for index, tool_call in enumerate(tool_calls_from_stream)
+            }
+            messages[tool_results_start:] = sorted(
+                messages[tool_results_start:],
+                key=lambda message: (
+                    call_index.get(message.tool_call_id, len(call_index))
+                    if isinstance(message, ToolMessage)
+                    else len(call_index)
+                ),
+            )
 
             termination_message = (
                 tool_call_review_state.terminal_denial_escalation_message
