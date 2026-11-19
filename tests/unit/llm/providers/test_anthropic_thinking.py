@@ -648,10 +648,10 @@ def test_between_tools_thinking_is_left_without_a_binding() -> None:
     assert "extra_headers" not in params
 
 
-def test_prefix_mismatches_are_logged_as_warnings(
+def test_prefix_mismatches_are_logged_as_errors(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A changed history is worth a warning; a model switch is expected."""
+    """A changed history must not pass silently; a model switch is expected."""
     message = SimpleNamespace(
         input_transformations=[
             {
@@ -675,6 +675,6 @@ def test_prefix_mismatches_are_logged_as_warnings(
         for record in caplog.records
     }
     assert levels == {
-        "prefix_binding_mismatch": "WARNING",
+        "prefix_binding_mismatch": "ERROR",
         "model_binding_mismatch": "INFO",
     }

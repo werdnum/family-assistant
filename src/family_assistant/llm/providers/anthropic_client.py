@@ -232,8 +232,9 @@ def log_input_transformations(message: object) -> None:
     models (a tier switch, a fallback). ``prefix_binding_mismatch`` means the
     history sent differs from the one the block was produced against -- the
     history window slid, the system prompt changed, or a code path edited an
-    earlier message -- and is worth a warning, because the last of those is a
-    bug.
+    earlier message -- and is logged as an error: ``drop_block`` keeps the turn
+    answering, so the log is the only place the lost reasoning shows up, and
+    the last of those causes is a bug.
     """
     transformations = getattr(message, "input_transformations", None)
     if transformations is None:
@@ -258,7 +259,7 @@ def log_input_transformations(message: object) -> None:
             if isinstance(entry, dict)
             else getattr(entry, "path", None)
         )
-        log = logger.warning if reason == "prefix_binding_mismatch" else logger.info
+        log = logger.error if reason == "prefix_binding_mismatch" else logger.info
         log(
             "Anthropic input transformation: type=%s reason=%s path=%s",
             entry_type,

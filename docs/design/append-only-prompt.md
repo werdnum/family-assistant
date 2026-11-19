@@ -108,8 +108,9 @@ request can be retried on a different provider, and each adapter has to render i
   blocks instead of failing the request into its fallback. A model that thinks by default (Fable,
   Mythos, Opus 5-series, Sonnet 5.5, Haiku 5.5) gets an explicit `{"type": "adaptive"}` when its
   tier configures no thinking, so the field is sent there too. `input_transformations` is logged:
-  `model_binding_mismatch` is expected after a tier switch; `prefix_binding_mismatch` means some
-  code path still edits history.
+  `model_binding_mismatch` is expected after a tier switch and logged at info;
+  `prefix_binding_mismatch` means some code path still edits history, and is logged as an error so
+  the reasoning `drop_block` discards does not go unnoticed.
 - The `frontier` tier moves to Claude Fable 5.1. Forced tool choice was already removed from the
   client, which is the breaking change that blocked it.
 
