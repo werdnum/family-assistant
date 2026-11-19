@@ -303,8 +303,13 @@ class TypeSafeConfig(BaseModel):
     )
     """Which events near a new one are the same occurrence. The bar sits above
     an even chance because a match blocks the write until the model retries."""
-    calendar_search: JevFilterConfig = Field(default_factory=JevFilterConfig)
-    """Which events in the searched range match ``search_text``."""
+    calendar_search: JevFilterConfig = Field(
+        default_factory=lambda: JevFilterConfig(mode="active")
+    )
+    """Which events in the searched range match ``search_text``. Active by
+    default because title similarity alone cannot separate a one-word query
+    from unrelated short titles ("birthday" scores about as close to "Labour
+    Day" as to "Mia's birthday party")."""
     document_search: JevFilterConfig = Field(
         default_factory=lambda: JevFilterConfig(timeout_seconds=2.5)
     )

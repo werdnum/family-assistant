@@ -1292,3 +1292,25 @@ async def test_active_jev_calendar_search_returns_jev_matches(
     assert "Found 1 event(s):" in result
     assert "Dr Smith checkup (match: 0.85)" in result
     assert "Swimming" not in result
+
+
+@pytest.mark.asyncio
+async def test_calendar_search_lists_literal_matches_first(
+    monkeypatch: pytest.MonkeyPatch,
+    db_engine: AsyncEngine,
+) -> None:
+    _serve_ics(
+        monkeypatch,
+        ("near-1", "20260410T090000Z", "Birthdate check"),
+        ("party-1", "20260411T090000Z", "Mia's birthday party"),
+    )
+
+    result = await search_calendar_events_tool(
+        _create_context(db_engine),
+        _FUZZY_FEED_CONFIG,
+        search_text="birthday",
+        start_date="2026-04-09",
+        end_date="2026-04-12",
+    )
+
+    assert result.index("Mia's birthday party") < result.index("Birthdate check")

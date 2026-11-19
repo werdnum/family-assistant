@@ -668,8 +668,8 @@ async def check_for_duplicate_events(
         similarity_threshold = dup_detection.get("similarity_threshold", 0.30)
 
         try:
-            similarity_strategy = create_similarity_strategy_from_config(
-                calendar_config
+            similarity_strategy = await asyncio.to_thread(
+                create_similarity_strategy_from_config, calendar_config
             )
         except Exception as e:
             logger.warning(
@@ -1551,7 +1551,9 @@ async def _filter_events_by_similarity(
     similarity_threshold = dup_detection.get("similarity_threshold", 0.30)
 
     try:
-        similarity_strategy = create_similarity_strategy_from_config(calendar_config)
+        similarity_strategy = await asyncio.to_thread(
+            create_similarity_strategy_from_config, calendar_config
+        )
         logger.info(
             f"Using similarity strategy: {similarity_strategy.name} with threshold {similarity_threshold}"
         )
@@ -1565,6 +1567,11 @@ async def _filter_events_by_similarity(
         return filtered, similarity_threshold
 
     scored = await _score_by_similarity(similarity_strategy, search_text, events)
+    # Title similarity scores a one-word query about as close to any short
+    # title as to one containing it, so literal matches go first; that also
+    # keeps them among the candidates Jev sees.
+    needle = search_text.lower()
+    scored.sort(key=lambda event: needle not in event["summary"].lower())
     matching = [
         event
         for event in scored
@@ -1590,12 +1597,13 @@ async def _score_by_similarity(
     strategy: SimilarityStrategy, text: str, events: list[CalendarSearchResult]
 ) -> list[CalendarSearchResult]:
     """Copies of *events* carrying their similarity to *text*, most similar first."""
+    similarities = await strategy.compute_similarities(
+        text, [event["summary"] for event in events]
+    )
     scored: list[CalendarSearchResult] = []
-    for event in events:
+    for event, similarity in zip(events, similarities, strict=True):
         event_with_sim: CalendarSearchResult = dict(event)  # type: ignore[assignment]
-        event_with_sim["similarity"] = await strategy.compute_similarity(
-            text, event["summary"]
-        )
+        event_with_sim["similarity"] = similarity
         scored.append(event_with_sim)
     scored.sort(key=lambda e: e.get("similarity") or 0.0, reverse=True)
     return scored
