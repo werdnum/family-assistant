@@ -303,15 +303,6 @@ model_tiers:
     chain:
       - provider: "openai"
         model: "gpt-6.2-sol"
-  # Kept only while kube-config's live experiments name it as an arm; an
-  # experiment naming a tier the image lacks fails startup. Remove once they
-  # move to gpt_6_2_sol.
-  gpt_6_1_sol:
-    label: "GPT-6.1 Sol"
-    description: "OpenAI's previous GPT-6.1 reasoning model."
-    chain:
-      - provider: "openai"
-        model: "gpt-6.1-sol"
   gpt_6_2_astra:
     label: "GPT-6.2 Astra"
     description: "OpenAI's strongest GPT-6.2 model, reasoning at high effort."
