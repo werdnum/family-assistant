@@ -18,8 +18,10 @@ from, and leaving it would strand the conversation. For the same reason
 ``delegation_runs.source_profile_id`` moves: a delegation's result is delivered
 back to its source profile, so it would otherwise land outside the moved
 history. What actually ran stays on record in ``claude_agent_session_turns`` and
-``taint_audit``, which are left be, as is ``history_compaction_events`` (a moved
-conversation is simply compacted afresh).
+``taint_audit``, which are left be, as is ``history_compaction_events``. A web
+thread has no default_assistant compaction state, so it is compacted afresh; in
+a Telegram chat, moved turns below an existing boundary stay out of plain
+messages' window as before, and a reply to one loads its whole thread.
 
 Executable work follows ``restamp_automation_creation``, for the same reason:
 profile resolution at execution is fail-loud, so automations, queued task
