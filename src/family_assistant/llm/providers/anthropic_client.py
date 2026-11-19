@@ -153,6 +153,20 @@ _NON_STREAMING_MAX_TOKENS = 16_000
 # conversation prefix no longer matches the one that produced it.
 _THINKING_BINDING_BETA = "thinking-binding-controls-2026-08-01"
 
+# Models that run the thinking-binding check and think adaptively when a
+# request carries no `thinking` object, by id prefix. A request to one of them
+# with no thinking configured still replays bound thinking blocks, so it is
+# sent `{"type": "adaptive"}` -- equivalent to omitting it on these models --
+# to give `block_binding` somewhere to live. Opus 4.8 and older run without
+# thinking when it is omitted, so an explicit adaptive would change them.
+_DEFAULT_THINKING_BINDING_MODELS = (
+    "claude-fable-5",
+    "claude-mythos-5",
+    "claude-opus-5",
+    "claude-sonnet-5-5",
+    "claude-haiku-5-5",
+)
+
 # Declares on-demand tools with `defer_loading` and surfaces each with a
 # `tool_addition` block in an appended system message, so activating one never
 # changes the `tools` array.
@@ -1471,7 +1485,7 @@ class AnthropicClient(BaseLLMClient):
     ) -> list[dict[str, Any]]:
         """Ask for a tool call in the final user turn instead of forcing one.
 
-        Current Anthropic models (Opus 5.5, Fable 5.1) reject a forced ``any``
+        Current Anthropic models (Opus 5.5, Fable 5.2) reject a forced ``any``
         or ``tool`` choice with a 400, and every generation rejects one combined
         with thinking. Requesting the call in words works on all of them and
         keeps thinking on, so a forced choice is never sent: the request goes
@@ -1509,19 +1523,28 @@ class AnthropicClient(BaseLLMClient):
     ) -> None:
         """Drop, rather than reject, replayed thinking the history no longer matches.
 
-        Opus 5.5, Sonnet 5.5 and Fable 5.1 bind each thinking block to the exact
-        system prompt, tools and messages that preceded it. Where that prefix has
-        changed -- the history window slid, a note in the system prompt was edited
-        -- an enforced account gets a 400 for the whole request, which the retry
-        layer would turn into a silent fallback to another model. Dropping the
-        stale blocks loses only the reasoning they carried. The setting is sent
-        explicitly so the behaviour does not depend on the account's age; models
-        that do not run the check accept it and ignore it.
+        Fable 5.2, Opus 5.5, Sonnet 5.5 and Haiku 5.5 bind each thinking block
+        to the exact system prompt, tools and messages that preceded it. Where
+        that prefix has changed -- the history window slid, a note in the system
+        prompt was edited -- an enforced account (every account, on Fable 5.2)
+        gets a 400 for the whole request, which the retry layer would turn into
+        a silent fallback to another model, or a failed turn where the chain
+        has none. Dropping the stale blocks loses only the reasoning they
+        carried. The setting is sent explicitly so the behaviour does not depend
+        on the account's age; models that do not run the check accept it and
+        ignore it.
 
-        It applies only where thinking is configured: the field lives inside the
-        ``thinking`` object and is rejected alongside ``between_tools``.
+        The field lives inside the ``thinking`` object and is rejected
+        alongside ``between_tools`` or ``disabled``, so it is added only to
+        adaptive or budgeted thinking. A model in
+        ``_DEFAULT_THINKING_BINDING_MODELS`` thinks even when no ``thinking``
+        is configured, so it is given the equivalent explicit adaptive config.
         """
         thinking = params.get("thinking")
+        if thinking is None and str(params.get("model", "")).startswith(
+            _DEFAULT_THINKING_BINDING_MODELS
+        ):
+            thinking = {"type": "adaptive"}
         if not isinstance(thinking, dict) or thinking.get("type") not in {
             "adaptive",
             "enabled",

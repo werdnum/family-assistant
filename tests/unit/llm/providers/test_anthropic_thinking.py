@@ -604,6 +604,50 @@ def test_no_binding_without_a_thinking_config() -> None:
     assert "extra_headers" not in params
 
 
+def test_default_thinking_model_without_config_still_drops_mismatched_blocks() -> None:
+    """Fable 5.2 thinks with no ``thinking`` configured, so it still needs the binding.
+
+    The ``claude_fable_5_2`` tier carries no llm_parameters; without this the
+    request replayed bound thinking blocks with no ``drop_block`` and a
+    changed prefix was a 400 on every retry.
+    """
+    client = AnthropicClient(api_key="test-key", model="claude-fable-5-2")
+
+    params = client._build_request_params([], None, None, "auto", streaming=True)
+
+    assert params["thinking"] == {
+        "type": "adaptive",
+        "block_binding": {"prefix_mismatch_behavior": "drop_block"},
+    }
+    assert params["extra_headers"]["anthropic-beta"] == (
+        "thinking-binding-controls-2026-08-01"
+    )
+
+
+def test_model_that_does_not_think_by_default_gets_no_thinking_added() -> None:
+    """Opus 4.8 runs without thinking when it is omitted; adding it would change that."""
+    client = AnthropicClient(api_key="test-key", model="claude-opus-4-8")
+
+    params = client._build_request_params([], None, None, "auto", streaming=True)
+
+    assert "thinking" not in params
+    assert "extra_headers" not in params
+
+
+def test_between_tools_thinking_is_left_without_a_binding() -> None:
+    """``block_binding`` alongside ``between_tools`` is a 400 on Sonnet 5.5."""
+    client = AnthropicClient(
+        api_key="test-key",
+        model="claude-sonnet-5-5",
+        model_parameters={"claude-sonnet-5-5": {"thinking": {"type": "between_tools"}}},
+    )
+
+    params = client._build_request_params([], None, None, "auto", streaming=True)
+
+    assert params["thinking"] == {"type": "between_tools"}
+    assert "extra_headers" not in params
+
+
 def test_prefix_mismatches_are_logged_as_warnings(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

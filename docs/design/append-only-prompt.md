@@ -105,7 +105,9 @@ request can be retried on a different provider, and each adapter has to render i
   replaces the one that had to skip back over the turn-context block.
 - Every request sends `thinking.block_binding.prefix_mismatch_behavior: "drop_block"` under the
   `thinking-binding-controls-2026-08-01` beta, so a remaining mismatch drops the affected thinking
-  blocks instead of failing the request into its fallback. `input_transformations` is logged:
+  blocks instead of failing the request into its fallback. A model that thinks by default (Fable,
+  Mythos, Opus 5-series, Sonnet 5.5, Haiku 5.5) gets an explicit `{"type": "adaptive"}` when its
+  tier configures no thinking, so the field is sent there too. `input_transformations` is logged:
   `model_binding_mismatch` is expected after a tier switch; `prefix_binding_mismatch` means some
   code path still edits history.
 - The `frontier` tier moves to Claude Fable 5.1. Forced tool choice was already removed from the
