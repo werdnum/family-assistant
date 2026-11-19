@@ -31,6 +31,7 @@ from claude_agent_sdk import (
 from claude_agent_sdk import (
     ClaudeAgentOptions,
     ClaudeSDKClient,
+    ClaudeSDKError,
     HookMatcher,
     MirrorErrorMessage,
     RateLimitEvent,
@@ -716,14 +717,13 @@ class _TurnSession:
             resume=self.resume,
         )
         try:
-            async with self.loop.client_factory(options) as client:
-                await client.query(_opening_message(prompt.content))
-                pump = asyncio.create_task(self._pump(client))
-                try:
-                    await self._drive(client)
-                finally:
-                    pump.cancel()
-                    await asyncio.gather(pump, return_exceptions=True)
+            await self._converse(options, prompt)
+        except ClaudeSDKError as exc:
+            # The SDK's own failures -- a CLI that will not start, a
+            # connection lost, a process that exits -- are provider failures to
+            # the rest of the application, which falls back on those.
+            msg = f"Claude Code session failed: {exc}"
+            raise LLMProviderError(msg, PROVIDER_NAME, self.model.model) from exc
         finally:
             # A resumed session runs in a config directory the SDK removes.
             if self.session_id is not None and self.resume is None:
@@ -731,6 +731,18 @@ class _TurnSession:
         await self._flush()
         await self._finish()
         await self._record_session(prompt.system_prompt)
+
+    async def _converse(
+        self, options: ClaudeAgentOptions, prompt: SessionPrompt
+    ) -> None:
+        async with self.loop.client_factory(options) as client:
+            await client.query(_opening_message(prompt.content))
+            pump = asyncio.create_task(self._pump(client))
+            try:
+                await self._drive(client)
+            finally:
+                pump.cancel()
+                await asyncio.gather(pump, return_exceptions=True)
 
     async def _record_session(self, system_prompt: str) -> None:
         """Make the session resumable, if the store holds all of it."""

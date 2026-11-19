@@ -13,6 +13,7 @@ import pytest
 from claude_agent_sdk import (
     ClaudeAgentOptions,
     ClaudeSDKClient,
+    CLIConnectionError,
     project_key_for_directory,
 )
 from prometheus_client import REGISTRY
@@ -482,6 +483,21 @@ async def test_session_billed_to_an_api_key_runs_the_turn_on_the_api(
         responses=[FakeResponse([FakeText("Hi.")])],
         api_key_source="ANTHROPIC_API_KEY",
     )
+    reply = await _turn(_service(fake), db_engine, "Hello")
+
+    assert reply == API_REPLY
+
+
+class _UnstartableClaudeCode(FakeClaudeCode):
+    async def connect(self) -> NoReturn:
+        raise CLIConnectionError("Failed to start Claude Code")
+
+
+@pytest.mark.asyncio
+async def test_cli_that_will_not_start_runs_the_turn_on_the_api(
+    db_engine: AsyncEngine,
+) -> None:
+    fake = _UnstartableClaudeCode(responses=[FakeResponse([FakeText("Hi.")])])
     reply = await _turn(_service(fake), db_engine, "Hello")
 
     assert reply == API_REPLY
