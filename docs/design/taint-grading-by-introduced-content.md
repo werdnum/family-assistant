@@ -52,7 +52,9 @@ tool stays cautious and only a deliberate grading makes anything cleaner.
   matrix allows sensitive reads and low-bandwidth egress and audits messages to known users, which
   are the cells where these turns meet friction today.
 - **Calendar reads are graded per event, by where the event's content came from.** An event a
-  household member created by hand on a household calendar is the household's. An event the
+  household member created by hand on a household calendar is the household's, and so is one on an
+  owned calendar whose organizer and every attendee are configured household members (their sign-in
+  or email-intake sender addresses), since nobody outside the household is on it. An event the
   assistant wrote carries the provenance of the turn that wrote it, and is external if that record
   is missing or the event has changed since. Events on subscribed feeds or created by anyone else
   stay external.
@@ -68,7 +70,11 @@ unauthenticated callers can post telemetry and logs quote external input.
 - **Calendar authorship is conservative where a provider cannot prove it.** Accepted invitations and
   subscribed events remain external even when they appear on a writable calendar. An operator-owned
   CalDAV collection's event with no invitation metadata is treated as household authored; a
-  recurring occurrence whose unchanged write version cannot be proved stays external.
+  recurring occurrence whose unchanged write version cannot be proved stays external. An invitation
+  whose organizer and attendees are all household addresses is trusted on its addresses alone: an
+  outside sender who forges a household organizer onto an invite delivered to a household calendar
+  would be trusted. That needs the forged mail to reach the calendar despite the sender's domain
+  authentication, and the payoff is one event's text read without a review.
 - **A grading mistake on the clean side skips a review.** That is the cost of letting grading reduce
   friction at all. It is bounded by the unchanged fallback: only tools someone deliberately regraded
   can err clean, and each regrading is small enough to review on its own.

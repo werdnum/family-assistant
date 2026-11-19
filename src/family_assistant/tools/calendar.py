@@ -60,7 +60,9 @@ from family_assistant.similarity import create_similarity_strategy_from_config
 from family_assistant.tools.calendar_provenance import (
     CALDAV_PROVENANCE_PROPERTY,
     PROVENANCE_PROPERTY,
+    caldav_event_participants,
     google_event_marker,
+    google_event_participants,
     grade_calendar_events,
     is_household_authored_google_event,
     new_event_marker,
@@ -101,6 +103,12 @@ class CalendarSearchResult(TypedDict):
     provenance_marker: NotRequired[str | None]
     event_version: NotRequired[str | None]
     user_vetted: NotRequired[bool]
+    household_participants: NotRequired[list[str] | None]
+    """Organizer and attendee addresses of an event on an owned calendar.
+
+    Grading trusts the event when every one is a household member. ``None``
+    when the calendar is not owned or a participant cannot be matched.
+    """
 
 
 # The calendar tools reach a user's Google calendars when the deployment requests
@@ -312,6 +320,11 @@ def _parse_caldav_event_component(
         "event_version": _caldav_event_version(event),
         "user_vetted": (
             src.owned and not vevent.get("organizer") and not vevent.get("attendee")
+        ),
+        "household_participants": (
+            caldav_event_participants(vevent.get("organizer"), vevent.get("attendee"))
+            if src.owned
+            else None
         ),
     }
 
@@ -557,6 +570,9 @@ async def _search_google_sources(
                 else None,
                 "user_vetted": source.owned
                 and is_household_authored_google_event(item),
+                "household_participants": (
+                    google_event_participants(item) if source.owned else None
+                ),
             })
     return events
 
