@@ -177,12 +177,10 @@ async def test_asterisk_connection_flow(
         await wait_for_condition(lambda: bool(fake_genai.live.connect_calls))
 
         # Verify that genai.Client was instantiated with correct parameters
-        assert fake_genai.client_kwargs == [
-            {
-                "api_key": "test-api-key-for-testing",
-                "http_options": {"api_version": "v1alpha"},
-            }
-        ]
+        assert [
+            (kwargs["api_key"], getattr(kwargs["http_options"], "api_version", None))
+            for kwargs in fake_genai.client_kwargs
+        ] == [("test-api-key-for-testing", "v1alpha")]
 
         # Verify that connect was called with a model
         assert fake_genai.live.connect_calls[0]["model"]

@@ -32,6 +32,8 @@ from family_assistant.web.routers.gemini_live_api import (
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
 if TYPE_CHECKING:
+    from google.genai.types import HttpOptions
+
     from family_assistant.tools.types import (
         ToolDefinition,
         ToolExecutionContext,
@@ -134,9 +136,9 @@ class _FakeAuthTokens:
 
 
 class _FakeGenAIClient:
-    def __init__(self, *, api_key: str, http_options: dict[str, str]) -> None:
+    def __init__(self, *, api_key: str, http_options: HttpOptions) -> None:
         assert api_key == "test-api-key"
-        assert http_options == {"api_version": "v1alpha"}
+        assert http_options.api_version == "v1alpha"
         self.auth_tokens = _FakeAuthTokens()
 
 
