@@ -204,7 +204,8 @@ apply; a new surface of that kind belongs there with a justification.
 
 ### `no-raw-genai-client`
 
-**Pattern**: any call to `genai.Client(...)`.
+**Pattern**: any call to `genai.Client(...)`, and the imports that would reach it under another name
+(`Client` imported from `google.genai`, or `genai` under an alias).
 
 **Why it's banned**: google-genai 3 sends Gemini Developer API calls to `v1` by default, and the
 models, request fields and `-latest` aliases this application uses exist only on `v1beta`. A client

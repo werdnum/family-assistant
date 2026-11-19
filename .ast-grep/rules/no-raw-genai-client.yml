@@ -15,7 +15,25 @@ note: |
         api_key=api_key, http_options=gemini_http_options(api_version="v1alpha")
     )
 
+  The import forms that would let a call site reach the constructor under
+  another name (Client imported directly, or genai under an alias) are banned
+  with it.
+
   Tests that stand up a raw client to inspect SDK types or request shapes are
   exempt in .ast-grep/exemptions.yml.
 rule:
-  pattern: genai.Client($$$)
+  any:
+    - pattern: genai.Client($$$)
+    - pattern: google.genai.Client($$$)
+    - pattern: from google.genai import $$$NAMES
+      has:
+        stopBy: end
+        kind: dotted_name
+        regex: ^Client$
+    - pattern: from google.genai.client import $$$NAMES
+      has:
+        stopBy: end
+        kind: dotted_name
+        regex: ^Client$
+    - pattern: from google import genai as $ALIAS
+    - pattern: import google.genai as $ALIAS
