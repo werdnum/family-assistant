@@ -184,7 +184,10 @@ robustness pass:
   delegated runs now use: a confirm-gated call becomes a durable request addressed to the run's
   owner, shown in the run's conversation, so nothing parks on it. A call whose result the run would
   need (not `deferred_confirmation_eligible`) is refused, and tool-call review cannot answer it with
-  `confirm`; a run with no owner fails closed.
+  `confirm`; a run with no owner fails closed. A browser action (a `browser`-tagged tool, or a
+  call carrying Gemini's `require_confirmation` safety decision) is never deferred on any
+  confirmation path, since it acts on the page as it is now and would run against a page or session
+  that has since changed.
 - **Only `telegram` and `web` have confirmation managers.**
   `_build_delegation_confirmation_callback` returns `None` for any interface without a registered
   `ConfirmationUIManager`, so a delegated run on `a2a`/`asterisk` cannot run confirmation-gated

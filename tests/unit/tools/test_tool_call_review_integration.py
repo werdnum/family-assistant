@@ -759,6 +759,49 @@ async def test_hard_static_confirm_keeps_existing_unattended_deferral(
     assert pending[0]["static_policy_reason"] is None
 
 
+async def test_hard_static_confirm_refuses_to_defer_a_browser_action(
+    db_engine: AsyncEngine,
+) -> None:
+    executed: list[object] = []
+
+    async def execute(**kwargs: object) -> ToolResult:
+        executed.append(kwargs)
+        return ToolResult(text="must not execute")
+
+    provider = _provider(
+        cast("ToolImplementation", execute),
+        reviewer_llm=None,
+        static_decision=ToolPolicyDecision.CONFIRM,
+        taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
+        browser=True,
+    )
+    deferred_confirmation = build_deferred_confirmation_callback(
+        target_user_id="owner-user",
+        source_prefix="From an unattended hard gate — approve to run:",
+        missing_owner_message=lambda tool_name: f"No owner for {tool_name}",
+    )
+    context = _context(
+        db_engine,
+        TurnTaintState.empty(),
+        confirmation=deferred_confirmation,
+        turn_id="hard-confirm-unattended-browser",
+    )
+
+    result = await provider.execute_tool(
+        "reviewed_tool",
+        {"destination": "https://example.test"},
+        context,
+        "hard-confirm-unattended-browser-call",
+    )
+
+    assert "cannot be queued for later approval" in str(result)
+    assert executed == []
+    pending = await ConfirmationService(db=context.db_context).list_pending_for_user(
+        user_id="owner-user"
+    )
+    assert pending == []
+
+
 async def test_adapted_deferred_placeholder_does_not_add_tool_output_taint(
     db_engine: AsyncEngine,
 ) -> None:
