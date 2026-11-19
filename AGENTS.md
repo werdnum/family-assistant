@@ -370,16 +370,16 @@ supervision requirements based on input trust level:
    [docs/design/conversation-memory.md](docs/design/conversation-memory.md).
 
 **The Claude Code runtime is a tier property, not a profile.** A model tier with
-`runtime: "claude_code"` (the shipped `deep` and `frontier`) runs a turn in a Claude Agent SDK
-session billed to the Claude subscription (`CLAUDE_CODE_OAUTH_TOKEN`), on whichever profile the turn
-is on, and leaves the profile's Rule of Two class unchanged: Claude Code runs the loop, but **every
-tool it can call is one of ours**, offered over an in-process MCP server and executed by
-`ToolExecutor`, so policy, confirmation, taint and tool-call review apply per call. Claude Code gets
-none of its own built-ins except `ToolSearch` (which replaces on-demand activation), no settings,
-hooks, skills or MCP servers from disk, and `verbatim_prompts` so rendered history cannot make it
-read a local file — it runs in the application's container, so a built-in would act with the
-application's privileges. A session that reports an API key in use is refused; a session that fails
-before producing anything reruns on the tier's API chain. See
+`runtime: "claude_code"` (the shipped `deep`, `frontier` and Claude presets) runs a turn in a Claude
+Agent SDK session billed to the Claude subscription (`CLAUDE_CODE_OAUTH_TOKEN`), on whichever
+profile the turn is on, and leaves the profile's Rule of Two class unchanged: Claude Code runs the
+loop, but **every tool it can call is one of ours**, offered over an in-process MCP server and
+executed by `ToolExecutor`, so policy, confirmation, taint and tool-call review apply per call.
+Claude Code gets none of its own built-ins except `ToolSearch` (which replaces on-demand
+activation), no settings, hooks, skills or MCP servers from disk, and `verbatim_prompts` so rendered
+history cannot make it read a local file — it runs in the application's container, so a built-in
+would act with the application's privileges. A session that reports an API key in use is refused; a
+session that fails before producing anything reruns on the tier's API chain. See
 [docs/design/claude-agent-sdk-profile.md](docs/design/claude-agent-sdk-profile.md).
 
 The Rule of Two addresses prompt injection specifically; it complements rather than replaces

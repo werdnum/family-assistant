@@ -69,6 +69,28 @@ def test_frontier_runs_fable_in_claude_code_at_high_effort(shipped: AppConfig) -
     )
 
 
+@pytest.mark.parametrize(
+    ("tier_name", "model_id"),
+    [
+        ("claude_opus_5_5", "claude-opus-5-5"),
+        ("claude_sonnet_5_5", "claude-sonnet-5-5"),
+        ("claude_fable_5_2", "claude-fable-5-2"),
+    ],
+)
+def test_claude_presets_run_in_claude_code(
+    shipped: AppConfig, tier_name: str, model_id: str
+) -> None:
+    """A conversation carrying a Claude preset forward keeps to the subscription.
+
+    These were the removed claude_agent profile's tiers, so its migrated
+    conversations still name them.
+    """
+    tier = shipped.model_tiers[tier_name]
+    model = resolve_claude_agent_model(tier_name, tier, shipped.llm_parameters)
+
+    assert (tier.runtime, model.model) == ("claude_code", model_id)
+
+
 def test_claude_code_tier_on_another_provider_is_refused() -> None:
     with pytest.raises(ValidationError, match="Anthropic"):
         ModelTierConfig(
@@ -185,7 +207,13 @@ async def test_startup_runs_the_claude_code_tiers_in_sessions(
 ) -> None:
     loop = _service(started).claude_agent_loop
 
-    assert loop is not None and set(loop.models) == {"deep", "frontier"}
+    assert loop is not None and set(loop.models) == {
+        "deep",
+        "frontier",
+        "claude_opus_5_5",
+        "claude_sonnet_5_5",
+        "claude_fable_5_2",
+    }
 
 
 @pytest.mark.asyncio

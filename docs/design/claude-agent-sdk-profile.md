@@ -23,9 +23,12 @@ replacement for anything.
 
 A model tier may name **`runtime: "claude_code"`**: a turn on that tier runs in a Claude Agent SDK
 session on the tier's primary model, with Family Assistant's own tools made available to Claude Code
-as an in-process MCP server. The shipped `deep` (Opus 5.5) and `frontier` (Fable 5.2) tiers do. The
-runtime changes who runs the loop and who pays for it, not what the turn may reach, so the profile a
-turn is on keeps its Rule of Two class.
+as an in-process MCP server. The shipped `deep` (Opus 5.5) and `frontier` (Fable 5.2) tiers do, and
+so do the Claude presets (`claude_opus_5_5`, `claude_sonnet_5_5`, `claude_fable_5_2`), so a Claude
+model a person, an experiment or a delegating model picks runs on the subscription too. The removed
+`claude_agent` profile's conversations still name those presets, and stay in Claude Code because of
+it. The runtime changes who runs the loop and who pays for it, not what the turn may reach, so the
+profile a turn is on keeps its Rule of Two class.
 
 This started as a profile, `claude_agent`, carrying `complex_tasks`' job. Running it showed that the
 profile was only ever a way to say "this model, run this way": the workflow, tool surface and
