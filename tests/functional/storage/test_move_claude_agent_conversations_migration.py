@@ -8,6 +8,7 @@ from sqlalchemy import create_engine, select
 
 from alembic import command
 from family_assistant.storage.conversation_threads import conversation_threads_table
+from family_assistant.storage.delegation_runs import delegation_runs_table
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.schedule_automations import schedule_automations_table
 from family_assistant.storage.tasks import tasks_table
@@ -41,6 +42,24 @@ def _message(conversation_id: str, profile_id: str) -> dict[str, object]:
         "role": "user",
         "content": "hello",
         "processing_profile_id": profile_id,
+    }
+
+
+def _delegation(
+    delegation_id: str, source: str, target: str, status: str
+) -> dict[str, object]:
+    return {
+        "delegation_id": delegation_id,
+        "task_id": f"task-{delegation_id}",
+        "status": status,
+        "source_profile_id": source,
+        "target_service_id": target,
+        "interface_type": "web",
+        "conversation_id": f"conv-{delegation_id}",
+        "subconversation_id": f"sub-{delegation_id}",
+        "request_text": "look into it",
+        "content_parts_json": [],
+        "created_at": _NOW,
     }
 
 
@@ -82,6 +101,16 @@ def test_moves_claude_agent_conversations_and_work(tmp_path: Path) -> None:
                         "recurrence_anchor": _NOW,
                         "created_at": _NOW,
                     }
+                ],
+            )
+            conn.execute(
+                delegation_runs_table.insert(),
+                [
+                    _delegation(
+                        "parked", "engineer", "claude_agent", "awaiting_children"
+                    ),
+                    _delegation("done-to", "engineer", "claude_agent", "completed"),
+                    _delegation("done-from", "claude_agent", "engineer", "completed"),
                 ],
             )
             conn.execute(
@@ -133,6 +162,16 @@ def test_moves_claude_agent_conversations_and_work(tmp_path: Path) -> None:
             automation_profile = conn.execute(
                 select(schedule_automations_table.c.processing_profile_id)
             ).scalar_one()
+            delegations = {
+                str(delegation_id): (str(source), str(target))
+                for delegation_id, source, target in conn.execute(
+                    select(
+                        delegation_runs_table.c.delegation_id,
+                        delegation_runs_table.c.source_profile_id,
+                        delegation_runs_table.c.target_service_id,
+                    )
+                ).all()
+            }
             task_profiles = {
                 task_id: payload["processing_profile_id"]
                 for task_id, payload in conn.execute(
@@ -143,6 +182,13 @@ def test_moves_claude_agent_conversations_and_work(tmp_path: Path) -> None:
         assert threads == {"t-claude": "default_assistant", "t-engineer": "engineer"}
         assert messages == {"t-claude": "default_assistant", "t-engineer": "engineer"}
         assert automation_profile == "default_assistant"
+        # A finished run's target records where the work ran; its source is the
+        # conversation the result is delivered to, which moved.
+        assert delegations == {
+            "parked": ("engineer", "default_assistant"),
+            "done-to": ("engineer", "claude_agent"),
+            "done-from": ("default_assistant", "engineer"),
+        }
         assert task_profiles == {
             "queued": "default_assistant",
             "finished": "claude_agent",

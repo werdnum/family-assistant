@@ -14,10 +14,12 @@ back to the default profile. History is read per profile, so either way the
 continuation would not see the earlier turns. Threads and their history rows are
 moved together. Unlike ``restamp_automation_creation``, ``message_history`` is
 rewritten here: its profile column is the partition a turn reads its history
-from, and leaving it would strand the conversation. What actually ran stays on
-record in ``claude_agent_session_turns`` and ``taint_audit``, which are left be,
-as are ``delegation_runs.source_profile_id`` (a label) and
-``history_compaction_events`` (a moved conversation is simply compacted afresh).
+from, and leaving it would strand the conversation. For the same reason
+``delegation_runs.source_profile_id`` moves: a delegation's result is delivered
+back to its source profile, so it would otherwise land outside the moved
+history. What actually ran stays on record in ``claude_agent_session_turns`` and
+``taint_audit``, which are left be, as is ``history_compaction_events`` (a moved
+conversation is simply compacted afresh).
 
 Executable work follows ``restamp_automation_creation``, for the same reason:
 profile resolution at execution is fail-loud, so automations, queued task
@@ -45,9 +47,10 @@ _PROFILE_COLUMNS = (
     ("message_history", "processing_profile_id"),
     ("event_listeners", "processing_profile_id"),
     ("schedule_automations", "processing_profile_id"),
+    ("delegation_runs", "source_profile_id"),
 )
 _LIVE_TASK_STATUSES = ("pending", "processing", "failed")
-_LIVE_DELEGATION_STATUSES = ("queued", "running")
+_LIVE_DELEGATION_STATUSES = ("queued", "running", "awaiting_children")
 _LIVE_CONFIRMATION_STATUSES = ("pending", "approved")
 
 _delegation_runs = sa.table(
