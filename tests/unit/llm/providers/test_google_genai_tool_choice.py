@@ -2,6 +2,8 @@
 
 Tests the tool_choice parameter implementation in GoogleGenAIClient, verifying
 that different tool_choice values correctly configure the FunctionCallingConfig.
+These cover the generateContent path (``use_interactions_api: false``); the
+Interactions mapping is tested in ``test_gemini_interactions.py``.
 """
 
 from collections.abc import AsyncIterator
@@ -49,7 +51,9 @@ class TestGoogleGenAIToolChoice:
     def google_client(self) -> GoogleGenAIClient:
         """Create a GoogleGenAIClient instance for testing."""
         return GoogleGenAIClient(
-            api_key="test_key_for_unit_tests", model="gemini-2.0-flash"
+            api_key="test_key_for_unit_tests",
+            model="gemini-2.0-flash",
+            use_interactions_api=False,
         )
 
     @pytest.fixture
@@ -363,7 +367,9 @@ class TestGoogleGenAIToolChoiceStreaming:
     def google_client(self) -> GoogleGenAIClient:
         """Create a GoogleGenAIClient instance for testing."""
         return GoogleGenAIClient(
-            api_key="test_key_for_unit_tests", model="gemini-2.0-flash"
+            api_key="test_key_for_unit_tests",
+            model="gemini-2.0-flash",
+            use_interactions_api=False,
         )
 
     @pytest.fixture

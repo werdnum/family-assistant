@@ -164,6 +164,7 @@ class TestComputerUseClientConfiguration:
             api_key="test_key",
             model="gemini-3.8-flash",
             enable_computer_use=False,
+            use_interactions_api=False,
         )
 
         generate = RecordingAsyncCall(text_response("Response"))

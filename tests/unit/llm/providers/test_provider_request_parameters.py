@@ -8,6 +8,7 @@ handed the SDK, which can drop or reject a parameter on its own.
 from __future__ import annotations
 
 import json
+from typing import Literal
 
 import httpx
 import pytest
@@ -32,6 +33,48 @@ _GEMINI_REPLY = {
     ],
     "usageMetadata": {"promptTokenCount": 3, "candidatesTokenCount": 1},
 }
+
+_GEMINI_INTERACTION_REPLY = {
+    "id": "interaction-1",
+    "status": "completed",
+    "model": "gemini-3.8-flash",
+    "steps": [{"type": "model_output", "content": [{"type": "text", "text": "{}"}]}],
+    "usage": {"total_input_tokens": 3, "total_output_tokens": 1, "total_tokens": 4},
+}
+
+GeminiApi = Literal["interactions", "generate_content"]
+GEMINI_APIS: tuple[GeminiApi, ...] = ("interactions", "generate_content")
+
+
+def _gemini_reply(api: GeminiApi) -> dict[str, object]:
+    return _GEMINI_INTERACTION_REPLY if api == "interactions" else _GEMINI_REPLY
+
+
+def _gemini_parameters(
+    api: GeminiApi, model_parameters: dict[str, dict[str, object]]
+) -> dict[str, dict[str, object]]:
+    """*model_parameters*, keeping the model on generateContent when asked."""
+    if api == "interactions":
+        return model_parameters
+    pinned = dict(model_parameters)
+    pinned["gemini-3.8-flash"] = {
+        **pinned.get("gemini-3.8-flash", {}),
+        "use_interactions_api": False,
+    }
+    return pinned
+
+
+def _generation(api: GeminiApi, request: dict[str, object]) -> dict[str, object]:
+    """The generation settings a Gemini request body carries."""
+    key = "generation_config" if api == "interactions" else "generationConfig"
+    generation = request.get(key, {})
+    assert isinstance(generation, dict)
+    return generation
+
+
+def _service_tier(api: GeminiApi, request: dict[str, object]) -> object:
+    return request.get("service_tier" if api == "interactions" else "serviceTier")
+
 
 _CHAT_COMPLETION_REPLY = {
     "id": "gen-1",
@@ -62,24 +105,28 @@ def _recording_transport(
 def _gemini_client(
     model_parameters: dict[str, dict[str, object]],
     requests: list[dict[str, object]],
+    api: GeminiApi = "interactions",
+    reply: dict[str, object] | None = None,
 ) -> GoogleGenAIClient:
     client = GoogleGenAIClient(
         api_key="test-key",
         model="gemini-3.8-flash",
-        model_parameters=model_parameters,
+        model_parameters=_gemini_parameters(api, model_parameters),
     )
     client.client = genai.Client(
         api_key="test-key",
         http_options=types.HttpOptions(
+            api_version="v1beta",
             httpx_async_client=httpx.AsyncClient(
-                transport=_recording_transport(_GEMINI_REPLY, requests)
-            )
+                transport=_recording_transport(reply or _gemini_reply(api), requests)
+            ),
         ),
     )
     return client
 
 
-async def test_gemini_thinking_config_reaches_the_request() -> None:
+@pytest.mark.parametrize("api", GEMINI_APIS)
+async def test_gemini_thinking_config_reaches_the_request(api: GeminiApi) -> None:
     requests: list[dict[str, object]] = []
     client = _gemini_client(
         {
@@ -88,21 +135,29 @@ async def test_gemini_thinking_config_reaches_the_request() -> None:
             }
         },
         requests,
+        api,
     )
 
     await client.generate_response([UserMessage(content="hi")])
 
-    assert requests[0]["generationConfig"]["thinkingConfig"] == {  # type: ignore[index]
-        "thinking_level": "LOW",
-        "include_thoughts": True,
-    }
+    if api == "interactions":
+        generation = _generation(api, requests[0])
+        assert generation["thinking_level"] == "low"
+        assert generation["thinking_summaries"] == "auto"
+    else:
+        assert _generation(api, requests[0])["thinkingConfig"] == {
+            "thinking_level": "LOW",
+            "include_thoughts": True,
+        }
 
 
 async def test_gemini_parameters_reach_structured_output_too() -> None:
+    """Structured output is a generateContent call whichever API chat uses."""
     requests: list[dict[str, object]] = []
     client = _gemini_client(
         {"gemini-": {"thinking_config": {"thinking_budget": 512}, "seed": 7}},
         requests,
+        "generate_content",
     )
 
     await client.generate_json([UserMessage(content="Return {}")])
@@ -112,13 +167,15 @@ async def test_gemini_parameters_reach_structured_output_too() -> None:
     assert generation_config["seed"] == 7  # type: ignore[index]
 
 
-async def test_gemini_max_tokens_is_sent_as_max_output_tokens() -> None:
+@pytest.mark.parametrize("api", GEMINI_APIS)
+async def test_gemini_max_tokens_is_sent_as_max_output_tokens(api: GeminiApi) -> None:
     requests: list[dict[str, object]] = []
-    client = _gemini_client({"gemini-": {"max_tokens": 1024}}, requests)
+    client = _gemini_client({"gemini-": {"max_tokens": 1024}}, requests, api)
 
     await client.generate_response([UserMessage(content="hi")])
 
-    assert requests[0]["generationConfig"]["maxOutputTokens"] == 1024  # type: ignore[index]
+    key = "max_output_tokens" if api == "interactions" else "maxOutputTokens"
+    assert _generation(api, requests[0])[key] == 1024
 
 
 @pytest.mark.parametrize(
@@ -165,18 +222,20 @@ def test_gemini_base_url_reaches_the_sdk_client() -> None:
     )
 
 
-async def test_gemini_versioned_base_url_is_not_versioned_twice() -> None:
+@pytest.mark.parametrize("api", GEMINI_APIS)
+async def test_gemini_versioned_base_url_is_not_versioned_twice(api: GeminiApi) -> None:
     """A legacy ``.../v1beta`` endpoint keeps the SDK from appending another."""
     urls: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         urls.append(str(request.url))
-        return httpx.Response(200, json=_GEMINI_REPLY)
+        return httpx.Response(200, json=_gemini_reply(api))
 
     client = GoogleGenAIClient(
         api_key="test-key",
         model="gemini-3.8-flash",
         base_url="https://gemini.example.test/v1beta",
+        model_parameters=_gemini_parameters(api, {}),
     )
     http_options = client.client._api_client._http_options
     http_options.httpx_async_client = httpx.AsyncClient(
@@ -186,9 +245,12 @@ async def test_gemini_versioned_base_url_is_not_versioned_twice() -> None:
 
     await client.generate_response([UserMessage(content="hi")])
 
-    assert urls[0].startswith(
-        "https://gemini.example.test/v1beta/models/gemini-3.8-flash:"
+    expected = (
+        "https://gemini.example.test/v1beta/interactions"
+        if api == "interactions"
+        else "https://gemini.example.test/v1beta/models/gemini-3.8-flash:"
     )
+    assert urls[0].startswith(expected)
 
 
 def _openai_chat_client(
@@ -271,23 +333,25 @@ def test_anthropic_base_url_reaches_the_sdk_client() -> None:
     assert "base_url" not in client.default_kwargs
 
 
-async def test_a_flex_attempt_reaches_the_gemini_request() -> None:
+@pytest.mark.parametrize("api", GEMINI_APIS)
+async def test_a_flex_attempt_reaches_the_gemini_request(api: GeminiApi) -> None:
     requests: list[dict[str, object]] = []
-    client = _gemini_client({}, requests)
+    client = _gemini_client({}, requests, api)
 
     with with_service_tier("flex"):
         await client.generate_response([UserMessage(content="hi")])
 
-    assert requests[0]["serviceTier"] == "flex"
+    assert _service_tier(api, requests[0]) == "flex"
 
 
-async def test_a_standard_gemini_request_names_no_service_tier() -> None:
+@pytest.mark.parametrize("api", GEMINI_APIS)
+async def test_a_standard_gemini_request_names_no_service_tier(api: GeminiApi) -> None:
     requests: list[dict[str, object]] = []
-    client = _gemini_client({}, requests)
+    client = _gemini_client({}, requests, api)
 
     await client.generate_response([UserMessage(content="hi")])
 
-    assert "serviceTier" not in requests[0]
+    assert _service_tier(api, requests[0]) is None
 
 
 async def test_a_flex_attempt_reaches_the_openai_compatible_request() -> None:
@@ -309,27 +373,24 @@ async def test_a_standard_openai_compatible_request_names_no_service_tier() -> N
     assert "service_tier" not in requests[0]
 
 
-async def test_the_tier_gemini_served_is_recorded_with_the_usage() -> None:
+@pytest.mark.parametrize("api", GEMINI_APIS)
+async def test_the_tier_gemini_served_is_recorded_with_the_usage(
+    api: GeminiApi,
+) -> None:
     requests: list[dict[str, object]] = []
-    client = _gemini_client({}, requests)
-    client.client = genai.Client(
-        api_key="test-key",
-        http_options=types.HttpOptions(
-            httpx_async_client=httpx.AsyncClient(
-                transport=_recording_transport(
-                    {
-                        **_GEMINI_REPLY,
-                        "usageMetadata": {
-                            "promptTokenCount": 3,
-                            "candidatesTokenCount": 1,
-                            "trafficType": "ON_DEMAND_FLEX",
-                        },
-                    },
-                    requests,
-                )
-            )
-        ),
+    reply = (
+        {**_GEMINI_INTERACTION_REPLY, "service_tier": "flex"}
+        if api == "interactions"
+        else {
+            **_GEMINI_REPLY,
+            "usageMetadata": {
+                "promptTokenCount": 3,
+                "candidatesTokenCount": 1,
+                "trafficType": "ON_DEMAND_FLEX",
+            },
+        }
     )
+    client = _gemini_client({}, requests, api, reply)
 
     output = await client.generate_response([UserMessage(content="hi")])
 
@@ -356,14 +417,15 @@ async def test_openai_default_tier_is_recorded_as_standard() -> None:
     assert output.reasoning_info.get("service_tier") == "standard"
 
 
-async def test_a_gemini_503_at_flex_is_retried_at_standard() -> None:
+@pytest.mark.parametrize("api", GEMINI_APIS)
+async def test_a_gemini_503_at_flex_is_retried_at_standard(api: GeminiApi) -> None:
     """A capacity rejection as the Gemini API sends it, not a pre-typed error."""
     requests: list[dict[str, object]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         requests.append(body)
-        if body.get("serviceTier") == "flex":
+        if _service_tier(api, body) == "flex":
             return httpx.Response(
                 503,
                 json={
@@ -374,12 +436,17 @@ async def test_a_gemini_503_at_flex_is_retried_at_standard() -> None:
                     }
                 },
             )
-        return httpx.Response(200, json=_GEMINI_REPLY)
+        return httpx.Response(200, json=_gemini_reply(api))
 
-    gemini = GoogleGenAIClient(api_key="test-key", model="gemini-3.8-flash")
+    gemini = GoogleGenAIClient(
+        api_key="test-key",
+        model="gemini-3.8-flash",
+        model_parameters=_gemini_parameters(api, {}),
+    )
     gemini.client = genai.Client(
         api_key="test-key",
         http_options=types.HttpOptions(
+            api_version="v1beta",
             httpx_async_client=httpx.AsyncClient(
                 transport=httpx.MockTransport(handler)
             ),
@@ -392,4 +459,4 @@ async def test_a_gemini_503_at_flex_is_retried_at_standard() -> None:
         output = await client.generate_response([UserMessage(content="hi")])
 
     assert output.content == "{}"
-    assert [request.get("serviceTier") for request in requests] == ["flex", None]
+    assert [_service_tier(api, request) for request in requests] == ["flex", None]
