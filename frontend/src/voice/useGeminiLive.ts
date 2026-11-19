@@ -27,6 +27,7 @@ import type {
 import { SESSION_CONFIG } from './types';
 import { useAudioCapture } from './useAudioCapture';
 import { useAudioPlayback } from './useAudioPlayback';
+import { generateConversationId } from '../utils/uuid';
 
 const GEMINI_API_HOST = 'generativelanguage.googleapis.com';
 
@@ -548,7 +549,7 @@ export function useGeminiLive(): GeminiLiveState {
         setError(null);
         setTranscripts([]);
         transcriptsRef.current = [];
-        conversationIdRef.current = `web_conv_${crypto.randomUUID()}`;
+        conversationIdRef.current = generateConversationId();
         savedConversationIdRef.current = null;
         attemptIdRef.current = crypto.randomUUID();
         const attemptId = attemptIdRef.current;

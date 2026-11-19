@@ -19,3 +19,11 @@ export function generateUUID() {
     return v.toString(16);
   });
 }
+
+/**
+ * A fresh web conversation id. Written without dashes so a double-click
+ * selects the whole id.
+ */
+export function generateConversationId() {
+  return `web_conv_${generateUUID().replace(/-/g, '')}`;
+}

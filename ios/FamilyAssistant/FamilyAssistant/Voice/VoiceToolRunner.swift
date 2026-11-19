@@ -39,7 +39,7 @@ final class VoiceToolRunner {
     let conversationID: String
     private var taintMetadata = VoiceToolRunner.initialTaintMetadata
 
-    init(executor: VoiceToolExecuting, profileID: String? = nil, conversationID: String = "web_conv_\(UUID().uuidString)") {
+    init(executor: VoiceToolExecuting, profileID: String? = nil, conversationID: String = ChatConstants.newConversationID()) {
         self.executor = executor
         self.profileID = profileID
         self.conversationID = conversationID

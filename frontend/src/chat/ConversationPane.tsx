@@ -20,7 +20,7 @@ import { Button } from '@/components/ui/button';
 import { AppTopBar } from '../shared/AppShell';
 import { getDiagnosticsUrl } from '../utils/diagnosticsUrl';
 import { parseToolArguments } from '../utils/toolUtils';
-import { generateUUID } from '../utils/uuid';
+import { generateConversationId, generateUUID } from '../utils/uuid';
 import { defaultAttachmentAdapter } from './attachmentAdapter';
 import {
   ChatControlsContext,
@@ -2318,7 +2318,7 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
     const preferredProfileId = localStorage.getItem('selectedProfileId') || profileId;
     setCurrentProfileId(preferredProfileId);
 
-    const newConvId = `web_conv_${generateUUID()}`;
+    const newConvId = generateConversationId();
     conversationIsUnsentDraftRef.current = true;
     setConversationId(newConvId);
     setMessages([]);
@@ -2513,7 +2513,7 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
       // draft: a later profile change has real context to separate from.
       conversationIsUnsentDraftRef.current = false;
 
-      const targetConversationId = conversationId || `web_conv_${generateUUID()}`;
+      const targetConversationId = conversationId || generateConversationId();
       if (!conversationId) {
         setConversationId(targetConversationId);
         onConversationChangeRef.current(targetConversationId, 'send');
