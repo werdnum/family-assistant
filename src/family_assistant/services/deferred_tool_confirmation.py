@@ -110,6 +110,49 @@ async def deliver_confirmation_to_primary_channel(
     return None
 
 
+@dataclass(frozen=True, slots=True)
+class ConfirmationDeliveryTarget:
+    """A conversation to show a deferred confirmation in, instead of the primary channel."""
+
+    interface_type: str
+    conversation_id: str
+
+
+async def deliver_confirmation_to_conversation(
+    *,
+    context: ToolExecutionContext,
+    target: ConfirmationDeliveryTarget,
+    request_id: str,
+    confirmation_prompt: str,
+) -> str | None:
+    """Show a durable request in ``target`` through its interface's confirmation UI.
+
+    Returns a warning string when it could not be shown there (the durable
+    request still exists, and its creation sent the owner a push notification),
+    or None on success.
+    """
+    managers = context.confirmation_ui_managers
+    manager = managers.get(target.interface_type) if managers is not None else None
+    if manager is None:
+        message = f"No {target.interface_type} confirmation UI is available."
+        logger.info("%s Deferred confirmation: %s", message, request_id)
+        return message
+    outcome = await manager.send_existing_confirmation_request(
+        conversation_id=target.conversation_id,
+        request_id=request_id,
+        prompt_text=confirmation_prompt,
+    )
+    if outcome.kind != "completed":
+        message = (
+            f"Could not show the confirmation in {target.interface_type} "
+            f"conversation {target.conversation_id}: "
+            f"{outcome.result or outcome.kind}."
+        )
+        logger.warning("%s Deferred confirmation: %s", message, request_id)
+        return message
+    return None
+
+
 async def create_deferred_tool_confirmation(
     *,
     context: ToolExecutionContext,
@@ -119,8 +162,13 @@ async def create_deferred_tool_confirmation(
     timeout_seconds: float,
     target_user_id: str,
     source_prefix: str,
+    delivery_target: ConfirmationDeliveryTarget | None = None,
 ) -> ConfirmationOutcome:
     """Record a durable confirmation for a confirm-gated tool and notify the user.
+
+    The request is shown in ``delivery_target`` when one is given -- the
+    conversation that is waiting on the work -- and on the owner's primary
+    channel otherwise.
 
     Returns a ``completed`` outcome whose ``result`` tells the caller the tool has
     not run yet and is awaiting approval. The policy layer surfaces this result in
@@ -177,12 +225,20 @@ async def create_deferred_tool_confirmation(
     logger.info(
         "Created durable confirmation %s for deferred tool %s", request_id, tool_name
     )
-    notification_warning = await deliver_confirmation_to_primary_channel(
-        context=context,
-        target_user_id=target_user_id,
-        request_id=request_id,
-        confirmation_prompt=confirmation_prompt,
-    )
+    if delivery_target is not None:
+        notification_warning = await deliver_confirmation_to_conversation(
+            context=context,
+            target=delivery_target,
+            request_id=request_id,
+            confirmation_prompt=confirmation_prompt,
+        )
+    else:
+        notification_warning = await deliver_confirmation_to_primary_channel(
+            context=context,
+            target_user_id=target_user_id,
+            request_id=request_id,
+            confirmation_prompt=confirmation_prompt,
+        )
     result = (
         f"Waiting on the user to approve this in Telegram or the web UI "
         f"(request {request_id}). {NOT_RUN_YET_NOTE}."
@@ -203,6 +259,7 @@ class DeferredToolConfirmationCallback:
     target_user_id: str | None
     source_prefix: str
     missing_owner_message: Callable[[str], str]
+    delivery_target: ConfirmationDeliveryTarget | None = None
 
     def is_deferred_confirmation(self) -> bool:
         """Identify this callback as non-resuming deferred confirmation."""
@@ -236,6 +293,7 @@ class DeferredToolConfirmationCallback:
             timeout_seconds=timeout_seconds,
             target_user_id=self.target_user_id,
             source_prefix=self.source_prefix,
+            delivery_target=self.delivery_target,
         )
 
 
@@ -281,6 +339,7 @@ def build_deferred_confirmation_callback(
     target_user_id: str | None,
     source_prefix: str,
     missing_owner_message: Callable[[str], str],
+    delivery_target: ConfirmationDeliveryTarget | None = None,
 ) -> RequestConfirmationCallback:
     """Build a confirmation callback that defers confirm-gated calls to durable requests.
 
@@ -290,9 +349,12 @@ def build_deferred_confirmation_callback(
     ``target_user_id`` and returns immediately; the tool runs later via the
     ``confirmation_tool_execution`` task once the user approves. When the owning user
     is unknown the tool cannot be approved and is reported as not run.
+    ``delivery_target`` shows the request in that conversation rather than on
+    the owner's primary channel.
     """
     return DeferredToolConfirmationCallback(
         target_user_id=target_user_id,
         source_prefix=source_prefix,
         missing_owner_message=missing_owner_message,
+        delivery_target=delivery_target,
     )

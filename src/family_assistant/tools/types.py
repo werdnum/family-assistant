@@ -313,6 +313,16 @@ class DeferredConfirmationCallback(RequestConfirmationCallback, Protocol):
         ...
 
 
+def is_deferred_confirmation_callback(
+    callback: RequestConfirmationCallback | None,
+) -> bool:
+    """Whether a confirmation through ``callback`` would be answered later, not in this run."""
+    return (
+        isinstance(callback, DeferredConfirmationCallback)
+        and callback.is_deferred_confirmation()
+    )
+
+
 class CalendarEvent(TypedDict):
     """Represents a calendar event with structured data."""
 

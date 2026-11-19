@@ -133,6 +133,7 @@ from family_assistant.tools.types import (
     ToolDefinition,
     ToolExecutionContext,
     ToolResult,
+    is_deferred_confirmation_callback,
 )
 from family_assistant.utils.clock import SystemClock
 
@@ -1425,7 +1426,7 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
         """Execute through the provider's central static-policy chokepoint."""
 
         async def coordinate_default_policy(
-            _descriptor: ToolDescriptor,
+            descriptor: ToolDescriptor,
             evaluation: PolicyEvaluation,
             execute_authorized: AuthorizedToolExecutor,
             effective_arguments: dict[str, object],
@@ -1433,6 +1434,7 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
         ) -> str | ToolResult:
             return await self._execute_default_policy_decision(
                 name=name,
+                descriptor=descriptor,
                 arguments=effective_arguments,
                 context=execution_context,
                 call_id=call_id,
@@ -1505,6 +1507,7 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
         self,
         *,
         name: str,
+        descriptor: ToolDescriptor,
         # ast-grep-ignore: no-dict-any - Tool arguments are dynamic JSON from LLM
         arguments: dict[str, Any],
         context: ToolExecutionContext,
@@ -1540,6 +1543,9 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
                     name,
                     f"{evaluation.reason}; confirmation required but unavailable",
                 )
+            refusal = _session_bound_deferral_refusal(name, descriptor, context)
+            if refusal is not None:
+                return ToolResult(text=refusal, attachments=None)
 
             typed_callback = context.request_confirmation_callback
             resolved_call_id = call_id or f"tool_{uuid.uuid4()}"
@@ -1815,10 +1821,27 @@ def _without_confirm(
 
 def _confirmation_is_deferred(context: ToolExecutionContext) -> bool:
     """Whether a confirmation here would be answered later, not in this run."""
-    callback = context.request_confirmation_callback
+    return is_deferred_confirmation_callback(context.request_confirmation_callback)
+
+
+def _session_bound_deferral_refusal(
+    name: str, descriptor: ToolDescriptor | None, context: ToolExecutionContext
+) -> str | None:
+    """Refuse to defer a call that acts on a live session.
+
+    A browser action names elements or coordinates on the page as it is now.
+    Executed after approval, the page has moved on or the session has closed,
+    so it would act on something nobody approved. A tool with no descriptor is
+    treated as session-bound.
+    """
+    if not _confirmation_is_deferred(context):
+        return None
+    if descriptor is not None and ToolTag.BROWSER not in descriptor.tags:
+        return None
     return (
-        isinstance(callback, DeferredConfirmationCallback)
-        and callback.is_deferred_confirmation()
+        f"{ACTION_CANCELLED_PREFIX} Tool '{name}' needs confirmation, but nobody is "
+        "here to give it now, and it acts on a live browser session, so it cannot "
+        "be queued for later approval."
     )
 
 
@@ -4557,6 +4580,14 @@ class TaintTrackingToolsProvider(ToolsProvider):
             )
         return context.taint_tracker.snapshot() != before
 
+    async def _session_bound_deferral_refusal(
+        self, name: str, context: ToolExecutionContext
+    ) -> str | None:
+        if not _confirmation_is_deferred(context):
+            return None
+        descriptor = await self._descriptor_provider.get_tool_descriptor(name)
+        return _session_bound_deferral_refusal(name, descriptor, context)
+
     async def _request_taint_confirmation(
         self,
         *,
@@ -4580,6 +4611,12 @@ class TaintTrackingToolsProvider(ToolsProvider):
             )
             return _ConfirmationGateResult(
                 result=ToolResult(text=block_reason, attachments=None),
+                action_attempted=False,
+            )
+        refusal = await self._session_bound_deferral_refusal(name, context)
+        if refusal is not None:
+            return _ConfirmationGateResult(
+                result=ToolResult(text=refusal, attachments=None),
                 action_attempted=False,
             )
 

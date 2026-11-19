@@ -39,6 +39,7 @@ from family_assistant.tools.types import (
     ToolCallReviewTurnState,
     ToolExecutionContext,
     ToolResult,
+    is_deferred_confirmation_callback,
 )
 
 from .types import (
@@ -1057,6 +1058,29 @@ class ToolExecutor:
                         call_id=call_id,
                         function_name=function_name,
                         error_content=error_content,
+                        error_traceback="",
+                        taint_metadata=initial_taint_metadata,
+                    )
+
+                # A safety decision is about an action on the live screen; run
+                # later, after the session has moved on or closed, it would act
+                # on something nobody approved.
+                if is_deferred_confirmation_callback(request_confirmation_callback):
+                    logger.info(
+                        "Refusing safety-gated tool '%s': confirmation would be deferred.",
+                        function_name,
+                    )
+                    return self._build_error_result(
+                        call_id=call_id,
+                        function_name=function_name,
+                        error_content=(
+                            f"{ACTION_CANCELLED_PREFIX} Tool '{function_name}' needs "
+                            "safety confirmation, but nobody is here to give it now, "
+                            "and the action depends on the live browser session, so "
+                            "it cannot be queued for later approval. "
+                            "Explanation: "
+                            f"{safety_decision.get('explanation', 'No explanation provided')}"
+                        ),
                         error_traceback="",
                         taint_metadata=initial_taint_metadata,
                     )

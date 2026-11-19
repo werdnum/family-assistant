@@ -92,6 +92,12 @@ running, a delegated task reporting back. If such a turn needs approval for some
 the request as a pending confirmation addressed to you, sends it to your primary channel, and
 finishes its turn. The action runs later, once you approve.
 
+A task running in the background (a browser search, a longer job the assistant handed off) works
+the same way: the approval appears in the conversation the task belongs to, the task carries on
+without waiting, and the action runs once you approve, with the result posted in that conversation.
+A step whose result the task needs before it can go on, such as an action inside a browser session,
+can't wait for you, so the task is told it was blocked and carries on without it.
+
 How long an approval stays open depends on the deployment and on which mode asked. Ordinary
 assistant confirmations expire after about an hour by default; requests raised from forwarded email
 stay open for 24 hours, since you may not be at a trusted interface when the reply lands. If a

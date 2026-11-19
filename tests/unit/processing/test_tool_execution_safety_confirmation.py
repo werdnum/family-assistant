@@ -793,22 +793,14 @@ async def test_safety_confirmation_prompts_for_a_long_type_text(
 
 
 @pytest.mark.asyncio
-async def test_safety_confirmation_deferred_pending_not_acknowledged(
+async def test_safety_confirmation_is_not_deferred(
     db_context: Database,
 ) -> None:
-    """A deferred 'completed' placeholder (tool hasn't run) must not claim consent."""
+    """A safety-gated action on the live screen is refused, not queued for later."""
     provider = MinimalToolsProvider()
     executor = make_tool_executor(provider)
-
-    pending_message = (
-        "Waiting on the user to approve this in Telegram or the web UI "
-        "(request abc123). It hasn't run yet."
-    )
     wrapped_callback = StubConfirmationCallback(
-        outcome=ConfirmationOutcome(
-            kind="completed",
-            result=pending_message,
-        )
+        outcome=ConfirmationOutcome(kind="completed", result="queued")
     )
     callback = DeferredConfirmationCallbackAdapter(wrapped_callback)
 
@@ -841,8 +833,8 @@ async def test_safety_confirmation_deferred_pending_not_acknowledged(
 
     assert isinstance(result, ToolExecutionResult)
     assert provider.executed_tool_names == []
-    assert len(wrapped_callback.calls) == 1
-    assert "hasn't run yet" in result.llm_message.content
+    assert wrapped_callback.calls == []
+    assert "cannot be queued for later approval" in result.llm_message.content
     assert "safety_acknowledgement" not in result.llm_message.content
 
 
