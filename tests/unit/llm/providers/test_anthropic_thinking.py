@@ -18,12 +18,14 @@ from family_assistant.llm.base import InvalidRequestError, LLMProviderError
 from family_assistant.llm.messages import (
     AssistantMessage,
     LLMMessage,
+    SystemMessage,
     ToolMessage,
     UserMessage,
 )
 from family_assistant.llm.providers.anthropic_client import (
     AnthropicClient,
     log_input_transformations,
+    request_binding_prefix,
 )
 from family_assistant.tools.types import ToolDefinition
 
@@ -391,10 +393,11 @@ async def test_production_stream_loop_emits_thinking_delta() -> None:
     assert [event.type for event in events] == ["thinking", "done"]
     assert events[0].content == "Checking the arithmetic"
     assert events[1].metadata is not None
-    assert events[1].metadata.get("provider_metadata") == {
-        **_thinking_metadata(),
-        "response_id": "msg_fake",
-    }
+    provider_metadata = events[1].metadata.get("provider_metadata")
+    assert isinstance(provider_metadata, dict)
+    assert provider_metadata["thinking_blocks"] == [THINKING_BLOCK]
+    assert provider_metadata["response_id"] == "msg_fake"
+    assert isinstance(provider_metadata["thinking_prefix"], str)
 
 
 _SHIPPED_THINKING_PARAMS: dict[str, dict[str, object]] = {
@@ -678,3 +681,99 @@ def test_prefix_mismatches_are_logged_as_errors(
         "prefix_binding_mismatch": "ERROR",
         "model_binding_mismatch": "INFO",
     }
+
+
+def _bound_history(
+    client: AnthropicClient,
+    *,
+    thinking_prefix: str | None,
+    system_prompt: str = "You are helpful.",
+) -> list[LLMMessage]:
+    """A two-turn history whose assistant turn carries recorded thinking."""
+    metadata = _thinking_metadata()
+    if thinking_prefix is not None:
+        metadata["thinking_prefix"] = thinking_prefix
+    return [
+        SystemMessage(content=system_prompt),
+        UserMessage(content="What is 42 times 17?"),
+        AssistantMessage(content="714.", provider_metadata=metadata),
+        UserMessage(content="And times 18?"),
+    ]
+
+
+def _first_request_prefix(client: AnthropicClient) -> str:
+    """The prefix fingerprint the first turn's response was produced against."""
+    params = client._assemble_request(
+        [
+            SystemMessage(content="You are helpful."),
+            UserMessage(content="What is 42 times 17?"),
+        ],
+        None,
+        None,
+        streaming=True,
+    )
+    return request_binding_prefix(params)
+
+
+def _replayed_block_types(params: dict[str, object]) -> list[object]:
+    messages = params["messages"]
+    assert isinstance(messages, list)
+    assistant = messages[1]
+    assert isinstance(assistant, dict)
+    content = assistant["content"]
+    assert isinstance(content, list)
+    return [block["type"] for block in content if isinstance(block, dict)]
+
+
+def test_thinking_replayed_against_its_own_prefix_is_kept(
+    client: AnthropicClient,
+) -> None:
+    """The next request extends the one that produced the thinking, so it stays.
+
+    The cache breakpoint moves between the two requests, which must not count
+    as a change of prefix.
+    """
+    history = _bound_history(client, thinking_prefix=_first_request_prefix(client))
+
+    params = client._assemble_request(history, None, None, streaming=True)
+
+    assert _replayed_block_types(params) == ["thinking", "text"]
+
+
+def test_thinking_whose_system_prompt_changed_is_dropped(
+    client: AnthropicClient,
+) -> None:
+    """A note write changes the system prompt, so the earlier thinking no longer binds."""
+    history = _bound_history(
+        client,
+        thinking_prefix=_first_request_prefix(client),
+        system_prompt="You are helpful. Remember: the dog is called Rex.",
+    )
+
+    params = client._assemble_request(history, None, None, streaming=True)
+
+    assert _replayed_block_types(params) == ["text"]
+
+
+def test_thinking_without_a_recorded_prefix_is_dropped(
+    client: AnthropicClient,
+) -> None:
+    """Thinking stored before prefixes were recorded cannot be shown to still bind."""
+    history = _bound_history(client, thinking_prefix=None)
+
+    params = client._assemble_request(history, None, None, streaming=True)
+
+    assert _replayed_block_types(params) == ["text"]
+
+
+def test_thinking_only_turn_keeps_its_thinking(client: AnthropicClient) -> None:
+    """An assistant turn cannot be sent empty, so its thinking is left for the API."""
+    history: list[LLMMessage] = [
+        UserMessage(content="What is 42 times 17?"),
+        AssistantMessage(content=None, provider_metadata=_thinking_metadata()),
+        UserMessage(content="Hello?"),
+    ]
+
+    params = client._assemble_request(history, None, None, streaming=True)
+
+    assert _replayed_block_types(params) == ["thinking"]

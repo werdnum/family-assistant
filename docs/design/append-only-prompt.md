@@ -103,14 +103,21 @@ request can be retried on a different provider, and each adapter has to render i
 - User content is always sent as a block list, so a message has one wire shape whether or not a tool
   result or steering message merges into it. One cache breakpoint at the end of the conversation
   replaces the one that had to skip back over the turn-context block.
-- Every request sends `thinking.block_binding.prefix_mismatch_behavior: "drop_block"` under the
-  `thinking-binding-controls-2026-08-01` beta, so a remaining mismatch drops the affected thinking
-  blocks instead of failing the request into its fallback. A model that thinks by default (Fable,
-  Mythos, Opus 5-series, Sonnet 5.5, Haiku 5.5) gets an explicit `{"type": "adaptive"}` when its
-  tier configures no thinking, so the field is sent there too. `input_transformations` is logged:
-  `model_binding_mismatch` is expected after a tier switch and logged at info;
-  `prefix_binding_mismatch` means some code path still edits history, and is logged as an error so
-  the reasoning `drop_block` discards does not go unnoticed.
+- Each turn's thinking blocks are stored with a fingerprint of the prefix that produced them: the
+  model, system prompt, tools and messages of that request, without `cache_control` (breakpoints
+  move on every request and are not what the model read). Before sending, the client drops every
+  replayed thinking block whose fingerprint no longer matches the prefix being sent, and logs the
+  count at info. That covers the edits this design leaves in place (see below), a note write
+  changing the system prompt, and a fallback or tier switch changing the model. Blocks stored
+  before fingerprints existed have none and are dropped once.
+- Every request also sends `thinking.block_binding.prefix_mismatch_behavior: "drop_block"` under
+  the `thinking-binding-controls-2026-08-01` beta, as a backstop, so a mismatch the fingerprint did
+  not foresee drops the block instead of failing the request into its fallback. A model that thinks
+  by default (Fable, Mythos, Opus 5-series, Sonnet 5.5, Haiku 5.5) gets an explicit
+  `{"type": "adaptive"}` when its tier configures no thinking, so the field is sent there too.
+  `input_transformations` is logged: `model_binding_mismatch` at info, and
+  `prefix_binding_mismatch` as an error, because after the client's own check it means the
+  fingerprint missed something the API binds on.
 - The `frontier` tier moves to Claude Fable 5.1. Forced tool choice was already removed from the
   client, which is the breaking change that blocked it.
 
@@ -119,8 +126,8 @@ request can be retried on a different provider, and each adapter has to render i
 These still edit history and are left for a follow-up on history management and compaction:
 
 - **The history window** drops messages from the front by count and age. Every removed message
-  changes the prefix of every later thinking block, so each slide drops the earlier thinking (via
-  `drop_block`) and misses the cache from the start of the conversation. The proper fix is
+  changes the prefix of every later thinking block, so each slide drops the earlier thinking (by
+  the fingerprint check) and misses the cache from the start of the conversation. The proper fix is
   server-side context editing or compaction rather than a client-side window.
 - **Trigger attachment metadata** is injected into the trigger message in memory and not persisted.
 - **Delegation wake triggers** are system messages, which the Anthropic adapter hoists into the
