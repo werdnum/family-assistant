@@ -180,7 +180,6 @@ from family_assistant.processing.types import ChatInteractionStatus, MidTurnUser
 from family_assistant.processing.utils import get_file_extension_from_mime_type
 from family_assistant.services.confirmation_service import ConfirmationService
 from family_assistant.services.deferred_tool_confirmation import (
-    ConfirmationDeliveryTarget,
     build_deferred_confirmation_callback,
 )
 from family_assistant.services.delegated_run_resumption import (
@@ -235,6 +234,7 @@ from family_assistant.threads.wakes import (
 from family_assistant.tools.authenticated_site_results import authenticated_site_result
 from family_assistant.tools.authenticated_sites import prepare_authenticated_run
 from family_assistant.tools.computer_use_names import COMPUTER_USE_FUNCTION_NAMES
+from family_assistant.tools.confirmation import render_tool_confirmation
 from family_assistant.tools.infrastructure import (
     TaintTrackingToolsProvider,
     find_provider_by_type,
@@ -243,7 +243,6 @@ from family_assistant.tools.stored_scripts import AUTOMATION_RUNTIME_GLOBALS
 from family_assistant.tools.types import (
     ConfirmationOutcome,
     RequestConfirmationCallback,
-    ToolArguments,
     ToolCallReviewAuthorization,
     ToolConfirmationAuthorization,
     ToolExecutionContext,
@@ -3052,8 +3051,9 @@ class TaskWorker:
     ) -> None:
         """Reject what a stopped turn left waiting for approval.
 
-        Approving one would still run the call, on behalf of a turn the user
-        stopped, so what it asked for goes with it.
+        Approving one would run nothing -- delegated confirmations are
+        decision-only -- but the prompt would sit in the user's list asking
+        about a turn that no longer exists.
         """
         user_id = run["user_id"]
         if user_id is None or not confirmation_sources:
@@ -3093,7 +3093,7 @@ class TaskWorker:
             run["interface_type"],
         )
         request_confirmation_callback = self._build_delegation_confirmation_callback(
-            run, confirmation_sources
+            exec_context, run, confirmation_sources
         )
         return await local_target.handle_chat_interaction(
             db_context=exec_context.db_context,
@@ -3106,7 +3106,7 @@ class TaskWorker:
             replied_to_interface_id=None,
             chat_interface=chat_interface,
             chat_interfaces=exec_context.chat_interfaces,
-            confirmation_ui_managers=self._confirmation_ui_managers_for(exec_context),
+            confirmation_ui_managers=exec_context.confirmation_ui_managers,
             request_confirmation_callback=request_confirmation_callback,
             subconversation_id=run["subconversation_id"],
             # A thread run's request was written into the thread when it was
@@ -3313,9 +3313,9 @@ class TaskWorker:
                 exec_context, run["interface_type"]
             ),
             chat_interfaces=exec_context.chat_interfaces,
-            confirmation_ui_managers=self._confirmation_ui_managers_for(exec_context),
+            confirmation_ui_managers=exec_context.confirmation_ui_managers,
             request_confirmation_callback=self._build_delegation_confirmation_callback(
-                run, confirmation_sources
+                exec_context, run, confirmation_sources
             ),
             trigger_attachments=trigger_attachments or None,
             subconversation_id=run["subconversation_id"],
@@ -4701,44 +4701,83 @@ class TaskWorker:
             now - _as_aware_utc(first_failed_at) > DELEGATION_NOTIFY_TRANSIENT_MAX_AGE
         )
 
-    def _confirmation_ui_managers_for(
-        self, exec_context: ToolExecutionContext
-    ) -> dict[str, ConfirmationUIManager] | None:
-        """The confirmation UIs a delegated run shows its deferred requests in."""
-        return exec_context.confirmation_ui_managers or self.confirmation_ui_managers
-
-    @staticmethod
     def _build_delegation_confirmation_callback(
+        self,
+        exec_context: ToolExecutionContext,
         run: DelegationRunDict,
         confirmation_sources: set[int],
-    ) -> RequestConfirmationCallback:
-        """Build the confirmation callback for a delegated profile background run.
-
-        Nobody is waiting on a delegated run to answer a prompt, so a
-        confirm-gated call is deferred, as an email action's is: a durable
-        request addressed to the run's owner, shown in the run's conversation,
-        that runs the call once approved while the run carries on. A run with
-        no owner, or a call whose result the run would need, fails closed.
+    ) -> RequestConfirmationCallback | None:
+        """Build a confirmation callback for a delegated profile background run.
 
         Each confirmation's source message is added to ``confirmation_sources``,
         which is how a stopped turn finds the requests it left pending.
         """
-        deferred = build_deferred_confirmation_callback(
-            target_user_id=run["user_id"],
-            source_prefix="From a background task — approve to run:",
-            missing_owner_message=lambda tool_name: (
-                "This background task has no recorded owner, so the "
-                f"confirm-gated tool '{tool_name}' cannot be approved and "
-                "was not run."
-            ),
-            delivery_target=ConfirmationDeliveryTarget(
-                interface_type=run["interface_type"],
+        confirmation_ui_managers = (
+            exec_context.confirmation_ui_managers or self.confirmation_ui_managers
+        )
+        if confirmation_ui_managers is None:
+            return None
+
+        confirmation_manager = confirmation_ui_managers.get(run["interface_type"])
+        if confirmation_manager is None:
+            logger.info(
+                "Delegation run %s has no confirmation manager for interface %s.",
+                run["delegation_id"],
+                run["interface_type"],
+            )
+            return None
+
+        async def request_confirmation(
+            interface_type: str,
+            conversation_id: str,
+            turn_id: str | None,
+            tool_name: str,
+            call_id: str,
+            # ast-grep-ignore: no-dict-any - confirmation callback protocol carries arbitrary tool arguments
+            tool_args: dict[str, Any],
+            timeout_seconds: float,
+            context: ToolExecutionContext,
+        ) -> ConfirmationOutcome:
+            _ = interface_type
+            _ = conversation_id
+            prompt_text = await render_tool_confirmation(tool_name, tool_args, context)
+
+            display_turn_id = run["source_turn_id"] or turn_id
+            execution_turn_id = turn_id
+            source_message_internal_id = None
+            if execution_turn_id is not None:
+                source_row = (
+                    await context.db_context.message_history.get_user_row_by_turn_id(
+                        execution_turn_id
+                    )
+                )
+                if source_row is not None:
+                    source_message_internal_id = source_row["internal_id"]
+                    confirmation_sources.add(source_message_internal_id)
+
+            taint_state_json = (
+                context.taint_tracker.snapshot().to_metadata()
+                if context.taint_tracker is not None
+                else None
+            )
+            return await confirmation_manager.request_confirmation(
                 conversation_id=run["conversation_id"],
-            ),
-        )
-        return _SourceTrackingDeferredConfirmation(
-            deferred=deferred, sources=confirmation_sources
-        )
+                interface_type=run["interface_type"],
+                turn_id=display_turn_id,
+                prompt_text=prompt_text,
+                tool_name=tool_name,
+                tool_args=tool_args,
+                timeout=timeout_seconds,
+                target_user_id=run["user_id"],
+                tool_call_id=call_id,
+                source_message_internal_id=source_message_internal_id,
+                wait_for_durable_execution=False,
+                taint_state_json=taint_state_json,
+                processing_profile_id=context.processing_profile_id,
+                tool_call_review_authorization=context.tool_call_review_authorization,
+            )
+
+        return request_confirmation
 
     async def _fail_delegation_run(
         self,
@@ -7927,53 +7966,6 @@ def _resolve_execution_service(
         )
 
     return cast("ProcessingService", candidate)
-
-
-@dataclass(frozen=True, slots=True)
-class _SourceTrackingDeferredConfirmation:
-    """A deferred confirmation that records each request's source message.
-
-    A delegated turn that is stopped withdraws what it left pending, and finds
-    those requests by their source messages.
-    """
-
-    deferred: RequestConfirmationCallback
-    sources: set[int]
-
-    def is_deferred_confirmation(self) -> bool:
-        """Approval runs the call later; it does not resume this turn."""
-        return True
-
-    async def __call__(
-        self,
-        interface_type: str,
-        conversation_id: str,
-        turn_id: str | None,
-        tool_name: str,
-        call_id: str,
-        tool_args: ToolArguments,
-        timeout_seconds: float,
-        context: ToolExecutionContext,
-    ) -> ConfirmationOutcome:
-        """Note the turn's source message, then defer the call."""
-        if turn_id is not None:
-            source_row = (
-                await context.db_context.message_history.get_user_row_by_turn_id(
-                    turn_id
-                )
-            )
-            if source_row is not None:
-                self.sources.add(source_row["internal_id"])
-        return await self.deferred(
-            interface_type,
-            conversation_id,
-            turn_id,
-            tool_name,
-            call_id,
-            tool_args,
-            timeout_seconds,
-            context,
-        )
 
 
 def build_script_confirmation_callback(

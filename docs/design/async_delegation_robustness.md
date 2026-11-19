@@ -180,11 +180,8 @@ robustness pass:
   in a separate PR (the multi-task-worker pool); the existing durable confirmation flow is
   unchanged. The reaper threshold (`DELEGATION_RUN_STALE_SECONDS`) remains well above the handler
   timeout plus retry backoff so it never reaps a legitimately-running run. A fully non-blocking
-  fire-and-forget confirmation (the email-intake pattern, returning "pending" immediately) is what
-  delegated runs now use: a confirm-gated call becomes a durable request addressed to the run's
-  owner, shown in the run's conversation, so nothing parks on it. A call whose result the run would
-  need (not `deferred_confirmation_eligible`) is refused, and tool-call review cannot answer it with
-  `confirm`; a run with no owner fails closed.
+  fire-and-forget confirmation (the email-intake pattern, returning "pending" immediately) remains a
+  future option that removes worker parking entirely.
 - **Only `telegram` and `web` have confirmation managers.**
   `_build_delegation_confirmation_callback` returns `None` for any interface without a registered
   `ConfirmationUIManager`, so a delegated run on `a2a`/`asterisk` cannot run confirmation-gated

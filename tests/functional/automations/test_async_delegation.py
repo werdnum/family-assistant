@@ -87,7 +87,6 @@ from family_assistant.tools.services import (
 )
 from family_assistant.tools.types import (
     ConfirmationOutcome,
-    DeferredConfirmationCallback,
     ToolCallReviewAuthorization,
     ToolExecutionContext,
 )
@@ -151,20 +150,11 @@ class FakeConfirmationRequest(TypedDict):
     wait_for_durable_execution: bool
 
 
-class FakeConfirmationDelivery(TypedDict):
-    """An existing durable confirmation shown by the fake UI manager."""
-
-    conversation_id: str
-    request_id: str
-    prompt_text: str
-
-
 class FakeConfirmationUIManager:
     """Confirmation manager that records and approves delegated confirmations."""
 
     def __init__(self) -> None:
         self.requests: list[FakeConfirmationRequest] = []
-        self.deliveries: list[FakeConfirmationDelivery] = []
 
     async def request_confirmation(
         self,
@@ -212,13 +202,9 @@ class FakeConfirmationUIManager:
         request_id: str,
         prompt_text: str,
     ) -> ConfirmationOutcome:
-        self.deliveries.append(
-            FakeConfirmationDelivery(
-                conversation_id=conversation_id,
-                request_id=request_id,
-                prompt_text=prompt_text,
-            )
-        )
+        _ = conversation_id
+        _ = request_id
+        _ = prompt_text
         return ConfirmationOutcome(kind="completed")
 
 
@@ -246,7 +232,6 @@ class FakeDelegatableService:
         self.attachment_registry = attachment_registry
         self.text_reply = text_reply
         self.calls: list[FakeDelegationCall] = []
-        self.confirmation_outcome: ConfirmationOutcome | None = None
         self.routes_to = routes_to
         """What this target's Auto decides, if it routes at all."""
         # ast-grep-ignore: no-dict-any - records the routing keyword surface verbatim
@@ -304,7 +289,7 @@ class FakeDelegatableService:
                 timeout_seconds=42.0,
                 context=callback_context,
             )
-            self.confirmation_outcome = outcome
+            assert outcome.kind == "approved"
         attachment_ids: list[str] | None = None
         if self.attachment_registry is not None:
             attachment = (
@@ -767,30 +752,27 @@ async def test_delegate_to_service_background_reference_and_completion_notificat
         originating_request="delegate this",
         originating_request_taint_metadata=TurnTaintState.empty().to_metadata(),
     )
-    # Nobody is waiting on a background run to answer, so the call is deferred
-    # to the owner rather than holding the run until it times out.
-    assert target_service.confirmation_outcome is not None
-    assert target_service.confirmation_outcome.kind == "completed"
-    assert target_service.confirmation_outcome.action_attempted is False
-    assert confirmation_manager.requests == []
-    assert len(confirmation_manager.deliveries) == 1
-    delivery = confirmation_manager.deliveries[0]
-    assert delivery["conversation_id"] == TEST_CONVERSATION_ID
-    confirmation_request = await Database(engine=db_engine).confirmation_requests.get(
-        delivery["request_id"]
-    )
-    assert confirmation_request is not None
-    assert confirmation_request["status"] == "pending"
-    assert confirmation_request["target_user_id"] == "async-delegation-user"
-    assert confirmation_request["tool_name"] == "confirmable_delegated_tool"
-    assert confirmation_request["tool_args_json"] == {"action": "write"}
-    assert confirmation_request["origin_conversation_id"] == TEST_CONVERSATION_ID
-    assert delivery["prompt_text"] == confirmation_request["confirmation_prompt"]
-    assert delivery["prompt_text"].endswith(
-        render_generic_tool_confirmation(
-            "confirmable_delegated_tool", {"action": "write"}
+    assert len(confirmation_manager.requests) == 1
+    confirmation_request = confirmation_manager.requests[0]
+    assert confirmation_manager.requests == [
+        FakeConfirmationRequest(
+            conversation_id=TEST_CONVERSATION_ID,
+            interface_type=TEST_INTERFACE_TYPE,
+            turn_id="turn_async_delegation",
+            prompt_text=render_generic_tool_confirmation(
+                "confirmable_delegated_tool", {"action": "write"}
+            ),
+            tool_name="confirmable_delegated_tool",
+            tool_args={"action": "write"},
+            timeout=42.0,
+            target_user_id="async-delegation-user",
+            tool_call_id="confirmable_call_1",
+            source_message_internal_id=confirmation_request[
+                "source_message_internal_id"
+            ],
+            wait_for_durable_execution=False,
         )
-    )
+    ]
     delegated_source_message_internal_id = confirmation_request[
         "source_message_internal_id"
     ]
@@ -3330,7 +3312,7 @@ async def test_mark_handed_off_is_refused_once_terminal(
 
 @pytest.mark.asyncio
 async def test_web_delegation_can_request_confirmation(db_engine: AsyncEngine) -> None:
-    """A web delegation's confirmation is shown in its web conversation."""
+    """A web-interface delegation gets a confirmation callback from the web manager (C7)."""
     target_service = FakeDelegatableService(request_confirmation=True)
     processing_service = _source_processing_service(target_service)
     confirmation_manager = FakeConfirmationUIManager()
@@ -3366,22 +3348,10 @@ async def test_web_delegation_can_request_confirmation(db_engine: AsyncEngine) -
     )
 
     assert len(target_service.calls) == 1
-    callback = target_service.calls[0]["request_confirmation_callback"]
-    # Deferred, so a call whose result the run needs is refused rather than
-    # queued, and tool-call review cannot answer such a call with confirm.
-    assert isinstance(callback, DeferredConfirmationCallback)
-    assert callback.is_deferred_confirmation()
-    assert target_service.confirmation_outcome is not None
-    assert target_service.confirmation_outcome.kind == "completed"
-    assert [d["conversation_id"] for d in confirmation_manager.deliveries] == [
-        TEST_CONVERSATION_ID
-    ]
-    request = await Database(engine=db_engine).confirmation_requests.get(
-        confirmation_manager.deliveries[0]["request_id"]
-    )
-    assert request is not None
-    assert request["origin_interface_type"] == "web"
-    assert request["tool_name"] == "confirmable_delegated_tool"
+    assert target_service.calls[0]["request_confirmation_callback"] is not None
+    assert len(confirmation_manager.requests) == 1
+    assert confirmation_manager.requests[0]["interface_type"] == "web"
+    assert confirmation_manager.requests[0]["tool_name"] == "confirmable_delegated_tool"
 
 
 class FakeConfirmingWakeSourceService:
