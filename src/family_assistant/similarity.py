@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import difflib
+import functools
 import logging
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import numpy as np
@@ -27,16 +29,14 @@ logger = logging.getLogger(__name__)
 class SimilarityStrategy(Protocol):
     """Protocol for computing similarity between calendar event titles."""
 
-    async def compute_similarity(self, title1: str, title2: str) -> float:
-        """
-        Compute similarity score between two event titles.
+    async def compute_similarities(
+        self, query: str, titles: Sequence[str]
+    ) -> list[float]:
+        """Similarity of *query* to each of *titles*, in order.
 
-        Args:
-            title1: First event title
-            title2: Second event title
-
-        Returns:
-            float: Similarity score between 0.0 (completely different) and 1.0 (identical)
+        Scores run from 0.0 (completely different) to 1.0 (identical). One
+        call scores a whole batch, so an implementation backed by a model can
+        encode everything at once.
         """
         ...
 
@@ -53,17 +53,14 @@ class FuzzySimilarityStrategy:
     Performance: ~0.03ms per comparison, F1=0.843 at threshold 0.30
     """
 
-    async def compute_similarity(self, title1: str, title2: str) -> float:
-        """Compute fuzzy string similarity using difflib.
-
-        Args:
-            title1: First event title
-            title2: Second event title
-
-        Returns:
-            float: Similarity ratio between 0.0 and 1.0
-        """
-        return difflib.SequenceMatcher(None, title1.lower(), title2.lower()).ratio()
+    async def compute_similarities(
+        self, query: str, titles: Sequence[str]
+    ) -> list[float]:
+        query_lower = query.lower()
+        return [
+            difflib.SequenceMatcher(None, query_lower, title.lower()).ratio()
+            for title in titles
+        ]
 
     @property
     def name(self) -> str:
@@ -119,35 +116,40 @@ class EmbeddingSimilarityStrategy:
         self.model: SentenceTransformer = SentenceTransformer(model_name, device=device)
         logger.info(f"Model {model_name} loaded successfully")
 
-    async def compute_similarity(self, title1: str, title2: str) -> float:
-        """Compute semantic similarity using embeddings.
-
-        Args:
-            title1: First event title
-            title2: Second event title
-
-        Returns:
-            float: Cosine similarity between embeddings (0.0 to 1.0)
-        """
-        # Run embedding generation in executor to avoid blocking
+    async def compute_similarities(
+        self, query: str, titles: Sequence[str]
+    ) -> list[float]:
+        """Cosine similarity of *query* to each title, from one batched encode."""
+        if not titles:
+            return []
         loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._score_batch, query, titles)
 
-        emb1 = await loop.run_in_executor(None, self.model.encode, title1)
-        emb2 = await loop.run_in_executor(None, self.model.encode, title2)
-
-        # Compute cosine similarity
-        dot_product = np.dot(emb1, emb2)
-        norm1 = np.linalg.norm(emb1)
-        norm2 = np.linalg.norm(emb2)
-
-        if norm1 == 0 or norm2 == 0:
-            return 0.0
-
-        return float(dot_product / (norm1 * norm2))
+    def _score_batch(self, query: str, titles: Sequence[str]) -> list[float]:
+        embeddings = np.asarray(self.model.encode([query, *titles]))
+        query_embedding, title_embeddings = embeddings[0], embeddings[1:]
+        norms = np.linalg.norm(title_embeddings, axis=1) * np.linalg.norm(
+            query_embedding
+        )
+        dots = title_embeddings @ query_embedding
+        scores = np.divide(dots, norms, out=np.zeros_like(dots), where=norms != 0)
+        return [float(score) for score in scores]
 
     @property
     def name(self) -> str:
         return f"embedding ({self.model_name})"
+
+
+@functools.lru_cache(maxsize=4)
+def load_embedding_strategy(
+    model_name: str, device: str
+) -> EmbeddingSimilarityStrategy:
+    """The process-wide strategy for *model_name* on *device*.
+
+    Loading a sentence-transformer takes seconds and the loaded model is
+    read-only, so every search and duplicate check shares one instance.
+    """
+    return EmbeddingSimilarityStrategy(model_name=model_name, device=device)
 
 
 def create_similarity_strategy(
@@ -174,7 +176,7 @@ def create_similarity_strategy(
         return FuzzySimilarityStrategy()
     elif strategy_type == "embedding":
         logger.info(f"Using embedding similarity strategy with model: {model_name}")
-        return EmbeddingSimilarityStrategy(model_name=model_name, device=device)
+        return load_embedding_strategy(model_name, device)
     else:
         raise ValueError(
             f"Unknown similarity strategy: {strategy_type}. "
@@ -227,7 +229,7 @@ def create_similarity_strategy_from_config(
             embedding_config.get("model", "sentence-transformers/all-MiniLM-L6-v2")
         )
         device = str(embedding_config.get("device", "cpu"))
-        return EmbeddingSimilarityStrategy(model_name=model_name, device=device)
+        return load_embedding_strategy(model_name, device)
     else:
         logger.warning(
             f"Unknown similarity strategy '{strategy_type}', falling back to fuzzy"

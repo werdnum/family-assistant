@@ -1472,7 +1472,7 @@ typesafe:
   relevance_mode: "shadow" # off | shadow | active
   relevance_threshold: 0.5
   calendar_duplicates: { mode: "shadow", threshold: 0.6, timeout_seconds: 1.0 }
-  calendar_search: { mode: "shadow", threshold: 0.5, timeout_seconds: 1.0 }
+  calendar_search: { mode: "active", threshold: 0.5, timeout_seconds: 1.0 }
   document_search: { mode: "shadow", threshold: 0.5, timeout_seconds: 2.5 }
   continue_selection: { mode: "active", threshold: 0.5, timeout_seconds: 2.0 }
   camera_frames: { mode: "active", threshold: 0.5, timeout_seconds: 10.0 }
@@ -1498,10 +1498,10 @@ typesafe:
   with `search_text`. The closest events by title similarity (up to 30 for a duplicate check, 90 for
   a search) each get one yes/no question — "the same occurrence as the new event?" or "what the
   search is looking for?" — and those at or above `threshold` are kept, most probable first.
-  `active` uses that set and shows Jev's probability as the result's `match` score; `shadow`
-  (shipped) keeps the similarity filter and logs what Jev would have kept (one
-  `Jev <surface> filter` line per call, plus `family_assistant_jev_filter_decisions`); `off` never
-  asks. A timeout or error falls back to the similarity filter. The duplicate threshold sits above
+  `active` (shipped for `calendar_search`) uses that set and shows Jev's probability as the result's
+  `match` score; `shadow` (shipped for `calendar_duplicates`) keeps the similarity filter and logs
+  what Jev would have kept (one `Jev <surface> filter` line per call, plus
+  `family_assistant_jev_filter_decisions`); `off` never asks. A timeout or error falls back to the similarity filter. The duplicate threshold sits above
   an even chance because a match blocks the write until the model retries with
   `bypass_duplicate_check`. Sends event titles and calendar names to TypeSafe.
 - **Document search.** With `document_search` not `off`, `search_documents` retrieves 30 candidates
