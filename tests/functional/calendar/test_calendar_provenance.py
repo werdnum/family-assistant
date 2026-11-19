@@ -13,6 +13,12 @@ import pytest
 from caldav.davclient import DAVClient
 
 from family_assistant.caldav_sync import sync_result
+from family_assistant.config_models import (
+    AppConfig,
+    EmailIntakeIdentityConfig,
+    OIDCUserIdentityConfig,
+    UserIdentityConfig,
+)
 from family_assistant.security.taint import (
     InMemoryTurnTaintTracker,
     SourceTrustTier,
@@ -27,16 +33,39 @@ from family_assistant.tools.calendar import (
 )
 from family_assistant.tools.calendar_provenance import (
     CALDAV_PROVENANCE_PROPERTY,
+    google_event_participants,
     grade_calendar_events,
     record_event_write,
 )
 from family_assistant.tools.types import CalendarConfig, ToolExecutionContext
+from tests.mocks.idle_processing_service import make_idle_processing_service
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
 
-def _context(db: Database, tracker: InMemoryTurnTaintTracker) -> ToolExecutionContext:
+_HOUSEHOLD_CONFIG = AppConfig(
+    users=[
+        UserIdentityConfig(
+            id="member-1",
+            oidc=OIDCUserIdentityConfig(emails={"member@family.test"}),
+        ),
+        UserIdentityConfig(
+            id="member-2",
+            email_intake=EmailIntakeIdentityConfig(
+                sender_addresses={"partner@family.test"}
+            ),
+        ),
+    ]
+)
+
+
+def _context(
+    db: Database,
+    tracker: InMemoryTurnTaintTracker,
+    *,
+    app_config: AppConfig | None = None,
+) -> ToolExecutionContext:
     return ToolExecutionContext(
         interface_type="web",
         conversation_id="calendar-provenance-test",
@@ -44,7 +73,11 @@ def _context(db: Database, tracker: InMemoryTurnTaintTracker) -> ToolExecutionCo
         user_id="member-1",
         turn_id="calendar-provenance-turn",
         db_context=db,
-        processing_service=None,
+        processing_service=(
+            make_idle_processing_service(app_config=app_config)
+            if app_config is not None
+            else None
+        ),
         clock=None,
         plugins=None,
         event_sources=None,
@@ -57,9 +90,14 @@ def _context(db: Database, tracker: InMemoryTurnTaintTracker) -> ToolExecutionCo
 
 
 def _event(
-    *, marker: str | None, version: str | None, user_vetted: bool
+    *,
+    marker: str | None,
+    version: str | None,
+    user_vetted: bool,
+    household_participants: list[str] | None = None,
 ) -> CalendarSearchResult:
     return {
+        "household_participants": household_participants,
         "summary": "Appointment",
         "uid": "event-1",
         "start": "2026-10-01 10:00 UTC",
@@ -284,3 +322,171 @@ async def test_mixed_household_and_subscribed_calendar_grades_returned_events(
     assert "Family dinner" in mixed_result
     assert "School notice" in mixed_result
     assert mixed_tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("participants", "expected"),
+    [
+        (["member@family.test", "partner@family.test"], SourceTrustTier.TRUSTED_USER),
+        (["partner@family.test"], SourceTrustTier.TRUSTED_USER),
+        (
+            ["outsider@else.test", "member@family.test"],
+            SourceTrustTier.UNKNOWN_EXTERNAL,
+        ),
+        (
+            ["member@family.test", "outsider@else.test"],
+            SourceTrustTier.UNKNOWN_EXTERNAL,
+        ),
+        ([], SourceTrustTier.UNKNOWN_EXTERNAL),
+        (None, SourceTrustTier.UNKNOWN_EXTERNAL),
+    ],
+)
+async def test_event_with_only_household_participants_is_trusted(
+    db_engine: AsyncEngine,
+    participants: list[str] | None,
+    expected: SourceTrustTier,
+) -> None:
+    tracker = InMemoryTurnTaintTracker()
+    await grade_calendar_events(
+        _context(Database(db_engine), tracker, app_config=_HOUSEHOLD_CONFIG),
+        [
+            _event(
+                marker=None,
+                version="v1",
+                user_vetted=False,
+                household_participants=participants,
+            )
+        ],
+    )
+    assert tracker.snapshot().max_tier is expected
+
+
+@pytest.mark.asyncio
+async def test_household_participants_do_not_override_a_changed_or_missing_stamp(
+    db_engine: AsyncEngine,
+) -> None:
+    db = Database(db_engine)
+    await record_event_write(
+        _context(db, InMemoryTurnTaintTracker()),
+        marker="marker-1",
+        source_key="google:primary",
+        event_uid="event-1",
+        event_version="v1",
+    )
+    household = ["partner@family.test"]
+    for marker, version in (("marker-1", "v2"), ("missing", "v1"), (None, "v2")):
+        tracker = InMemoryTurnTaintTracker()
+        await grade_calendar_events(
+            _context(db, tracker, app_config=_HOUSEHOLD_CONFIG),
+            [
+                _event(
+                    marker=marker,
+                    version=version,
+                    user_vetted=False,
+                    household_participants=household,
+                )
+            ],
+        )
+        assert tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+
+
+@pytest.mark.asyncio
+async def test_household_participants_need_configured_household(
+    db_engine: AsyncEngine,
+) -> None:
+    tracker = InMemoryTurnTaintTracker()
+    await grade_calendar_events(
+        _context(Database(db_engine), tracker),
+        [
+            _event(
+                marker=None,
+                version="v1",
+                user_vetted=False,
+                household_participants=["partner@family.test"],
+            )
+        ],
+    )
+    assert tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+
+
+def test_google_event_participants() -> None:
+    organized_by_partner: dict[str, object] = {
+        "organizer": {"email": "Partner@Family.test"},
+        "attendees": [
+            {"email": "me@gmail.test", "self": True},
+            {"email": "partner@family.test", "organizer": True},
+        ],
+    }
+    assert google_event_participants(organized_by_partner) == [
+        "partner@family.test",
+        "partner@family.test",
+    ]
+    assert (
+        google_event_participants({**organized_by_partner, "eventType": "fromGmail"})
+        is None
+    )
+    assert (
+        google_event_participants({
+            "organizer": {"email": "partner@family.test"},
+            "attendees": [{"displayName": "No address"}],
+        })
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_caldav_event_grades_by_organizer_and_attendees(
+    db_engine: AsyncEngine,
+    radicale_server: tuple[str, str, str, str],
+) -> None:
+    base_url, username, password, calendar_url = radicale_server
+    config: CalendarConfig = {
+        "caldav": {
+            "base_url": base_url,
+            "username": username,
+            "password": password,
+            "calendar_urls": [calendar_url],
+        }
+    }
+    db = Database(db_engine)
+    start = datetime.now(UTC) + timedelta(days=1)
+
+    def add_event(uid: str, organizer: str, attendees: list[str]) -> None:
+        with DAVClient(url=base_url, username=username, password=password) as client:
+            client.calendar(url=calendar_url).add_event(
+                "\r\n".join([
+                    "BEGIN:VCALENDAR",
+                    "VERSION:2.0",
+                    "BEGIN:VEVENT",
+                    f"UID:{uid}",
+                    f"SUMMARY:{uid}",
+                    f"DTSTART:{start.strftime('%Y%m%dT%H%M%SZ')}",
+                    f"DTEND:{(start + timedelta(hours=1)).strftime('%Y%m%dT%H%M%SZ')}",
+                    f"ORGANIZER:mailto:{organizer}",
+                    *(f"ATTENDEE:mailto:{attendee}" for attendee in attendees),
+                    "END:VEVENT",
+                    "END:VCALENDAR",
+                    "",
+                ])
+            )
+
+    add_event("family-dinner", "member@family.test", ["PARTNER@family.test"])
+    household_tracker = InMemoryTurnTaintTracker()
+    result = await search_calendar_events_tool(
+        _context(db, household_tracker, app_config=_HOUSEHOLD_CONFIG),
+        config,
+        start_date=start.date().isoformat(),
+    )
+    assert "family-dinner" in result
+    assert household_tracker.snapshot().max_tier is SourceTrustTier.TRUSTED_USER
+
+    add_event("outside-invite", "outsider@else.test", ["member@family.test"])
+    outside_tracker = InMemoryTurnTaintTracker()
+    result = await search_calendar_events_tool(
+        _context(db, outside_tracker, app_config=_HOUSEHOLD_CONFIG),
+        config,
+        start_date=start.date().isoformat(),
+    )
+    assert "outside-invite" in result
+    assert outside_tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL

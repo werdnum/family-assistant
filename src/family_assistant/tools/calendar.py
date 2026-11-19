@@ -60,7 +60,9 @@ from family_assistant.similarity import create_similarity_strategy_from_config
 from family_assistant.tools.calendar_provenance import (
     CALDAV_PROVENANCE_PROPERTY,
     PROVENANCE_PROPERTY,
+    caldav_event_participants,
     google_event_marker,
+    google_event_participants,
     grade_calendar_events,
     is_household_authored_google_event,
     new_event_marker,
@@ -101,6 +103,12 @@ class CalendarSearchResult(TypedDict):
     provenance_marker: NotRequired[str | None]
     event_version: NotRequired[str | None]
     user_vetted: NotRequired[bool]
+    household_participants: NotRequired[list[str] | None]
+    """Organizer and attendee addresses of an event on an owned calendar.
+
+    Grading trusts the event when every one is a household member. ``None``
+    when the calendar is not owned or a participant cannot be matched.
+    """
 
 
 # The calendar tools reach a user's Google calendars when the deployment requests
@@ -312,6 +320,11 @@ def _parse_caldav_event_component(
         "event_version": _caldav_event_version(event),
         "user_vetted": (
             src.owned and not vevent.get("organizer") and not vevent.get("attendee")
+        ),
+        "household_participants": (
+            caldav_event_participants(vevent.get("organizer"), vevent.get("attendee"))
+            if src.owned
+            else None
         ),
     }
 
@@ -557,6 +570,9 @@ async def _search_google_sources(
                 else None,
                 "user_vetted": source.owned
                 and is_household_authored_google_event(item),
+                "household_participants": (
+                    google_event_participants(item) if source.owned else None
+                ),
             })
     return events
 
@@ -652,8 +668,8 @@ async def check_for_duplicate_events(
         similarity_threshold = dup_detection.get("similarity_threshold", 0.30)
 
         try:
-            similarity_strategy = create_similarity_strategy_from_config(
-                calendar_config
+            similarity_strategy = await asyncio.to_thread(
+                create_similarity_strategy_from_config, calendar_config
             )
         except Exception as e:
             logger.warning(
@@ -1535,7 +1551,9 @@ async def _filter_events_by_similarity(
     similarity_threshold = dup_detection.get("similarity_threshold", 0.30)
 
     try:
-        similarity_strategy = create_similarity_strategy_from_config(calendar_config)
+        similarity_strategy = await asyncio.to_thread(
+            create_similarity_strategy_from_config, calendar_config
+        )
         logger.info(
             f"Using similarity strategy: {similarity_strategy.name} with threshold {similarity_threshold}"
         )
@@ -1549,6 +1567,11 @@ async def _filter_events_by_similarity(
         return filtered, similarity_threshold
 
     scored = await _score_by_similarity(similarity_strategy, search_text, events)
+    # Title similarity scores a one-word query about as close to any short
+    # title as to one containing it, so literal matches go first; that also
+    # keeps them among the candidates Jev sees.
+    needle = search_text.lower()
+    scored.sort(key=lambda event: needle not in event["summary"].lower())
     matching = [
         event
         for event in scored
@@ -1574,12 +1597,13 @@ async def _score_by_similarity(
     strategy: SimilarityStrategy, text: str, events: list[CalendarSearchResult]
 ) -> list[CalendarSearchResult]:
     """Copies of *events* carrying their similarity to *text*, most similar first."""
+    similarities = await strategy.compute_similarities(
+        text, [event["summary"] for event in events]
+    )
     scored: list[CalendarSearchResult] = []
-    for event in events:
+    for event, similarity in zip(events, similarities, strict=True):
         event_with_sim: CalendarSearchResult = dict(event)  # type: ignore[assignment]
-        event_with_sim["similarity"] = await strategy.compute_similarity(
-            text, event["summary"]
-        )
+        event_with_sim["similarity"] = similarity
         scored.append(event_with_sim)
     scored.sort(key=lambda e: e.get("similarity") or 0.0, reverse=True)
     return scored

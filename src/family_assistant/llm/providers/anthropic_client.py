@@ -3,6 +3,7 @@ Direct Anthropic API implementation for LLM interactions.
 """
 
 import base64
+import hashlib
 import json
 import logging
 import os
@@ -153,6 +154,20 @@ _NON_STREAMING_MAX_TOKENS = 16_000
 # conversation prefix no longer matches the one that produced it.
 _THINKING_BINDING_BETA = "thinking-binding-controls-2026-08-01"
 
+# Models that run the thinking-binding check and think adaptively when a
+# request carries no `thinking` object, by id prefix. A request to one of them
+# with no thinking configured still replays bound thinking blocks, so it is
+# sent `{"type": "adaptive"}` -- equivalent to omitting it on these models --
+# to give `block_binding` somewhere to live. Opus 4.8 and older run without
+# thinking when it is omitted, so an explicit adaptive would change them.
+_DEFAULT_THINKING_BINDING_MODELS = (
+    "claude-fable-5",
+    "claude-mythos-5",
+    "claude-opus-5",
+    "claude-sonnet-5-5",
+    "claude-haiku-5-5",
+)
+
 # Declares on-demand tools with `defer_loading` and surfaces each with a
 # `tool_addition` block in an appended system message, so activating one never
 # changes the `tools` array.
@@ -214,12 +229,12 @@ def _add_beta_header(
 def log_input_transformations(message: object) -> None:
     """Log what the API did to replayed thinking blocks before running a request.
 
-    ``model_binding_mismatch`` is expected when a conversation moves between
-    models (a tier switch, a fallback). ``prefix_binding_mismatch`` means the
-    history sent differs from the one the block was produced against -- the
-    history window slid, the system prompt changed, or a code path edited an
-    earlier message -- and is worth a warning, because the last of those is a
-    bug.
+    ``drop_unbound_thinking`` has already removed every block whose recorded
+    prefix differs from the one being sent, so a mismatch reported here is one
+    that fingerprint did not foresee. ``prefix_binding_mismatch`` is logged as
+    an error for that reason: ``drop_block`` keeps the turn answering, so the
+    log is the only place the lost reasoning shows up. ``model_binding_mismatch``
+    stays at info.
     """
     transformations = getattr(message, "input_transformations", None)
     if transformations is None:
@@ -244,12 +259,107 @@ def log_input_transformations(message: object) -> None:
             if isinstance(entry, dict)
             else getattr(entry, "path", None)
         )
-        log = logger.warning if reason == "prefix_binding_mismatch" else logger.info
+        log = logger.error if reason == "prefix_binding_mismatch" else logger.info
         log(
             "Anthropic input transformation: type=%s reason=%s path=%s",
             entry_type,
             reason,
             path,
+        )
+
+
+# ast-grep-ignore: no-dict-any - API payload fragments are heterogeneous JSON
+def _binding_bytes(value: Any) -> bytes:  # noqa: ANN401 - any request fragment
+    """Serialize a request fragment the way the thinking binding sees it.
+
+    ``cache_control`` is left out: the breakpoints move on every request, and
+    they decide what is cached, not what the model read.
+    """
+
+    # ast-grep-ignore: no-dict-any - API payload fragments are heterogeneous JSON
+    def strip(item: Any) -> Any:  # noqa: ANN401 - any request fragment
+        if isinstance(item, Mapping):
+            return {
+                str(key): strip(val)
+                for key, val in cast("Mapping[object, object]", item).items()
+                if key != "cache_control"
+            }
+        if isinstance(item, list | tuple):
+            return [strip(val) for val in cast("Sequence[object]", item)]
+        return item
+
+    return json.dumps(
+        strip(value), sort_keys=True, separators=(",", ":"), default=str
+    ).encode()
+
+
+# ast-grep-ignore: no-dict-any - kwargs dict for client.messages.create(**params) requires heterogeneous values
+def _binding_head(params: Mapping[str, Any]) -> bytes:
+    """What precedes the first message of *params*, as the binding sees it."""
+    return _binding_bytes({
+        "model": params.get("model"),
+        "system": params.get("system"),
+        "tools": params.get("tools"),
+    })
+
+
+# ast-grep-ignore: no-dict-any - kwargs dict for client.messages.create(**params) requires heterogeneous values
+def request_binding_prefix(params: Mapping[str, Any]) -> str:
+    """Fingerprint the prefix that a response to *params* is produced against.
+
+    Stored with the response's thinking blocks, so that a later request can tell
+    whether it still sends that prefix (see ``drop_unbound_thinking``).
+    """
+    hasher = hashlib.sha256(_binding_head(params))
+    for message in params.get("messages", ()):
+        hasher.update(_binding_bytes(message))
+    return hasher.hexdigest()
+
+
+def drop_unbound_thinking(
+    # ast-grep-ignore: no-dict-any - kwargs dict for client.messages.create(**params) requires heterogeneous values
+    params: dict[str, Any],
+    bindings: Mapping[int, str],
+) -> None:
+    """Remove replayed thinking whose prefix this request no longer sends.
+
+    A thinking block is bound to the exact model, system prompt, tools and
+    messages that preceded it. Several things legitimately change that prefix
+    -- the history window slides, a note write changes the system prompt, a
+    fallback changes the model -- and the API would drop those blocks itself.
+    Dropping them here instead, by comparing the prefix fingerprint recorded
+    with each block (*bindings*, keyed by the block's ``id``) to the prefix
+    actually being sent, means any ``prefix_binding_mismatch`` the API still
+    reports is one this fingerprint did not foresee, which is worth an error.
+
+    A block with no recorded fingerprint predates the fingerprint and is
+    dropped too. An assistant turn made only of thinking keeps it, since an
+    empty turn is not valid; the API's own ``drop_block`` handles that one.
+    """
+    hasher = hashlib.sha256(_binding_head(params))
+    dropped = 0
+    for message in params.get("messages", ()):
+        content = message.get("content")
+        if message.get("role") == "assistant" and isinstance(content, list):
+            prefix = hasher.hexdigest()
+            kept = [
+                block
+                for block in cast("list[object]", content)
+                if not (
+                    isinstance(block, dict)
+                    and block.get("type") in _THINKING_BLOCK_TYPES
+                    and bindings.get(id(block)) != prefix
+                )
+            ]
+            if kept and len(kept) != len(content):
+                dropped += len(content) - len(kept)
+                message["content"] = kept
+        hasher.update(_binding_bytes(message))
+    if dropped:
+        logger.info(
+            "Dropped %d replayed thinking block(s) whose prefix changed on %s",
+            dropped,
+            params.get("model"),
         )
 
 
@@ -270,6 +380,7 @@ class AnthropicProviderMetadata(TypedDict):
     provider: Literal["anthropic"]
     thinking_blocks: list[JsonObject]
     response_id: NotRequired[str]
+    thinking_prefix: NotRequired[str]
 
 
 class AnthropicClient(BaseLLMClient):
@@ -333,14 +444,21 @@ class AnthropicClient(BaseLLMClient):
     def _provider_metadata(
         thinking_blocks: list[JsonObject],
         *,
+        thinking_prefix: str,
         response_id: str | None = None,
     ) -> AnthropicProviderMetadata | None:
-        """Wrap a turn's replay state as provider metadata, or None when it has none."""
+        """Wrap a turn's replay state as provider metadata, or None when it has none.
+
+        ``thinking_prefix`` is ``request_binding_prefix`` of the request that
+        produced the turn; it is kept only alongside thinking blocks.
+        """
         if not thinking_blocks and response_id is None:
             return None
         metadata = AnthropicProviderMetadata(
             provider="anthropic", thinking_blocks=thinking_blocks
         )
+        if thinking_blocks:
+            metadata["thinking_prefix"] = thinking_prefix
         if response_id is not None:
             metadata["response_id"] = response_id
         return metadata
@@ -924,11 +1042,16 @@ class AnthropicClient(BaseLLMClient):
         activations: Mapping[str, Sequence[str]] | None = None,
         *,
         cache_conversation: bool,
+        thinking_bindings: dict[int, str] | None = None,
         # ast-grep-ignore: no-dict-any - MessageParam TypedDict incompatible with dynamic content merging in _merge_consecutive_roles
     ) -> tuple[str | list[TextBlockParam] | None, list[dict[str, Any]]]:
         """Convert typed messages to Anthropic API format.
 
         Returns (system_blocks, api_messages).
+
+        ``thinking_bindings``, when given, is filled with the recorded prefix
+        fingerprint of each replayed thinking block, keyed by the block's
+        ``id``, for ``drop_unbound_thinking``.
 
         ``cache_conversation`` puts a cache breakpoint at the end of the
         conversation. Only a request that a later request will extend should
@@ -999,9 +1122,19 @@ class AnthropicClient(BaseLLMClient):
                 # merge -- so no ordering machinery is warranted. What is
                 # enforced is the signature, so blocks are replayed as opaque
                 # dicts, byte-identical to what came back.
+                thinking_blocks = self._thinking_blocks_from_metadata(
+                    msg.provider_metadata
+                )
+                if thinking_bindings is not None and isinstance(
+                    msg.provider_metadata, dict
+                ):
+                    recorded = msg.provider_metadata.get("thinking_prefix")
+                    if isinstance(recorded, str):
+                        for block in thinking_blocks:
+                            thinking_bindings[id(block)] = recorded
                 content_blocks: list[
                     TextBlockParam | ToolUseBlockParam | JsonObject
-                ] = list(self._thinking_blocks_from_metadata(msg.provider_metadata))
+                ] = list(thinking_blocks)
                 if msg.content:
                     content_blocks.append(TextBlockParam(type="text", text=msg.content))
                 if msg.tool_calls:
@@ -1390,14 +1523,19 @@ class AnthropicClient(BaseLLMClient):
             if isinstance(message, ToolMessage) and message.activated_tools
         }
         processed_messages = self._process_tool_messages(list(messages))
+        thinking_bindings: dict[int, str] = {}
         # Only the agent loop streams, and only the agent loop sends a next
         # request that extends this one; a non-streaming call is one-shot.
         system_blocks, api_messages = self._convert_messages_to_anthropic_format(
-            processed_messages, activations=activations, cache_conversation=streaming
+            processed_messages,
+            activations=activations,
+            cache_conversation=streaming,
+            thinking_bindings=thinking_bindings,
         )
         params = self._build_request_params(
             api_messages, system_blocks, tools, tool_choice, streaming=streaming
         )
+        drop_unbound_thinking(params, thinking_bindings)
         if deferred_names:
             _add_beta_header(params, _TOOL_CHANGES_BETA)
         if streaming:
@@ -1471,7 +1609,7 @@ class AnthropicClient(BaseLLMClient):
     ) -> list[dict[str, Any]]:
         """Ask for a tool call in the final user turn instead of forcing one.
 
-        Current Anthropic models (Opus 5.5, Fable 5.1) reject a forced ``any``
+        Current Anthropic models (Opus 5.5, Fable 5.2) reject a forced ``any``
         or ``tool`` choice with a 400, and every generation rejects one combined
         with thinking. Requesting the call in words works on all of them and
         keeps thinking on, so a forced choice is never sent: the request goes
@@ -1509,19 +1647,28 @@ class AnthropicClient(BaseLLMClient):
     ) -> None:
         """Drop, rather than reject, replayed thinking the history no longer matches.
 
-        Opus 5.5, Sonnet 5.5 and Fable 5.1 bind each thinking block to the exact
-        system prompt, tools and messages that preceded it. Where that prefix has
-        changed -- the history window slid, a note in the system prompt was edited
-        -- an enforced account gets a 400 for the whole request, which the retry
-        layer would turn into a silent fallback to another model. Dropping the
-        stale blocks loses only the reasoning they carried. The setting is sent
-        explicitly so the behaviour does not depend on the account's age; models
-        that do not run the check accept it and ignore it.
+        Fable 5.2, Opus 5.5, Sonnet 5.5 and Haiku 5.5 bind each thinking block
+        to the exact system prompt, tools and messages that preceded it. Where
+        that prefix has changed -- the history window slid, a note in the system
+        prompt was edited -- an enforced account (every account, on Fable 5.2)
+        gets a 400 for the whole request, which the retry layer would turn into
+        a silent fallback to another model, or a failed turn where the chain
+        has none. Dropping the stale blocks loses only the reasoning they
+        carried. The setting is sent explicitly so the behaviour does not depend
+        on the account's age; models that do not run the check accept it and
+        ignore it.
 
-        It applies only where thinking is configured: the field lives inside the
-        ``thinking`` object and is rejected alongside ``between_tools``.
+        The field lives inside the ``thinking`` object and is rejected
+        alongside ``between_tools`` or ``disabled``, so it is added only to
+        adaptive or budgeted thinking. A model in
+        ``_DEFAULT_THINKING_BINDING_MODELS`` thinks even when no ``thinking``
+        is configured, so it is given the equivalent explicit adaptive config.
         """
         thinking = params.get("thinking")
+        if thinking is None and str(params.get("model", "")).startswith(
+            _DEFAULT_THINKING_BINDING_MODELS
+        ):
+            thinking = {"type": "adaptive"}
         if not isinstance(thinking, dict) or thinking.get("type") not in {
             "adaptive",
             "enabled",
@@ -1648,7 +1795,9 @@ class AnthropicClient(BaseLLMClient):
             content=content_text or None,
             tool_calls=tool_calls if tool_calls else None,
             reasoning_info=reasoning_info,
-            provider_metadata=self._provider_metadata(thinking_blocks),
+            provider_metadata=self._provider_metadata(
+                thinking_blocks, thinking_prefix=request_binding_prefix(params)
+            ),
             resolved_model=response.model,
         )
         telemetry.record_output(llm_output)
@@ -1971,6 +2120,7 @@ class AnthropicClient(BaseLLMClient):
                     # verifies when the block is replayed.
                     provider_metadata = self._provider_metadata(
                         self._extract_thinking_blocks(final_message.content),
+                        thinking_prefix=request_binding_prefix(params),
                         response_id=final_message.id,
                     )
                     if provider_metadata:
@@ -2117,6 +2267,7 @@ class AnthropicClient(BaseLLMClient):
         # about the round trip.
         provider_metadata = self._provider_metadata(
             self._extract_thinking_blocks(response.content),
+            thinking_prefix=request_binding_prefix(params),
             response_id=response.id,
         )
         if provider_metadata:

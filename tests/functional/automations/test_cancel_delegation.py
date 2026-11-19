@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo
 
@@ -54,8 +53,6 @@ if TYPE_CHECKING:
     from family_assistant.processing.service import ProcessingService
     from family_assistant.processing.types import ChatInteractionResult
     from family_assistant.task_worker import DelegationPollPayload
-    from family_assistant.telegram.protocols import ConfirmationUIManager
-    from family_assistant.tools.types import ConfirmationOutcome
 
 
 RUN_USER_ID = "async-delegation-user"
@@ -129,31 +126,6 @@ class BlockingTurnService(FakeDelegatableService):
                 api_backend=None,
             ),
         )
-
-
-class DurableBlockingConfirmationManager:
-    """Records a durable confirmation, as the web's manager does, then waits."""
-
-    def __init__(self, confirmations: ConfirmationService) -> None:
-        self._confirmations = confirmations
-        self.asked = asyncio.Event()
-        self.request_id: str | None = None
-
-    async def request_confirmation(self, **kwargs: Any) -> ConfirmationOutcome:  # noqa: ANN401 - fake accepts the ConfirmationUIManager keyword surface
-        request = await self._confirmations.create_request(
-            target_user_id=kwargs["target_user_id"],
-            tool_name=kwargs["tool_name"],
-            tool_args=kwargs["tool_args"],
-            tool_call_id=kwargs["tool_call_id"],
-            source_message_internal_id=kwargs["source_message_internal_id"],
-            confirmation_prompt=kwargs["prompt_text"],
-            expires_at=datetime.now(UTC) + timedelta(seconds=kwargs["timeout"]),
-            decision_only=True,
-        )
-        self.request_id = request["id"]
-        self.asked.set()
-        await asyncio.Event().wait()
-        raise AssertionError("the confirmation was never answered")
 
 
 class MeteredPollableService(FakePollableService):
@@ -328,10 +300,10 @@ async def test_cancelling_a_running_turn_stops_it_partway(
 
 
 @pytest.mark.asyncio
-async def test_a_stopped_turn_withdraws_the_confirmation_it_was_waiting_on(
+async def test_a_stopped_turn_withdraws_the_confirmation_it_left_pending(
     db_engine: AsyncEngine,
 ) -> None:
-    """Nobody is left to act on an approval, so the prompt is taken back."""
+    """Approving it would run the call for a turn the user stopped, so it is taken back."""
     delegation_turns = RunningDelegationTurns()
     target = BlockingTurnService(delegation_turns, ask_for_confirmation=True)
     processing_service = _source_processing_service(
@@ -339,40 +311,23 @@ async def test_a_stopped_turn_withdraws_the_confirmation_it_was_waiting_on(
     )
     db_context = Database(engine=db_engine)
     confirmations = ConfirmationService(db=db_context)
-    confirmation_manager = DurableBlockingConfirmationManager(confirmations)
-    confirmation_ui_managers = cast(
-        "dict[str, ConfirmationUIManager]", {TEST_INTERFACE_TYPE: confirmation_manager}
-    )
     await _create_run(db_context, delegation_id="delegation_confirming")
     await db_context.delegation_runs.mark_handed_off(
         "delegation_confirming", SystemClock().now()
     )
-    context = _tool_context(
-        db_context,
-        processing_service,
-        RecordingChatInterface(),
-        confirmation_ui_managers,
-    )
-    worker = _build_worker(
-        db_engine,
-        processing_service,
-        RecordingChatInterface(),
-        confirmation_ui_managers,
-    )
+    context = _tool_context(db_context, processing_service, RecordingChatInterface())
+    worker = _build_worker(db_engine, processing_service, RecordingChatInterface())
     handler = asyncio.create_task(
         run_delegated_profile_run(worker, context, _payload("delegation_confirming"))
     )
-    await asyncio.wait_for(confirmation_manager.asked.wait(), timeout=10)
-    assert len(await confirmations.list_pending_for_user(user_id=RUN_USER_ID)) == 1
+    await asyncio.wait_for(target.waiting.wait(), timeout=10)
+    pending = await confirmations.list_pending_for_user(user_id=RUN_USER_ID)
+    assert len(pending) == 1
 
     await cancel_delegation_tool(context, "delegation_confirming")
     await asyncio.wait_for(handler, timeout=10)
 
-    assert await confirmations.list_pending_for_user(user_id=RUN_USER_ID) == []
-    assert confirmation_manager.request_id is not None
-    request = await db_context.confirmation_requests.get(
-        confirmation_manager.request_id
-    )
+    request = await db_context.confirmation_requests.get(pending[0]["id"])
     assert request is not None
     assert request["status"] == "rejected"
 
