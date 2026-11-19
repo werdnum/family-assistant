@@ -25,7 +25,6 @@ from typing import (
     cast,
     get_args,
     get_origin,
-    get_type_hints,
     runtime_checkable,
 )
 
@@ -304,6 +303,63 @@ def _annotation_contains_type_name(annotation: object, type_name: str) -> bool:
         return False
     return any(
         _annotation_contains_type_name(arg, type_name) for arg in get_args(annotation)
+    )
+
+
+@dataclass(frozen=True)
+class _InjectionPlan:
+    """Which context values a local tool function receives, decided once per tool."""
+
+    signature: inspect.Signature
+    exec_context: bool
+    db_context: bool
+    embedding_generator: bool
+    requires_embedding_generator: bool
+    calendar_config: bool
+
+
+def _is_calendar_config_annotation(annotation: object) -> bool:
+    if isinstance(annotation, str):
+        return _annotation_contains_type_name(annotation, "CalendarConfig") or (
+            re.fullmatch(r"\s*dict\s*\[.*\]\s*", annotation) is not None
+        )
+    return annotation is CalendarConfig or get_origin(annotation) is dict
+
+
+def build_injection_plan(callable_func: Callable[..., object]) -> _InjectionPlan:
+    """Decide which context values to inject into a local tool function.
+
+    Injection is keyed on the parameter name and the annotation's type name, read
+    without evaluating it. Tool modules use ``from __future__ import annotations``
+    and import ``ToolExecutionContext``, ``Database`` and the like only under
+    ``TYPE_CHECKING``, so evaluating their annotations at runtime fails.
+    """
+    signature = inspect.signature(callable_func)
+    parameters = signature.parameters
+
+    def annotation_names(param_name: str, type_name: str) -> bool:
+        param = parameters.get(param_name)
+        if param is None:
+            return False
+        return _annotation_contains_type_name(param.annotation, type_name)
+
+    embedding_param = parameters.get("embedding_generator")
+    embedding_generator = annotation_names("embedding_generator", "EmbeddingGenerator")
+    calendar_param = parameters.get("calendar_config")
+    return _InjectionPlan(
+        signature=signature,
+        exec_context=annotation_names("exec_context", "ToolExecutionContext"),
+        db_context=annotation_names("db_context", "Database"),
+        embedding_generator=embedding_generator,
+        requires_embedding_generator=(
+            embedding_generator
+            and embedding_param is not None
+            and embedding_param.default is inspect.Parameter.empty
+        ),
+        calendar_config=(
+            calendar_param is not None
+            and _is_calendar_config_annotation(calendar_param.annotation)
+        ),
     )
 
 
@@ -929,6 +985,10 @@ class LocalToolsProvider:
         for definition in self._definitions:
             check_parameter_schema(definition["function"].get("parameters", {}))
         self._embedding_generator = embedding_generator
+        self._injection_plans: dict[str, _InjectionPlan] = {
+            tool_name: build_injection_plan(implementation)
+            for tool_name, implementation in self._implementations.items()
+        }
         logger.info(
             f"LocalToolsProvider initialized with {len(self._definitions)} tools: {list(self._implementations.keys())}"
         )
@@ -967,6 +1027,15 @@ class LocalToolsProvider:
                 return descriptor
         return None
 
+    def _injection_plan(
+        self, name: str, callable_func: Callable[..., object]
+    ) -> _InjectionPlan:
+        plan = self._injection_plans.get(name)
+        if plan is None:
+            plan = build_injection_plan(callable_func)
+            self._injection_plans[name] = plan
+        return plan
+
     async def execute_tool(
         self,
         name: str,
@@ -1002,123 +1071,23 @@ class LocalToolsProvider:
             except ValueError as e:
                 logger.error(f"Attachment processing failed for tool '{name}': {e}")
                 return f"Error: {e!s}"
-            sig = inspect.signature(callable_func)
-
-            resolved_hints = {}
-            try:
-                func_module = inspect.getmodule(callable_func)
-                global_ns = func_module.__dict__ if func_module else None
-                resolved_hints = get_type_hints(callable_func, globalns=global_ns)
-            except Exception as e:
-                logger.warning(
-                    f"Could not fully resolve type hints for '{callable_func.__name__}': {e}. "
-                    "Injection will rely on raw annotations where resolution failed."
-                )
-
-            needs_exec_context = False
-            needs_db_context = False
-            needs_embedding_generator = False
-            requires_embedding_generator = False
-            needs_calendar_config = False
-
-            for param_name, param in sig.parameters.items():
-                # Use resolved hint if available, otherwise use the raw annotation from signature.
-                annotation_to_check = resolved_hints.get(param_name, param.annotation)
-
-                if param_name == "exec_context":
-                    if annotation_to_check is ToolExecutionContext:
-                        needs_exec_context = True
-                    # Fallback for unresolved forward reference string
-                    elif (
-                        isinstance(param.annotation, str)
-                        and param.annotation == "ToolExecutionContext"
-                    ):
-                        needs_exec_context = True
-                        logger.debug(
-                            f"Identified 'exec_context' for {callable_func.__name__} via string forward reference fallback."
-                        )
-
-                elif param_name == "db_context":
-                    # Check for Database by name since we can't import it
-                    if (
-                        hasattr(annotation_to_check, "__name__")
-                        and annotation_to_check.__name__ == "Database"
-                    ):
-                        needs_db_context = True
-                    # Fallback for unresolved forward reference string
-                    elif isinstance(param.annotation, str) and (
-                        param.annotation == "Database"
-                        or param.annotation.endswith(".Database")
-                    ):
-                        needs_db_context = True
-                        logger.debug(
-                            f"Identified 'db_context' for {callable_func.__name__} via string forward reference fallback."
-                        )
-
-                elif param_name == "embedding_generator":
-                    # Check for EmbeddingGenerator by name since we can't import it
-                    if _annotation_contains_type_name(
-                        annotation_to_check,
-                        "EmbeddingGenerator",
-                    ):
-                        needs_embedding_generator = True
-                        requires_embedding_generator = (
-                            param.default is inspect.Parameter.empty
-                        )
-                    # Also check for string annotation
-                    elif (
-                        isinstance(param.annotation, str)
-                        and param.annotation == "EmbeddingGenerator"
-                    ):
-                        needs_embedding_generator = True
-                        requires_embedding_generator = (
-                            param.default is inspect.Parameter.empty
-                        )
-                        logger.debug(
-                            f"Identified 'embedding_generator' for {callable_func.__name__} via string annotation."
-                        )
-
-                elif param_name == "calendar_config":
-                    if (
-                        annotation_to_check == "CalendarConfig"
-                        or annotation_to_check == dict[str, Any]
-                    ):
-                        needs_calendar_config = True
-                    # Handle string annotation fallback
-                    elif (
-                        isinstance(param.annotation, str)
-                        and param.annotation == "dict[str, Any]"
-                    ):
-                        needs_calendar_config = True
-                        logger.debug(
-                            f"Identified 'calendar_config' for {callable_func.__name__} via string annotation fallback."
-                        )
-                    # Also handle cases where the type might not match exactly
-                    elif (
-                        hasattr(annotation_to_check, "__origin__")
-                        and annotation_to_check.__origin__ is dict
-                    ):
-                        needs_calendar_config = True
-                        logger.debug(
-                            f"Matched calendar_config via __origin__ check for {callable_func.__name__}"
-                        )
-                    elif annotation_to_check == CalendarConfig:
-                        needs_calendar_config = True
+            plan = self._injection_plan(name, callable_func)
+            sig = plan.signature
 
             # Inject dependencies based on resolved needs
-            if needs_exec_context:
+            if plan.exec_context:
                 call_args["exec_context"] = context
-            if needs_db_context:  # db_context is part of ToolExecutionContext
+            if plan.db_context:  # db_context is part of ToolExecutionContext
                 call_args["db_context"] = context.db_context
-            if needs_embedding_generator:
+            if plan.embedding_generator:
                 if self._embedding_generator:
                     call_args["embedding_generator"] = self._embedding_generator
-                elif requires_embedding_generator:
+                elif plan.requires_embedding_generator:
                     logger.error(
                         f"Tool '{name}' requires an embedding generator, but none was provided to LocalToolsProvider."
                     )
                     return f"Error: Tool '{name}' cannot be executed because the embedding generator is missing."
-            if needs_calendar_config:
+            if plan.calendar_config:
                 if context.calendar_config:
                     call_args["calendar_config"] = context.calendar_config
                 else:
