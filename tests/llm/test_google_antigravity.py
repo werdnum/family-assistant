@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from unittest.mock import ANY, AsyncMock, patch
 
 import httpx
+import httpx2
 import pytest
 from google import genai
 from google.genai import errors as genai_errors
@@ -716,6 +717,22 @@ async def test_a_connection_blip_while_polling_is_transient(
     """One failed poll of a long run must reschedule, not fail the delegation."""
     client = _egress_client("disabled")
     sdk.get.side_effect = _connection_blip()
+
+    with pytest.raises(DelegationTransientError):
+        await client.get_agent_interaction("inter_long_running")
+
+
+@pytest.mark.asyncio
+async def test_a_connection_blip_on_the_httpx2_transport_is_transient(
+    sdk: _SdkCalls,
+) -> None:
+    """google-genai 3 runs on httpx2, whose transport errors are not httpx's."""
+    client = _egress_client("disabled")
+    request = httpx2.Request("GET", "https://generativelanguage.googleapis.com/")
+    cause = httpx2.ConnectError("All connection attempts failed", request=request)
+    error = _SDK_COMPAT_ERRORS.APIConnectionError(message=str(cause), request=request)
+    error.__cause__ = cause
+    sdk.get.side_effect = error
 
     with pytest.raises(DelegationTransientError):
         await client.get_agent_interaction("inter_long_running")
