@@ -1,7 +1,7 @@
 """A turn run by the Claude Agent SDK, with this application's tools.
 
-``ClaudeAgentLoop`` replaces ``LLMStreamingLoop`` for a profile with a
-``claude_agent_config``. One turn is one Claude Code session: Claude Code runs
+``ClaudeAgentLoop`` runs a profile's turns on tiers whose runtime is
+``claude_code``. One turn is one Claude Code session: Claude Code runs
 the agent loop, and every tool it calls is one of this application's,
 offered over an in-process MCP server and executed by the same
 ``ToolExecutor`` the ordinary loop uses -- so tool policy, confirmation, taint
@@ -31,6 +31,7 @@ from claude_agent_sdk import (
 from claude_agent_sdk import (
     ClaudeAgentOptions,
     ClaudeSDKClient,
+    ClaudeSDKError,
     HookMatcher,
     MirrorErrorMessage,
     RateLimitEvent,
@@ -159,6 +160,9 @@ TOOL_SEARCH_TOOL_NAME = "ToolSearch"
 # Claude Code prefers an API key to a subscription token, and the application's
 # environment carries one for the `anthropic` provider. Blanking these is what
 # lets the session fall through to CLAUDE_CODE_OAUTH_TOKEN.
+# The subscription token from `claude setup-token`. Turns on a claude_code tier
+# run in Claude Code only where it is set.
+CLAUDE_CODE_OAUTH_TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
 _BLANKED_CREDENTIAL_ENV = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
 # What a session reports when no API key is in use: a subscription login.
 _SUBSCRIPTION_KEY_SOURCE = "none"
@@ -713,14 +717,13 @@ class _TurnSession:
             resume=self.resume,
         )
         try:
-            async with self.loop.client_factory(options) as client:
-                await client.query(_opening_message(prompt.content))
-                pump = asyncio.create_task(self._pump(client))
-                try:
-                    await self._drive(client)
-                finally:
-                    pump.cancel()
-                    await asyncio.gather(pump, return_exceptions=True)
+            await self._converse(options, prompt)
+        except ClaudeSDKError as exc:
+            # The SDK's own failures -- a CLI that will not start, a
+            # connection lost, a process that exits -- are provider failures to
+            # the rest of the application, which falls back on those.
+            msg = f"Claude Code session failed: {exc}"
+            raise LLMProviderError(msg, PROVIDER_NAME, self.model.model) from exc
         finally:
             # A resumed session runs in a config directory the SDK removes.
             if self.session_id is not None and self.resume is None:
@@ -728,6 +731,18 @@ class _TurnSession:
         await self._flush()
         await self._finish()
         await self._record_session(prompt.system_prompt)
+
+    async def _converse(
+        self, options: ClaudeAgentOptions, prompt: SessionPrompt
+    ) -> None:
+        async with self.loop.client_factory(options) as client:
+            await client.query(_opening_message(prompt.content))
+            pump = asyncio.create_task(self._pump(client))
+            try:
+                await self._drive(client)
+            finally:
+                pump.cancel()
+                await asyncio.gather(pump, return_exceptions=True)
 
     async def _record_session(self, system_prompt: str) -> None:
         """Make the session resumable, if the store holds all of it."""
@@ -1102,19 +1117,20 @@ class ClaudeAgentLoop(LLMStreamingLoop):
             await asyncio.gather(task, return_exceptions=True)
 
 
-def run_on_claude_agent(
+def build_claude_agent_loop(
     service: ProcessingService,
     *,
     agent_config: ClaudeAgentConfig,
     models: Mapping[str, ClaudeAgentModel],
     client_factory: ClientFactory | None = None,
-) -> None:
-    """Make *service* run its turns in Claude Agent SDK sessions.
+) -> ClaudeAgentLoop:
+    """The loop that runs *service*'s turns on the tiers in *models*.
 
-    Everything else about the service -- context, history, persistence, its
-    tools -- is unchanged: only the loop that runs a turn is replaced.
+    It shares the service's tool executor and attachment processor, so a turn
+    it runs reaches the same tools under the same policy as one the ordinary
+    loop runs.
     """
-    service.llm_loop = ClaudeAgentLoop(
+    return ClaudeAgentLoop(
         service.service_config,
         service.app_config,
         service.tool_executor,
@@ -1195,8 +1211,9 @@ async def probe_claude_code(profile_id: str, agent_config: ClaudeAgentConfig) ->
     else:
         logger.error(
             "Profile '%s' cannot run Claude Code sessions on the subscription: %s. "
-            "Its turns will fail until this is fixed; see CLAUDE_CODE_OAUTH_TOKEN "
-            "in docs/operations/CONFIGURATION_REFERENCE.md.",
+            "Its claude_code turns will fall back to the API until this is "
+            "fixed; see CLAUDE_CODE_OAUTH_TOKEN in "
+            "docs/operations/CONFIGURATION_REFERENCE.md.",
             profile_id,
             problem,
         )
@@ -1231,8 +1248,8 @@ def _require_subscription(init_data: Mapping[str, object], model: str) -> None:
     if source != _SUBSCRIPTION_KEY_SOURCE:
         msg = (
             "The Claude Agent SDK session would be billed to an API key "
-            f"(apiKeySource={source!r}), not the Claude subscription this profile "
-            "is for. Set CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token`; see "
+            f"(apiKeySource={source!r}), not the Claude subscription a "
+            "claude_code tier runs on. Set CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token`; see "
             "docs/operations/CONFIGURATION_REFERENCE.md."
         )
         raise ClaudeAgentBillingError(msg, PROVIDER_NAME, model)

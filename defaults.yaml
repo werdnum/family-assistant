@@ -226,6 +226,11 @@ model_tiers:
     # Chat command: `/deep <request>` runs that message, and the rest of the
     # conversation, on this tier, on whatever profile it is already using.
     slash_command: "/deep"
+    # The turn runs in a Claude Code session on Opus, billed to the Claude
+    # subscription, where the deployment sets CLAUDE_CODE_OAUTH_TOKEN. The
+    # chain below serves it without a token, and when a session fails before
+    # producing anything. See docs/design/claude-agent-sdk-profile.md.
+    runtime: "claude_code"
     chain:
       # Opus 5.5's thinking and effort, and Sol's reasoning_effort, come from
       # the global llm_parameters entries above. Sol is a different provider on
@@ -238,6 +243,9 @@ model_tiers:
     label: "Max"
     description: "The strongest configured recipe, for the hardest requests."
     slash_command: "/max"
+    # In a Claude Code session on Fable where a subscription token is set, as
+    # on `deep` above; the chain is the API fallback.
+    runtime: "claude_code"
     chain:
       # No fallback: this tier is chosen for its capability, and a weaker
       # stand-in would answer the request the tier was not chosen for. A future
@@ -1410,30 +1418,6 @@ service_profiles:
     # and with it whatever an operator adds there.
     slash_commands:
       - "/complex"
-  # complex_tasks' job on the Claude subscription instead of the API: the turn
-  # runs in a Claude Agent SDK (Claude Code) session, with this application's
-  # tools offered to it and executed here under the same policy. Present only
-  # where CLAUDE_CODE_OAUTH_TOKEN is set, and refuses to run if the session
-  # would be billed to an API key. See docs/design/claude-agent-sdk-profile.md.
-  - id: "claude_agent"
-    user_selectable: true
-    description: "Long-running, multi-step work with the household's tools, run by Claude in a Claude Code session billed to the Claude subscription rather than per token. For the same kind of investigation as complex_tasks when it would otherwise run on an expensive Claude model."
-    processing_config:
-      include_aggregated_context: true
-      model_tier: "claude_opus_5_5"
-      max_iterations: 100
-      memory_read: true
-      memory_contribute: true
-      claude_agent_config: {}
-    # Every tier here is one Anthropic model with no fallback: the session
-    # runs exactly one model, and a fallback would never run.
-    allowed_model_tiers: ["claude_opus_5_5", "claude_fable_5_2", "claude_sonnet_5_5"]
-    delegation_model_tiers: ["claude_opus_5_5", "claude_fable_5_2", "claude_sonnet_5_5"]
-    # No tools_policy of its own: the same [BC] tool surface as complex_tasks.
-    # on_demand_* settings do not apply -- Claude Code finds tools by its own
-    # search instead of activation.
-    slash_commands:
-      - "/claude"
   - id: "research"
     user_selectable: true
     description: "Assistant profile for deep research, utilizing the Google Gemini Deep Research agent (regular tier). Faster turnaround; ideal for everyday research questions that benefit from web-grounded synthesis."

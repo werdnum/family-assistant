@@ -13,6 +13,7 @@ import pytest
 from claude_agent_sdk import (
     ClaudeAgentOptions,
     ClaudeSDKClient,
+    CLIConnectionError,
     project_key_for_directory,
 )
 from prometheus_client import REGISTRY
@@ -36,10 +37,9 @@ from family_assistant.llm.model_selection import (
 from family_assistant.llm.model_tiers import ClaudeAgentModel
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.processing.claude_agent_loop import (
-    ClaudeAgentBillingError,
+    build_claude_agent_loop,
     mcp_tool_name,
     probe_verdict,
-    run_on_claude_agent,
 )
 from family_assistant.processing.claude_agent_sessions import (
     database_session_store,
@@ -99,12 +99,17 @@ async def get_weather(city: str, exec_context: ToolExecutionContext) -> str:
     return f"Weather in {city}: 21C, sunny"
 
 
+API_TIER = "deep"
+API_REPLY = "Answered on the API."
+
+
 def _service(
     fake: FakeClaudeCode | ReplayClaudeCode,
     *,
     max_iterations: int = 10,
     custom_instructions: str | None = None,
     options_seen: list[ClaudeAgentOptions] | None = None,
+    default_tier: str = TIER,
 ) -> ProcessingService:
     tools = MockToolsProvider()
     tools.add_tool("get_weather", get_weather)
@@ -118,21 +123,24 @@ def _service(
         id="claude_agent",
         max_iterations=max_iterations,
         tier_eligibility=ModelTierEligibility(
-            default_tier=TIER, selectable=(ModelTierOption(id=TIER, label="Opus"),)
+            default_tier=default_tier,
+            selectable=(
+                ModelTierOption(id=TIER, label="Opus"),
+                ModelTierOption(id=API_TIER, label="Deep"),
+            ),
         ),
     )
-    # The tier's chat client serves only auxiliary calls; a turn never uses it.
-    aux_client = RuleBasedMockLLMClient(
-        rules=[], default_response=LLMOutput(content="unused")
-    )
+    # The tier's API client: auxiliary calls, and the turn itself when it does
+    # not run in a session.
+    client = _api_client()
     service = ProcessingService(
-        llm_client=aux_client,
+        llm_client=client,
         tools_provider=tools,
         service_config=config,
         context_providers=[],
         server_url="http://testserver",
         app_config=AppConfig(),
-        tier_llm_clients={TIER: aux_client},
+        tier_llm_clients={TIER: client, API_TIER: client},
     )
 
     def client_factory(options: ClaudeAgentOptions) -> ClaudeSDKClient:
@@ -147,7 +155,7 @@ def _service(
             )
         return ClaudeSDKClient(options, transport=fake)
 
-    run_on_claude_agent(
+    service.claude_agent_loop = build_claude_agent_loop(
         service,
         agent_config=ClaudeAgentConfig(),
         models={
@@ -160,6 +168,12 @@ def _service(
         client_factory=client_factory,
     )
     return service
+
+
+def _api_client() -> RuleBasedMockLLMClient:
+    return RuleBasedMockLLMClient(
+        rules=[], default_response=LLMOutput(content=API_REPLY)
+    )
 
 
 async def _turn(service: ProcessingService, db_engine: AsyncEngine, text: str) -> str:
@@ -462,14 +476,56 @@ async def test_a_resumed_wake_keeps_the_taint_its_session_saw(
 
 
 @pytest.mark.asyncio
-async def test_session_billed_to_an_api_key_is_refused(db_engine: AsyncEngine) -> None:
+async def test_session_billed_to_an_api_key_runs_the_turn_on_the_api(
+    db_engine: AsyncEngine,
+) -> None:
     fake = FakeClaudeCode(
         responses=[FakeResponse([FakeText("Hi.")])],
         api_key_source="ANTHROPIC_API_KEY",
     )
-    result = await _interact(_service(fake), db_engine, "Hello")
+    reply = await _turn(_service(fake), db_engine, "Hello")
 
-    assert ClaudeAgentBillingError.__name__ in (result.error_traceback or "")
+    assert reply == API_REPLY
+
+
+class _UnstartableClaudeCode(FakeClaudeCode):
+    async def connect(self) -> NoReturn:
+        raise CLIConnectionError("Failed to start Claude Code")
+
+
+@pytest.mark.asyncio
+async def test_cli_that_will_not_start_runs_the_turn_on_the_api(
+    db_engine: AsyncEngine,
+) -> None:
+    fake = _UnstartableClaudeCode(responses=[FakeResponse([FakeText("Hi.")])])
+    reply = await _turn(_service(fake), db_engine, "Hello")
+
+    assert reply == API_REPLY
+
+
+@pytest.mark.asyncio
+async def test_session_failing_after_a_tool_call_fails_the_turn(
+    db_engine: AsyncEngine,
+) -> None:
+    fake = FakeClaudeCode(
+        responses=[
+            FakeResponse([_weather_call()]),
+            FakeResponse([FakeText("Usage limit reached.")], error="rate_limit"),
+        ]
+    )
+    result = await _interact(_service(fake), db_engine, "Weather?")
+
+    assert "RateLimitError" in (result.error_traceback or "")
+
+
+@pytest.mark.asyncio
+async def test_turn_on_a_tier_without_a_session_model_runs_on_the_api(
+    db_engine: AsyncEngine,
+) -> None:
+    fake = FakeClaudeCode(responses=[FakeResponse([FakeText("From the session.")])])
+    reply = await _turn(_service(fake, default_tier=API_TIER), db_engine, "Hello")
+
+    assert reply == API_REPLY
 
 
 @pytest.mark.asyncio
@@ -599,7 +655,7 @@ async def test_no_tool_runs_before_its_call_is_saved(db_engine: AsyncEngine) -> 
     tools = service.tool_executor.tools_provider
     assert isinstance(tools, MockToolsProvider)
     tools.tools["get_weather"] = record
-    stream = service.llm_loop.run_stream(
+    stream = service.process_message_stream(
         db_context=Database(db_engine),
         messages=[
             SystemMessage(content="You are a household assistant."),

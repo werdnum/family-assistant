@@ -238,15 +238,6 @@ def validate_profile_model_tier(
     ):
         _reject_interactions_agent_tier(profile_id, selectable, model_tiers[selectable])
 
-    if processing_config.claude_agent_config is not None:
-        for reachable in sorted({
-            tier_name,
-            *(allowed or ()),
-            *(auto or ()),
-            *(delegation or ()),
-        }):
-            _reject_non_claude_agent_tier(profile_id, reachable, model_tiers[reachable])
-
     if processing_config.antigravity_config is not None:
         for reachable in sorted({
             tier_name,
@@ -364,38 +355,6 @@ def _reject_interactions_agent_tier(
             f"chain names Interactions API agent model(s): {', '.join(agent_models)}. "
             "Those run server-side rather than as chat models, so they are "
             "configured inline on a profile, not as an interchangeable tier."
-        )
-        raise ValueError(msg)
-
-
-def _reject_non_claude_agent_tier(
-    profile_id: str,
-    tier_name: str,
-    tier: ModelTierConfig,
-) -> None:
-    """Refuse a tier a Claude Agent SDK session cannot run as configured.
-
-    A session takes one Claude model and an effort; it has no fallback, so a
-    second entry would never run, and a non-Anthropic model or a Flex price
-    class has no meaning there. Request parameters are checked when the model
-    is resolved, against the merged global map.
-    """
-    entry = tier.chain[0]
-    problem: str | None = None
-    if len(tier.chain) != 1:
-        problem = "its chain has a fallback, which the session cannot fall back to"
-    elif entry.provider != "anthropic" or not entry.model:
-        problem = (
-            f"its model is on provider '{entry.provider}', and Claude Code runs "
-            "only Anthropic models"
-        )
-    elif entry.flex:
-        problem = "its entry sets flex, a price class Claude Code does not accept"
-    if problem is not None:
-        msg = (
-            f"Profile '{profile_id}' runs on the Claude Agent SDK and can run "
-            f"on model_tier '{tier_name}', but {problem}. A tier on this profile "
-            "names the session's model, so it must be exactly one Anthropic model."
         )
         raise ValueError(msg)
 

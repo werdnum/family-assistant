@@ -1,4 +1,4 @@
-# Claude Agent SDK Profile
+# Claude Agent SDK Runtime
 
 ## Context
 
@@ -21,10 +21,17 @@ replacement for anything.
 
 ## Decision
 
-A new profile, **`claude_agent`**, runs its turn on the Agent SDK, with Family Assistant's own tools
-made available to Claude Code as an in-process MCP server. It is a **[BC]** profile, the same class
-as `complex_tasks`: what changes is who runs the loop and who pays for it, not what the turn may
-reach.
+A model tier may name **`runtime: "claude_code"`**: a turn on that tier runs in a Claude Agent SDK
+session on the tier's primary model, with Family Assistant's own tools made available to Claude Code
+as an in-process MCP server. The shipped `deep` (Opus 5.5) and `frontier` (Fable 5.2) tiers do. The
+runtime changes who runs the loop and who pays for it, not what the turn may reach, so the profile a
+turn is on keeps its Rule of Two class.
+
+This started as a profile, `claude_agent`, carrying `complex_tasks`' job. Running it showed that the
+profile was only ever a way to say "this model, run this way": the workflow, tool surface and
+prompts were `complex_tasks`'. Saying it on the tier lets every profile that reaches Deep or Max use
+the subscription, lets an experiment compare a Claude Code arm against an API arm on the same
+profile, and keeps the API as the fallback.
 
 ### The Agent SDK runs the loop; Family Assistant runs every tool
 
@@ -35,13 +42,13 @@ Assistant does not own, so there are two copies of the conversation that have to
 compaction, after the history window slides, after a turn is retried. It also gives up what makes
 Claude Code worth using: its own context management and prompt caching within a long run.
 
-So one turn is one Agent SDK session, and a **`ClaudeAgentLoop`** replaces `LLMStreamingLoop` for
-the profile. It yields the same `(LLMStreamEvent, LLMMessage)` stream, so persistence, streaming to
-the web and Telegram, delegation and telemetry are unchanged. Every tool call Claude Code makes
-reaches `ToolExecutor.execute` — the same entry point the ordinary loop uses — so tool policy,
-confirmation, taint tracking, tool-call review and attachment handling apply to each call exactly as
-they do on `complex_tasks`. The Agent SDK's MCP handler is not told which `tool_use` it is serving;
-a `PreToolUse` hook, which is, records the id so the handler can execute the call under it, and the
+So one turn is one Agent SDK session, run by a **`ClaudeAgentLoop`** in place of `LLMStreamingLoop`.
+It yields the same `(LLMStreamEvent, LLMMessage)` stream, so persistence, streaming to the web and
+Telegram, delegation and telemetry are unchanged. Every tool call Claude Code makes reaches
+`ToolExecutor.execute` — the same entry point the ordinary loop uses — so tool policy, confirmation,
+taint tracking, tool-call review and attachment handling apply to each call exactly as they do on
+`complex_tasks`. The Agent SDK's MCP handler is not told which `tool_use` it is serving; a
+`PreToolUse` hook, which is, records the id so the handler can execute the call under it, and the
 history Family Assistant saves carries the model's own ids.
 
 ### Claude Code holds nothing of its own
@@ -73,22 +80,38 @@ every tool that passes policy), so nothing is widened.
 
 The application's environment carries `ANTHROPIC_API_KEY` for the `anthropic` provider, and Claude
 Code prefers an API key to a subscription token. Left alone, every run would be billed to the API at
-list price under a profile whose reason to exist is not to be. The loop blanks the API-key variables
-in the subprocess's environment, and refuses the turn unless the session reports that no API key is
-in use (`apiKeySource: "none"`). A misconfigured deployment fails visibly instead of quietly
-spending.
+list price by a runtime whose reason to exist is not to be. The loop blanks the API-key variables in
+the subprocess's environment, and refuses the session unless it reports that no API key is in use
+(`apiKeySource: "none"`). The refusal comes before any output, so the turn falls back to the API
+openly: counted as `billing_refused`, logged, and priced as the API spend it is.
 
-### The model is a tier
+### The runtime is a tier property, and the service picks the loop per turn
 
-As on `coder` ([antigravity-model-tiers.md](antigravity-model-tiers.md)), the model a run uses is
-the profile's model tier: every tier the profile can reach must be exactly one `anthropic` model,
-with no fallback, because Claude Code takes a model and an effort, not a recipe. The tier's thinking
-effort is passed through. The tier's ordinary client remains the profile's client for the few
-auxiliary calls a turn can make outside the loop — selecting among many queued attachments, for
-example — which go to the API as they do today.
+A tier already says which model runs and how; where it runs is the same kind of fact. A
+`claude_code` tier's primary must be an `anthropic` model, and its parameters must be ones Claude
+Code accepts (adaptive thinking, an effort, custom instructions), so the session runs the recipe the
+tier names. The chain stays an ordinary chain, fallback included, because it is still used: by
+deployments without a token, for the turn's auxiliary calls, and as the fallback below.
 
-`claude_agent` ships on `claude_opus_5_5` by default, with `claude_fable_5_2` and
-`claude_sonnet_5_5` selectable by a person and by a delegating model.
+Each profile's service holds the ordinary loop and, where any tier it can reach is `claude_code` and
+the deployment has a token, a `ClaudeAgentLoop` for those tiers. The turn's tier is resolved once
+before the loop runs, as it always was; the service runs the turn on the loop that tier names. Both
+loops write history in the same form, plain text and tool calls, so a conversation can move between
+them: an experiment arm, a person picking Deep, or a fallback all just change which loop the next
+turn runs on.
+
+This reverses, for this runtime only, the rule that server-side agent runtimes are not tiers.
+Antigravity and Interactions agents stay off tiers because they drop the profile's tools and
+history. Claude Code keeps both, which is the condition: a tier may name an agent runtime only if
+the runtime runs Family Assistant's tools and reads its history.
+
+### A session that fails before producing anything falls back to the API
+
+The subscription has rate-limit windows shared with the household's other Claude use, and a token
+can lapse. When a session fails before it has yielded anything, nothing has been shown, saved or
+executed, so the turn reruns on the tier's chain through the ordinary loop and a warning is logged.
+Once a session has produced output, a failure fails the turn: tool calls are saved before they run,
+and rerunning the turn could repeat one that took effect.
 
 ### Conversation history is rendered, not resumed
 
@@ -117,10 +140,10 @@ costs is subscription quota, which these numbers measure but do not price.
 
 Anthropic's Agent SDK documentation says: "Unless previously approved, Anthropic does not allow
 third party developers to offer claude.ai login or rate limits for their products, including agents
-built on the Claude Agent SDK." This profile does not offer anyone a claude.ai login: the operator
+built on the Claude Agent SDK." This runtime does not offer anyone a claude.ai login: the operator
 configures their own token for their own household deployment. Whether a deployment's use falls
 within the subscription's terms — in particular when household members other than the subscriber
-reach the profile — is the operator's judgement, and the profile is opt-in per deployment for that
+reach Deep or Max — is the operator's judgement, and the runtime is opt-in per deployment for that
 reason: it runs only where a token has been configured.
 
 ## Deliberate simplifications
@@ -130,23 +153,26 @@ reason: it runs only where a token has been configured.
   session that delegated, when that session provably agrees with the history (see
   [claude-agent-session-resume.md](claude-agent-session-resume.md)).
 - **No mid-turn input.** A message sent while a turn runs waits for the next turn instead of being
-  steered into this one. Claude Code accepts queued messages, so this is follow-up work, not a
-  limitation of the runtime.
+  steered into this one, which on `default_assistant` is a visible difference from Standard. Claude
+  Code accepts queued messages, so this is follow-up work, not a limitation of the runtime.
 - **Attachments on the opening message reach the model as images only.** Other attachment types are
   named in the prompt by id, for the model to read with Family Assistant's attachment tools.
-- **One process per turn.** Starting the CLI adds a second or two to each turn, acceptable on a
-  profile chosen for long tasks.
+- **One process per turn.** Starting the CLI adds a second or two to each turn, acceptable on the
+  tiers chosen for hard requests.
+- **No fallback mid-turn.** A session that fails after a tool call fails the turn rather than
+  continuing on the API from the rows saved so far. The common failures (an exhausted window, a
+  rejected token) happen before anything is produced.
+- **A fallen-back turn counts twice in the turn metrics**, once as an error on the session and once
+  on the API loop; session outcomes say which it was.
 - **The startup check cannot validate the token.** `claude auth status` reads local state only, so
   it shows the binary runs and that a subscription credential is the one in use, not that the token
   is accepted. A rejected token shows as `auth_failed` sessions.
 
-## Not in this PR
+## Not in this design
 
-- Routing existing `deep`/`frontier` traffic to the profile automatically. The profile is reachable
-  by `/claude`, the web profile picker and delegation; whether `complex_tasks` should become it is a
-  decision for after it has run.
-- A `taint_sink_class` for the profile. Its only egress is Family Assistant's tools, which are gated
-  per call, so it declares none, and startup refuses one rather than ignoring it.
+- A `taint_sink_class` on a profile that reaches a `claude_code` tier. The session's only egress is
+  Family Assistant's tools, which are gated per call; startup refuses a profile-level sink rather
+  than ignoring it.
 
 ## Verification
 
@@ -155,6 +181,9 @@ reason: it runs only where a token has been configured.
   session (kept beside the tests): tool calls reach the executor under the model's ids, results
   return to the session, the saved history is valid tool-call protocol, a session that reports an
   API key is refused, and the iteration limit and a quiet end close the turn.
-- Startup tests over the tier rules and the shipped profile, including a full startup whose session
-  is offered the household's tools and not `activate_tools`.
-- A manual run of the shipped profile against a real subscription, recorded in the PR.
+- Startup tests over the tier rules and the shipped tiers, including a full startup whose session is
+  offered the household's tools and not `activate_tools`, and one without a token whose tiers run on
+  their chain.
+- Service tests that a turn on a tier with no session model runs on the ordinary loop, that a
+  session refused before output reruns on the API, and that one failing after a tool call fails.
+- A manual run against a real subscription, recorded in the PR that introduced the runtime.

@@ -24,6 +24,14 @@ Higher is not simply better. A stronger level costs more and takes longer, and f
 was never difficult it produces the same answer more slowly. Reach for Deep or Max when you can say
 why the request is hard: it turns on the answer being *right* rather than merely *produced*.
 
+Where the household's Claude subscription is connected, Deep and Max run on Claude (Opus for Deep,
+Fable for Max) on that subscription, with the same access to your notes, calendar, documents and
+devices, and the same confirmations. Two things differ while one of those requests is running: a
+message you send meanwhile waits for the next turn instead of joining the one in progress, and
+attachments other than images are read with the assistant's attachment tools rather than handed to
+the model directly. If the subscription is unavailable, the request runs on the same model through
+the API instead.
+
 ## Choosing a level
 
 **In the web app and the iOS app**, there is a control beside the assistant picker. Pick a level and
