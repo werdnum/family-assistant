@@ -335,6 +335,19 @@ class UserIdentityResolver:
         return None
 
 
+def household_email_addresses(config: AppConfig) -> frozenset[str]:
+    """Addresses a configured household member signs in or sends mail from.
+
+    Recipient-mapping addresses are left out: they name where mail for a user
+    is delivered, which may be a shared intake alias rather than the user.
+    """
+    return frozenset(
+        address
+        for user in config.users
+        for address in (*user.oidc.emails, *user.email_intake.sender_addresses)
+    )
+
+
 def normalize_email_address(raw_address: str | None) -> str | None:
     """Extract and normalize an email address from a header or form field."""
     if not raw_address:

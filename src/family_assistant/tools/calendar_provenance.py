@@ -15,6 +15,10 @@ from family_assistant.security.taint import (
     TurnTaintState,
     merge_taint_state_into_tracker,
 )
+from family_assistant.services.user_identity import (
+    household_email_addresses,
+    normalize_email_address,
+)
 
 if TYPE_CHECKING:
     from family_assistant.storage.calendar_provenance import CalendarProvenanceRecord
@@ -47,6 +51,69 @@ def is_household_authored_google_event(item: dict[str, object]) -> bool:
         isinstance(person := item.get(role), dict) and person.get("self") is True
         for role in ("creator", "organizer")
     )
+
+
+def google_event_participants(item: dict[str, object]) -> list[str] | None:
+    """Organizer and attendee addresses of a Google event, for household vetting.
+
+    The connected user's own entries (``self``) are omitted, since they are the
+    reader. ``None`` means the event cannot be vetted by its participants: it
+    was imported from Gmail, or someone on it has no address.
+    """
+    if item.get("eventType") == "fromGmail":
+        return None
+    attendees = item.get("attendees")
+    people: list[object] = [item.get("organizer")]
+    if isinstance(attendees, list):
+        people.extend(attendees)
+    addresses: list[str] = []
+    for person in people:
+        if not isinstance(person, dict):
+            if person is None:
+                continue
+            return None
+        if person.get("self") is True:
+            continue
+        email = person.get("email")
+        address = normalize_email_address(email) if isinstance(email, str) else None
+        if address is None:
+            return None
+        addresses.append(address)
+    return addresses
+
+
+def caldav_event_participants(organizer: object, attendees: object) -> list[str] | None:
+    """Organizer and attendee addresses of an iCalendar event.
+
+    ``None`` when any participant is not a ``mailto:`` address, so it cannot be
+    matched against the household.
+    """
+    people: list[object] = [] if organizer is None else [organizer]
+    if isinstance(attendees, list):
+        people.extend(attendees)
+    elif attendees is not None:
+        people.append(attendees)
+    addresses: list[str] = []
+    for person in people:
+        value = str(person).strip()
+        if value[:7].lower() != "mailto:":
+            return None
+        address = normalize_email_address(value[7:])
+        if address is None:
+            return None
+        addresses.append(address)
+    return addresses
+
+
+def _household_only(
+    participants: list[str] | None, exec_context: ToolExecutionContext
+) -> bool:
+    """An event whose organizer and attendees are all household members."""
+    service = exec_context.processing_service
+    if not participants or service is None:
+        return False
+    household = household_email_addresses(service.app_config)
+    return all(address in household for address in participants)
 
 
 def event_source_key(event: CalendarSearchResult) -> str:
@@ -132,7 +199,10 @@ async def grade_calendar_events(
                 _owner_for_source(event_source_key(event), exec_context.user_id),
             )
             in previously_written
-            or not event.get("user_vetted")
+            or not (
+                event.get("user_vetted")
+                or _household_only(event.get("household_participants"), exec_context)
+            )
         ):
             tracker.add_source(
                 TaintSource(
