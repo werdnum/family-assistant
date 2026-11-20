@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
+from family_assistant.llm.genai_sdk import new_genai_client
 from family_assistant.llm.messages import MessageReasoningInfo
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.observability.metrics import instrumented_llm_request
@@ -32,7 +33,6 @@ if TYPE_CHECKING:
 
 # Optional imports for production use
 try:
-    from google import genai
     from google.genai import types as genai_types
 
     GENAI_AVAILABLE = True
@@ -515,7 +515,7 @@ class GeminiImageBackend:
 
         self.api_key = api_key
         self.model = model or self.DEFAULT_MODEL
-        self.client = genai.Client(api_key=api_key, debug_config=debug_config)
+        self.client = new_genai_client(api_key=api_key, debug_config=debug_config)
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
 
     def _decode_image_bytes(self, image_data: bytes) -> bytes:

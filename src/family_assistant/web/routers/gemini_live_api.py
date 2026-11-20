@@ -313,11 +313,14 @@ def _create_token_response(
     gemini_live_config: GeminiLiveConfig,
     profile_id: str,
 ) -> EphemeralTokenResponse:
-    from google import (  # noqa: PLC0415 - Import here to handle missing dependency gracefully
-        genai,
+    from family_assistant.llm.genai_sdk import (  # noqa: PLC0415 - Import here to handle missing dependency gracefully
+        gemini_http_options,
+        new_genai_client,
     )
 
-    client = genai.Client(api_key=api_key, http_options={"api_version": "v1alpha"})
+    client = new_genai_client(
+        api_key=api_key, http_options=gemini_http_options(api_version="v1alpha")
+    )
 
     now = datetime.datetime.now(tz=datetime.UTC)
     token_response = client.auth_tokens.create(

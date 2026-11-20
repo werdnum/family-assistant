@@ -12,11 +12,11 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Any, Protocol, cast, runtime_checkable
 
-from google import genai
 from google.genai import types as genai_types
 from google.genai.client import DebugConfig
 from openai import AsyncOpenAI
 
+from family_assistant.llm.genai_sdk import new_genai_client
 from family_assistant.llm.messages import MessageReasoningInfo
 from family_assistant.observability.metrics import instrumented_llm_request
 
@@ -103,7 +103,7 @@ class GoogleEmbeddingGenerator:
             raise ValueError("Embedding model identifier cannot be just 'gemini/'.")
         self._dimensions = dimensions
         self._task_type = task_type
-        self._client = genai.Client(api_key=api_key, debug_config=debug_config)
+        self._client = new_genai_client(api_key=api_key, debug_config=debug_config)
         logger.info(
             f"GoogleEmbeddingGenerator initialized for model: {self._model_name}, "
             f"dimensions: {self._dimensions}, task_type: {self._task_type}"

@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 
 import aiofiles
 import httpx
+import httpx2
 from google import genai
 from google.genai import types
 from google.genai.client import DebugConfig
@@ -60,6 +61,7 @@ from family_assistant.llm.antigravity_egress import (
 from family_assistant.llm.call_context import current_service_tier
 from family_assistant.llm.connections import ConnectionKey, ProviderConnections
 from family_assistant.llm.deferred_tools import resolve_deferred_tools
+from family_assistant.llm.genai_sdk import new_genai_client
 from family_assistant.llm.google_types import (
     GeminiProviderMetadata,
     GeminiThoughtSignature,
@@ -160,7 +162,9 @@ def _caused_by_transport_failure(error: BaseException) -> bool:
     current: BaseException | None = error
     seen: set[int] = set()
     while current is not None and id(current) not in seen:
-        if isinstance(current, httpx.TransportError):
+        # The SDK raises whichever HTTP package it runs on: httpx2 by
+        # default since google-genai 3, httpx where a caller injected one.
+        if isinstance(current, (httpx.TransportError, httpx2.TransportError)):
             return True
         seen.add(id(current))
         current = current.__cause__ or current.__context__
@@ -646,17 +650,17 @@ class GoogleGenAIClient(BaseLLMClient):
         self._owns_client = connections is None or bool(debug_config)
         # Create client with optional debug_config for record/replay in tests
         if debug_config:
-            self.client = genai.Client(
+            self.client = new_genai_client(
                 api_key=api_key,
                 http_options=http_options,
                 debug_config=DebugConfig(**debug_config),
             )
         elif connections is None:
-            self.client = genai.Client(api_key=api_key, http_options=http_options)
+            self.client = new_genai_client(api_key=api_key, http_options=http_options)
         else:
             self.client = connections.get(
                 ConnectionKey("google", base_url, api_key),
-                lambda: genai.Client(api_key=api_key, http_options=http_options),
+                lambda: new_genai_client(api_key=api_key, http_options=http_options),
                 _close_genai_client,
             )
         # Google API requires 'models/' prefix
