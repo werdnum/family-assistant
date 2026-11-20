@@ -1312,68 +1312,6 @@ def vcr_bypass_for_streaming(request: pytest.FixtureRequest) -> None:
         request.addfinalizer(restore)
 
 
-@pytest.fixture
-def llm_replay_config(
-    request: pytest.FixtureRequest, llm_record_mode: str
-) -> dict[str, str]:
-    """
-    Unified record/replay configuration for all LLM providers.
-
-    Automatically configures the appropriate mechanism based on the provider
-    being tested. Providers are detected from test parametrization.
-
-    For Google Gemini:
-        Returns DebugConfig parameters for SDK's built-in replay (native streaming support)
-
-    For other providers (OpenAI, etc.):
-        Returns empty dict - VCR.py handles recording via @pytest.mark.vcr decorator
-
-    Environment Variables:
-        LLM_RECORD_MODE: Control recording behavior (default: replay)
-            - replay: Only use existing recordings (safe for CI)
-            - auto: Record if missing, else replay (convenient for dev)
-            - record: Force re-record all interactions (requires API keys)
-
-    Recording Examples:
-    -------------------
-    # Record all LLM tests
-    LLM_RECORD_MODE=record pytest tests/integration/llm/
-
-    # Record only Gemini tests
-    LLM_RECORD_MODE=record GEMINI_API_KEY=xxx pytest tests/integration/llm/ -k gemini
-
-    # Auto-record missing interactions during development
-    LLM_RECORD_MODE=auto pytest tests/integration/llm/
-
-    Benefits:
-    ---------
-    - Single interface for all LLM providers
-    - Provider-agnostic test code
-    - Automatic provider detection via parametrization
-    - Consistent recording behavior across providers
-    """
-    # Detect provider from test parametrization
-    # Handle non-parameterized tests gracefully
-    if not hasattr(request.node, "callspec"):
-        return {}
-    provider = request.node.callspec.params.get("provider", "")
-
-    if provider == "google":
-        # Google uses SDK's DebugConfig for native streaming support
-        test_name = request.node.name
-        module_name = request.node.module.__name__.replace("tests.", "")
-
-        return {
-            "client_mode": llm_record_mode,  # Use unified mode
-            "replay_id": f"{module_name}/{test_name}/mldev",
-            "replays_directory": "tests/cassettes/gemini",
-        }
-    else:
-        # Other providers use VCR.py (configured via vcr_config fixture)
-        # Return empty dict - VCR.py intercepts HTTP automatically
-        return {}
-
-
 @pytest.fixture(scope="session", autouse=True)
 def setup_fastapi_test_config() -> Generator[None]:
     """

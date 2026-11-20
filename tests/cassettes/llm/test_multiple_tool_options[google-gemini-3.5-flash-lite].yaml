@@ -1,0 +1,69 @@
+interactions:
+- request:
+    body: '{"model":"gemini-3.5-flash-lite","input":[{"content":[{"text":"What is
+      25 times 4?","type":"text"}],"type":"user_input"}],"store":false,"stream":false,"tools":[{"description":"Get
+      the current weather in a given location","name":"get_weather","parameters":{"type":"object","properties":{"location":{"type":"string","description":"The
+      city and state, e.g. San Francisco, CA"},"unit":{"type":"string","enum":["celsius","fahrenheit"],"description":"The
+      temperature unit"}},"required":["location"]},"type":"function"},{"description":"Perform
+      basic mathematical calculations","name":"calculate","parameters":{"type":"object","properties":{"expression":{"type":"string","description":"The
+      mathematical expression to evaluate"}},"required":["expression"]},"type":"function"}]}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '768'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+      x-goog-api-client:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/3ySWW/aQBSF/0o0j61pvOEFqQ+QmKQNCYEQkrqqrMG+2APjsZklwkH8946zQKpW
+        fZxzlzn67tkhIbFUAvUQh40iHESCU0kqhgykBM4B9XZIVhLTRFZrYLrT8l3jTSKsVvJY6HoG+igl
+        iyYpqwxTIhvU+7lDxweSsJWo3XOY3f96X5vitIDssNd81ysl//gvMA7WKpooAX+PyKJSeSE/Fggj
+        kvzL/N5AKQcsIdP+bNP2OpbVscKZ7fTcoOeEccukzv7fIIA/kVQ7IcB1l8bLMsyztiKhFi8YBMmZ
+        ps41XBQxcQWTYT28NGdry4+368jdXJRpkbFBzopydUuX56PJHb6b8ulsejOLlXh6fqBmPP52wc/6
+        eOPcFo8Dvh2ZSl0G30+HoTVvirEfLZRoJjL0afToxF0vaKoSy5EM7M2NCz88cppFZ/44uG5w8fzQ
+        x1t3Hn1Wdn+zOo/N8H5Qzu3VWKThFS0r1/3a3qqpW8dvSNHe2CHSkkgxpYlleY7tBYFj2b7j2JZj
+        u8FxZqnYS6qStlfLDJfwOpkqqoFqCfNclcCkaBMH21pHUbQ51KS7J59OXLRvA1ItVpBKLRImgR+i
+        qoMFVKs5lPq8HedLt7OkWBQdnTZA+98AAAD//wMAeiuWA+cCAAA=
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-encoding:
+      - gzip
+      content-type:
+      - application/json
+      date:
+      - Thu, 19 Nov 2026 23:48:39 GMT
+      server:
+      - scaffolding on HTTPServer2
+      server-timing:
+      - gfet4t7; dur=934
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,0 +1,65 @@
+interactions:
+- request:
+    body: '{"model":"gemini-3.5-flash-lite","input":[{"content":[{"text":"System:
+      You are a helpful assistant that always responds in JSON format.","type":"text"}],"type":"user_input"},{"content":[{"text":"What
+      is 2+2? Reply with a JSON object with a key ''answer''.","type":"text"}],"type":"user_input"}],"store":false,"stream":false}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '322'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+      x-goog-api-client:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/3xS25KaQBD9FWteFwMCa4SqPCSurmh53fWyhpSOw6gozLBMI1IW/74DWY1VSeWx
+        T3ef7j6nL0gAhkQgGxEeRgEF6iEFJQLvKLIvCDjgYAX8SJmsMS3lE/FZlMANN0wF3SOrTbYKuYcD
+        HzJk/7ygPwECegZU0Fxb819XUoLJnno3Vu2K8wTup9UeldtePFglgv7dAnue7PZwn/CZD/4/Vs8V
+        RGKKi8NtpGt6vVqrVWvWq27YZsM2jGWhR+T9v0DQ+OQTuYhPY1klRWUejgspBdBIlCIIf8ek1rEU
+        FrWY6NFxO2p3tFc8aKT17mi8s6bgZCdheU4YHgf7dNuxtlH/ILLO1/Fh8Q7f64HW9Lrn0Y8jac8W
+        mjOAyWjY61sdyFqm/jK3DrN00ti8q8/O07a5aIddZ6JaJn5oLnvpy0abLslT/W2oqqe+rk4Xw+yB
+        d9q981wl82fKnaFer/HeG4nMlkEyMus73wqnsqjY+FNRlCsX+SoMKIPyqtJPG63X64PgzGUXl1Uq
+        LsJMpDR2kV0xXZa7TObvuIqe0vffsXwPerW5xPnmQElB68tBMSbgcybbyzqJ7mgo3awaXx6r2wCL
+        fVX+FkX5BwAAAP//AwC8cwS+zQIAAA==
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-encoding:
+      - gzip
+      content-type:
+      - application/json
+      date:
+      - Thu, 19 Nov 2026 23:48:33 GMT
+      server:
+      - scaffolding on HTTPServer2
+      server-timing:
+      - gfet4t7; dur=933
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+version: 1

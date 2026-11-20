@@ -1,0 +1,77 @@
+interactions:
+- request:
+    body: '{"model":"gemini-3.8-flash","input":[{"content":[{"text":"My favorite color
+      is blue. Remember this.","type":"text"}],"type":"user_input"},{"content":[{"text":"I''ll
+      remember that your favorite color is blue.","type":"text"}],"type":"model_output"},{"content":[{"text":"What''s
+      my favorite color?","type":"text"}],"type":"user_input"}],"store":false,"stream":true}'
+    headers:
+      accept:
+      - text/event-stream
+      accept-encoding:
+      - gzip, deflate, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '361'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+      x-goog-api-client:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/1SNMQqAMBAE+7wiXK02NpLPyJmsGomJ6CGI5O9qIWg7wzDYEcVoHwUrW/EpVnYF
+        C5xyLGz0SR9H5qTUTbBC5scLmpNDuOmA2Udf1lVT9oG3kXJBeCatHAv+2buirNQFAAD//0rFdEhx
+        SWJJaXF8aQHQJalw50BEwQbFFxTlpxelFhcr4bEDxRSQTQAAAAD//4LaVFySWgCSLCpB8mlKaoWS
+        lYGOEkgS5FmoeSUZ+aXpGSUYfkGYATIYAAAA//9skzmym0AARA9EAEKAZgIHrAKBEAKEgMTFInYY
+        hkUsp7e+Hdiu+mkHr7q6Xv8L/owxRd+Af+df5LHMu0+x4Qsjz5okTkDin/Ujsy1/dZB3ObAOPvqu
+        TzKSX6xEQkYBu+/k63aXHbwBDasmdk8R09775KnKmwo6wm7L+LSP5pR68zV+2a+genaWHuwevSFC
+        G1TdnOGo0378fuqY0ydWXmuuklqyasIh4L0rQUFVWUM7Pq0NqQpAeEnaqkGWukzOFDUXqNDQJJvm
+        Zk/L0mRE7HKa4aKmNoya1PElqELDZxQtFqGsj62yyNWjdunTkA47GPPU9OWSY5DlcURVFi5fzqRN
+        uez8pByGwAsOyFQqjn3ajVS84vPVsINzAk9AQ/yTG9K+uxIGcqOBTLp29OrB2xiuCCCjWdUZx0eU
+        rmY5xv08F6HypouJuLF4laJMPBR3dwjsZHAXDWeU15irmOYvsPWOBqwNRypT6S8ljLA5stYbDaKg
+        FmrXokhJAu9pJezWlhHcDo+5ToSK37zOA3jucgGpWUAlqPOF5m3CvswfOcwQ6bKfHZepWV26Ssg1
+        QU3wMOEk9tHrvvGDo/LV+RITuHNYUsxDvt1XLzNKHD8yY7wdkNAo4GIu9MTmhkHMNfWGM7iVYVOx
+        CLincCl8gFiw7dXRFKSuYmQ9xr2oQb3z8eoQKQSRDHrRx+QBEY0X9p7t03t/f4QTzA2bOcfNaO2K
+        8qba8jK5sP7xudH/wv/8a+m36v+x+aP+LwAAAP//Qs1T+QVYUj62jJNfANIMAAAA//8imCENMTIk
+        uLSJzy8tKSgllCsBAAAA//8imCsNkXJlSWoFqGiLzC8tQgoMkCB+/wMAAAD//yLHEoW0RGAyyyxJ
+        VQCmjfwihcxihaSc0lRFkiwGAAAA//8iFPCG+AIeAAAA//+sVcsOgjAQ/BfOkFBqEPodnjSmqWWj
+        jUhJARNi/He3YFcTCSePnX1kurOZXfBcbW9tDSv2T/ZLmch36NQZpq9ZNAnZ2ys0mMPSMn5DpkGl
+        KMBxH74ReRolSqpq04+RODyiz2Megm8TSp/H0FQrfYGKuqYBn/eC8DwmXraWQwe/FWHfQ2DLPUHT
+        mwXqKEi4WyLK0ixPGEtYucu42BSCF3s/kOnarCR04O5GIxMDbpJFNZVyfpZ/va+kEar9AgAA//+C
+        xnZKfh6sMo128fdzjeXiAgAAAP//AwBdavhzBQgAAA==
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-encoding:
+      - gzip
+      content-type:
+      - text/event-stream
+      date:
+      - Thu, 19 Nov 2026 23:48:38 GMT
+      server:
+      - scaffolding on HTTPServer2
+      server-timing:
+      - gfet4t7; dur=2344
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+version: 1

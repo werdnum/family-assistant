@@ -1,0 +1,196 @@
+interactions:
+- request:
+    body: '{"model":"gemini-3.5-flash-lite","input":[{"content":[{"text":"What''s
+      the weather in London, UK?","type":"text"}],"type":"user_input"},{"arguments":{"location":"London,
+      UK"},"id":"call_124203275058853071","name":"get_weather","type":"function_call","signature":"c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I="},{"call_id":"call_124203275058853071","result":[{"text":"{\"location\":
+      \"London, UK\", \"temperature\": 15, \"unit\": \"celsius\", \"condition\": \"Partly
+      cloudy\"}","type":"text"}],"name":"test_tool","type":"function_result"}],"store":false,"stream":false,"tools":[{"description":"Get
+      the current weather in a given location","name":"get_weather","parameters":{"type":"object","properties":{"location":{"type":"string","description":"The
+      city and state, e.g. San Francisco, CA"},"unit":{"type":"string","enum":["celsius","fahrenheit"],"description":"The
+      temperature unit"}},"required":["location"]},"type":"function"}]}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '929'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+      x-goog-api-client:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/6tWSi0qyi9SsqpWyk0tLk5MT1WyUgpKLSxNLS5RSM7PK0nMzCtWSMxTyMwrS8zJ
+        TFFILEovzU3NK9FT0lFKzk8BKYdKxRdBtCnV1gIAqA7hrlYAAAA=
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-encoding:
+      - gzip
+      content-type:
+      - application/json; charset=UTF-8
+      date:
+      - Thu, 19 Nov 2026 23:48:41 GMT
+      server:
+      - scaffolding on HTTPServer2
+      server-timing:
+      - gfet4t7; dur=177
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-xss-protection:
+      - '0'
+    status:
+      code: 400
+      message: Bad Request
+- request:
+    body: '{"model":"gemini-3.5-flash-lite","input":[{"content":[{"text":"What''s
+      the weather in London, UK?","type":"text"}],"type":"user_input"}],"store":false,"stream":false,"tools":[{"description":"Get
+      the current weather in a given location","name":"get_weather","parameters":{"type":"object","properties":{"location":{"type":"string","description":"The
+      city and state, e.g. San Francisco, CA"},"unit":{"type":"string","enum":["celsius","fahrenheit"],"description":"The
+      temperature unit"}},"required":["location"]},"type":"function"}]}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '528'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+      x-goog-api-client:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/3ySW2+bMBiG/8rk25AVyAkj7SI0ydLQHZqTFqYJOfAVnDo2tQ3NQfnvM1GbdNq0
+        K8vvd+Dl8XtEShNdKuQjCc8llaBikmgqOLJQqUgGyD8iLTRhsRZPwE2n43atV4nyotTXgu1Z6L0U
+        r/fxVqSEUb1H/s8jul6Qhp1G9Z7L7OnX29qEJDmkl732my5K/cf3POtiTbC4VPD3iM5FmeX6fYFy
+        qum/zJ8slEggGlLjz7XdbtNxmg6euy2/Y/uuG9VMivT/DQpkRRPjhII0XQYvT4lM64qGQp0xKJpx
+        Q10auGjIVQgPo2I0tuch9KJVgaeSHsT8kE+/lLPZjNOgETS2g2F7OZAw4d6Lw8IED5xRta823qo/
+        6HMNnclX1l88YMyqJU54cJh/5rcigOmmsatSb2Kv0+HNTaCiu6d0UEV3ocwiaA9F6H0rSRcw/g67
+        CI+9qnEr1pIqvYvgx0TOlsPx/XLVW3yq32pf1I5fkaKTdUS0JpEQxmKn5bptjNt2q9fGrjkcz7vO
+        PJb8nKq47jUyJ9tazkDHL4Z4blhZiMis3ALXqs4cEwk559BH94KnglsfFiE61SER6w0k2hSo+XF5
+        iasJF7Dz0q154mbrY6f5yIjKmyZxgE6/AQAA//8DANV0JPHrAgAA
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-encoding:
+      - gzip
+      content-type:
+      - application/json
+      date:
+      - Thu, 19 Nov 2026 23:50:22 GMT
+      server:
+      - scaffolding on HTTPServer2
+      server-timing:
+      - gfet4t7; dur=582
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"model":"gemini-3.5-flash-lite","input":[{"content":[{"text":"What''s
+      the weather in London, UK?","type":"text"}],"type":"user_input"},{"arguments":{"location":"London,
+      UK"},"id":"call_13224994037492403188","name":"get_weather","type":"function_call","signature":"c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I="},{"call_id":"call_13224994037492403188","result":[{"text":"{\"location\":
+      \"London, UK\", \"temperature\": 15, \"unit\": \"celsius\", \"condition\": \"Partly
+      cloudy\"}","type":"text"}],"name":"get_weather","type":"function_result"}],"store":false,"stream":false,"tools":[{"description":"Get
+      the current weather in a given location","name":"get_weather","parameters":{"type":"object","properties":{"location":{"type":"string","description":"The
+      city and state, e.g. San Francisco, CA"},"unit":{"type":"string","enum":["celsius","fahrenheit"],"description":"The
+      temperature unit"}},"required":["location"]},"type":"function"}]}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '935'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+      x-goog-api-client:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/3xS227aQBD9FWtfa1LbXG2pDy6BkpiAikCpUlVoscf2FrNrdscQg/infkO+LGs3
+        EKpWfZwztzNnzpEopFgo4pFQbPIMECJikkLRBIh3JCiQZksUa+C6xu7Z5hvEeF7ge6LTMsk1tFyV
+        y42IaMawJN73I3kPCMIzkmrOpff04zw2pGEK0WWudcZFgX/s65oXaiJbFgr+bsFUFEmK1wnGGbJ/
+        kT+ZJJRAq+M94lhOp2HbDdudO02vbXmO81Rpkkf/L1AgdyzUTBhIXaWF5RGVlZwKIVe1DIolXOst
+        tbhkwFUAX4f5cGTNx/1AOlPpd/xEiNtYJg/ZrD+ZrqbbGPzt6GExdNJBTF3ZDTrJXXy7Tq0omm0L
+        Qdn+7nF6aCe7w0osPsxbbjffl+XeL609xVIc7NFmPmOuG3yz2PBp8KUVfKSL5D6L7MlM+PF9MN2O
+        Q7rmjy7tJZP1ZzftyRyaQ4HuZNdZ+eJT9asyrxi/SUpO5lHbhSNwrK+qP+qReQpGWEipYWOv1UxB
+        GowbY8EjwU1jERhMGXb75Vff0NIYOZWYlUaYiSIqb662VNNqS/yOtXXg7IAaF6ufEFYLmaYgaYhM
+        cN1e12k0gY1+dKN5027EGVVpQ/sOyOkVAAD//wMAkL2+4usCAAA=
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-encoding:
+      - gzip
+      content-type:
+      - application/json
+      date:
+      - Thu, 19 Nov 2026 23:50:22 GMT
+      server:
+      - scaffolding on HTTPServer2
+      server-timing:
+      - gfet4t7; dur=595
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+version: 1

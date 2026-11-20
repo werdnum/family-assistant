@@ -24,6 +24,9 @@ from family_assistant.context_providers import (
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm.google_types import GeminiProviderMetadata
 from family_assistant.llm.messages import AssistantMessage
+from family_assistant.llm.providers.gemini_interactions import (
+    recorded_interaction_steps,
+)
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
@@ -48,6 +51,7 @@ from family_assistant.tools.types import ToolDefinition, ToolResult
 from family_assistant.utils.clock import MockClock
 from family_assistant.web.app_creator import app
 from family_assistant.web.web_chat_interface import WebChatInterface
+from tests.integration.llm.vcr_helpers import sanitize_response
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -150,20 +154,10 @@ def gemini_http_api_debug_config(
     }
 
 
-@pytest_asyncio.fixture
-async def llm_integration_processing_service(
-    db_engine: AsyncEngine,
-    gemini_http_api_debug_config: dict[str, str | None],
-) -> AsyncGenerator[ProcessingService]:
-    """ProcessingService with replay-backed Gemini LLM client for integration testing."""
-    llm_client = GoogleGenAIClient(
-        api_key=os.getenv("GEMINI_API_KEY")
-        or os.getenv("GOOGLE_API_KEY")
-        or "test-key",
-        model="gemini-3.8-flash",  # V3 model with thought signatures, cheaper than pro
-        debug_config=gemini_http_api_debug_config,
-    )
-
+def _processing_service(
+    db_engine: AsyncEngine, llm_client: GoogleGenAIClient
+) -> ProcessingService:
+    """A ProcessingService over *llm_client* with the replay tool and context."""
     local_tools = LocalToolsProvider(registrations=_REPLAY_REGISTRATIONS)
     composite_tools = CompositeToolsProvider(providers=[local_tools])
     tools_provider = PolicyEnforcingToolsProvider(
@@ -201,8 +195,7 @@ async def llm_integration_processing_service(
 
     context_providers = [notes_provider, users_provider]
 
-    # Create processing service
-    processing_service = ProcessingService(
+    return ProcessingService(
         llm_client=llm_client,
         tools_provider=tools_provider,
         service_config=config,
@@ -216,8 +209,25 @@ async def llm_integration_processing_service(
         clock=MockClock(datetime(2026, 8, 7, 12, 0, 0, tzinfo=UTC)),
     )
 
+
+@pytest_asyncio.fixture
+async def llm_integration_processing_service(
+    db_engine: AsyncEngine,
+    gemini_http_api_debug_config: dict[str, str | None],
+) -> AsyncGenerator[ProcessingService]:
+    """ProcessingService with replay-backed Gemini LLM client for integration testing."""
+    llm_client = GoogleGenAIClient(
+        api_key=os.getenv("GEMINI_API_KEY")
+        or os.getenv("GOOGLE_API_KEY")
+        or "test-key",
+        model="gemini-3.8-flash",  # V3 model with thought signatures, cheaper than pro
+        debug_config=gemini_http_api_debug_config,
+        # Per-call thought signatures are the generateContent mechanism; the
+        # Interactions equivalent is the second half of this module.
+        use_interactions_api=False,
+    )
     try:
-        yield processing_service
+        yield _processing_service(db_engine, llm_client)
     finally:
         await llm_client.close()
 
@@ -374,3 +384,114 @@ async def test_streaming_multiturn_with_tool_calls_reproduces_bug(
         for event in turn2_events
         if event["type"] == "text"
     ).strip()
+
+
+# --- The same turns on the Interactions API -------------------------------
+#
+# Interactions needs a response's steps back verbatim, so the property that
+# matters is that they reach the database and come back out intact: a follow-up
+# turn replays them from there. Recorded with VCR, since the SDK's own replay
+# does not intercept the Interactions API.
+
+
+@pytest.fixture(scope="module")
+def vcr_config(vcr_config: dict[str, object]) -> dict[str, object]:
+    """The shared VCR config, leaving the in-process test client's own requests alone.
+
+    The app under test is reached over httpx at ``http://test``, which VCR would
+    otherwise record -- random conversation ids and all.
+    """
+    return {**vcr_config, "ignore_hosts": ["test"]}
+
+
+@pytest_asyncio.fixture
+async def interactions_client(
+    db_engine: AsyncEngine,
+    attachment_registry_fixture: AttachmentRegistry,
+) -> AsyncGenerator[AsyncClient]:
+    llm_client = GoogleGenAIClient(
+        api_key=os.getenv("GEMINI_API_KEY") or "test-key",
+        model="gemini-3.8-flash",
+    )
+    app.state.database_engine = db_engine
+    app.state.processing_service = _processing_service(db_engine, llm_client)
+    app.state.attachment_registry = attachment_registry_fixture
+    app.state.web_chat_interface = WebChatInterface(db_engine)
+    app.state.debug_mode = True
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            yield client
+    finally:
+        await llm_client.close()
+
+
+@pytest.mark.llm_integration
+@pytest.mark.vcr(before_record_response=sanitize_response)
+async def test_an_interactions_turn_persists_its_steps(
+    interactions_client: AsyncClient,
+    db_engine: AsyncEngine,
+) -> None:
+    """The steps of a tool-calling turn are saved with its assistant message."""
+    response = await interactions_client.post(
+        "/api/v1/chat/send_message",
+        json={"prompt": "Calculate 5 + 5. Use the add_numbers tool."},
+    )
+    assert response.status_code == 200, f"Turn failed: {response.text}"
+    data = response.json()
+    assert data["reply"].strip()
+
+    messages = await Database(engine=db_engine).message_history.get_recent(
+        interface_type="api",
+        conversation_id=data["conversation_id"],
+        limit=20,
+        current_time=datetime(2026, 8, 7, 12, 0, 0, tzinfo=UTC),
+    )
+    assert any(
+        isinstance(message, AssistantMessage)
+        and message.tool_calls
+        and (steps := recorded_interaction_steps(message))
+        and any(step.get("type") == "function_call" for step in steps)
+        for message in messages
+    )
+
+
+@pytest.mark.llm_integration
+@pytest.mark.vcr(before_record_response=sanitize_response)
+async def test_a_streamed_follow_up_replays_persisted_steps(
+    interactions_client: AsyncClient,
+) -> None:
+    """A second streamed turn completes on steps read back from the database."""
+    conversation_id = f"interaction-steps-{uuid.uuid4().hex[:8]}"
+    first_turn = str(uuid.uuid4())
+    started = await interactions_client.post(
+        "/api/v1/chat/turns",
+        json={
+            "turn_id": first_turn,
+            "conversation_id": conversation_id,
+            "prompt": "Calculate 5 + 5. Use the add_numbers tool.",
+        },
+    )
+    assert started.status_code == 200, f"Turn 1 start failed: {started.text}"
+    first_events = await _collect_turn_events(
+        interactions_client, conversation_id, 0, first_turn
+    )
+    assert any(event["type"] == "tool_call" for event in first_events)
+
+    second_turn = str(uuid.uuid4())
+    followed = await interactions_client.post(
+        "/api/v1/chat/turns",
+        json={
+            "turn_id": second_turn,
+            "conversation_id": conversation_id,
+            "prompt": "Now calculate 10 + 10 the same way.",
+        },
+    )
+    assert followed.status_code == 200, f"Turn 2 start failed: {followed.text}"
+    second_events = await _collect_turn_events(
+        interactions_client, conversation_id, followed.json()["first_seq"], second_turn
+    )
+
+    ended = next(event for event in second_events if event["type"] == "turn_ended")
+    assert ended["data"].get("status") == "complete"

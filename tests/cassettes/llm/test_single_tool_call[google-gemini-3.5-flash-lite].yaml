@@ -1,0 +1,67 @@
+interactions:
+- request:
+    body: '{"model":"gemini-3.5-flash-lite","input":[{"content":[{"text":"What''s
+      the weather like in San Francisco?","type":"text"}],"type":"user_input"}],"store":false,"stream":false,"tools":[{"description":"Get
+      the current weather in a given location","name":"get_weather","parameters":{"type":"object","properties":{"location":{"type":"string","description":"The
+      city and state, e.g. San Francisco, CA"},"unit":{"type":"string","enum":["celsius","fahrenheit"],"description":"The
+      temperature unit"}},"required":["location"]},"type":"function"}]}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '536'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+      x-goog-api-client:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/3ySXW/aMBiF/0rlW8KWhPCRSLtox0Knlo8y1pJOU2QSk7hxbLBfEzLEf5+DWui0
+        aZc+74ePnvcckAIMWqEASbLVVBIV4wSo4MhCWuGMoOCAQABmMYiCcNPpuH3rVaJ8o+FSsAcWei/F
+        qzouRYoZhRoFPw7o8kBA9oCaPefZ48+3tQlOcpKe99pvutDwx3++dbYmWKwV+XsEcqGzHN4XKKdA
+        /2X+aKFEEgwkNf5c2+21Haft+Au3E3iDwLOfGyab9P8NisgdTYwTSqTpMnh5imXaVIBs1AmDohk3
+        1KWBi75wdUcewk14ay+icUZFOlRDHKrHXlhG42rdGvvTyKMtnQNIOWVVtitIK1l9/EqHEzb6fnOz
+        q+oQxLyuiuiRjaqna0/Pyd1zOppE6aLTFbt91+GTmcOnW7rMl9PW1E3va2/k3xdpXszysnjYLse3
+        eMRWL9F+vsVPlM+yPVZVr/B/tTD3y0x9am5VbxrHr0jR0Tog2pBIMGOxM3A7jmN3vY7X7fte3+m7
+        g8vMWvNTquKm18gcl42cEYgrQzw3rCyEZaZLwkE1mWMiwaccBugb5lehxDyhKhHW1edrdGyyIlYv
+        JAFTpxyIPKfWZIyw0+7SXLrd+dBtrxlWedsEj6DjbwAAAP//AwDPbHHR8gIAAA==
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-encoding:
+      - gzip
+      content-type:
+      - application/json
+      date:
+      - Thu, 19 Nov 2026 23:48:40 GMT
+      server:
+      - scaffolding on HTTPServer2
+      server-timing:
+      - gfet4t7; dur=791
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -89,8 +89,7 @@ def _require_cassette(request: pytest.FixtureRequest, llm_record_mode: str) -> N
     In replay mode CI has no network, so a VCR test with no recording fails with
     `ProviderConnectionError: Connection error` -- or worse, the client swallows
     it and a later assertion fails for an unrelated-looking reason. Neither names
-    the file to record. Gemini's SDK replay reports the missing id itself, so this
-    only guards the VCR-backed tests, which request it explicitly.
+    the file to record. Every test here that records is VCR-backed and requests it explicitly.
     """
     if llm_record_mode != "replay":
         return
@@ -189,8 +188,9 @@ async def test_shipped_openai_model_accepts_the_unreadable_media_note(
 
 @pytest.mark.no_db
 @pytest.mark.llm_integration
+@pytest.mark.vcr(before_record_response=sanitize_response)
+@pytest.mark.usefixtures("_require_cassette")
 async def test_media_analyst_provider_can_actually_read_audio(
-    request: pytest.FixtureRequest,
     llm_record_mode: str,
 ) -> None:
     """The handoff target has to be able to do the job it exists for.
@@ -201,20 +201,14 @@ async def test_media_analyst_provider_can_actually_read_audio(
     the model here means a future retier of that profile has to keep a provider
     that can take audio, or fail.
 
-    Uses the genai SDK's own replay rather than VCR: Gemini recordings are JSON
-    under `tests/cassettes/gemini/`, keyed by module/test/mldev.
+    Recorded with VCR: chat runs on the Interactions API, which the genai
+    SDK's own replay does not intercept.
     """
     _skip_unless_replayable(llm_record_mode, "GEMINI_API_KEY")
 
-    module_name = request.node.module.__name__.replace("tests.", "")
     client = GoogleGenAIClient(
         api_key=os.getenv("GEMINI_API_KEY", "test-gemini-key"),
         model=_SHIPPED_GOOGLE_MODEL,
-        debug_config={
-            "client_mode": llm_record_mode,
-            "replay_id": f"{module_name}/{request.node.name}/mldev",
-            "replays_directory": "tests/cassettes/gemini",
-        },
     )
     parts: list[ContentPart] = [
         TextContentPart(
@@ -265,29 +259,22 @@ async def test_shipped_openai_model_calls_a_tool(llm_record_mode: str) -> None:
 
 @pytest.mark.no_db
 @pytest.mark.llm_integration
-async def test_shipped_google_model_calls_a_tool(
-    request: pytest.FixtureRequest,
-    llm_record_mode: str,
-) -> None:
+@pytest.mark.vcr(before_record_response=sanitize_response)
+@pytest.mark.usefixtures("_require_cassette")
+async def test_shipped_google_model_calls_a_tool(llm_record_mode: str) -> None:
     """Agentic tool calling on the default assistant's primary.
 
     This is the model every interactive turn starts on, so its tool calling is
     what users meet first -- and the adapter's function-declaration conversion is
     a different code path from the OpenAI one the sibling test covers.
 
-    Uses the genai SDK's own replay rather than VCR, like the audio test.
+    Recorded with VCR, like the audio test.
     """
     _skip_unless_replayable(llm_record_mode, "GEMINI_API_KEY")
 
-    module_name = request.node.module.__name__.replace("tests.", "")
     client = GoogleGenAIClient(
         api_key=os.getenv("GEMINI_API_KEY", "test-gemini-key"),
         model=_SHIPPED_GOOGLE_MODEL,
-        debug_config={
-            "client_mode": llm_record_mode,
-            "replay_id": f"{module_name}/{request.node.name}/mldev",
-            "replays_directory": "tests/cassettes/gemini",
-        },
     )
 
     try:

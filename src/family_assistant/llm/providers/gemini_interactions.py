@@ -74,9 +74,18 @@ class UnrepresentableInteractionInputError(ValueError):
     """A history part that the Interactions API has no form for."""
 
 
+# The provider tag of recorded steps. Not "google": message history reads
+# that tag back as GeminiProviderMetadata (an agent's interaction id, a
+# generateContent signature), which has no place for steps and drops them.
+INTERACTION_STEPS_PROVIDER = "gemini_interactions"
+
+
 def interaction_steps_metadata(steps: list[JsonObject]) -> JsonObject:
     """``provider_metadata`` recording a response's model steps for replay."""
-    return {"provider": "google", INTERACTION_STEPS_KEY: cast("JsonValue", steps)}
+    return {
+        "provider": INTERACTION_STEPS_PROVIDER,
+        INTERACTION_STEPS_KEY: cast("JsonValue", steps),
+    }
 
 
 def recorded_interaction_steps(message: LLMMessage) -> list[JsonObject] | None:
@@ -84,7 +93,10 @@ def recorded_interaction_steps(message: LLMMessage) -> list[JsonObject] | None:
     if not isinstance(message, AssistantMessage):
         return None
     metadata = message.provider_metadata
-    if not isinstance(metadata, dict) or metadata.get("provider") != "google":
+    if (
+        not isinstance(metadata, dict)
+        or metadata.get("provider") != INTERACTION_STEPS_PROVIDER
+    ):
         return None
     steps = metadata.get(INTERACTION_STEPS_KEY)
     if not isinstance(steps, list) or not steps:
@@ -577,4 +589,33 @@ def history_steps(
         flush()
         steps.extend(recorded)
     flush()
-    return steps
+    return _named_results(steps)
+
+
+def _named_results(steps: list[JsonObject]) -> list[JsonObject]:
+    """*steps* with every tool result named after the call it answers.
+
+    The call id is what binds a result to its call, but Interactions also
+    requires the result's name and rejects one that is missing or differs from
+    the call's. A tool message does not always carry the name the model used,
+    so the call's own name, from the same input, is the one sent.
+    """
+    names = {
+        step["id"]: step["name"]
+        for step in steps
+        if step.get("type") == "function_call"
+        and isinstance(step.get("id"), str)
+        and isinstance(step.get("name"), str)
+    }
+    named: list[JsonObject] = []
+    for step in steps:
+        call_id = step.get("call_id")
+        if (
+            step.get("type") == "function_result"
+            and isinstance(call_id, str)
+            and call_id in names
+        ):
+            named.append({**step, "name": names[call_id]})
+        else:
+            named.append(step)
+    return named

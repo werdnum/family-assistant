@@ -38,18 +38,15 @@ LLM_RECORD_MODE=record pytest tests/integration/llm/test_tool_calling.py::test_p
   -xq -m llm_integration
 ```
 
-Providers use different mechanisms under the hood, so recordings land in different places:
+Where recordings land:
 
-- **OpenAI/Anthropic and other HTTP providers**: VCR.py YAML cassettes in `tests/cassettes/llm/`.
-- **Google Gemini**: the SDK's `DebugConfig` replay (JSON, with native streaming support) in
-  `tests/cassettes/gemini/`, keyed by `<module>/<test name>/mldev` — see the `llm_replay_config`
-  fixture in `tests/conftest.py`, which selects the mechanism from the test's `provider` parameter.
-- **Google's Interactions API** (Deep Research and Antigravity agents): VCR, not the `DebugConfig`
-  replay. These endpoints are served by a separate `_gaos` client inside the SDK, which the replay
-  layer wrapping `models.generate_content` does not intercept; VCR sits at the HTTP transport and
-  catches both. Such a test takes `@pytest.mark.vcr` and no `provider` parameter, so
-  `llm_replay_config` leaves it to VCR — see
-  `tests/integration/llm/test_google_antigravity_integration.py`.
+- **Every LLM provider, Gemini included**: VCR.py YAML cassettes in `tests/cassettes/llm/`. Gemini
+  chat runs on the Interactions API, which the SDK's own `DebugConfig` replay (it wraps only
+  `models.generate_content`) does not intercept, while VCR sits at the HTTP transport and catches
+  both.
+- **A test kept on generateContent** (`use_interactions_api: false`, e.g. the thought-signature
+  tests and the streaming conversion reproducer) may still use `DebugConfig` replay, with JSON
+  recordings under `tests/cassettes/gemini/` keyed by `<module>/<test name>/mldev`.
 
 ### Home Assistant Integration Tests
 
@@ -134,8 +131,8 @@ the whole suite.
 ## File Organization
 
 Cassettes live under `tests/cassettes/` (not inside `tests/integration/`): `llm/` for VCR YAML,
-`gemini/` for SDK replays. The shared VCR fixtures (`llm_record_mode`, `vcr_config`,
-`llm_replay_config`) are in the top-level `tests/conftest.py`.
+`gemini/` for SDK replays. The shared VCR fixtures (`llm_record_mode`, `vcr_config`) are in the
+top-level `tests/conftest.py`.
 
 ## See Also
 

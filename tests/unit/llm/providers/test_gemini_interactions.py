@@ -124,6 +124,17 @@ class TestRenderingHistory:
             "result": [{"type": "text", "text": "22C"}],
         }
 
+    def test_a_tool_result_takes_the_name_of_the_call_it_answers(self) -> None:
+        messages: list[LLMMessage] = [
+            UserMessage(content="Weather?"),
+            AssistantMessage(tool_calls=[_call("call_1", "get_weather", {})]),
+            ToolMessage(tool_call_id="call_1", name="mislabelled", content="22C"),
+        ]
+
+        steps = _input(_client(), messages)
+
+        assert steps[2]["name"] == "get_weather"
+
     def test_a_generate_content_signature_signs_the_replayed_call(self) -> None:
         signature = b"gc-signature"
         call = _call("call_1", "get_weather", {"city": "Sydney"})

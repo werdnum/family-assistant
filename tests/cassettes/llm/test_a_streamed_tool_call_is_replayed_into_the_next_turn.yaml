@@ -1,0 +1,277 @@
+interactions:
+- request:
+    body: '{"model":"gemini-3.8-flash","input":[{"content":[{"text":"What''s the weather
+      in Sydney? Use the tool.","type":"text"}],"type":"user_input"},{"signature":"EpUECpIEAWkUfROVeyYrRXEukabasei6uDM/s2N6OJSqJJTZz6osYh/c7pRyrg2dJt+qdyh/6s5JxUW0gk5sXNVEAxqLmBlrGps73OnEjV8Z2GdYKdCaBf7689Y2LQ8z8Xd7AMTARJ0AJqqJSgEiwOkwK0NUFnNrTdpQZpB1HOX4wS6Ew14AtSml382TUE0tMxIt6mpIeTRJJLVmFsvGA4G0IWi4QeDaQEhmvxF0RT4pddVjZneoWhAVpEY7fjoB09uEQBqQPStLXZuSqqT4uAePYEK1SI9Gg5eTSbf+NDwfuGJfJEgwD11488LSvP/A7U3td/nYdKSBpoFWGHBh7zCyPAF7u5bCzzTZqcAJDPK0F1HWfSrNxphUJa67s9++/HTTI4rIR5nDSJ38bZxiPB+9wsIql0gWycERNZrQfmjyBcfJerNEZBi50eqCplvbAGuA+gAdMYeXmfHvdXZjDN5wHi6nat0rBv8CVewmZB2zzt2h8hXznWUjDEjLiyJD6kAUJXCEqpcRwFnNT8cllnuRYrU63+eJrs2P+jnNrf/tnHbGMelrOcRXu8JrIqaKAStNsIr9t5FvqA8XM2E6jDIHosGqh7ih/8+Rof+yeGir/hnWptAI+t41ZQh+HAI2W9HnBmG8FOEZMzlNeQcJ9AXXrFC8Uqc5RNFzdoxWFrJk2kz6eUyNxAbfTlUvHbPW1+DIkFKRwn0=","type":"thought"},{"arguments":{"city":"Sydney"},"id":"call_9884872528255868475","name":"get_weather","type":"function_call"},{"call_id":"call_9884872528255868475","result":[{"text":"{\"forecast\":
+      \"22C and sunny\"}","type":"text"}],"name":"get_weather","type":"function_result"}],"store":false,"stream":false,"tools":[{"description":"Get
+      the weather forecast for a city.","name":"get_weather","parameters":{"type":"object","properties":{"city":{"type":"string","description":"City
+      name"},"units":{"type":"string","enum":["celsius","fahrenheit"]}},"required":["city"]},"type":"function"}]}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1462'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+      x-goog-api-client:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/3xS247aMBT8lcivwJILlxCpD0ADe4GGQCjdVBVKHJMYQpzYzi4W4p/6Df2yOuku
+        rNSqjz6eM2fOnDkDxgNeMmABSI55ijiKQBOULIgRsM6AEx6kW04OKJMY3VCbbyWc5SW/fahmE3ws
+        bUOxPZIoSDEXwPp+BrcH4OjEQcVz7b38eKeFAUxQdOW9jiMl/zhPM5pXaSTdlgz93cITUsbJrWdQ
+        KcQc/0v8pQkgRUG1vAV0Ve+1NK2lDTzdsDo9q6v7lSd59H8AQ/QFQ6kEIypR0tgsCmhlJ+MoZ7UN
+        DMeZ9JtKc4FNh6NxoY6Gm8N6t/zih5uNm47mDwG13V6xF2Qhlqe17Ym24ZSvvjMZYqZ+Fc5eLO8f
+        zT3hqwCNhePB3WQ/ykOcxqa5ekiwOPSxW3T051RbkM3xqY8PL+7h230SpYNnT+u4/mQdz2DpLBZ+
+        6E77PZ2Gk24BVS/1n9By0TMxpDP1aHcj0xhCMgi9aL7jJiZakM+R/dnp6kWc2I/thrZY9tfQa0zH
+        mtqYnDI7nOKibE9njUa7z0ZwWHhdwy1nqtYZfqpuLvJq87fTgEvzLGOXcZTx2p06GRbwEqS8ymsk
+        iCo4U1YiypBQMFNgSanEpkLR9V8/x4o0WGFllom7D9wVRx2oP28ZPPSen7pOwj2C1RgsB9MAckwy
+        2V7jZDVGRxmTlnFntnZpwBJw+Q0AAP//AwB1f8e3JAMAAA==
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-encoding:
+      - gzip
+      content-type:
+      - application/json
+      date:
+      - Thu, 19 Nov 2026 23:46:52 GMT
+      server:
+      - scaffolding on HTTPServer2
+      server-timing:
+      - gfet4t7; dur=1527
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"model":"gemini-3.8-flash","input":[{"content":[{"text":"What''s the weather
+      in Sydney? Use the tool.","type":"text"}],"type":"user_input"},{"signature":"EokDCoYDAWkUfRPw+HW3J6so4jaSOhShw+ZpBtXlKAO54f9PJscHmiPMPF1fT8LYp3FtFyUUe1Nrx+ifGwcxTtImFjU/VY17oeGSvr+JBmVugonbeAfV8w8hql5PgXFhS6CoVHuCuSWjZbCGuOYgmUigNWVPLmxXTRZcEufxVMrIuFyYFXNJTgiwys4u5WnE1CA9XYP41lNlMdAyGoRfhV3Jr6pWcWb+/+MglmAuR7FJjBZvxD71xGgd8yw+bCl79LuehJpKo/f8Zk0x00c6yIu8hfoyvGXl3fJmpAMoE6Wn+r/BsX+o9tr4O/3MjkYLoBXm9v+ibJcATnKKcl5RrJKiDGrGvjcM4z9bg/S//NhDSmB+IBhqR8lyCWfp4DFM0XduJvKr0mvFKjhBUM/Xa9DTyzWUqQV9x5IrMktLzFxK6Hb4f1+MbnwSlv418lE1o7XD0BPo2s+JzBUSHGaQnQVSxUUGSIf/oaObO4rd08KyQL9b3kozwEAKu1npMI7pPxuibh41D9GktccX","type":"thought"},{"arguments":{"city":"Sydney"},"id":"call_8316828010674703485","name":"get_weather","type":"function_call"},{"call_id":"call_8316828010674703485","result":[{"text":"{\"forecast\":
+      \"22C and sunny\"}","type":"text"}],"name":"get_weather","type":"function_result"}],"store":false,"stream":false,"tools":[{"description":"Get
+      the weather forecast for a city.","name":"get_weather","parameters":{"type":"object","properties":{"city":{"type":"string","description":"City
+      name"},"units":{"type":"string","enum":["celsius","fahrenheit"]}},"required":["city"]},"type":"function"}]}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1274'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+      x-goog-api-client:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/3xS23LaMBT8FY9egYAv8W0mD8YkqQMmE4JNoNNhfBG2fJGNJSfYDP/Ub+iXVaYJ
+        Taedjp602rPnaM8eAaEerQnQQVDkZQYpDEEf1MSLINCPgBbUy7a0SCFmHIHn++8QwmVNLw+8ovXB
+        Z2jrN9u8CL0M0QboX4/g9wVQeKCg07nUnr59yAZeEMPwojv6wIua/tFP6l9GK7JtTeDfJTQu6ij+
+        VKN2IyKK/jX9qQ+CCnrd73UgjAR5wPMDXlsKoi4puqBuOlPK8P8EAqtXFLBREKwYizmLQ6/q/CQU
+        luTsA0ERZoZXzF1wS9djk9pjY5U6u4V9oOHTiy/bM3wP31RDcueVl7v3tm3dZbKznPDNGxknLmpo
+        suxZM+U69ZCfvyjGQzRyVkvSQ1NsJsl+aCSh00PV7CFS18/ZZiSNpWKoPeeC5mmveNKKZrN2q15c
+        YrgK2pcW3U+v0ypt7mLZ8m1bsyd7K19gq/e408byZm1PtcNowqPbvVibt5bzFCyUGsl1Wh8mPjV3
+        MpZaRY20nNbS4nVeCPhgGnzst06S7pN1mQ53seUieZX5U/LFMKaiWzoPQzITxZ6vPTpUjcatq/k4
+        mCvsbIysTRU+msOnm5suKE3ZufW+T3DqH1lWMYWYnh09x0kHyxhyb2yDMaw4hLnnJsSw4RDhgrqq
+        GDdrOEH48d3k2FI4UmPcXH3S7jTOKfx1Z2mFH6E744WfwKBrg1jjygsoKjArP/MYGsGcRWsgXqmD
+        XeaRGJx+AgAA//8DADe8VDJZAwAA
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-encoding:
+      - gzip
+      content-type:
+      - application/json
+      date:
+      - Thu, 19 Nov 2026 23:47:28 GMT
+      server:
+      - scaffolding on HTTPServer2
+      server-timing:
+      - gfet4t7; dur=2557
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"model":"gemini-3.8-flash","input":[{"content":[{"text":"What''s the weather
+      in Sydney? Use the tool.","type":"text"}],"type":"user_input"}],"store":false,"stream":true,"tools":[{"description":"Get
+      the weather forecast for a city.","name":"get_weather","parameters":{"type":"object","properties":{"city":{"type":"string","description":"City
+      name"},"units":{"type":"string","enum":["celsius","fahrenheit"]}},"required":["city"]},"type":"function"}]}'
+    headers:
+      accept:
+      - text/event-stream
+      accept-encoding:
+      - gzip, deflate, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '448'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+      x-goog-api-client:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/1SNMQqAMBAE+7wiXK02NpLPyJmsGomJ6CGI5O9qIWg7wzDYEcVoHwUrW/EpVnYF
+        C5xyLGz0SR9H5qTUTbBC5scLmpNDuOmA2Udf1lVT9oG3kXJBeCatHAv+2buirNQFAAD//0rFdEhx
+        SWJJaXF8aQHQJalw50BEwQbFFxTlpxelFhcr4bEDxRSQTQAAAAD//4LaVFySWgCSLCpB8mlKaoWS
+        lYGOEkgS5FmoeSUZ+aXpGSUYfkGYATIYAAAA//9s0seSm0AQgOEH4gBIhNERAQKWIDKIi4ugGSSS
+        hmFJT79a+2C7aq99+Kur+/s3/D7GlP8Q/j3/LpMH6t+Ljd8ZFXuKjFVFSpoI+u7szMtKNWy7Pa+X
+        g77nHTgvfajcWSBgZwoxwkjJOJstXq87Rz94m6+sq6zxh/XGEMqgSno9UPWYx5LU0B2kx700cT4v
+        9iEkcU5j4g4N2s/OglK6sgbOs16foALmQ2Nu4j3q48LRUghhJVUnV6mXVmDhQWdealLcxUbb2Hp0
+        gpa2CjIWowNMQ3zXYeP7p6HP2EiXhO39Fnm8IDXCnFEe7TyjIdXUx0w55q4s9DgoTKHg5qRf5f15
+        DRxd0G5zUh3psI+fnhKnLI+JQeJqylbDR6JhnQs5yUthMRlxDD4JAYIvdAF6Yuy24nr1nZZLLFk/
+        3zPquHaDc2pOdreyvpA/9iK2FsPGJMo9hkIIPXLeYBJRjfaUn0bHFZuwZj2QjI1r7nVE3TggMbbp
+        0bMsEt2tZBeorq65WYec9OOGTTvOKrh21xcun6HHxwm55XWAoqBk/AFqsXYIHjY10+cIZiRaLnCf
+        nsCkXkul2AX0l3ZI43XwhxZGMrwUDYBxKJBx60HruTZVp2o2b1ElMWkeTlmz+SfV2MHpo57K2oGb
+        gz7f5P/H+euvqB+Z/pH3ZvoFAAD//0JN//kFWFIptkSeXwDSDAAAAP//Iph5DBGZJzMFqDs5MScn
+        3tjMzNjI3MLQ0MjAxNLSwNLY2Azh/rTSPHBOjQcpBQrnJeamgguSkvhyYPGQkVoEFEwsSi/NBVoN
+        zPjVtfizIQAAAP//IpgNDZGyIZK5StUxSsmZJZUxSlYxSsGVKXmpQGYtwp1wpfHQoMQbygAAAAD/
+        /yIUyob4QhkAAAD//6xVyw7CIBD8F85tUqhW2+/wpDEE6UaJWGoLRmP8d5dGsIlNTx7ZF5OZzeyE
+        GUpzaTXM+HL0xQ6uTqEr8ujNrhdHGOzMWKG5NWdosJKuWPIJqaZ1NiZKBDeO8MODo78LjeyQavck
+        3wexcLeeo9j62oehUsgT1HFqFuLG2fFvtEgiMKO56+G3Jex4SBRLj1BZNYEddQl3pSIsY0VKaUrL
+        DcurxbrK861nZLgGMwU9dDclEYnC9fPqiKYWXY2Zv96/IKoX/Q0AAP//gkZ6Sn4erLKLdvH3c43l
+        4gIAAAD//wMACWDGcKUHAAA=
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-encoding:
+      - gzip
+      content-type:
+      - text/event-stream
+      date:
+      - Thu, 19 Nov 2026 23:48:33 GMT
+      server:
+      - scaffolding on HTTPServer2
+      server-timing:
+      - gfet4t7; dur=2000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"model":"gemini-3.8-flash","input":[{"content":[{"text":"What''s the weather
+      in Sydney? Use the tool.","type":"text"}],"type":"user_input"},{"signature":"EqQDCqEDAWkUfRPvNvwx+k1lyjOF2Hzam8BwnTDe186qNtTqgqgDZ4M1bppe4/i5M5dLOCG52xY0s+I+c/x2+hraVAAk/mf/rzcKqavwM2TsVa/qsPokgzBNwgX/dLo4QLpu8d8KiG0Y7eUnVbNGXfffdAd9PDhwl61f2H0pEWbe7kGy1hrNSl/LbsrbrN8KI7qavfkRR9onZ1UHA6ygreCrFgEUq4Ic3MaZ/f+kh3ZD3aPC6nqSbK6b4vWnxCzjOSNH6GYvWd3/TnVjQDVX15qsIsVdtZxIRg7ILBbCWac6wK07rSuss86R6mSgjqqPl7xORNl4WLCHBeZ+3xmoN9k9Mmx1R6aizbVLwIMqsUaQ0+gggia5I0W7EUzX5trNP7kTh1Q8WrkPKzhU+Y48A0MKQ/vC7sHPdCP8EPHGPZmgNXJYqKMVZdfxmOpqcjTQ5VWsYahSgUSc0RofGVG2SiM+v/BUfZsUwFfztj8K+pwdDMbfRwloXVxoRolfUCfFbk8fVT6sryn8lQPM+hXEZvyUdA0XaTtZkyR9EIz89JhtchNfyNgu","type":"thought"},{"arguments":{"city":"Sydney"},"id":"call_3663278112049909336","name":"get_weather","type":"function_call"},{"call_id":"call_3663278112049909336","result":[{"text":"{\"forecast\":
+      \"22C and sunny\"}","type":"text"}],"name":"get_weather","type":"function_result"}],"store":false,"stream":false,"tools":[{"description":"Get
+      the weather forecast for a city.","name":"get_weather","parameters":{"type":"object","properties":{"city":{"type":"string","description":"City
+      name"},"units":{"type":"string","enum":["celsius","fahrenheit"]}},"required":["city"]},"type":"function"}]}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1310'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+      x-goog-api-client:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/3xS0XKiQBD8FWpfT4NCDGBVHhQwoiZq1Bi9urIWWGEBF1wWEC3/Kd9wX3aLl5hc
+        3dU9Tm9Pz2xPn0DKIMtS0AZOvEsixJALaiBLoYdA+wRYzGC0YXGICOdIslx7hzBJMnZ9aGqNGvgK
+        bexys4tdGGFWgvb3E/gsAEMHBiqda+/5x4esAx0fuVfdxgceZ+yPebe162pxtMlS9HcL8+PM8z97
+        JK1aETP8r+3PNeBQBKvft4HUkO7qzWa9qc0luX2rtuXWujIlcf9PSBHNscNXwYhyFneWuJBWfqYM
+        JenFhxR7hBtOubvAzM2unt12O8twsX2euMqA0uFaZs1kUDYT46DfvVhQ9s39zknCFp4k6ydi5rRl
+        ZtP1XMcMxobkesW+oAZeGuO+BM2e/w0ven4uap6sW5OR0n153vaxiSY9zRCX3sJYTQxb3Xtb6+gG
+        3sFhKznL7TId7FallAzFMqDlvuUPi9UglI2iWE2ndmOWYr10XmQtU0fSLjkkC1UZTmPLHAeKpz7k
+        Rzh00eNa1Rp7SwxJLxiG7Ei1O1957WgxtOUgc2d4HmqHcLwq1qIjuuso0A+qpcCZsXpMg37f6hzN
+        B7Pf0p7HqhjIU3nOKXn3QVFH+dadHZZd25sl3lPx6jXmiohHzlIj0mvUub+vwlQmlaPvNwfn2onn
+        mTBE2MX1S+TaYO4joeBX9hEVMBFmpUtQKeBUcDJKOTcqBUn6+aYL/HBCmhFS3nzRrjQuSf1d80Sj
+        j2Be8NgOkFONwXwwhQ7DMeHtFx5HPbTj8avLN2p9G8HUB+dfAAAA//8DABNQOeh9AwAA
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-encoding:
+      - gzip
+      content-type:
+      - application/json
+      date:
+      - Thu, 19 Nov 2026 23:48:35 GMT
+      server:
+      - scaffolding on HTTPServer2
+      server-timing:
+      - gfet4t7; dur=1475
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,0 +1,64 @@
+interactions:
+- request:
+    body: '{"model":"gemini-3.5-flash-lite","input":[{"content":[{"text":"Count to
+      5","type":"text"}],"type":"user_input"}],"store":false,"stream":false}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '142'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+      x-goog-api-client:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/3xS247aMBD9FeTXOi0mhIZIfeCyKYWqbLpcxFYVcmKTexziCRtA/HudFCjSSn30
+        mZnjM+fMGUmgUEpkIU+kecKBM4RRKanPkXVGIIAmWxAxz1QPMfEVCbO8hDtuYPQIbN3jNhWMJiEc
+        kfXrjP49EPAKUM1ynbz8vlF61As4u3O2b7go4fEvouO7KpFsS8nfj0AgSj+Ax0KYhRC+F37ByCs4
+        rbe2UKfd6WmEaKS/6OhW17R08lqbkbP/N0heHEJP6Qh5obqUoxmjRe2jBJ7LxgIZ+pkyulCuoqdM
+        zrhj5/akvXBIt/MsjIoNFl9FPJaBuQpmJDl9W643/v60HnyqnjfjfprzU06N9nI0/RAUrHLL5eZg
+        M76bp0P78+TnJK6Y90qGxlM3XmymcQTR5Me8f3ACe/id7GDtzQp30DsZvWFUydSMDvqe7Ucj/W3m
+        TBn0SumWA/MleilWb9l4vgIZO1/qnI55rfhqKLrgs7qTDHgGzVZNmhYiuNXBLR23urhlPEzV1Sbg
+        v291BvyWZ4MLN+JeTRAqyoJ6EIpMjTd9CvV5qmLT9I+GtkuoDDR1Qxxd/gAAAP//AwCKa+1dtAIA
+        AA==
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-encoding:
+      - gzip
+      content-type:
+      - application/json
+      date:
+      - Thu, 19 Nov 2026 23:48:31 GMT
+      server:
+      - scaffolding on HTTPServer2
+      server-timing:
+      - gfet4t7; dur=536
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+version: 1

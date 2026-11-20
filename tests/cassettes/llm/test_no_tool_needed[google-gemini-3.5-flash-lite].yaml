@@ -1,0 +1,69 @@
+interactions:
+- request:
+    body: '{"model":"gemini-3.5-flash-lite","input":[{"content":[{"text":"Tell me
+      a joke about programming","type":"text"}],"type":"user_input"}],"store":false,"stream":false,"tools":[{"description":"Get
+      the current weather in a given location","name":"get_weather","parameters":{"type":"object","properties":{"location":{"type":"string","description":"The
+      city and state, e.g. San Francisco, CA"},"unit":{"type":"string","enum":["celsius","fahrenheit"],"description":"The
+      temperature unit"}},"required":["location"]},"type":"function"},{"description":"Perform
+      basic mathematical calculations","name":"calculate","parameters":{"type":"object","properties":{"expression":{"type":"string","description":"The
+      mathematical expression to evaluate"}},"required":["expression"]},"type":"function"}]}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '781'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+      x-goog-api-client:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/3xSYXOaQBT8K/S+igVBnMBMp5OoiME0aRsrtek4JzzhAtwR7nBEx//eg0Zjp51+
+        u9t7b9/evj0gLrCoOHJQyPIiAwERUlHFcQzIOSDBBM5WgqVAZU1vMFBfIUKLSrw9WKaKLqHVul7l
+        LMIZETVyfhzQ2wUJ2AnU8Jx7jz9PtCEOE4jOvPoJZ5X4Y56pnqWxbFVx+LtFJKyKE3H5QCgR5F/i
+        jyoKS8DN5x1k6Mag2+t1e/ajYTr9K8e0l40nRfT/Ag7lloRSCYFSVkljaYTLxk4uoOCtDZzEVPpd
+        SnPRmHIfPruF6+mPY3Mbbb2+58d+er8fLvlMM243X7jn9yf7xdp/WCYuZSNyX4bTzVSzrq4FBBOt
+        U9+NTGLEaZGN5v63waR+yL+6WW0x+6Uzmu4GM0ZutLjnzyr9Zqy59j7Z6cG88zxMwbqzh9e3gTff
+        T7zvC3CDMGBs9MmKDX1paENb1+p0FrD5h2ZXddEofrUUHdWDjAsVQEX7q3ajDloktRIxpShZXOI8
+        h5LLM2ygVKQPqSIjAB+f6BO9gRDLlSkZkWQKFqLEoeDKuor5u4thDWmbjN/3pv0UhBZn62cIm7lE
+        KmkoCKOyva2TaAy53HfXfG91NxnmSVfGD9DxFwAAAP//AwCDcsl88gIAAA==
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-encoding:
+      - gzip
+      content-type:
+      - application/json
+      date:
+      - Thu, 19 Nov 2026 23:48:39 GMT
+      server:
+      - scaffolding on HTTPServer2
+      server-timing:
+      - gfet4t7; dur=570
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+version: 1

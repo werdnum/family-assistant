@@ -6,8 +6,7 @@ ship: the unit tests in ``tests/llm/test_google_antigravity.py`` assert the
 request we *intend* to send, and agreed with the code while every real run
 failed with ``400 Missing required field 'environment'``.
 
-VCR rather than the Gemini SDK's own ``DebugConfig`` replay (the usual
-mechanism for this provider, see the ``llm_replay_config`` fixture): the
+VCR rather than the Gemini SDK's own ``DebugConfig`` replay: the
 Interactions API is served by the SDK's separate ``_gaos`` client, which the
 replay layer wrapping ``models.generate_content`` does not intercept. VCR sits
 at the HTTP transport, so it captures both.

@@ -74,7 +74,7 @@ async def llm_client_factory() -> Callable[
     [
         ("openai", "gpt-4.1-nano"),
         ("openai", "gpt-5.2"),
-        ("google", "gemini-2.5-flash-lite"),
+        ("google", "gemini-3.5-flash-lite"),
         ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
@@ -113,7 +113,7 @@ async def test_basic_completion(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite"),
+        ("google", "gemini-3.5-flash-lite"),
         ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
@@ -152,7 +152,7 @@ async def test_system_message_handling(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite"),
+        ("google", "gemini-3.5-flash-lite"),
         ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
@@ -184,7 +184,7 @@ async def test_multi_turn_conversation(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite"),
+        ("google", "gemini-3.5-flash-lite"),
         ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
@@ -209,7 +209,7 @@ async def test_empty_conversation(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite"),
+        ("google", "gemini-3.5-flash-lite"),
         ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
@@ -244,7 +244,7 @@ async def test_gemini_multipart_content_with_images(
     llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
 ) -> None:
     """Test that Gemini can handle multi-part content with text and images."""
-    client = await llm_client_factory("google", "gemini-2.5-flash-lite", None)
+    client = await llm_client_factory("google", "gemini-3.5-flash-lite", None)
 
     # Generate a simple red square image
     # Create a 64x64 red image
@@ -292,7 +292,7 @@ async def test_gemini_system_message_with_multipart_content(
     llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
 ) -> None:
     """Test that Gemini can handle system messages with multi-part user content."""
-    client = await llm_client_factory("google", "gemini-2.5-flash-lite", None)
+    client = await llm_client_factory("google", "gemini-3.5-flash-lite", None)
 
     # Create a valid blue square image
     # Create a 64x64 blue image
@@ -338,7 +338,7 @@ async def test_gemini_system_message_with_multipart_content(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite"),
+        ("google", "gemini-3.5-flash-lite"),
         ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
@@ -401,7 +401,7 @@ async def test_tool_message_with_image_attachment(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite"),
+        ("google", "gemini-3.5-flash-lite"),
         ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
