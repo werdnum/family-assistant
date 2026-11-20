@@ -1,16 +1,25 @@
 """Functional tests for the diagnostics export API."""
 
+from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
+from opentelemetry.sdk.trace import TracerProvider
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.llm import LLMOutput, ToolCallFunction, ToolCallItem
+from family_assistant.llm.google_types import (
+    GeminiProviderMetadata,
+    GeminiThoughtSignature,
+)
+from family_assistant.llm.messages import UserMessage
 from family_assistant.llm.request_buffer import (
     LLMRequestRecord,
     get_request_buffer,
     reset_request_buffer,
 )
+from family_assistant.llm.utils.call_telemetry import LLMCallTelemetry
 
 
 @pytest.fixture(autouse=True)
@@ -288,3 +297,53 @@ async def test_diagnostics_export_with_error_record(
     assert error_request is not None
     assert error_request["error"] == "Connection timeout"
     assert error_request["response"] is None
+
+
+def _record_gemini_tool_call_response() -> None:
+    """Record a call the way the Google provider does: ``asdict`` of its output."""
+    span = TracerProvider().get_tracer("test").start_span("llm.provider.generate")
+    telemetry = LLMCallTelemetry(
+        span,
+        provider="google",
+        system="gemini",
+        requested_model="models/gemini-3.8-flash",
+        messages=[UserMessage(content="What's on today?")],
+        tools=None,
+        tool_choice="auto",
+        streaming=False,
+    )
+    output = LLMOutput(
+        tool_calls=[
+            ToolCallItem(
+                id="call_1",
+                type="function",
+                function=ToolCallFunction(
+                    name="search_calendar_events", arguments="{}"
+                ),
+                provider_metadata=GeminiProviderMetadata(
+                    thought_signature=GeminiThoughtSignature(b"signature")
+                ),
+            )
+        ]
+    )
+    telemetry.finish_success(asdict(output))
+    span.end()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("export_format", "expected"),
+    [("json", "search_calendar_events"), ("markdown", "**Tool Calls**: 1")],
+)
+async def test_diagnostics_export_succeeds_with_gemini_tool_call_responses(
+    api_client: httpx.AsyncClient,
+    export_format: str,
+    expected: str,
+) -> None:
+    """A Gemini tool call's provider metadata once made every export a 500."""
+    _record_gemini_tool_call_response()
+
+    response = await api_client.get(f"/api/diagnostics/export?format={export_format}")
+
+    assert response.status_code == 200
+    assert expected in response.text
