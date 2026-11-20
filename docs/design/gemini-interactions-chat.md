@@ -32,13 +32,17 @@ loop.
 
 ## How milestone 2 works
 
-**History is replayed, not reconstructed.** Interactions requires the model's steps back exactly as
-received, signatures included; a tool call without one is rejected. The adapter records every model
-step of a response in the assistant message's `provider_metadata`, tagged `gemini_interactions`, as
-the Anthropic adapter records thinking blocks, and replays them verbatim. A message with no recorded
-steps (one from `generateContent`, another provider, or a compacted turn) is rendered from its text
-and tool calls, with the `generateContent` signature where there is one and the documented
-skip-validator signature otherwise. User messages and tool results go through the existing part
+**The message is the record; metadata keeps only what it cannot say.** Interactions requires the
+model's steps back as received, signatures included; a tool call without one is rejected. A
+response's text and tool calls are already the assistant message's `content` and `tool_calls`, so
+`provider_metadata` (tagged `gemini_interactions`) stores only the opaque steps (thoughts and their
+signatures, tool searches, server-side tool runs) in order, with an anchor where each piece of text
+or tool call went. Replay fills the anchors from the message, as the Anthropic adapter rebuilds text
+and tool use around its stored thinking blocks, so there is one source of truth for what the model
+said: a call the message no longer has is left out, and one no anchor places is added unsigned. A
+message with nothing stored (from `generateContent`, another provider, or a compacted turn) is the
+same rendering with no opaque steps, its calls signed with their generateContent signature or the
+documented skip-validator placeholder. User messages and tool results go through the existing part
 conversion, so attachments and multimodal tool results behave as before.
 
 **Streaming rebuilds steps from deltas.** The completion event carries usage but no steps, so the

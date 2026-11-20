@@ -25,7 +25,7 @@ from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm.google_types import GeminiProviderMetadata
 from family_assistant.llm.messages import AssistantMessage
 from family_assistant.llm.providers.gemini_interactions import (
-    recorded_interaction_steps,
+    stored_replay_steps,
 )
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
@@ -451,7 +451,7 @@ async def test_an_interactions_turn_persists_its_steps(
     assert any(
         isinstance(message, AssistantMessage)
         and message.tool_calls
-        and (steps := recorded_interaction_steps(message))
+        and (steps := stored_replay_steps(message))
         and any(step.get("type") == "function_call" for step in steps)
         for message in messages
     )

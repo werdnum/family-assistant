@@ -1,12 +1,16 @@
 """Gemini chat on the Interactions API: history as steps, and responses back.
 
 Chat runs statelessly (``store=False``): every request carries the whole
-conversation as Interactions steps. The model's steps must come back exactly
-as the API sent them, signatures included -- a tool call without one is
-rejected -- so each response's model steps are recorded on its assistant
-message (``provider_metadata``) and replayed verbatim. A message with none
-recorded (one from ``generateContent``, another provider, or a compacted turn)
-is rendered from its text and tool calls.
+conversation as Interactions steps. The model's steps must come back as the
+API sent them, signatures included -- a tool call without one is rejected.
+Its text and tool calls are already the assistant message's own ``content``
+and ``tool_calls``, so ``provider_metadata`` keeps only what the message cannot
+say: the opaque steps (thoughts and their signatures, tool searches,
+server-side tool runs) in order, with an anchor where each piece of text or
+tool call went. Replay fills the anchors from the message, so the message
+stays the one record of what the model said. A message with nothing stored
+(from ``generateContent``, another provider, or a compacted turn) is the case
+with no opaque steps to interleave.
 
 Everything here is pure data shaping; the client in ``google_genai_client``
 owns the requests. See docs/design/gemini-interactions-chat.md.
@@ -33,7 +37,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-INTERACTION_STEPS_KEY = "interaction_steps"
+INTERACTION_REPLAY_KEY = "replay_steps"
 
 # The documented placeholder for a tool call whose signature was never
 # received. It lets history from generateContent, another provider, or a
@@ -80,16 +84,47 @@ class UnrepresentableInteractionInputError(ValueError):
 INTERACTION_STEPS_PROVIDER = "gemini_interactions"
 
 
-def interaction_steps_metadata(steps: list[JsonObject]) -> JsonObject:
-    """``provider_metadata`` recording a response's model steps for replay."""
+def _anchor(step: JsonObject) -> JsonObject:
+    """*step* without what the assistant message already records.
+
+    A tool call keeps its id (and anything else, such as a signature) but not
+    its name and arguments; a text-only model output keeps nothing but its
+    place. Every other step is opaque and kept whole.
+    """
+    kind = step.get("type")
+    if kind == "function_call" and isinstance(step.get("id"), str):
+        return {k: v for k, v in step.items() if k not in {"name", "arguments"}}
+    if kind == "model_output" and all(
+        block.get("type") == "text" for block in _blocks(step.get("content"))
+    ):
+        return {k: v for k, v in step.items() if k != "content"}
+    return step
+
+
+def interaction_replay_metadata(steps: Sequence[JsonObject]) -> JsonObject | None:
+    """``provider_metadata`` keeping what replaying a response needs.
+
+    ``None`` when the response had nothing but text and tool calls: the
+    message alone then renders it.
+    """
+    stored = [_anchor(step) for step in steps]
+    if all(_is_anchor(step) for step in stored):
+        return None
     return {
         "provider": INTERACTION_STEPS_PROVIDER,
-        INTERACTION_STEPS_KEY: cast("JsonValue", steps),
+        INTERACTION_REPLAY_KEY: cast("JsonValue", stored),
     }
 
 
-def recorded_interaction_steps(message: LLMMessage) -> list[JsonObject] | None:
-    """The model steps recorded on *message*, if it came from Interactions chat."""
+def _is_anchor(step: JsonObject) -> bool:
+    kind = step.get("type")
+    return (kind == "function_call" and "name" not in step) or (
+        kind == "model_output" and "content" not in step
+    )
+
+
+def stored_replay_steps(message: LLMMessage) -> list[JsonObject] | None:
+    """The replay steps stored on *message*, if it came from Interactions chat."""
     if not isinstance(message, AssistantMessage):
         return None
     metadata = message.provider_metadata
@@ -98,10 +133,70 @@ def recorded_interaction_steps(message: LLMMessage) -> list[JsonObject] | None:
         or metadata.get("provider") != INTERACTION_STEPS_PROVIDER
     ):
         return None
-    steps = metadata.get(INTERACTION_STEPS_KEY)
+    steps = metadata.get(INTERACTION_REPLAY_KEY)
     if not isinstance(steps, list) or not steps:
         return None
     return cast("list[JsonObject]", steps)
+
+
+def _call_arguments(arguments: str | dict[str, object]) -> JsonValue:
+    if isinstance(arguments, dict):
+        return cast("JsonValue", arguments)
+    parsed = json.loads(arguments) if arguments else {}
+    return cast("JsonValue", parsed if isinstance(parsed, dict) else {})
+
+
+def _replayed(
+    message: AssistantMessage, stored: Sequence[JsonObject]
+) -> list[JsonObject]:
+    """*stored* with its anchors filled from *message*.
+
+    The message is authoritative: a tool call it no longer has is left out,
+    and text or a call it has that no anchor places (a message changed after
+    the response) is added after the stored steps, unsigned.
+    """
+    calls = {call.id: call for call in message.tool_calls or ()}
+    placed: set[str] = set()
+    text_placed = False
+    steps: list[JsonObject] = []
+    for step in stored:
+        kind = step.get("type")
+        if kind == "function_call" and "name" not in step:
+            call = calls.get(str(step.get("id")))
+            if call is None:
+                continue
+            placed.add(call.id)
+            steps.append({
+                **step,
+                "name": call.function.name,
+                "arguments": _call_arguments(call.function.arguments),
+            })
+        elif kind == "model_output" and "content" not in step:
+            if message.content and not text_placed:
+                text_placed = True
+                steps.append({
+                    **step,
+                    "content": [{"type": "text", "text": message.content}],
+                })
+        else:
+            steps.append(step)
+    if message.content and not text_placed:
+        steps.append({
+            "type": "model_output",
+            "content": [{"type": "text", "text": message.content}],
+        })
+    steps.extend(
+        {
+            "type": "function_call",
+            "id": call.id,
+            "name": call.function.name,
+            "arguments": _call_arguments(call.function.arguments),
+            "signature": SKIP_SIGNATURE,
+        }
+        for call in message.tool_calls or ()
+        if call.id not in placed
+    )
+    return steps
 
 
 def _b64(data: bytes) -> str:
@@ -565,9 +660,9 @@ def history_steps(
 ) -> list[JsonObject]:
     """The Interactions input for *messages*.
 
-    Assistant messages with recorded steps are replayed verbatim; runs of
-    everything else go through *to_contents* (the client's own message
-    conversion) and are translated.
+    Assistant messages with stored replay steps are rendered from them and the
+    message; runs of everything else go through *to_contents* (the client's own
+    message conversion) and are translated.
     """
     steps: list[JsonObject] = []
     pending: list[LLMMessage] = []
@@ -582,12 +677,12 @@ def history_steps(
             pending.clear()
 
     for message in messages:
-        recorded = recorded_interaction_steps(message)
-        if recorded is None:
+        stored = stored_replay_steps(message)
+        if stored is None or not isinstance(message, AssistantMessage):
             pending.append(message)
             continue
         flush()
-        steps.extend(recorded)
+        steps.extend(_replayed(message, stored))
     flush()
     return _named_results(steps)
 

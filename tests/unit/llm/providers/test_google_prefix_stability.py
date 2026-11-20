@@ -35,7 +35,7 @@ from family_assistant.llm.google_types import (
 )
 from family_assistant.llm.messages import AssistantMessage, LLMMessage, UserMessage
 from family_assistant.llm.providers.gemini_interactions import (
-    interaction_steps_metadata,
+    interaction_replay_metadata,
 )
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.storage.delegation_runs import delegation_wake_instruction
@@ -121,7 +121,7 @@ def _decorate_with_recorded_steps(
         for call in message.tool_calls or ()
     )
     return message.model_copy(
-        update={"provider_metadata": interaction_steps_metadata(steps)}
+        update={"provider_metadata": interaction_replay_metadata(steps)}
     )
 
 

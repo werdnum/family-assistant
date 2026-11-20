@@ -31,7 +31,7 @@ from family_assistant.llm.providers.gemini_interactions import (
     contents_to_steps,
     function_tools,
     interaction_generation_settings,
-    interaction_steps_metadata,
+    interaction_replay_metadata,
     read_steps,
     tool_choice_setting,
 )
@@ -87,6 +87,31 @@ def _call(call_id: str, name: str, arguments: dict[str, object]) -> ToolCallItem
     )
 
 
+RESPONSE_STEPS: list[JsonObject] = [
+    {"type": "thought", "signature": "c2ln"},
+    {"type": "model_output", "content": [{"type": "text", "text": "Checking."}]},
+    {
+        "type": "function_call",
+        "id": "call_1",
+        "name": "get_weather",
+        "arguments": {"city": "Sydney"},
+    },
+]
+
+
+def _answered(response: list[JsonObject]) -> list[LLMMessage]:
+    """A turn whose response is *response*, with its tool call answered."""
+    return [
+        UserMessage(content="Weather?"),
+        AssistantMessage(
+            content="Checking.",
+            tool_calls=[_call("call_1", "get_weather", {"city": "Sydney"})],
+            provider_metadata=interaction_replay_metadata(response),
+        ),
+        ToolMessage(tool_call_id="call_1", name="get_weather", content="22C"),
+    ]
+
+
 class TestRenderingHistory:
     def test_text_from_the_user_is_a_user_input_step(self) -> None:
         steps = _input(_client(), [UserMessage(content="Hello")])
@@ -95,34 +120,68 @@ class TestRenderingHistory:
             {"type": "user_input", "content": [{"type": "text", "text": "Hello"}]}
         ]
 
-    def test_recorded_steps_are_replayed_verbatim(self) -> None:
-        recorded: list[JsonObject] = [
+    def test_stored_steps_hold_nothing_the_message_records(self) -> None:
+        stored = interaction_replay_metadata(RESPONSE_STEPS)
+
+        assert stored is not None
+        assert stored["replay_steps"] == [
             {"type": "thought", "signature": "c2ln"},
-            {
-                "type": "function_call",
-                "id": "call_1",
-                "name": "get_weather",
-                "arguments": {"city": "Sydney"},
-            },
-        ]
-        messages: list[LLMMessage] = [
-            UserMessage(content="Weather?"),
-            AssistantMessage(
-                tool_calls=[_call("call_1", "get_weather", {"city": "Sydney"})],
-                provider_metadata=interaction_steps_metadata(recorded),
-            ),
-            ToolMessage(tool_call_id="call_1", name="get_weather", content="22C"),
+            {"type": "model_output"},
+            {"type": "function_call", "id": "call_1"},
         ]
 
-        steps = _input(_client(), messages)
+    def test_a_response_is_replayed_as_the_api_sent_it(self) -> None:
+        steps = _input(_client(), _answered(RESPONSE_STEPS))
 
-        assert steps[1:3] == recorded
-        assert steps[3] == {
+        assert steps[1:4] == RESPONSE_STEPS
+        assert steps[4] == {
             "type": "function_result",
             "call_id": "call_1",
             "name": "get_weather",
             "result": [{"type": "text", "text": "22C"}],
         }
+
+    def test_the_message_is_what_is_replayed(self) -> None:
+        messages = _answered(RESPONSE_STEPS)
+        assistant = messages[1]
+        assert isinstance(assistant, AssistantMessage)
+        messages[1] = assistant.model_copy(
+            update={
+                "content": "Edited.",
+                "tool_calls": [_call("call_1", "get_weather", {"city": "Perth"})],
+            }
+        )
+
+        steps = _input(_client(), messages)
+
+        assert steps[2]["content"] == [{"type": "text", "text": "Edited."}]
+        assert steps[3]["arguments"] == {"city": "Perth"}
+
+    def test_a_call_no_anchor_places_is_added_unsigned(self) -> None:
+        messages = _answered(RESPONSE_STEPS)
+        assistant = messages[1]
+        assert isinstance(assistant, AssistantMessage)
+        messages[1] = assistant.model_copy(
+            update={
+                "tool_calls": [
+                    *(assistant.tool_calls or []),
+                    _call("call_2", "get_time", {}),
+                ]
+            }
+        )
+
+        steps = _input(_client(), messages)
+
+        assert steps[4] == {
+            "type": "function_call",
+            "id": "call_2",
+            "name": "get_time",
+            "arguments": {},
+            "signature": SKIP_SIGNATURE,
+        }
+
+    def test_a_response_with_nothing_opaque_stores_nothing(self) -> None:
+        assert interaction_replay_metadata(RESPONSE_STEPS[1:]) is None
 
     def test_a_tool_result_takes_the_name_of_the_call_it_answers(self) -> None:
         messages: list[LLMMessage] = [

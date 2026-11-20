@@ -82,7 +82,7 @@ from family_assistant.llm.providers.gemini_interactions import (
     function_tools,
     history_steps,
     interaction_generation_settings,
-    interaction_steps_metadata,
+    interaction_replay_metadata,
     read_steps,
     tool_choice_setting,
 )
@@ -1926,9 +1926,7 @@ class GoogleGenAIClient(BaseLLMClient):
                             output.thought_summaries,
                         )
                     ),
-                    provider_metadata=(
-                        interaction_steps_metadata(steps) if steps else None
-                    ),
+                    provider_metadata=interaction_replay_metadata(steps),
                     resolved_model=interaction.model,
                 )
                 telemetry.record_output(llm_output)
@@ -2047,8 +2045,8 @@ class GoogleGenAIClient(BaseLLMClient):
                 finish_reason=status if isinstance(status, str) else None,
             )
             done_metadata: StreamEventMetadata = {}
-            if steps:
-                done_metadata["provider_metadata"] = interaction_steps_metadata(steps)
+            if (replay_metadata := interaction_replay_metadata(steps)) is not None:
+                done_metadata["provider_metadata"] = replay_metadata
             if served_model:
                 done_metadata["resolved_model"] = served_model
             done_metadata["reasoning_info"] = telemetry.finalize_usage(

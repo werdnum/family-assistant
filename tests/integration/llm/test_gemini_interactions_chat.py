@@ -21,7 +21,7 @@ from family_assistant.llm.messages import (
     UserMessage,
 )
 from family_assistant.llm.providers.gemini_interactions import (
-    recorded_interaction_steps,
+    stored_replay_steps,
 )
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.tools.catalog import TOOLS_DEFINITION
@@ -117,7 +117,7 @@ async def test_a_streamed_tool_call_is_replayed_into_the_next_turn(
     await client.close()
 
     assert first.tool_calls and first.tool_calls[0].function.name == "get_weather"
-    assert recorded_interaction_steps(first), "the streamed steps were not recorded"
+    assert stored_replay_steps(first), "the streamed steps were not recorded"
     assert second.content and "22" in second.content
 
 

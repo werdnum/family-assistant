@@ -1,10 +1,10 @@
-"""Gemini Interactions steps must survive the database round trip byte-exact.
+"""Gemini Interactions replay state must survive the database round trip.
 
-The Interactions API requires a response's steps back exactly as it sent them,
+The Interactions API requires a response's steps back as it sent them,
 signatures included, so any mangling between saving an assistant turn and
 reading it back for the next request is a 400 on the continuation. These tests
 pin the storage layer against that, and feed the round-tripped message back
-through the client's rendering to prove the replay still carries the steps.
+through the client's rendering to prove the replay reproduces the steps.
 """
 
 import uuid
@@ -16,8 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.llm import JsonObject, ToolCallFunction, ToolCallItem
 from family_assistant.llm.messages import AssistantMessage
 from family_assistant.llm.providers.gemini_interactions import (
-    interaction_steps_metadata,
-    recorded_interaction_steps,
+    interaction_replay_metadata,
+    stored_replay_steps,
 )
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.storage.database import Database
@@ -64,7 +64,7 @@ async def _round_trip(db_context: Database) -> AssistantMessage:
                     ),
                 )
             ],
-            provider_metadata=interaction_steps_metadata(STEPS),
+            provider_metadata=interaction_replay_metadata(STEPS),
         ),
         interface_type="web",
         conversation_id=str(uuid.uuid4()),
@@ -85,7 +85,9 @@ async def test_interaction_steps_survive_the_database_round_trip(
 ) -> None:
     restored = await _round_trip(db_context)
 
-    assert recorded_interaction_steps(restored) == STEPS
+    stored = interaction_replay_metadata(STEPS)
+    assert stored is not None
+    assert stored_replay_steps(restored) == stored["replay_steps"]
 
 
 @pytest.mark.asyncio
