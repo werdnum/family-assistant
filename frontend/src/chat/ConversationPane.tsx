@@ -35,6 +35,7 @@ import {
   type HomeTurnTarget,
 } from './homeTurnActions';
 import IntelligenceSelector from './IntelligenceSelector';
+import { LiveBrowserView, parseBrowserViewFrame } from './LiveBrowserView';
 import { MoveToThreadDialog } from './MoveToThreadDialog';
 import { interleaveTextAndToolCalls, isToolCallDisplay, toolCallParts } from './orderedParts';
 import ProfileSelector from './ProfileSelector';
@@ -56,6 +57,7 @@ import { submitTurnFeedback, type TurnFeedbackActions, TurnFeedbackContext } fro
 import {
   BackendAttachment,
   BackendConversationMessage,
+  BrowserViewFrame,
   ConversationMessagesResponse,
   Message,
   MessageContent,
@@ -570,9 +572,17 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
   const { delegations: pendingDelegations, refresh: refreshPendingDelegations } =
     usePendingDelegations(conversationId);
   const [peekStack, setPeekStack] = useState<PendingDelegation[]>([]);
+  const [browserFrame, setBrowserFrame] = useState<BrowserViewFrame | null>(null);
   useEffect(() => {
     setPeekStack([]);
+    setBrowserFrame(null);
   }, [conversationId]);
+  const handleBrowserFrame = useCallback((rawFrame: unknown) => {
+    const parsed = parseBrowserViewFrame(rawFrame);
+    if (parsed) {
+      setBrowserFrame(parsed);
+    }
+  }, []);
   const handlePeekDelegation = useCallback((delegation: PendingDelegation) => {
     if (!delegation.subconversation_id) {
       return;
@@ -1449,6 +1459,7 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
       onToolConfirmationResult: onConfirmationResult,
       onUserInput: handleStreamingUserInput,
       onCancelled: handleStreamingCancelled,
+      onBrowserFrame: handleBrowserFrame,
       onCheckTurnActive: handleCheckTurnActive,
     }) as {
       sendStreamingMessage: (params: {
@@ -1577,6 +1588,9 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
         }
         setOlderHistory({ convId, hasMore: historyHasMore });
         setOlderMessagesStatus((prev) => (prev === 'failed' ? 'idle' : prev));
+        if (data.browser_view !== undefined) {
+          setBrowserFrame(data.browser_view ?? null);
+        }
         clearConversationLoad(convId);
 
         // A foreground load means the user just opened this conversation (every
@@ -2215,6 +2229,7 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
     enabled: true,
     onMessageReceived: handleLiveMessageUpdate,
     onTurnStarted: handleLiveTurnStarted,
+    onBrowserFrame: handleBrowserFrame,
   });
 
   // Home and threads keep a read marker per viewer. The open one is marked
@@ -3306,10 +3321,20 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
       disabled={isLoading}
     />
   );
+  const isBrowserProfile = Boolean(currentProfile?.has_browser_view);
+  const isBrowserActivityRunning =
+    isStreaming ||
+    (isBrowserProfile &&
+      pendingDelegations.some((d) => d.status !== 'completed' && d.status !== 'failed'));
   const body = (
     <div className="flex min-w-0 min-h-0 flex-1 flex-col">
       {topSlot}
       {threadBanner}
+      <LiveBrowserView
+        frame={browserFrame}
+        isRunning={isBrowserActivityRunning}
+        isBrowserProfile={isBrowserProfile}
+      />
       <div className="flex flex-1 flex-col min-h-0">{threadView}</div>
       {homeTurnActions && (
         <>

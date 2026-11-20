@@ -1804,6 +1804,11 @@ class Assistant:
                 if self.fastapi_app is not None
                 else None
             ),
+            browser_live_view_publisher=(
+                getattr(self.fastapi_app.state, "conversation_stream_hub", None)
+                if self.fastapi_app is not None
+                else None
+            ),
             delegation_turns=self.delegation_turns,
         )
         claude_code_models = {

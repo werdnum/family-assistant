@@ -47,6 +47,8 @@ export interface ServiceProfile {
   receives_household_context?: boolean;
   /** A remote delegation target, which can't be chatted with directly. */
   delegation_only?: boolean;
+  /** Whether this profile drives a local or remote browser with live screenshots. */
+  has_browser_view?: boolean;
 }
 
 export interface ProfilesResponse {

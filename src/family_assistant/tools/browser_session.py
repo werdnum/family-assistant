@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import logging
 import random
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -45,8 +46,22 @@ from family_assistant.utils.stealth_browser import (
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
+    from family_assistant.services.browser_live_view import (
+        BrowserBackendKind,
+        BrowserLiveViewPublisher,
+    )
     from family_assistant.services.ucp import MerchantUCPProfile
     from family_assistant.tools.types import ToolExecutionContext, ToolResult
+
+logger = logging.getLogger(__name__)
+
+# Tools whose post-call state must not trigger a live-view screenshot (handoff
+# transfers the remote browser lease to the human; login outcome is metadata).
+_LIVE_VIEW_SKIP_TOOLS = frozenset({
+    "browser_request_handoff",
+    "browser_report_login_outcome",
+})
+_LIVE_VIEW_SCREENSHOT_TIMEOUT_SECONDS = 5.0
 
 # Every tool that drives the shared browser, filled by ``@browser_operation``.
 # One registry rather than a hand-maintained list, so a browser tool that
@@ -383,6 +398,14 @@ def browser_operation[**P](
                         binding.operation_failures.add(name)
                     else:
                         binding.operation_failures.discard(name)
+                try:
+                    await _capture_and_publish_live_frame(exec_context, name, result)
+                except Exception:
+                    logger.debug(
+                        "Skipping live browser frame publish after %s",
+                        name,
+                        exc_info=True,
+                    )
                 return result
 
         # The marker a test reads to check the registry against the tool table.
@@ -390,6 +413,124 @@ def browser_operation[**P](
         return wrapper
 
     return decorate
+
+
+def _extract_result_screenshot(result: ToolResult) -> tuple[bytes, str] | None:
+    """Return ``(bytes, mime_type)`` if the tool result already carries an image."""
+    for attachment in result.attachments or ():
+        if isinstance(attachment.content, bytes) and attachment.mime_type.startswith(
+            "image/"
+        ):
+            return attachment.content, attachment.mime_type
+    return None
+
+
+def _has_later_browser_sibling(exec_context: ToolExecutionContext) -> bool:
+    """Whether another browser tool call follows this one in the same batch."""
+    batch = exec_context.tool_call_batch
+    call_id = exec_context.tool_call_id
+    if batch is None or call_id is None:
+        return False
+    return any(tool_name in BROWSER_TOOL_NAMES for _, tool_name in batch.later(call_id))
+
+
+def _live_view_targets(
+    exec_context: ToolExecutionContext,
+    scope: str,
+) -> list[tuple[str, str | None, str | None]]:
+    """Return ``(conversation_id, subconversation_id, turn_id)`` targets for a frame.
+
+    When a delegated browser turn continues its parent's tab (for example,
+    ``browser_profile`` delegating a visual step to ``browser_visual_profile``),
+    both the child subconversation and the tab-owning parent receive the frame
+    so users watching either surface stay in sync.
+    """
+    conversation_id = exec_context.conversation_id
+    if not conversation_id:
+        return []
+    subconversation_id = getattr(exec_context, "subconversation_id", None)
+    targets: list[tuple[str, str | None, str | None]] = [
+        (conversation_id, subconversation_id, exec_context.turn_id)
+    ]
+    if subconversation_id is not None:
+        if scope == conversation_id:
+            targets.append((conversation_id, None, None))
+        elif scope.startswith(f"{conversation_id}/"):
+            owner_sub = scope.removeprefix(f"{conversation_id}/")
+            if owner_sub and owner_sub != subconversation_id:
+                targets.append((conversation_id, owner_sub, None))
+    return targets
+
+
+async def _capture_and_publish_live_frame(
+    exec_context: ToolExecutionContext,
+    tool_name: str,
+    result: ToolResult,
+) -> None:
+    """Best-effort publish of the latest browser screenshot to live subscribers."""
+    service = getattr(exec_context, "processing_service", None)
+    publisher: BrowserLiveViewPublisher | None = (
+        getattr(service, "browser_live_view_publisher", None)
+        if service is not None
+        else None
+    )
+    if publisher is None or tool_name in _LIVE_VIEW_SKIP_TOOLS:
+        return
+
+    data = result.get_data()
+    if isinstance(data, dict) and data.get("error"):
+        return
+
+    from family_assistant.tools.browser_backend import (  # noqa: PLC0415 - backend depends on session types
+        get_existing_browser_backend,
+        infer_browser_backend_kind,
+    )
+
+    existing_image = _extract_result_screenshot(result)
+    backend = await get_existing_browser_backend(exec_context)
+
+    if existing_image is not None:
+        image_bytes, mime_type = existing_image
+    else:
+        if backend is None or _has_later_browser_sibling(exec_context):
+            return
+        image_bytes = await asyncio.wait_for(
+            backend.screenshot_png(),
+            timeout=_LIVE_VIEW_SCREENSHOT_TIMEOUT_SECONDS,
+        )
+        mime_type = "image/png"
+
+    if not image_bytes:
+        return
+
+    raw_url = data.get("url") if isinstance(data, dict) else None
+    url = (
+        str(raw_url)
+        if isinstance(raw_url, str) and raw_url
+        else (backend.current_url if backend is not None else "")
+    )
+    backend_kind: BrowserBackendKind = (
+        backend.backend_kind
+        if backend is not None
+        else infer_browser_backend_kind(exec_context)
+    )
+    width = backend.screen_width if backend is not None else None
+    height = backend.screen_height if backend is not None else None
+
+    scope = await browser_scope_key(exec_context)
+    for conv_id, sub_id, turn_id in _live_view_targets(exec_context, scope):
+        await publisher.publish_browser_frame(
+            conversation_id=conv_id,
+            subconversation_id=sub_id,
+            turn_id=turn_id,
+            image_bytes=image_bytes,
+            mime_type=mime_type,
+            url=url,
+            tool_name=tool_name,
+            backend_kind=backend_kind,
+            width=width,
+            height=height,
+        )
 
 
 def denormalize_coordinate(value: int, max_value: int) -> int:

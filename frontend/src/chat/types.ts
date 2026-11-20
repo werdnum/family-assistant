@@ -242,6 +242,17 @@ export interface ActiveTurnInfo {
   status: string;
 }
 
+export interface BrowserViewFrame {
+  frame_id: string;
+  url: string;
+  captured_at: string;
+  tool_name?: string | null;
+  backend_kind?: 'local' | 'remote';
+  width?: number | null;
+  height?: number | null;
+  image_url: string;
+}
+
 export interface ConversationMessagesResponse {
   messages: BackendConversationMessage[];
   // Profile of the most recent user message across the whole conversation,
@@ -257,4 +268,6 @@ export interface ConversationMessagesResponse {
   has_more_before?: boolean;
   // Recently retained turn states for this conversation, when the backend has them.
   active_turns?: ActiveTurnInfo[];
+  // Latest ephemeral live browser preview frame, when present.
+  browser_view?: BrowserViewFrame | null;
 }

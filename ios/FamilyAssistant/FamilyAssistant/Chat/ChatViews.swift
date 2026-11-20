@@ -401,6 +401,11 @@ struct ChatThreadView: View {
     var body: some View {
         VStack(spacing: 0) {
             PendingConfirmationsBanner(viewModel: viewModel)
+            BrowserLiveViewCard(
+                controller: viewModel.browserLiveView,
+                isRunning: viewModel.isBrowserActivityRunning,
+                isBrowserProfile: viewModel.isBrowserProfile
+            )
             ChatScenePhaseMountGate(viewModel: viewModel) {
                 messageScrollArea
             }

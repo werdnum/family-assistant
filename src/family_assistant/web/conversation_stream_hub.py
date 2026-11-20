@@ -25,6 +25,12 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
+from family_assistant.services.browser_live_view import (
+    BrowserBackendKind,
+    BrowserLiveFrame,
+    BrowserLiveViewStore,
+    browser_view_frame_url,
+)
 from family_assistant.storage.sync_tracking import SyncWakeup
 from family_assistant.web.chat_telemetry import log_turn_event
 
@@ -335,6 +341,8 @@ class ConversationStreamHub:
         # running subconversation never collides with parent locks, activity
         # broadcasts, or running_conversation_ids.
         self._subconversation_hub: ConversationStreamHub | None = None
+        # Ephemeral latest browser screenshot per conversation/subconversation.
+        self.browser_live_view = BrowserLiveViewStore()
 
     @property
     def subconversations(self) -> "ConversationStreamHub":
@@ -347,6 +355,54 @@ class ConversationStreamHub:
                 max_conversations=self._max_conversations,
             )
         return self._subconversation_hub
+
+    async def publish_browser_frame(
+        self,
+        *,
+        conversation_id: str,
+        subconversation_id: str | None,
+        turn_id: str | None,
+        image_bytes: bytes,
+        mime_type: str,
+        url: str,
+        tool_name: str | None,
+        backend_kind: BrowserBackendKind,
+        width: int | None,
+        height: int | None,
+        captured_at: datetime | None = None,
+    ) -> BrowserLiveFrame:
+        """Store the latest browser screenshot and notify live subscribers."""
+        frame = self.browser_live_view.set_frame(
+            conversation_id=conversation_id,
+            subconversation_id=subconversation_id,
+            image_bytes=image_bytes,
+            mime_type=mime_type,
+            url=url,
+            tool_name=tool_name,
+            backend_kind=backend_kind,
+            width=width,
+            height=height,
+            captured_at=captured_at,
+        )
+        image_url = browser_view_frame_url(
+            conversation_id, subconversation_id, frame.frame_id
+        )
+        payload = dict(frame.to_payload(image_url=image_url))
+        if subconversation_id is None:
+            await self.publish(
+                conversation_id,
+                "browser_frame",
+                turn_id=turn_id,
+                payload=payload,
+            )
+        else:
+            await self.subconversations.publish(
+                subconversation_id,
+                "browser_frame",
+                turn_id=turn_id,
+                payload=payload,
+            )
+        return frame
 
     # ------------------------------------------------------------------ #
     # Registry / lookups

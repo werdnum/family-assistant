@@ -5,6 +5,7 @@ import type {
   ActiveTurnInfo,
   BackendAttachment,
   BackendConversationMessage,
+  BrowserViewFrame,
   Message,
   MessageContent,
 } from './types';
@@ -23,6 +24,7 @@ export interface SubconversationMessagesResponse {
   has_more_before: boolean;
   has_more_after: boolean;
   active_turns: ActiveTurnInfo[];
+  browser_view?: BrowserViewFrame | null;
 }
 
 export interface LiveToolCall {

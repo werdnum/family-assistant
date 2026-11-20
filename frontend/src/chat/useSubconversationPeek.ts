@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ConversationLoadStatus, OlderMessagesStatus } from './chatControls';
+import { parseBrowserViewFrame } from './LiveBrowserView';
 import { isToolCallDisplay } from './orderedParts';
 import {
   buildLiveTurnMessage,
@@ -13,6 +14,7 @@ import type {
   ActiveTurnInfo,
   BackendAttachment,
   BackendConversationMessage,
+  BrowserViewFrame,
   Message,
 } from './types';
 import type { PendingDelegation } from './usePendingDelegations';
@@ -39,6 +41,7 @@ export interface SubconversationPeekState {
   loadStatus: ConversationLoadStatus | null;
   hasOlderMessages: boolean;
   olderMessagesStatus: OlderMessagesStatus;
+  browserFrame: BrowserViewFrame | null;
   loadOlderMessages: () => void;
   retryLoad: () => void;
 }
@@ -142,6 +145,7 @@ export function useSubconversationPeek(
   const [hasOlderMessages, setHasOlderMessages] = useState(false);
   const [olderMessagesStatus, setOlderMessagesStatus] = useState<OlderMessagesStatus>('idle');
   const [isListening, setIsListening] = useState(false);
+  const [browserFrame, setBrowserFrame] = useState<BrowserViewFrame | null>(null);
   const [reloadNonce, setReloadNonce] = useState(0);
 
   const activeTargetRef = useRef<string | null>(null);
@@ -178,6 +182,9 @@ export function useSubconversationPeek(
     setDelegationError(snapshot.delegation_error ?? null);
     setRequestText((prev) => snapshot.request_text ?? prev);
     setChildDelegations(snapshot.child_delegations ?? []);
+    if (snapshot.browser_view !== undefined) {
+      setBrowserFrame(snapshot.browser_view ?? null);
+    }
     setLoadStatus(null);
   }, []);
 
@@ -195,6 +202,7 @@ export function useSubconversationPeek(
       setDelegationError(null);
       setRequestText(null);
       setChildDelegations([]);
+      setBrowserFrame(null);
       setLoadStatus(null);
       setHasOlderMessages(false);
       setIsListening(false);
@@ -209,6 +217,7 @@ export function useSubconversationPeek(
     setDelegationError(null);
     setRequestText(seedDelegation?.request_preview ?? null);
     setChildDelegations([]);
+    setBrowserFrame(null);
     setLoadStatus('loading');
     setHasOlderMessages(false);
     setOlderMessagesStatus('idle');
@@ -242,6 +251,14 @@ export function useSubconversationPeek(
       }
 
       if (eventType === 'heartbeat') {
+        return 'continue';
+      }
+
+      if (eventType === 'browser_frame' || data.type === 'browser_frame') {
+        const parsed = parseBrowserViewFrame(data);
+        if (parsed) {
+          setBrowserFrame(parsed);
+        }
         return 'continue';
       }
 
@@ -783,6 +800,7 @@ export function useSubconversationPeek(
     loadStatus,
     hasOlderMessages,
     olderMessagesStatus,
+    browserFrame,
     loadOlderMessages,
     retryLoad,
   };
