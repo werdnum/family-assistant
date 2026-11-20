@@ -1,0 +1,66 @@
+interactions:
+- request:
+    body: '{"model":"gemini-3.5-flash-lite","input":[{"content":[{"text":"My name
+      is TestBot. What''s my name?","type":"text"}],"type":"user_input"},{"content":[{"text":"Your
+      name is TestBot.","type":"text"}],"type":"model_output"},{"content":[{"text":"What
+      did I just tell you my name was?","type":"text"}],"type":"user_input"}],"store":false,"stream":false}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '347'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+      x-goog-api-client:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/3xSXY/aMBD8K8ivJHf5uCKI1Ad6hIZC1cIBV6gqZJI94pDYabw+EhD/vU56UKRW
+        ffOOd2d3Z/ZEJFJUkngkFFmeAkJEDKIk3QHxTgQF0nSDYg9c5zxYxhvCeK7wiru2QW6RzbbaZCKi
+        KcOKeN9P5E9AEEokNc2l9PzjQhrSMIboynptJhTedusZ17FEulES/q7AWKhdjLcfjDNk/5j8bJCw
+        AFrv7RHHcjqmbZt2b+643kPXc611LUce/T9BQvHKQj0Ig0JnaU15RItaSYmQy0YDyXZcS11oXYnP
+        5Rimw3wYWHMaTKKBnS0cuww6vcFhWjpZh+9fRIiLUZ+u7qv9FvaDqR/4s8dlzr65oy8i/tkvFp+W
+        fjG38lc6gqik4+V4aK/6w1Kt/fJ54uzK1aSMZ9LhZdddP81XH4Pyq5/Ej7Mqzf02dar9sW2NPveT
+        VDyr7NgND212f3xKpnFyWPYT5frva6OqvJ74TVFyNk76UjgCx2arxk6PrIRqoUijVgatSqiixal+
+        Mdmag8QPAu9umOqKxvTfsb4NuHjc4GKbQFiTMt2moCEywXV5k6fRHWTaS9O9e2e+pFTGpj4sIOdf
+        AAAA//8DAHvkyS3KAgAA
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-encoding:
+      - gzip
+      content-type:
+      - application/json
+      date:
+      - Thu, 19 Nov 2026 23:48:30 GMT
+      server:
+      - scaffolding on HTTPServer2
+      server-timing:
+      - gfet4t7; dur=762
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+version: 1

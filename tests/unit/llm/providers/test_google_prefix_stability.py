@@ -17,7 +17,8 @@ more than the misses it avoids; see docs/design/prompt-caching.md.
 from __future__ import annotations
 
 import dataclasses
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from hypothesis import HealthCheck, given, settings
@@ -33,6 +34,9 @@ from family_assistant.llm.google_types import (
     GeminiThoughtSignature,
 )
 from family_assistant.llm.messages import AssistantMessage, LLMMessage, UserMessage
+from family_assistant.llm.providers.gemini_interactions import (
+    interaction_replay_metadata,
+)
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.storage.delegation_runs import delegation_wake_instruction
 from tests.unit.llm.agent_loop_conversations import (
@@ -47,6 +51,8 @@ from tests.unit.llm.agent_loop_conversations import (
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+    from family_assistant.llm import JsonObject, JsonValue
 
 MODEL = "gemini-3.8-flash"
 
@@ -93,61 +99,124 @@ def _tool_names(messages: Sequence[LLMMessage]) -> list[str | None]:
     return [tool_name(tool) for tool in resolve_deferred_tools(TOOLS, messages) or ()]
 
 
+def _decorate_with_recorded_steps(
+    message: AssistantMessage, index: int, thinking: bool
+) -> AssistantMessage:
+    """Record the steps an Interactions turn stores for this message."""
+    steps: list[JsonObject] = []
+    if thinking:
+        steps.append({"type": "thought", "signature": f"thought-{index}"})
+    if message.content:
+        steps.append({
+            "type": "model_output",
+            "content": [{"type": "text", "text": message.content}],
+        })
+    steps.extend(
+        {
+            "type": "function_call",
+            "id": call.id,
+            "name": call.function.name,
+            "arguments": cast("JsonValue", call.function.arguments),
+        }
+        for call in message.tool_calls or ()
+    )
+    return message.model_copy(
+        update={"provider_metadata": interaction_replay_metadata(steps)}
+    )
+
+
+def _interaction_steps(
+    client: GoogleGenAIClient, messages: Sequence[LLMMessage]
+) -> list[Part]:
+    """The Interactions input steps a chat request carries."""
+    settings = client._interaction_settings
+    assert settings is not None
+    request = client._interaction_chat_request(messages, None, None, settings)
+    return [("step", step) for step in request["input"]]
+
+
+Decorate = Callable[[AssistantMessage, int, bool], AssistantMessage]
+Render = Callable[[GoogleGenAIClient, "Sequence[LLMMessage]"], "list[Part]"]
+
+
+def _assert_each_request_extends_the_previous_one(
+    steps: list[Step], render: Render, decorate: Decorate
+) -> None:
+    client = GoogleGenAIClient(api_key="test-key", model=MODEL)
+    history = opening()
+    instruction: str | None = None
+
+    def request(messages: list[LLMMessage]) -> list[Part]:
+        trailing = (
+            [UserMessage(content=instruction, is_turn_scaffolding=True)]
+            if instruction is not None
+            else []
+        )
+        return render(client, [*messages, *trailing])
+
+    previous = request(history)
+    previous_instruction = instruction
+    previous_tools = _tool_names(history)
+    previous_activated = activated_tool_names(history)
+
+    for index, step in enumerate(steps):
+        history.extend(messages_for(step, index, history, decorate))
+        if step.kind == "wake":
+            instruction = delegation_wake_instruction(wake_trigger(index))
+        elif step.kind == "user":
+            instruction = None
+        if not sends_a_request(history):
+            continue
+        current = request(history)
+        tools = _tool_names(history)
+        activated = activated_tool_names(history)
+
+        if tools != previous_tools:
+            assert activated != previous_activated
+            assert set(previous_tools) < set(tools)
+        earlier = previous
+        if previous_instruction is not None:
+            trailing = render(
+                client,
+                [UserMessage(content=previous_instruction, is_turn_scaffolding=True)],
+            )
+            assert earlier[-len(trailing) :] == trailing
+            earlier = earlier[: -len(trailing)]
+        assert current[: len(earlier)] == earlier
+        previous = current
+        previous_instruction = instruction
+        previous_tools = tools
+        previous_activated = activated
+
+
+_PROPERTY_SETTINGS = settings(
+    max_examples=300,
+    deadline=None,
+    suppress_health_check=[HealthCheck.too_slow],
+)
+
+
 @pytest.mark.no_db
 class TestGooglePrefixStability:
     @given(st.lists(STEP, min_size=1, max_size=12))
-    @settings(
-        max_examples=300,
-        deadline=None,
-        suppress_health_check=[HealthCheck.too_slow],
-    )
+    @_PROPERTY_SETTINGS
     def test_each_request_extends_the_previous_one(self, steps: list[Step]) -> None:
-        client = GoogleGenAIClient(api_key="test-key", model=MODEL)
-        history = opening()
-        instruction: str | None = None
+        _assert_each_request_extends_the_previous_one(steps, _parts, _decorate)
 
-        def request(messages: list[LLMMessage]) -> list[Part]:
-            trailing = (
-                [UserMessage(content=instruction, is_turn_scaffolding=True)]
-                if instruction is not None
-                else []
-            )
-            return _parts(client, [*messages, *trailing])
+    @given(st.lists(STEP, min_size=1, max_size=12))
+    @_PROPERTY_SETTINGS
+    def test_each_interactions_request_extends_the_previous_one(
+        self, steps: list[Step]
+    ) -> None:
+        _assert_each_request_extends_the_previous_one(
+            steps, _interaction_steps, _decorate_with_recorded_steps
+        )
 
-        previous = request(history)
-        previous_instruction = instruction
-        previous_tools = _tool_names(history)
-        previous_activated = activated_tool_names(history)
-
-        for index, step in enumerate(steps):
-            history.extend(messages_for(step, index, history, _decorate))
-            if step.kind == "wake":
-                instruction = delegation_wake_instruction(wake_trigger(index))
-            elif step.kind == "user":
-                instruction = None
-            if not sends_a_request(history):
-                continue
-            current = request(history)
-            tools = _tool_names(history)
-            activated = activated_tool_names(history)
-
-            if tools != previous_tools:
-                assert activated != previous_activated
-                assert set(previous_tools) < set(tools)
-            earlier = previous
-            if previous_instruction is not None:
-                trailing = _parts(
-                    client,
-                    [
-                        UserMessage(
-                            content=previous_instruction, is_turn_scaffolding=True
-                        )
-                    ],
-                )
-                assert earlier[-len(trailing) :] == trailing
-                earlier = earlier[: -len(trailing)]
-            assert current[: len(earlier)] == earlier
-            previous = current
-            previous_instruction = instruction
-            previous_tools = tools
-            previous_activated = activated
+    @given(st.lists(STEP, min_size=1, max_size=12))
+    @_PROPERTY_SETTINGS
+    def test_history_from_generate_content_extends_on_interactions(
+        self, steps: list[Step]
+    ) -> None:
+        _assert_each_request_extends_the_previous_one(
+            steps, _interaction_steps, _decorate
+        )

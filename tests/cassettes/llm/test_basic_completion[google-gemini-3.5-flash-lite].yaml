@@ -1,0 +1,64 @@
+interactions:
+- request:
+    body: '{"model":"gemini-3.5-flash-lite","input":[{"content":[{"text":"Reply with
+      exactly this text: ''Hello from the test suite!''","type":"text"}],"type":"user_input"}],"store":false,"stream":false}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '190'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+      x-goog-api-client:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/3xSYY+aQBD9K3a/FisgZy1JP5gqtXK5E8/Gck1jFhhhFXY5dqCg8b93oac1adOP
+        +/bNm5n35kQkUiwlsUkosjwFhIhopJQ0BmKfCAqk6RbFAbjimLr2ijCel3jFDUsjt8g2aLaZiGjK
+        sCH29xP58yAINZJW5lJ6/nERDWmYQHRVvTYTJd52G2nXsUS6LSX8XYGJKOMEbz8YZ8j+MflZI2EB
+        tN3bJqZujvqG0Tc+rM2hbY1tc/zc2pFH/ydIKCoWqkEYFIqlPOURLVonJUIuOw8ki7myulC+khmX
+        LnhO7sz1dezuguXIr70X2PP91KuMKdJd8e0Y84V5P7BqXicP8vHwNPDdLP/JPwX1iKZ+vnYm46Bi
+        foMvnuFN3M3+/fFBOjvHWoc63xylM1ttKF0aQfnZn/NJsvK9u2rgW4vF2+F9ZU6T59XXcTNFoR+f
+        lptRzHz/UT8U0py5Vrr6Ajz+2AbV5O3Er46Ss3ZSl8IROHZbdXHaZA5pKnq7QmQ9TKCHILEnS4bw
+        5kaipXZp/36ro4BLuB0ugj2ErRpT+gUNkQmuyjueQmPIVIj94bu7/i6lMumriwJy/gUAAP//AwDz
+        6o7jwwIAAA==
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-encoding:
+      - gzip
+      content-type:
+      - application/json
+      date:
+      - Thu, 19 Nov 2026 23:48:28 GMT
+      server:
+      - scaffolding on HTTPServer2
+      server-timing:
+      - gfet4t7; dur=1271
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+version: 1

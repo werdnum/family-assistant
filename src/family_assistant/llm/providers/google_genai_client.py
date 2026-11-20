@@ -76,6 +76,16 @@ from family_assistant.llm.messages import (
     UserMessage,
     is_turn_scaffolding,
 )
+from family_assistant.llm.providers.gemini_interactions import (
+    InteractionGenerationSettings,
+    InteractionStepAccumulator,
+    function_tools,
+    history_steps,
+    interaction_generation_settings,
+    interaction_replay_metadata,
+    read_steps,
+    tool_choice_setting,
+)
 from family_assistant.llm.utils.call_telemetry import LLMCallTelemetry
 from family_assistant.observability.metrics import (
     current_call_attribution,
@@ -126,6 +136,14 @@ def _first_finish_reason(
 
 T = TypeVar("T", bound=BaseModel)
 _T = TypeVar("_T")
+
+# The llm_parameters key that keeps a Gemini model's chat on generateContent,
+# as use_responses_api does for OpenAI. It is read by the client, not sent.
+USE_INTERACTIONS_API_PARAM = "use_interactions_api"
+
+# Statuses that end a chat interaction without an answer. "incomplete" is not
+# one: like a generateContent MAX_TOKENS finish, it returns what was produced.
+_CHAT_INTERACTION_FAILED_STATUSES = frozenset({"failed", "cancelled"})
 
 # Maps Interactions API ErrorEvent.error.code values to our typed exception classes.
 # See https://cloud.google.com/apis/design/errors for canonical error codes.
@@ -669,12 +687,26 @@ class GoogleGenAIClient(BaseLLMClient):
         )
         self.model_parameters = model_parameters or {}
         self.default_kwargs = kwargs
-        self._generation_fields = _generation_config_fields(
-            {
-                **self.default_kwargs,
-                **self._get_model_specific_params(self.model_name),
-            },
-            model=model,
+        request_params = {
+            **self.default_kwargs,
+            **self._get_model_specific_params(self.model_name),
+        }
+        use_interactions_api = request_params.pop(USE_INTERACTIONS_API_PARAM, True)
+        if not isinstance(use_interactions_api, bool):
+            raise ValueError(
+                f"llm_parameters for Gemini model '{model}' set "
+                f"{USE_INTERACTIONS_API_PARAM}={use_interactions_api!r}; it must be "
+                "true or false."
+            )
+        self._generation_fields = _generation_config_fields(request_params, model=model)
+        # Chat turns go to the Interactions API unless the model opts out.
+        # Computer use and the Interactions agents keep their own paths.
+        self._interaction_settings: InteractionGenerationSettings | None = (
+            interaction_generation_settings(self._generation_fields, model=model)
+            if use_interactions_api
+            and not enable_computer_use
+            and not is_interactions_agent_model(model)
+            else None
         )
 
         # New configuration options
@@ -1482,6 +1514,10 @@ class GoogleGenAIClient(BaseLLMClient):
         # Validate user input before processing
         self._validate_user_input(messages)
         tools = resolve_deferred_tools(tools, messages)
+        if self._interaction_settings is not None:
+            return await self._generate_interaction_chat_response(
+                messages, tools, tool_choice, self._interaction_settings
+            )
 
         with tracer.start_as_current_span("llm.provider.generate") as span:
             telemetry = LLMCallTelemetry(
@@ -1744,6 +1780,316 @@ class GoogleGenAIClient(BaseLLMClient):
                 # terminal path has recorded the call.
                 telemetry.finish_abandoned()
 
+    def _stream_error_frame_exception(
+        self, error: object, label: str
+    ) -> LLMProviderError:
+        """The typed error an Interactions stream's ``error`` frame amounts to."""
+        error_code = getattr(error, "code", None)
+        error_message = getattr(error, "message", None) or str(error)
+        logger.error(f"{label} stream error: code={error_code} msg={error_message}")
+        exc_class = _STREAM_ERROR_CODE_TO_EXCEPTION.get(
+            error_code or "", LLMProviderError
+        )
+        if exc_class is RateLimitError:
+            return RateLimitError(
+                error_message,
+                provider="google",
+                model=self.model_name,
+                retry_after=self._parse_retry_after(error_message),
+            )
+        return exc_class(error_message, provider="google", model=self.model_name)
+
+    def _interaction_chat_request(
+        self,
+        messages: Sequence[LLMMessage],
+        tools: list[ToolDefinition] | None,
+        tool_choice: str | None,
+        settings: InteractionGenerationSettings,
+        # ast-grep-ignore: no-dict-any - **kwargs for the Interactions SDK's create()
+    ) -> dict[str, Any]:
+        """``interactions.create`` kwargs for one stateless chat turn."""
+
+        def to_contents(batch: list[LLMMessage]) -> list[types.Content]:
+            contents = self._convert_messages_to_genai_format(batch)
+            assert all(isinstance(content, types.Content) for content in contents)
+            return cast("list[types.Content]", contents)
+
+        steps = history_steps(
+            self._process_tool_messages(list(messages)),
+            to_contents,
+            media_resolution=settings.media_resolution,
+        )
+        request_tools: list[JsonObject] = function_tools(tools or [])
+        if self.enable_url_context:
+            request_tools.append({"type": "url_context"})
+        if self.enable_google_search:
+            request_tools.append({"type": "google_search"})
+        generation = dict(settings.generation_config)
+        choice = tool_choice_setting(tool_choice)
+        if choice is not None and request_tools:
+            generation["tool_choice"] = choice
+        # ast-grep-ignore: no-dict-any - **kwargs for the Interactions SDK's create()
+        request: dict[str, Any] = {
+            "model": self._agent_name,
+            "store": False,
+            "input": steps,
+        }
+        if request_tools:
+            request["tools"] = request_tools
+        if generation:
+            request["generation_config"] = generation
+        service_tier = (
+            "flex" if current_service_tier() == "flex" else settings.service_tier
+        )
+        if service_tier is not None:
+            request["service_tier"] = service_tier
+        return request
+
+    def _interaction_chat_reasoning_info(
+        self,
+        usage: Usage | None,
+        served_tier: object,
+        thought_summaries: Sequence[str],
+    ) -> MessageReasoningInfo | None:
+        reasoning_info = self._reasoning_info_from_interaction_usage(usage)
+        if isinstance(served_tier, str) and served_tier:
+            reasoning_info = reasoning_info or MessageReasoningInfo()
+            reasoning_info["service_tier"] = served_tier
+        if thought_summaries:
+            reasoning_info = reasoning_info or MessageReasoningInfo()
+            reasoning_info["thought_summaries"] = [
+                {"summary": summary} for summary in thought_summaries
+            ]
+        return reasoning_info
+
+    def _raise_for_failed_chat_interaction(self, status: object) -> None:
+        if status in _CHAT_INTERACTION_FAILED_STATUSES:
+            raise ServiceUnavailableError(
+                f"Gemini chat interaction {status}",
+                provider="google",
+                model=self.model_name,
+            )
+
+    async def _generate_interaction_chat_response(
+        self,
+        messages: Sequence[LLMMessage],
+        tools: list[ToolDefinition] | None,
+        tool_choice: str | None,
+        settings: InteractionGenerationSettings,
+    ) -> LLMOutput:
+        """One non-streamed chat turn on the Interactions API."""
+        # Built before the span: rendering history happens in this process,
+        # and a failure there is not a provider error.
+        request = self._interaction_chat_request(messages, tools, tool_choice, settings)
+        with tracer.start_as_current_span("llm.provider.generate") as span:
+            telemetry = LLMCallTelemetry(
+                span,
+                provider="google",
+                system="google-genai",
+                requested_model=self.model_name,
+                messages=messages,
+                tools=tools,
+                tool_choice=tool_choice,
+                streaming=False,
+            )
+
+            async def request_success() -> LLMOutput:
+                interaction = _agent_interaction_response(
+                    await self.client.aio.interactions.create(**request, stream=False)
+                )
+                telemetry.record_response_metadata(
+                    resolved_model=interaction.model,
+                    response_id=interaction.id,
+                    finish_reason=interaction.status,
+                )
+                self._raise_for_failed_chat_interaction(interaction.status)
+                steps = [
+                    cast("JsonObject", step.model_dump(mode="json", exclude_none=True))
+                    for step in interaction.steps or []
+                ]
+                output = read_steps(steps)
+                llm_output = LLMOutput(
+                    content=output.content,
+                    tool_calls=[
+                        ToolCallItem(
+                            id=call_id,
+                            type="function",
+                            function=ToolCallFunction(name=name, arguments=arguments),
+                        )
+                        for call_id, name, arguments in output.tool_calls
+                    ]
+                    or None,
+                    reasoning_info=telemetry.finalize_usage(
+                        self._interaction_chat_reasoning_info(
+                            interaction.usage,
+                            interaction.service_tier,
+                            output.thought_summaries,
+                        )
+                    ),
+                    provider_metadata=interaction_replay_metadata(steps),
+                    resolved_model=interaction.model,
+                )
+                telemetry.record_output(llm_output)
+                telemetry.finish_success(asdict(llm_output))
+                return llm_output
+
+            try:
+                return await request_success()
+            except Exception as e:
+                telemetry.finish_error(e)
+                if isinstance(e, LLMProviderError):
+                    raise
+                raise self._map_error_to_typed_exception(e) from e
+            finally:
+                telemetry.finish_abandoned()
+
+    async def _generate_interaction_chat_stream(
+        self,
+        messages: Sequence[LLMMessage],
+        tools: list[ToolDefinition] | None,
+        tool_choice: str | None,
+        settings: InteractionGenerationSettings,
+    ) -> AsyncIterator[LLMStreamEvent]:
+        """One streamed chat turn on the Interactions API.
+
+        Text streams as it arrives. The steps are rebuilt from the deltas,
+        since the completion event carries none, and recorded on the done
+        event for replay; tool calls are emitted once the stream ends, as the
+        generateContent path does.
+        """
+        request = self._interaction_chat_request(messages, tools, tool_choice, settings)
+        request["stream"] = True
+        span = tracer.start_span("llm.provider.generate_stream")
+        telemetry = LLMCallTelemetry(
+            span,
+            provider="google",
+            system="google-genai",
+            requested_model=self.model_name,
+            messages=messages,
+            tools=tools,
+            tool_choice=tool_choice,
+            streaming=True,
+        )
+        content_yielded = False
+
+        async def stream_events() -> AsyncGenerator[LLMStreamEvent]:
+            nonlocal content_yielded
+            stream = cast(
+                "AsyncIterator[Any]",
+                await self.client.aio.interactions.create(**request),
+            )
+            accumulator = InteractionStepAccumulator()
+            usage: Usage | None = None
+            served_model: str | None = None
+            served_tier: object = None
+            status: object = None
+            with trace.use_span(span, end_on_exit=False):
+                async for chunk in stream:
+                    interaction = getattr(chunk, "interaction", None)
+                    if model := getattr(interaction, "model", None):
+                        served_model = model
+                        telemetry.record_response_metadata(resolved_model=model)
+                    if reported := getattr(interaction, "usage", None):
+                        usage = reported
+                        telemetry.record_usage(
+                            self._reasoning_info_from_interaction_usage(reported)
+                        )
+                    served_tier = (
+                        getattr(interaction, "service_tier", None) or served_tier
+                    )
+                    event = _event_dict(chunk)
+                    event_type = event.get("event_type")
+                    index = event.get("index")
+                    if event_type == "step.start" and isinstance(index, int):
+                        accumulator.start(index, event.get("step") or {})
+                    elif event_type == "step.delta" and isinstance(index, int):
+                        text = accumulator.delta(index, event.get("delta") or {})
+                        if text:
+                            text_event = LLMStreamEvent(type="content", content=text)
+                            telemetry.observe_event(text_event)
+                            yield text_event  # noqa: ASYNC119 - use_span only scopes the tracing context
+                            content_yielded = True
+                    elif event_type == "step.stop" and isinstance(index, int):
+                        accumulator.stop(index)
+                    elif event_type == "interaction.status_update":
+                        status = event.get("status") or status
+                        self._raise_for_failed_chat_interaction(status)
+                    elif event_type in {
+                        "interaction.completed",
+                        "interaction.complete",
+                    }:
+                        status = getattr(interaction, "status", None) or status
+                        self._raise_for_failed_chat_interaction(status)
+                    elif event_type == "error":
+                        raise self._stream_error_frame_exception(
+                            chunk.error, "Gemini chat"
+                        )
+
+            steps = accumulator.steps
+            output = read_steps(steps)
+            for call_id, name, arguments in output.tool_calls:
+                tool_call_event = LLMStreamEvent(
+                    type="tool_call",
+                    tool_call=ToolCallItem(
+                        id=call_id,
+                        type="function",
+                        function=ToolCallFunction(name=name, arguments=arguments),
+                    ),
+                    tool_call_id=call_id,
+                )
+                telemetry.observe_event(tool_call_event)
+                yield tool_call_event
+
+            telemetry.record_response_metadata(
+                resolved_model=served_model,
+                finish_reason=status if isinstance(status, str) else None,
+            )
+            done_metadata: StreamEventMetadata = {}
+            if (replay_metadata := interaction_replay_metadata(steps)) is not None:
+                done_metadata["provider_metadata"] = replay_metadata
+            if served_model:
+                done_metadata["resolved_model"] = served_model
+            done_metadata["reasoning_info"] = telemetry.finalize_usage(
+                self._interaction_chat_reasoning_info(
+                    usage, served_tier, output.thought_summaries
+                )
+            )
+            telemetry.finish_success({"streaming": True, "metadata": done_metadata})
+            yield LLMStreamEvent(type="done", metadata=done_metadata)
+
+        events = stream_events()
+        try:
+            async for stream_event in events:
+                yield stream_event
+        except Exception as e:
+            telemetry.finish_error(e)
+            typed_error = (
+                e
+                if isinstance(e, LLMProviderError)
+                else self._map_error_to_typed_exception(e)
+            )
+            logger.exception(
+                f"Gemini Interactions chat stream error ({type(typed_error).__name__}): {e}"
+            )
+            if not content_yielded:
+                raise typed_error from e
+            yield LLMStreamEvent(
+                type="error",
+                error=str(e),
+                metadata={
+                    "error_id": str(e.__class__.__name__),
+                    "error_type": type(typed_error).__name__,
+                    "provider": "google",
+                    "model": self.model_name,
+                },
+            )
+        finally:
+            try:
+                await events.aclose()
+            finally:
+                telemetry.finish_abandoned()
+                span.end()
+
     def _map_error_message_to_typed_exception(self, e: Exception) -> LLMProviderError:
         """Map an exception that carries no HTTP status, by its message."""
         error_message = str(e)
@@ -1980,6 +2326,10 @@ class GoogleGenAIClient(BaseLLMClient):
 
         if is_interactions_agent_model(self.model_name):
             return self._generate_agent_interaction_stream(messages)
+        if self._interaction_settings is not None:
+            return self._generate_interaction_chat_stream(
+                messages, tools, tool_choice, self._interaction_settings
+            )
         return self._generate_response_stream(messages, tools, tool_choice)
 
     def _extract_agent_input_text(self, messages: Sequence[LLMMessage]) -> str:
@@ -2751,34 +3101,7 @@ class GoogleGenAIClient(BaseLLMClient):
                         )
 
                 elif event_type == "error":
-                    error_obj = chunk.error
-                    error_code = getattr(error_obj, "code", None)
-                    error_message = getattr(error_obj, "message", None) or str(
-                        error_obj
-                    )
-                    logger.error(
-                        f"{agent_label} stream error: code={error_code} msg={error_message}"
-                    )
-
-                    # Map error code to typed exception
-                    exc_class = _STREAM_ERROR_CODE_TO_EXCEPTION.get(
-                        error_code or "", LLMProviderError
-                    )
-                    if exc_class is RateLimitError:
-                        typed_exc = RateLimitError(
-                            error_message,
-                            provider="google",
-                            model=self.model_name,
-                            retry_after=self._parse_retry_after(error_message),
-                        )
-                    else:
-                        typed_exc = exc_class(
-                            error_message,
-                            provider="google",
-                            model=self.model_name,
-                        )
-
-                    raise typed_exc
+                    raise self._stream_error_frame_exception(chunk.error, agent_label)
 
             # 4. Finalize
             done_metadata: StreamEventMetadata = {}

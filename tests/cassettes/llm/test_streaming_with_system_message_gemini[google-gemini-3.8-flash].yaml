@@ -1,0 +1,76 @@
+interactions:
+- request:
+    body: '{"model":"gemini-3.8-flash","input":[{"content":[{"text":"System: You are
+      a helpful assistant that responds in a very concise manner.","type":"text"}],"type":"user_input"},{"content":[{"text":"What
+      is the capital of France? Reply in exactly one word.","type":"text"}],"type":"user_input"}],"store":false,"stream":true}'
+    headers:
+      accept:
+      - text/event-stream
+      accept-encoding:
+      - gzip, deflate, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '318'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+      x-goog-api-client:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/1SNMQqAMBAE+7wiXK02NpLPyJmsGomJ6CGI5O9qIWg7wzDYEcVoHwUrW/EpVnYF
+        C5xyLGz0SR9H5qTUTbBC5scLmpNDuOmA2Udf1lVT9oG3kXJBeCatHAv+2buirNQFAAD//0rFdEhx
+        SWJJaXF8aQHQJalw50BEwQbFFxTlpxelFhcr4bEDxRSQTQAAAAD//4LaVFySWgCSLCpB8mlKaoWS
+        lYGOEkgS5FmoeSUZ+aXpGSUYfkGYATIYAAAA//9s0zfTm0AQgOEfRAEIgaBwIcIdIOAIIqnxIAQi
+        68jh1/uzXdiecbvFOzs7+/wd/jrGlPwn/Gv+szyW7+5rseFnRsEfRcKpcg1rP3dtNbufvZg8CIrD
+        62Vnkz1PsgHk7EPVC/ekOh3kPeNR1RzBeU/H4auLitD8MXIE4urYeRdujCL5XpRYkeiC56CxiiIf
+        ODb0pTirnSY5qYgKDcXt4mVWdJN5vRoak+4E+lNkD8PyYsuZEGznm9uOFxu2fl17ukcUD74Gzybq
+        /ZJAXamMgcBO0L3OI8wasDsbMzovKzTWMNoNdMpTO3txUd4FB0U/p6C5f2IsTwoqF5hmonFEGBeI
+        CaaXaMTWHVNWF+QyyXj1XES5Rg/JOYidD0h9ia3GwbrRloWYYgCr/jLVC0lNJZs+68EZD9KvxaCn
+        wUA1p0K2uOEqACLwQNGeyz7UgakP0FzWHRyNR6+1TRW+X7gCsJ9KZiLmE3TQ49tWR+W895roYTjT
+        Iz10d+1y0Y+cGcVQO6fxcdtlwew7pbwxlqvPregUk2Z2psBNrTAqloj9Ze99/j61rbpQ6X2JMqPp
+        N0LhmN4+8XjJorewLZ25Xc8yE9rbPQjwi1fHl7pavPRGEhkJoRWcTPuSJJMLyYlV3nKt48WLlspN
+        ZnoderKttmqXnU0bO0oiDUbKqQ46E65QA7lSMY13J26x6+sgk/BrRW5wXnYrFB5anrjDmietnm7+
+        gwV2Mw8IQz6BanTybSILzXGWYjc8ccQQ8VNy9O/0sRnl5QVm3Fbw+iiLtX4eLKkjGuu67CXscpJG
+        UN/piEKdCInrt29fJP/F8/3Px/+X0W8ZX4x+AAAA//9CzZ/5BVhyEbZMmF8A0gwAAAD//yKYuQ0x
+        Mje45IrPLy0pKCWUwwEAAAD//yKYww2RcnhJagWomAxILMosRgoNkCj+AAAAAAD//yIUAIb4AgAA
+        AAD//6xV0QrCMAz8lz1vsLairt/hkyKldkGLdZWuE4b476ab7QTHnnxscgmXu5LM7FFlb3cDCys9
+        rdSERL5dK88wzGG9NMLbKzSIIZTln5BuULGUYOjLd0SceoHSSqN9n/HDM5seowihTSx9HWNTJdUF
+        6tS1jPHRn4lGnnhZI7oWfiviv4uJigaC2usZ6mhIvEU8oyVdF4QUpNpRxldbzjb7IMhwQRYALbiH
+        VshEgxtskU0tXdDyrzczeYRuvwEAAP//gsZ2Sn4erIKMdvH3c43l4gIAAAD//wMAXdDc0dkHAAA=
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-encoding:
+      - gzip
+      content-type:
+      - text/event-stream
+      date:
+      - Thu, 19 Nov 2026 23:48:37 GMT
+      server:
+      - scaffolding on HTTPServer2
+      server-timing:
+      - gfet4t7; dur=1935
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,0 +1,83 @@
+interactions:
+- request:
+    body: '{"model":"gemini-3.8-flash","input":[{"content":[{"text":"What''s the weather
+      in Paris, France? Also calculate 42 * 17.","type":"text"}],"type":"user_input"}],"store":false,"stream":true,"tools":[{"description":"Get
+      current weather for a location","name":"get_weather","parameters":{"type":"object","properties":{"location":{"type":"string","description":"The
+      city and country"},"unit":{"type":"string","enum":["celsius","fahrenheit"],"description":"Temperature
+      unit"}},"required":["location"]},"type":"function"},{"description":"Perform
+      mathematical calculations","name":"calculate","parameters":{"type":"object","properties":{"expression":{"type":"string","description":"Mathematical
+      expression to evaluate"}},"required":["expression"]},"type":"function"}]}'
+    headers:
+      accept:
+      - text/event-stream
+      accept-encoding:
+      - gzip, deflate, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '758'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+      x-goog-api-client:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/1SNMQqAMBAE+7wiXK02NpLPyJmsGomJ6CGI5O9qIWg7wzDYEcVoHwUrW/EpVnYF
+        C5xyLGz0SR9H5qTUTbBC5scLmpNDuOmA2Udf1lVT9oG3kXJBeCatHAv+2buirNQFAAD//0rFdEhx
+        SWJJaXF8aQHQJalw50BEwQbFFxTlpxelFhcr4bEDxRSQTQAAAAD//4LaVFySWgCSLCpB8mlKaoWS
+        lYGOEkgS5FmoeSUZ+aXpGSUYfkGYATIYAAAA//9sk8eym0AURD+IhdAQBpYiZxAizsaFxBtyFALB
+        11vPXtiu8vL24lRX1z1/gz9jLNl/wL/yb/KzKvpPsfkbIw+kLA6DfImbEPve8MoYNWWbqrL5tziN
+        gg1O+cjkeIhMxGdTokeUVckkAAIKUZQ/5Nr4XDcnAe8UaxJ+wC6sInLYL1+4lK2cUCvybWsnZpVV
+        QAxz/YjhmjKSpoQlZdj8ejNOciYFjpY9HKxgV6IOqSmazqFLzOvZURKV2zhPdBbVYncVyisiT+Sf
+        u3RhvJkL2bu/WSs8YhXYZxaST0K4EuqQh9ObqDmpgBVLJWjcjei6VKPL5YwhvmJu4e/hUKjRdKxS
+        0LccZK9B500QUm2W3MNxHeg+JdpbTb83bxesJZ1XAo3MTk9fjmU+IyU5Y+eObp2lTOe06rYxTVhB
+        VTyTNb2dOoiEe5k1y/b14HxaUPswpLY/NmfdXWHVnxz+5OLHGjEenIIJhFG3nQsSFHEI4uV2ihL4
+        tqr1lbav3W5LCoMApVfVEOanC6+xsjUWubs6sSjXo77Cpj+u5ur5vA/RIW4argaR6WusBkh487JQ
+        AnUXcW4TlboCeWkvZ9cqVWpuMamv3E2fCErFsgWGzpDFJqTU0tTqFwIGj6mOjDeTnGWoI8o/SQs/
+        TmJRL1wRv6S+jrRNl+sDTkk0wdDiuJrwiUvItwJOiAb4oUPHLHVHDjTnO4+K4Hm2vgBuqicdBz6v
+        CQOhdYzoT87XfrvQ9JtXQkpvmB37UbaNCZDytOp1G6n7A83oVNCip+Q4e4GLT6el/9HvX1F+/Pnu
+        /yrz24KPMj8BAAD//0LNi/kFWHIMtgyXXwDSDAAAAP//IpiRDREZOTMFqDs5MScn3tjAxNzU0MDI
+        1NjSwtwCmFqNDBHuTyvNA5ca8SClQOG8xNxUcKFWEl8OLKoyUouAgolF6aW5QKuBhVB1Lf4iAQAA
+        AP//IlgkGCIVCUjmKlXHKOXkJyeC3BKjZBWjFJBYlFmso+BWlJiXnBqjVItwMlxXPDRU8QY4AAAA
+        //8iFOCG+AIcAAAA//8iGOBGxAS4iaUZwQAH8pJLc0AFNknBDQAAAP//IhjcRriDO7WiAFSVwALc
+        xEhBS8HQnIKgBgAAAP//IhTURviCGgAAAP//rFZLDsIgEL0L65oUUFs4hyuNIUiJErHUFoyN8e5C
+        I7SJTVcumR9v5gXezMihMLdGywVlTsrYyrtTvhmW1Nl1/CwHQTOWa2bNVdY+EhUk+5pU3TibHHCD
+        MzA1sVPPvMRzrWwP6OEFxgOw8mnDkMbc9zGWFVxcZJXq5tFunJ3eh4ssQTOauU7+psS/JTpKEiAq
+        q+bQe2rickEBytF2BeEKkh3CdF1STPZhKMNKsBDQyfahhIei/LsPBPG64m3lPX9dgiKvgfcPAAAA
+        //+CxntKfh6sxRPt4u/nGsvFBQAAAP//AwDNCPywqgkAAA==
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-encoding:
+      - gzip
+      content-type:
+      - text/event-stream
+      date:
+      - Thu, 19 Nov 2026 23:48:39 GMT
+      server:
+      - scaffolding on HTTPServer2
+      server-timing:
+      - gfet4t7; dur=1805
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+version: 1

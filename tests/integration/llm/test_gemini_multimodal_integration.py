@@ -18,6 +18,8 @@ from family_assistant.llm.messages import AssistantMessage, ToolMessage, UserMes
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.tools.types import ToolAttachment
 
+from .vcr_helpers import sanitize_response
+
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
@@ -32,22 +34,11 @@ _RED_PNG = base64.b64decode(
 
 
 @pytest_asyncio.fixture
-async def google_client_gemini3_flash(
-    request: pytest.FixtureRequest, llm_record_mode: str
-) -> "AsyncGenerator[GoogleGenAIClient]":
-    """A gemini-3.8-flash client wired for SDK record/replay."""
-    api_key = os.getenv("GEMINI_API_KEY", "test-gemini-key")
-    test_name = request.node.name
-    module_name = request.node.module.__name__.replace("tests.", "")
-    debug_config: dict[str, str | None] = {
-        "client_mode": llm_record_mode,
-        "replay_id": f"{module_name}/{test_name}/mldev",
-        "replays_directory": "tests/cassettes/gemini",
-    }
+async def google_client_gemini3_flash() -> "AsyncGenerator[GoogleGenAIClient]":
+    """A gemini-3.8-flash client; its requests are recorded with VCR."""
     client = GoogleGenAIClient(
-        api_key=api_key,
+        api_key=os.getenv("GEMINI_API_KEY", "test-gemini-key"),
         model="gemini-3.8-flash",
-        debug_config=debug_config,
     )
     try:
         yield client
@@ -58,6 +49,7 @@ async def google_client_gemini3_flash(
 @pytest.mark.no_db
 @pytest.mark.llm_integration
 @pytest.mark.asyncio
+@pytest.mark.vcr(before_record_response=sanitize_response)
 async def test_tool_image_attachment_delivered_to_gemini3(
     google_client_gemini3_flash: GoogleGenAIClient,
     llm_record_mode: str,

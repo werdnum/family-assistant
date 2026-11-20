@@ -1,0 +1,263 @@
+interactions:
+- request:
+    body: '{"model":"gemini-3.8-flash","input":[{"content":[{"text":"What''s the weather
+      in Perth? Use the tool.","type":"text"}],"type":"user_input"},{"arguments":{"city":"Perth"},"id":"call_1949862495083543897","name":"get_weather","type":"function_call","signature":"Eo8CCowCAWkUfRP+10URGnD7FwYOGoyIS5AvGcPKYcuiHy/Smi+vssjVvQ75etVNhjg8NuMnBmO/nWLPcwzXlILW4kfr3jbAAkS3svP8na/04DoGGIpYhhTfC1EfifyoNnQ2RKr+qhJiXRVhXdFqd4ndYALu/O8nKHRG9O3e3b7wwNe+NCysG+UeNWqizFR3q5W8gfglNC8y2fDNfXiqB41iu3ERIDYe4OAPKmmafxhOu19npptVOVXWDOML+LmvAtW0rSvbMBqRI97Pk5vRVAUK9fQAv4d8J5IqWisCQTnsMWg0L0Z+TaKZZ3THc7mdLLNxGrKIg7U+iiwZ++KtoHk2SOdalms5i8s8BVAGk8YMjA=="},{"call_id":"call_1949862495083543897","result":[{"text":"{\"forecast\":
+      \"22C and sunny\"}","type":"text"}],"name":"get_weather","type":"function_result"}],"store":false,"stream":false,"tools":[{"description":"Get
+      the weather forecast for a city.","name":"get_weather","parameters":{"type":"object","properties":{"city":{"type":"string","description":"City
+      name"},"units":{"type":"string","enum":["celsius","fahrenheit"]}},"required":["city"]},"type":"function"}]}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1093'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+      x-goog-api-client:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/3xS7XKaQBR9FWb/qlU+gsA/IjBqJNEGFex0HAIru4oshUXYOr5Tn6FP1sUmJp12
+        +vPePffcs+eeMyhpSKsSGCAixzyFFMagC6oyTCAwzoASGqZbSg4w4xhJHHRfWzjLK3p7EIf84WNr
+        +8K2RxKHKaYMGF/O4L0AFDYUtDy32cvXN9oojBCMb7y3daSif+xTujdpJN1WJfx7hCJSJeh9RlJb
+        iZjif6m/dEFUwLD9vQGkgaT2RLEn6p4kG4pqKNqmNSWP/w8oYXHCEZeCYcFR3NksDovWz5LCvLz6
+        UOIk44YX3F1gV/b9iCr35vqw3H2e17NgiCbu86khxSQ/Itun3s60B6GoJglyxdDfHVb1Q7NydG3+
+        MEWDjqNZU39TpyolSZo3tX/H3ITWml4HQ9NyyUwKnPWjux+qtjWumskQx/0NzS33zm46nafKZnNr
+        PTKfY39KnaNtTpQVZbOXRzMNl5v86DFCTtaCoCcWahvUGaLx/VOdask4xCg46Qvi4sxn6p1F3Odo
+        snRmsFEWeOCPvUOjeLjvKvKqXDh7KuumrKv9vaWtA6dxiP/Ils1hJDvRlB46ykD5Hriyorus1Lwg
+        6c/Q6du8Xy7667iOJw+ZM236JzZvQ8Py1rnX24JL98xzm1GY0au712gZwENQqPk1ESwEnAlzWFAk
+        4FKIqqLg0JQJkvTzx0jg9xHKKsvYpw/ULcU1kL9rHlz4lr9rn7zsYdRuwXxvEUYUk4yPX3G8m8Aj
+        T1lP/qT1dmlYInD5BQAA//8DANeSNM9kAwAA
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-encoding:
+      - gzip
+      content-type:
+      - application/json
+      date:
+      - Thu, 19 Nov 2026 23:46:48 GMT
+      server:
+      - scaffolding on HTTPServer2
+      server-timing:
+      - gfet4t7; dur=1621
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"model":"gemini-3.8-flash","input":[{"content":[{"text":"What''s the weather
+      in Perth? Use the tool.","type":"text"}],"type":"user_input"},{"arguments":{"city":"Perth"},"id":"call_9084687292641312612","name":"get_weather","type":"function_call","signature":"EooDCocDAWkUfRMre0KskRIldrRMB/O1JBODNNbHRYOIFoiqILj5BGMUBIeowEOa9h7irXy063BjY1OETGJ0ZbwWzD8+8Jx2Zv1HI4UdB6m9pJJ8pEq8IMk7kU8RnLnJq8+Gq7KNsgF51sCBu12TKYCFLfE7oCXNt09LEfWSmr0M8hFybEv9u4Jmn4faP9JkTf7uyUNIZOtd3nlTFbkRhO//d6xankBRM4QfG8cjbI5hD9HtDi3nV3YHvrl0qhUQMR0NNS21hrgR0BVtvKHdUJz/qigu0La1Eoeg+3M22JkVnZr3Fs7Q/q8L10AlwUsF1b65rytBiQxkAlHycjaqM7ZvJKbWBH8ZJ1tLWrCIEUnlLZEOoFpBi9KAuXDRbUTFAjjsz8x7xIqSYxQLiLpoS2VfHJQ7fhCa6A1OpDrYl0sMrWR/uXgMNlpoHHgrxiemfAxtCYi7VLg6g880LiLHqoV1dFM4OIrlfg/UugopET5GFRiHplkd5Nl1/VfeTJXvErZynztjbvM+7RQnKw=="},{"call_id":"call_9084687292641312612","result":[{"text":"{\"forecast\":
+      \"22C and sunny\"}","type":"text"}],"name":"get_weather","type":"function_result"}],"store":false,"stream":false,"tools":[{"description":"Get
+      the weather forecast for a city.","name":"get_weather","parameters":{"type":"object","properties":{"city":{"type":"string","description":"City
+      name"},"units":{"type":"string","enum":["celsius","fahrenheit"]}},"required":["city"]},"type":"function"}]}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1257'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+      x-goog-api-client:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/3xS2XLaQBD8FdW+Ag66AFGVBwEWGAWbQwhDKkUt0uoAaSXvAQiKf/I35MuyIjZ2
+        Kqk8Tm9Pz2xPnwFlkHEK2sDL0jxBDPmgCjiFIQLtM2AZg8maZTuEBUdR1eobFOOcs9uDbMhV8Bla
+        b4p1mvkwiVkB2t/P4KMADB0ZKHVuvZcf77Ie9CLk33Tr73jG2R/ztOpttSxZc4r+bmFRxsPoo0dp
+        lSvGLP7X9pcq8AiC5e/bQKkrjZos12TDUdS21hT/XpWm5P7/CRSRfeyJVWJEBEs4i31ISj8pQzm9
+        +kDjEAvDiXAX3PNWp8sPHXOxmwfTkb0JRnDIJkWueE4zW56e69/0/Tghhdeda7xOqagcGvWhvgrd
+        Zv+hezRz12jpGoHuRLWU3ZSQ1JftSSWNXtyuyky2CJaTmbODk+7O2LgL1a+EczMJ+KM17WwG+qPl
+        5K3d1JmN7kf74WAY2pYbEvjkOC29o5NgPH6p1LuGLS86kYs3RqEN7XDRwJrda564/mXzHCTHZbCq
+        0HoxZ73OUun1SacBTR/2NTIID73jeGrik7qqBLG9MGLo9dMhDysx27vL+QqhJzfYOiMNb7WhWui8
+        Vbft1G3gQerih/CkHZyJpQfWLCN72awMzaamzazkxWpuvYOxO95/LYNU5KWbb/cGl+pZZBkzhNnV
+        8Wvc2sCJkHQQF44QkWIsjRFhkRRTyeOECGpSSIry87UriZtJlGNc3H2SLiWuIf1dizCj90xe8Wyz
+        RV45JRZzCfRYnGHRfuUJNESpSF5NvWvVggTSCFx+AQAA//8DAF7wkFx4AwAA
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-encoding:
+      - gzip
+      content-type:
+      - application/json
+      date:
+      - Thu, 19 Nov 2026 23:47:23 GMT
+      server:
+      - scaffolding on HTTPServer2
+      server-timing:
+      - gfet4t7; dur=1607
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"contents": [{"parts": [{"text": "What''s the weather in Perth? Use the
+      tool."}], "role": "user"}], "tools": [{"functionDeclarations": [{"description":
+      "Get the weather forecast for a city.", "name": "get_weather", "parameters":
+      {"properties": {"city": {"description": "City name", "type": "STRING"}, "units":
+      {"description": "", "type": "STRING"}}, "required": ["city"], "type": "OBJECT"}}]}],
+      "generationConfig": {"mediaResolution": "MEDIA_RESOLUTION_HIGH"}}'
+    headers:
+      Content-Type:
+      - application/json
+      user-agent:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+      x-goog-api-client:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+    method: post
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent
+  response:
+    body:
+      string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\":
+        [\n          {\n            \"functionCall\": {\n              \"name\": \"get_weather\",\n
+        \             \"args\": {\n                \"city\": \"Perth\"\n              },\n
+        \             \"id\": \"call_1229240675003631875\"\n            },\n            \"thoughtSignature\":
+        \"EvACCu0CAWkUfRO9ah6R8QPTbh/RxMRMwds7pyRyUwBUKBN57Gljonx0l5w6IM0sxs1AgqIxYT2aDDhgyoN0k162pneU9m7WaJOweuIKwS8FRU6O1fr7CIzm1FRHHrrYrqX2mmiEt8MQmINK2kfZrsmLpAbt+vOlGFRL0BQIqUuQUrg7Z5Lu6S3JZpqhJNrIWBg3Ish6a7twVJQ4gCIae2lnXie4lAyn57d7LfUrrUerCFkopXOV+q1zSCNdiZmNTEuahXiDRTcKRJxQnNowmoOyEAPBtQ/GX+u67i/wGtK5/5tgr6DK1zYDjDY8Coga4a1oW/umvkftY37TGzf87XdkdZFbU3sHoELmq6JKgYai2eAakEfZWogX5XaVyyoptkskA73FDSiJPkFkjMB0wF4WfZqtopGBJEEqDjCHVY1O3z28uWFUJtQOjJdL7L7bfWUaFUFATeI0sURoR80XKJsM3I3+Oy4lrAEorm8rIsjEDAI=\"\n
+        \         }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\":
+        \"STOP\",\n      \"index\": 0,\n      \"finishMessage\": \"Model generated
+        function call(s).\"\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\":
+        73,\n    \"candidatesTokenCount\": 17,\n    \"totalTokenCount\": 152,\n    \"promptTokensDetails\":
+        [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 73\n
+        \     }\n    ],\n    \"thoughtsTokenCount\": 62,\n    \"serviceTier\": \"standard\"\n
+        \ },\n  \"modelVersion\": \"gemini-3.8-flash\",\n  \"responseId\": \"y4r_atGCIJmx694PzJ_L2As\"\n}\n"
+    headers:
+      Alt-Svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      Content-Encoding:
+      - gzip
+      Content-Type:
+      - application/json; charset=UTF-8
+      Date:
+      - Thu, 19 Nov 2026 23:48:29 GMT
+      Server:
+      - scaffolding on HTTPServer2
+      Server-Timing:
+      - gfet4t7; dur=2098
+      Transfer-Encoding:
+      - chunked
+      Vary:
+      - Origin
+      - X-Origin
+      - Referer
+      X-Content-Type-Options:
+      - nosniff
+      X-Frame-Options:
+      - SAMEORIGIN
+      X-Gemini-Service-Tier:
+      - standard
+      X-XSS-Protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"model":"gemini-3.8-flash","input":[{"content":[{"text":"What''s the weather
+      in Perth? Use the tool.","type":"text"}],"type":"user_input"},{"arguments":{"city":"Perth"},"id":"call_1229240675003631875","name":"get_weather","type":"function_call","signature":"EvACCu0CAWkUfRO9ah6R8QPTbh/RxMRMwds7pyRyUwBUKBN57Gljonx0l5w6IM0sxs1AgqIxYT2aDDhgyoN0k162pneU9m7WaJOweuIKwS8FRU6O1fr7CIzm1FRHHrrYrqX2mmiEt8MQmINK2kfZrsmLpAbt+vOlGFRL0BQIqUuQUrg7Z5Lu6S3JZpqhJNrIWBg3Ish6a7twVJQ4gCIae2lnXie4lAyn57d7LfUrrUerCFkopXOV+q1zSCNdiZmNTEuahXiDRTcKRJxQnNowmoOyEAPBtQ/GX+u67i/wGtK5/5tgr6DK1zYDjDY8Coga4a1oW/umvkftY37TGzf87XdkdZFbU3sHoELmq6JKgYai2eAakEfZWogX5XaVyyoptkskA73FDSiJPkFkjMB0wF4WfZqtopGBJEEqDjCHVY1O3z28uWFUJtQOjJdL7L7bfWUaFUFATeI0sURoR80XKJsM3I3+Oy4lrAEorm8rIsjEDAI="},{"call_id":"call_1229240675003631875","result":[{"text":"{\"forecast\":
+      \"22C and sunny\"}","type":"text"}],"name":"get_weather","type":"function_result"}],"store":false,"stream":false,"tools":[{"description":"Get
+      the weather forecast for a city.","name":"get_weather","parameters":{"type":"object","properties":{"city":{"type":"string","description":"City
+      name"},"units":{"type":"string","enum":["celsius","fahrenheit"]}},"required":["city"]},"type":"function"}]}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1221'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+      x-goog-api-client:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/3xS226bQBD9FbSvtmPADsVIfQDHTZ34FhsCpaqsBZY7C95LHNfyP/Ub+mVd3MRJ
+        1aqPc2bmzMyZcwSUQcYpMEBYV02JGIpAF3AKEwSMI2A1g+WW1QXCokZV9e4LlOGGs0tC0UXiPbQN
+        DtuqjmCZsQMwvh7BWwAYemag5bn0nr690oYwTFF04ZVf8ZqzP+YNupfV6nLLKfq7haU1T9K3HvVD
+        u2LGsn9tf+qCkCDYXm8AVVa1nqL0lJGtDoyhbgwUvxWlif5fQBF5ykKxSoaIqBLK4giSVk/KUEPP
+        OtAswUJwItQFE25aYyZbpls48Xq+kKerAC8XZtF58BpnMl2uimWox7al1TN30ynCAen4fNnJHTnR
+        pyj3SxlrdUXh3SbuPy02+V3leVQx+XCquBv4AGGlsBVXPxyW5d0BYr+IuJ+ug0l1/x2Oqj55WCZJ
+        xh13M1jbu07k6liDsZdbzxRzfjuLiNtX8tpC5BNX53J9s9hYUSEHWGO7XNVWSeE8imvWnjOaj+15
+        Z/ismdb08+14h/azzL8Z5nRV32pzqvmjyFzNSEzVXF9SxVbvd/3J5JqY0WCaHXhgNtE1Kyes3Ls3
+        6d57TL+g4ThYOIu178a70PbifpV8bE1zaFrlXn4LTt2j8C1mCLOzumdrGcBOkRRyQgQs7cVXU0Sk
+        DEsrRFgqZVRS1Z8/xpL4jkQ5xoerd8QtwdmOv2NhW/TqvjNeBzkK2xmZmEpgyLIai/ZznUATVAmP
+        9QZXei8uIU3B6RcAAAD//wMAiXEc/WIDAAA=
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-encoding:
+      - gzip
+      content-type:
+      - application/json
+      date:
+      - Thu, 19 Nov 2026 23:48:31 GMT
+      server:
+      - scaffolding on HTTPServer2
+      server-timing:
+      - gfet4t7; dur=1657
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+version: 1

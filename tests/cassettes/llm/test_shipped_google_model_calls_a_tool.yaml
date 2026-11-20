@@ -1,0 +1,68 @@
+interactions:
+- request:
+    body: '{"model":"gemini-3.8-flash","input":[{"content":[{"text":"What is 42 times
+      17? Use the calculate tool.","type":"text"}],"type":"user_input"}],"store":false,"stream":false,"tools":[{"description":"Evaluate
+      an arithmetic expression.","name":"calculate","parameters":{"type":"object","properties":{"expression":{"type":"string"}},"required":["expression"]},"type":"function"}]}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '374'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+      x-goog-api-client:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/3xTa4+aQBT9K818rFqBQQSTfkDqW/ENStOYcRhhkDeDyhr/e2G7u27Sph/n3Hvu
+        nJx7zx1kDLE8Ax2QkiSnKckOCDMahaAO8gw5BHTugEUM+QcWnUlYdvK8Un+DaBjn7KPQkurgM3I4
+        FocgspFPWQE6P+/g+QCM3BioxrxTH7/eh2KEXWJ/TOXe8Shnn397qmBR5B/yjPxNYW6UO+6TI4qV
+        QsroP7Q/6gCnBDFil/IETpAaPN/glY0AO6LcEaFVORLb/2/ISHqhuFRCSVp2leaGNkrtqsJInL26
+        kFEnLD1PS2tBL9lqWjLSVPO8Pa3mln7tD+d9DNVtYWObTVlPmLT0fjK4pgs67gm6TpWVWmh2Dkei
+        MTORi0Wiv9DjSe1fnMQiYW1xWjb9KOwJ4z70rCMOanS6tkVut+Dp7eZ5zHRJZsTKLLTH6+lZSVbN
+        AtZ+oHWtXZhuW8JCd4KhPkpW8EpFVQp0XvE2A0w0LlXJRGVrS/ab52JXrLWXaeKO196omV586M4M
+        MzHRNNrrRdNRrqPdxtoRxI202WrsbT2N1bTexDW5F3lFl2wwH8PjICmEq0f2Nd6Kd12aJPu5KakY
+        xeI8WWyz9tARc8+Y3KC1uV2SCUTSsr8JNpcF2w3j9h5Pz2JamjWTsGkR2XD6vdZqvRwuW92Zzdlp
+        1zCWJIKT6Xy7cuZpVjsaRrJYH3uRlW6oNqSQwHyTa7dbMPtenWMRV1t5OxvwqN8BrbaNke8feAFy
+        siC3YEsR2jKvcLwkPjmnPHzNzaHqLeEQBeQPE+d+eTQlhFInD0jIsipT5BaXYcuqpHWAKHz5+oVv
+        g0eVgujoEcxKlIaMpB9pLMND/BJ1SFCecAN+kxsnH2UuePwGAAD//wMAQX1Cj8UDAAA=
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-encoding:
+      - gzip
+      content-type:
+      - application/json
+      date:
+      - Thu, 19 Nov 2026 23:48:43 GMT
+      server:
+      - scaffolding on HTTPServer2
+      server-timing:
+      - gfet4t7; dur=2001
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+version: 1

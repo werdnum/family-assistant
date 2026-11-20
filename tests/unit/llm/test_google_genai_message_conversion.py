@@ -35,7 +35,9 @@ class TestThoughtSignatureConversion:
     def google_client(self) -> GoogleGenAIClient:
         """Create a GoogleGenAIClient instance for testing."""
         return GoogleGenAIClient(
-            api_key="test_key_for_unit_tests", model="gemini-3.1-pro-preview"
+            api_key="test_key_for_unit_tests",
+            model="gemini-3.1-pro-preview",
+            use_interactions_api=False,
         )
 
     def test_system_message_with_existing_prefix_is_not_double_prefixed(

@@ -4,12 +4,10 @@ import base64
 import os
 import pathlib
 from collections.abc import Awaitable, Callable
-from io import BytesIO
 from typing import TYPE_CHECKING
 
 import pytest
 import pytest_asyncio
-from PIL import Image
 
 from family_assistant.llm import (
     InvalidRequestError,
@@ -32,6 +30,23 @@ from .vcr_helpers import sanitize_response
 
 if TYPE_CHECKING:
     from family_assistant.llm.messages import LLMMessage
+
+
+# Fixed PNG bytes rather than images drawn at run time: PNG compression depends
+# on the zlib Pillow was built against, which differs between platforms, and a
+# request carrying different bytes cannot replay its recording.
+_RED_SQUARE_PNG_B64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAfElEQVR4nNXOQREAMAjAsK7+"
+    "PTMRPLhGQd7QJnESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ES"
+    "J3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ESJ3ES53Vg6wNS"
+    "hQF/fRSLfgAAAABJRU5ErkJggg=="
+)
+_BLUE_SQUARE_PNG_B64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAfElEQVR4nNXOQREAMAjAsK7+"
+    "PTMRPLhGQR4MZRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIn"
+    "cRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncV4Htj5Q"
+    "hwF/4nP9ugAAAABJRU5ErkJggg=="
+)
 
 
 @pytest_asyncio.fixture
@@ -74,7 +89,7 @@ async def llm_client_factory() -> Callable[
     [
         ("openai", "gpt-4.1-nano"),
         ("openai", "gpt-5.2"),
-        ("google", "gemini-2.5-flash-lite"),
+        ("google", "gemini-3.5-flash-lite"),
         ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
@@ -113,7 +128,7 @@ async def test_basic_completion(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite"),
+        ("google", "gemini-3.5-flash-lite"),
         ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
@@ -152,7 +167,7 @@ async def test_system_message_handling(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite"),
+        ("google", "gemini-3.5-flash-lite"),
         ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
@@ -184,7 +199,7 @@ async def test_multi_turn_conversation(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite"),
+        ("google", "gemini-3.5-flash-lite"),
         ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
@@ -209,7 +224,7 @@ async def test_empty_conversation(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite"),
+        ("google", "gemini-3.5-flash-lite"),
         ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
@@ -244,18 +259,10 @@ async def test_gemini_multipart_content_with_images(
     llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
 ) -> None:
     """Test that Gemini can handle multi-part content with text and images."""
-    client = await llm_client_factory("google", "gemini-2.5-flash-lite", None)
+    client = await llm_client_factory("google", "gemini-3.5-flash-lite", None)
 
-    # Generate a simple red square image
-    # Create a 64x64 red image
-    img = Image.new("RGB", (64, 64), color="red")
-
-    # Convert to base64
-    buffer = BytesIO()
-    img.save(buffer, format="PNG")
-    buffer.seek(0)
-    img_bytes = buffer.getvalue()
-    test_image_base64 = base64.b64encode(img_bytes).decode("utf-8")
+    # A 64x64 red square
+    test_image_base64 = _RED_SQUARE_PNG_B64
 
     # Test multi-part content with text and image
     messages = [
@@ -292,18 +299,10 @@ async def test_gemini_system_message_with_multipart_content(
     llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
 ) -> None:
     """Test that Gemini can handle system messages with multi-part user content."""
-    client = await llm_client_factory("google", "gemini-2.5-flash-lite", None)
+    client = await llm_client_factory("google", "gemini-3.5-flash-lite", None)
 
-    # Create a valid blue square image
-    # Create a 64x64 blue image
-    img = Image.new("RGB", (64, 64), color="blue")
-
-    # Convert to base64
-    buffer = BytesIO()
-    img.save(buffer, format="PNG")
-    buffer.seek(0)
-    img_bytes = buffer.getvalue()
-    test_image_base64 = base64.b64encode(img_bytes).decode("utf-8")
+    # A 64x64 blue square
+    test_image_base64 = _BLUE_SQUARE_PNG_B64
 
     messages = [
         create_system_message(
@@ -338,7 +337,7 @@ async def test_gemini_system_message_with_multipart_content(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite"),
+        ("google", "gemini-3.5-flash-lite"),
         ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
@@ -401,7 +400,7 @@ async def test_tool_message_with_image_attachment(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite"),
+        ("google", "gemini-3.5-flash-lite"),
         ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )

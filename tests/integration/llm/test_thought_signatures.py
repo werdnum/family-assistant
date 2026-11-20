@@ -32,9 +32,12 @@ if TYPE_CHECKING:
 async def google_client_thinking() -> GoogleGenAIClient:
     """Create a GoogleGenAIClient for testing with thinking model."""
     api_key = os.getenv("GEMINI_API_KEY", "test-gemini-key")
+    # Per-call thought signatures are the generateContent mechanism; on the
+    # Interactions API the signed steps are replayed whole instead.
     return GoogleGenAIClient(
         api_key=api_key,
         model="gemini-2.0-flash-thinking-exp",
+        use_interactions_api=False,
     )
 
 

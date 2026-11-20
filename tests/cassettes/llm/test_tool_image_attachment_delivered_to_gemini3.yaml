@@ -1,0 +1,69 @@
+interactions:
+- request:
+    body: '{"model":"gemini-3.8-flash","input":[{"content":[{"text":"Use the get_image
+      tool to fetch an image, then describe what color the image shows. Be very brief
+      - just state the color.","type":"text"}],"type":"user_input"},{"arguments":{},"id":"call_1","name":"get_image","type":"function_call","signature":"c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I="},{"call_id":"call_1","result":[{"text":"Here
+      is the image.","type":"text"},{"data":"iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAX0lEQVR4nO3PQQ0AIBDAMMC/50MEj4ZkVbDtWX87OuBVA1oDWgNaA1oDWgNaA1oDWgNaA1oDWgNaA1oDWgNaA1oDWgNaA1oDWgNaA1oDWgNaA1oDWgNaA1oDWgNaA9oFUoUBf3Xr7AgAAAAASUVORK5CYII=","mime_type":"image/png","resolution":"high","type":"image"}],"name":"get_image","type":"function_result"}],"store":false,"stream":false}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '775'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+      x-goog-api-client:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/3xT2ZKiMBT9l7yiIwFZtGoeWhRFGxVcQKamLIQ0i0CQBLcu/33AbnupmZrHnJyT
+        e++5J6+AUJeWBHSBh9M8QRT5oAFK4gYIdF8BxdRNthTvUVZxIJSExjsWZXlJv9y0YQN8xba7yzbF
+        vptE9AK6v17B5wFQdKagfuhNLHC3xrf7KK3LfxIgK3duvx+VPdcLkf9Rmn3guKTfWmp8dI+TbUnQ
+        3woa4jIIPyU8X88Q0eif890awCuQWzvUBRzLiU0Im7Cz5PiuwHY56NTG5f7/CQQVx8ireolQUbEq
+        9zPfLWrPCUU5uTtFoiCrllJUGwCD/KQo+V55svarF1OnsuCo0onB0DJXzNyUXSl+kiNLl+TCcobT
+        nnnJ7RHle6uhzamqPUpVLpCfxWLpwUt/fNlpwUE5CMVMM3DMDszUs5wpu0sZXdfm+nlyeSm59UaK
+        vMGYT42YCXuuNoxaJEzsRdDvrF1PFnYG4wnjqyyKwSHtBe7GEWxxFux1vTP3rZE+vxqixgy1FFs4
+        LWzPZuO+rAh00VczIhtLy5CC59MqTvbXETNlcLY8nKbuYkL5IDRmh94xJQ43nrBFOFxmo3N0prbH
+        SR2y20g6Eo54vm63poF6arcVHAYD+BxszBSKw5YS+foawVFrDBO3nVtOj1sceifVoZOjnfvccY0z
+        GGdJsZdW8HreLAoiQrUMzRP1RoxCjkMBG3nHiGf7+ZxEBq9pP+sUXvJ6E+9hAXVWPZxRlNH7tu5h
+        7gLz/nEe3Bq7J/btXGUbPQJ6x/EuRl4ti6qHCtejEc4q+Z1XoQFKqxw2+R9y8yVxSQhufwAAAP//
+        AwC4ELHfqQMAAA==
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-encoding:
+      - gzip
+      content-type:
+      - application/json
+      date:
+      - Thu, 19 Nov 2026 23:50:21 GMT
+      server:
+      - scaffolding on HTTPServer2
+      server-timing:
+      - gfet4t7; dur=2202
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1013,7 +1013,8 @@ llm_parameters:
 Reasoning state has to be replayed on each turn of a tool loop or the model restarts its reasoning
 from scratch on every step. How that works differs:
 
-- **Google (Gemini)** — thought signatures are captured and replayed automatically. No
+- **Google (Gemini)** — chat runs on the Interactions API, which records the model's steps (thoughts
+  and their signatures included) with each assistant message and replays them verbatim. No
   configuration.
 
 - **OpenAI** — direct OpenAI models use the **Responses API by default**. Only Responses returns the
@@ -1058,10 +1059,17 @@ is the candidate. Note that thinking is incompatible with a non-default `tempera
 
 #### Gemini thinking and other request fields
 
-Gemini parameters are `GenerateContentConfig` field names from the `google-genai` SDK, and any field
-it models is accepted — `thinking_config`, `safety_settings`, `seed`, `stop_sequences`,
-`media_resolution`, `service_tier` and so on. `max_tokens` is accepted as the name the other
-providers use for `max_output_tokens`. They apply to chat, streaming and structured output alike.
+Gemini parameters are `GenerateContentConfig` field names from the `google-genai` SDK. `max_tokens`
+is accepted as the name the other providers use for `max_output_tokens`.
+
+Chat (streamed and not) runs on the **Interactions API** by default, statelessly: each request
+carries the whole conversation. Structured output stays on `generateContent`. Only the parameters
+with an Interactions equivalent can be used for a model whose chat runs there: `temperature`,
+`top_p`, `seed`, `max_output_tokens`, `stop_sequences`, `thinking_config.thinking_level`,
+`thinking_config.include_thoughts`, `media_resolution` and `service_tier`. Any other field
+(`safety_settings`, `thinking_config.thinking_budget`, ...) fails at startup naming the model. Set
+`use_interactions_api: false` to keep that model's chat on `generateContent`, where every
+`GenerateContentConfig` field is accepted; computer-use profiles stay there regardless.
 
 ```yaml
 llm_parameters:
@@ -1070,6 +1078,7 @@ llm_parameters:
       thinking_level: low # minimal | low | medium | high; Gemini 3 and later
       include_thoughts: true # thought summaries, recorded with the message's usage
   "gemini-2.5-":
+    use_interactions_api: false # opt a model back out; the default is on
     thinking_config:
       thinking_budget: 2048 # Gemini 2.5 takes a token budget instead of a level
 ```
@@ -1501,9 +1510,10 @@ typesafe:
   `active` (shipped for `calendar_search`) uses that set and shows Jev's probability as the result's
   `match` score; `shadow` (shipped for `calendar_duplicates`) keeps the similarity filter and logs
   what Jev would have kept (one `Jev <surface> filter` line per call, plus
-  `family_assistant_jev_filter_decisions`); `off` never asks. A timeout or error falls back to the similarity filter. The duplicate threshold sits above
-  an even chance because a match blocks the write until the model retries with
-  `bypass_duplicate_check`. Sends event titles and calendar names to TypeSafe.
+  `family_assistant_jev_filter_decisions`); `off` never asks. A timeout or error falls back to the
+  similarity filter. The duplicate threshold sits above an even chance because a match blocks the
+  write until the model retries with `bypass_duplicate_check`. Sends event titles and calendar names
+  to TypeSafe.
 - **Document search.** With `document_search` not `off`, `search_documents` retrieves 30 candidates
   by hybrid rank instead of `limit`, and Jev is asked of each whether it helps answer the query
   (title, source and a 1,500-character excerpt). `active` shows those at or above `threshold`, most

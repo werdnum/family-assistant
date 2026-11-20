@@ -1,0 +1,66 @@
+interactions:
+- request:
+    body: '{"model":"gemini-3.5-flash-lite","input":[{"content":[{"text":"Calculate
+      42 divided by 7","type":"text"}],"type":"user_input"}],"store":false,"stream":false,"tools":[{"description":"Perform
+      basic mathematical calculations","name":"calculate","parameters":{"type":"object","properties":{"expression":{"type":"string","description":"The
+      mathematical expression to evaluate"}},"required":["expression"]},"type":"function"}]}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '421'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+      x-goog-api-client:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/3xSYW/aMBT8K5W/Lqx2EkISaR8oBRUYFWW0G0xTZBInMU2c1H5uGxD/fU5XKNKm
+        ffS9u+fTvdsjBRS0QiGS7ElzyVREY+CVQBbSimYMhXsEFdAiguqRCcPsedY7wkWt4YR3fQudI9Gm
+        icoqoQWHBoU/9+jjgYC9AmrXHKWHX8elMY1zlpy24iNeaTj/jfjWyVdVRFqxvyWQVzrL4XzABQf+
+        D+sHC8WSUWCJcWdj2+sQ0iHB0nZC1w9dvG7zqJP/ExSTzzw2RjiThmWiFQmVSTsBVqu3EBTPhElc
+        mmDRUKgpuxvVoxu8TFc5/uoNeUmqNPecybK8EfoHbFfBw9YN7kbjq+s5nmq/R6b2YjxO83z3QPJi
+        guVMDt1s27CBs5ZN89S3K7FZZpN6vBoWbgMiAHq/voVPSf+Wz+ajpXrM7ukgHl7iwa6XQRmMk8XV
+        S7qqmxf1nQzmkzjOPXux+9YIf2bj6/6X9lJN3Tp+TxQdrD3ibRIxLYqIOA7petgPsOsT3MWOb/sf
+        mlSLt0ZFLdfAgpbsjzLWhQnUQFRmumQCVNs29lqbGqq2gyFy7YvLix46tP2oNlsWgwG5ACZPNTW1
+        YoVBM1aa63acz91OWlCVd0zXGDr8BgAA//8DAGcv5sLjAgAA
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-encoding:
+      - gzip
+      content-type:
+      - application/json
+      date:
+      - Thu, 19 Nov 2026 23:48:40 GMT
+      server:
+      - scaffolding on HTTPServer2
+      server-timing:
+      - gfet4t7; dur=721
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+version: 1

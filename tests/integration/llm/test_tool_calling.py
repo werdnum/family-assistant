@@ -108,7 +108,7 @@ def calculate_tool() -> ToolDefinition:
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite"),
+        ("google", "gemini-3.5-flash-lite"),
         ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
@@ -161,7 +161,7 @@ async def test_single_tool_call(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite"),
+        ("google", "gemini-3.5-flash-lite"),
         ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
@@ -203,7 +203,7 @@ async def test_multiple_tool_options(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite"),
+        ("google", "gemini-3.5-flash-lite"),
         ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
@@ -238,7 +238,7 @@ async def test_no_tool_needed(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite"),
+        ("google", "gemini-3.5-flash-lite"),
     ],
 )
 async def test_parallel_tool_calls(
@@ -279,7 +279,7 @@ async def test_parallel_tool_calls(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite"),
+        ("google", "gemini-3.5-flash-lite"),
         ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
@@ -331,7 +331,7 @@ async def test_tool_call_with_conversation_history(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite"),
+        ("google", "gemini-3.5-flash-lite"),
         ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
@@ -400,7 +400,7 @@ async def test_tool_response_handling(
     "provider,model",
     [
         ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite"),
+        ("google", "gemini-3.5-flash-lite"),
         ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )

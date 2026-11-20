@@ -15,6 +15,7 @@ async def test_tool_call_events_are_emitted(monkeypatch: pytest.MonkeyPatch) -> 
     client = GoogleGenAIClient(
         api_key="test_key_for_unit_tests",
         model="gemini-3.8-flash",
+        use_interactions_api=False,
     )
     signature = b"signature_for_execute_script"
     response = types.GenerateContentResponse(
