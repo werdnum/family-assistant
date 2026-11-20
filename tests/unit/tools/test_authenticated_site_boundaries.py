@@ -249,6 +249,7 @@ def test_a_global_grant_by_glob_is_counted_against_the_profile(
                         "report_technical_problem",
                         "jq_query",
                         "finish_thread",
+                        "execute_script",
                         "read_*",
                     ]
                 },

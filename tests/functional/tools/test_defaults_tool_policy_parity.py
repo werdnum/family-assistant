@@ -512,6 +512,9 @@ ENGINEER_TRUSTED_OUTPUT_ALLOWLIST = {
     "cancel_worker_task": "task id and lifecycle status, never task content",
     "schedule_future_callback": "a fixed acknowledgement echoing the requested time",
     "report_technical_problem": "a fixed acknowledgement of the recorded report",
+    "execute_script": (
+        "each tool, attachment and API the script reaches adds its own taint"
+    ),
     # The one exception, held open deliberately: get_message_history is granted
     # far beyond the engineer (the default baseline, email_intake, telephone,
     # complex_tasks), so a blanket retag would taint the default assistant's

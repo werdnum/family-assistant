@@ -286,8 +286,9 @@ supervision requirements based on input trust level:
    execution, self-scheduled check-back callbacks, and inbound delegations are judged by tool-call
    review. Example: "Why isn't my daily brief firing?" Code execution is granted by the tag pair
    `code_execution` + `worker`, which is what execution *outside* the application carries (a
-   deployment's code-execution MCP server, `spawn_worker`); `code_execution` alone — the in-app
-   script tools — stays denied, as does the shared workspace. A sandbox run reproduces a failure or
+   deployment's code-execution MCP server, `spawn_worker`); `code_execution` alone — the stored-script
+   tools — stays denied, as does the shared workspace; `execute_script` comes from
+   `global_tools_policy` and calls only tools the profile already holds. A sandbox run reproduces a failure or
    reads a repository without giving the profile anything that writes back, and the
    `sandbox_network` taint sink gates it whenever the turn carries untrusted content. Its model
    tiers work as on `default_assistant` below: it runs on `standard`, all three tiers are selectable

@@ -3793,7 +3793,8 @@ global rules at the maximum priority, which is what makes it effective. The ship
 profile withholds all of them, because none is safe in a fully untrusted context:
 `read_text_attachment` and `jq_query` resolve any attachment the acting user owns rather than only
 the current turn's artifacts, `report_technical_problem` persists model-supplied text, and
-`finish_thread` echoes a reply into the user's Home.
+`finish_thread` echoes a reply into the user's Home, and `execute_script`'s attachment API reads
+any attachment the acting user owns while its Keychute API is egress.
 
 ```yaml
 service_profiles:
@@ -3803,12 +3804,13 @@ service_profiles:
       - "jq_query"
       - "report_technical_problem"
       - "finish_thread"
+      - "execute_script"
 ```
 
 Keep this section to broadly safe tools, and treat anything that reads user-owned data by id, or
 writes, as needing an exclusion in every profile that processes untrusted input.
 
-The shipped default uses it for three things:
+The shipped default uses it for four things:
 
 - `report_technical_problem`, so the assistant can always report bugs — these surface through the
   error-log and diagnostics endpoints.
@@ -3818,6 +3820,11 @@ The shipped default uses it for three things:
   [conversation_threads](#conversation_threads)). It is offered only in a thread's own turns. Every
   shipped profile that withholds the other global tools withholds this one too; the user closes
   their threads instead.
+- `execute_script`, because it is programmatic tool calling: a script reaches tools only through the
+  running profile's own provider, so every call it makes meets that profile's policy, taint
+  enforcement and tool-call review. The profiles that withhold the other global tools withhold this
+  one too, as does `telephone_external`, because the script attachment API resolves any attachment
+  the acting user owns.
 
 ```yaml
 global_tools_policy:
@@ -3836,6 +3843,11 @@ global_tools_policy:
     - match:
         names:
           - "finish_thread"
+      decision: "allow"
+      priority: 50
+    - match:
+        names:
+          - "execute_script"
       decision: "allow"
       priority: 50
 ```

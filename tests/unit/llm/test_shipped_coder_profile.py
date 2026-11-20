@@ -117,6 +117,7 @@ def test_shipped_coder_profile_grants_no_family_assistant_tools(
         "jq_query",
         "report_technical_problem",
         "finish_thread",
+        "execute_script",
     }
 
 
