@@ -30,6 +30,8 @@ export interface ChatControls {
   loadOlderMessages: () => void;
   /** Background delegations the open conversation is waiting on. */
   pendingDelegations: PendingDelegation[];
+  /** Open the read-only live peek view for a running delegation's subconversation. */
+  onPeekDelegation?: (delegation: PendingDelegation) => void;
   /**
    * Set while the open conversation's history has not loaded: the thread shows
    * this instead of a transcript, and sending is refused until it clears.

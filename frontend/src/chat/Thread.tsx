@@ -82,11 +82,19 @@ const messageContentComponents = {
   },
 };
 
-export const Thread: React.FC = () => {
-  return <ThreadContent />;
+export interface ThreadProps {
+  readOnly?: boolean;
+  emptyState?: React.ReactNode;
+  readOnlyFooter?: React.ReactNode;
+}
+
+export const Thread: React.FC<ThreadProps> = ({ readOnly = false, emptyState, readOnlyFooter }) => {
+  return (
+    <ThreadContent readOnly={readOnly} emptyState={emptyState} readOnlyFooter={readOnlyFooter} />
+  );
 };
 
-const ThreadContent: React.FC = () => {
+const ThreadContent: React.FC<ThreadProps> = ({ readOnly = false, emptyState, readOnlyFooter }) => {
   const viewportRef = useRef<HTMLDivElement>(null);
   const conversationLoadStatus = useChatControls()?.conversationLoadStatus ?? null;
   return (
@@ -94,12 +102,14 @@ const ThreadContent: React.FC = () => {
       <div className="relative flex min-h-0 flex-1 flex-col">
         <ThreadPrimitive.Viewport
           ref={viewportRef}
-          data-testid="thread-viewport"
+          data-testid={readOnly ? 'readonly-thread-viewport' : 'thread-viewport'}
           className="flex-1 overflow-y-auto overflow-x-hidden scrollbar-thin scrollbar-thumb-muted-foreground/20 min-h-0"
         >
           <div className="pb-6">
             {conversationLoadStatus ? (
               <ThreadConversationLoad status={conversationLoadStatus} />
+            ) : readOnly ? (
+              <ThreadPrimitive.Empty>{emptyState ?? null}</ThreadPrimitive.Empty>
             ) : (
               <ThreadWelcome />
             )}
@@ -120,16 +130,26 @@ const ThreadContent: React.FC = () => {
           </div>
         </ThreadPrimitive.Viewport>
         <ThreadScrollToBottom />
-        <ReportViewportAtBottom />
+        {!readOnly && <ReportViewportAtBottom />}
       </div>
 
-      <div
-        className="flex-shrink-0 border-t border-border/50 bg-background/80 backdrop-blur-sm px-4 py-3 md:px-6 md:py-4"
-        data-testid="composer-container"
-      >
-        <ThreadPendingDelegations />
-        <Composer />
-      </div>
+      {readOnly ? (
+        <div
+          className="flex-shrink-0 border-t border-border/50 bg-background/80 backdrop-blur-sm px-4 py-3 md:px-6"
+          data-testid="readonly-thread-footer"
+        >
+          <ThreadPendingDelegations />
+          {readOnlyFooter}
+        </div>
+      ) : (
+        <div
+          className="flex-shrink-0 border-t border-border/50 bg-background/80 backdrop-blur-sm px-4 py-3 md:px-6 md:py-4"
+          data-testid="composer-container"
+        >
+          <ThreadPendingDelegations />
+          <Composer />
+        </div>
+      )}
     </ThreadPrimitive.Root>
   );
 };
@@ -351,7 +371,10 @@ const ThreadPendingDelegations: React.FC = () => {
   }
   return (
     <div className="pb-2">
-      <PendingDelegationsChip delegations={delegations} />
+      <PendingDelegationsChip
+        delegations={delegations}
+        onSelectDelegation={controls?.onPeekDelegation}
+      />
     </div>
   );
 };

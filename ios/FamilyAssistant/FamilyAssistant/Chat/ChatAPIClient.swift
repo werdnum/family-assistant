@@ -304,6 +304,49 @@ struct ChatAPIClient {
         return try JSONDecoder.chatDecoder.decode(ChatPendingDelegationsResponse.self, from: data).delegations
     }
 
+    func getSubconversationMessages(
+        conversationID: String,
+        subconversationID: String,
+        beforeID: Int? = nil,
+        limit: Int = 50
+    ) async throws -> ChatSubconversationMessagesResponse {
+        let encodedConv = Self.encodedPathComponent(conversationID)
+        let encodedSub = Self.encodedPathComponent(subconversationID)
+        var components = URLComponents(
+            url: try apiURL("/api/v1/chat/conversations/\(encodedConv)/subconversations/\(encodedSub)/messages"),
+            resolvingAgainstBaseURL: false
+        )
+        var queryItems = [URLQueryItem(name: "limit", value: String(limit))]
+        if let beforeID {
+            queryItems.append(URLQueryItem(name: "before_id", value: String(beforeID)))
+        }
+        components?.queryItems = queryItems
+        guard let url = components?.url else {
+            throw ChatAPIError.invalidServerURL
+        }
+        let (data, response) = try await authorizedGETWithAuthRetry(url: url)
+        try validate(response: response, data: data)
+        return try JSONDecoder.chatDecoder.decode(ChatSubconversationMessagesResponse.self, from: data)
+    }
+
+    /// Connect to a read-only live SSE stream for peeking into a running
+    /// delegated subconversation. Runs on `streamSession` (`ChatNetworkSessions.streams`)
+    /// so it cannot contend with sends on `URLSession.shared`.
+    func streamSubconversation(
+        conversationID: String,
+        subconversationID: String,
+        fromSeq: Int = 0,
+        follow: Bool = true
+    ) async throws -> AsyncThrowingStream<ChatStreamEvent, Error> {
+        let encodedConv = Self.encodedPathComponent(conversationID)
+        let encodedSub = Self.encodedPathComponent(subconversationID)
+        return try await openEventStream(
+            path: "/api/v1/chat/conversations/\(encodedConv)/subconversations/\(encodedSub)/stream",
+            fromSeq: fromSeq,
+            follow: follow
+        )
+    }
+
     /// Rotate the target's active share and return its absolute URL.
     func createShare(target: ConversationShareTarget) async throws -> URL {
         let capturedAuthEpoch = authManager.authEpoch
@@ -784,8 +827,24 @@ struct ChatAPIClient {
         eventTypes: [String]? = nil
     ) async throws -> AsyncThrowingStream<ChatStreamEvent, Error> {
         let encodedConversation = Self.encodedPathComponent(conversationID)
+        return try await openEventStream(
+            path: "/api/v1/chat/conversations/\(encodedConversation)/stream",
+            fromSeq: fromSeq,
+            follow: follow,
+            ackSeq: ackSeq,
+            eventTypes: eventTypes
+        )
+    }
+
+    private func openEventStream(
+        path: String,
+        fromSeq: Int,
+        follow: Bool,
+        ackSeq: Int? = nil,
+        eventTypes: [String]? = nil
+    ) async throws -> AsyncThrowingStream<ChatStreamEvent, Error> {
         var components = URLComponents(
-            url: try apiURL("/api/v1/chat/conversations/\(encodedConversation)/stream"),
+            url: try apiURL(path),
             resolvingAgainstBaseURL: false
         )
         var queryItems = [

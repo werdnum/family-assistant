@@ -331,6 +331,22 @@ class ConversationStreamHub:
         # Notified on every publish and turn start or end, so a waiting sync
         # long poll can check whether something it reports has moved.
         self.changes = SyncWakeup()
+        # Isolated sibling hub for delegated subconversations so peeking into a
+        # running subconversation never collides with parent locks, activity
+        # broadcasts, or running_conversation_ids.
+        self._subconversation_hub: ConversationStreamHub | None = None
+
+    @property
+    def subconversations(self) -> "ConversationStreamHub":
+        """Return the isolated stream hub keyed by ``subconversation_id``."""
+        if self._subconversation_hub is None:
+            self._subconversation_hub = ConversationStreamHub(
+                buffer_max_events=self._buffer_max_events,
+                subscriber_queue_max=self._subscriber_queue_max,
+                max_retained_turns=self._max_retained_turns,
+                max_conversations=self._max_conversations,
+            )
+        return self._subconversation_hub
 
     # ------------------------------------------------------------------ #
     # Registry / lookups

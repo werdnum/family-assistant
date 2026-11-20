@@ -4575,6 +4575,13 @@ final class ChatViewModel {
         }
     }
 
+    func subconversationPeekContext() -> (conversationID: String, authManager: AuthManager, apiClient: ChatAPIClient)? {
+        guard let conversationID = currentConversationID() else {
+            return nil
+        }
+        return (conversationID, authManager, apiClient)
+    }
+
     private func setPendingDelegations(_ delegations: [ChatPendingDelegation]) {
         pendingDelegations = delegations
         if delegations.isEmpty {

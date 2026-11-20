@@ -354,9 +354,72 @@ class DelegationRunsRepository(BaseRepository):
             .order_by(runs_table.c.created_at.asc())
         )
         runs = [self._row_to_dict(row) for row in await self._db.fetch_all(stmt)]
+        return await self._summarize_pending_runs(runs)
+
+    async def list_pending_children(
+        self,
+        *,
+        conversation_id: str,
+        source_subconversation_id: str,
+    ) -> list[PendingDelegationSummary]:
+        """Delegations spawned by a running subconversation that have not yet been delivered."""
+        runs_table = delegation_runs_table
+        stmt = (
+            select(runs_table)
+            .where(runs_table.c.conversation_id == conversation_id)
+            .where(runs_table.c.source_subconversation_id == source_subconversation_id)
+            .where(runs_table.c.handed_off_at.is_not(None))
+            .where(runs_table.c.notified_at.is_(None))
+            .where(runs_table.c.notify_stage != "gave_up")
+            .order_by(runs_table.c.created_at.asc())
+        )
+        runs = [self._row_to_dict(row) for row in await self._db.fetch_all(stmt)]
+        return await self._summarize_pending_runs(runs)
+
+    async def get_latest_for_subconversation(
+        self,
+        *,
+        conversation_id: str,
+        subconversation_id: str,
+    ) -> DelegationRunDict | None:
+        """Return the latest delegation run targeting ``subconversation_id`` in ``conversation_id``."""
+        runs_table = delegation_runs_table
+        stmt = (
+            select(runs_table)
+            .where(runs_table.c.conversation_id == conversation_id)
+            .where(runs_table.c.subconversation_id == subconversation_id)
+            .order_by(runs_table.c.created_at.desc(), runs_table.c.id.desc())
+            .limit(1)
+        )
+        row = await self._db.fetch_one(stmt)
+        return self._row_to_dict(row) if row is not None else None
+
+    async def count_children_for_subconversation(
+        self,
+        *,
+        conversation_id: str,
+        source_subconversation_id: str,
+    ) -> tuple[int, int]:
+        """Return ``(total, finished)`` counts of child delegations for a subconversation."""
+        runs_table = delegation_runs_table
+        stmt = select(runs_table.c.status).where(
+            runs_table.c.conversation_id == conversation_id,
+            runs_table.c.source_subconversation_id == source_subconversation_id,
+        )
+        rows = await self._db.fetch_all(stmt)
+        total = len(rows)
+        finished = sum(
+            1 for row in rows if row["status"] in TERMINAL_DELEGATION_STATUSES
+        )
+        return total, finished
+
+    async def _summarize_pending_runs(
+        self, runs: list[DelegationRunDict]
+    ) -> list[PendingDelegationSummary]:
         if not runs:
             return []
 
+        runs_table = delegation_runs_table
         child_stmt = select(
             runs_table.c.source_subconversation_id,
             runs_table.c.status,

@@ -12,6 +12,7 @@ export interface PendingDelegation {
   cancel_requested: boolean;
   children_total: number;
   children_finished: number;
+  subconversation_id?: string | null;
 }
 
 interface PendingDelegationsResponse {
