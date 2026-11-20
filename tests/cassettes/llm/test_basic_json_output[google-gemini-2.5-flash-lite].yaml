@@ -1,0 +1,44 @@
+interactions:
+  - request:
+      body: '{"contents": [{"parts": [{"text": "System: You must respond with a valid JSON object. The required fields and structure are defined by the conversation. Do not omit requested keys. Respond ONLY with the JSON object."}], "role": "user"}, {"parts": [{"text": "What is 2 + 2? Respond with a JSON object containing ''expression'', ''result'', and ''explanation''."}], "role": "user"}], "generationConfig": {"responseMimeType": "application/json", "mediaResolution": "MEDIA_RESOLUTION_HIGH"}}'
+      headers:
+        Content-Type:
+          - application/json
+        user-agent:
+          - google-genai-sdk/1.56.0 gl-python/3.13.9
+        x-goog-api-client:
+          - google-genai-sdk/1.56.0 gl-python/3.13.9
+      method: post
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent
+    response:
+      body:
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"{\\n  \\\"expression\\\": \\\"2 + 2\\\",\\n  \\\"result\\\": 4,\\n  \\\"explanation\\\": \\\"The sum of two and two is four.\\\"\\n}\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 61,\n    \"candidatesTokenCount\": 37,\n    \"totalTokenCount\": 98,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 61\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"_gy3aerbDofXvdIPjpfEmAw\"\n}\n"
+      headers:
+        Alt-Svc:
+          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json; charset=UTF-8
+        Date:
+          - Sun, 15 Mar 2026 19:48:14 GMT
+        Server:
+          - scaffolding on HTTPServer2
+        Server-Timing:
+          - gfet4t7; dur=428
+        Transfer-Encoding:
+          - chunked
+        Vary:
+          - Origin
+          - X-Origin
+          - Referer
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+        X-XSS-Protection:
+          - '0'
+      status:
+        code: 200
+        message: OK
+version: 1
