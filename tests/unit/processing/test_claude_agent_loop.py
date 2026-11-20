@@ -804,3 +804,46 @@ async def test_a_call_that_only_searches_tools_is_counted(
     await _turn(_service(fake), db_engine, "Weather in Paris?")
 
     assert _sample("family_assistant_llm_calls_total", **labels) == before + 2
+
+
+@pytest.mark.asyncio
+async def test_session_replies_carry_the_experiment_and_timing(
+    db_engine: AsyncEngine,
+) -> None:
+    """A session run is attributed to its experiment arm like any API run."""
+    fake = FakeClaudeCode(responses=[FakeResponse([FakeText("Hi.")])])
+    service = _service(fake)
+    stream = service.process_message_stream(
+        db_context=Database(db_engine),
+        messages=[
+            SystemMessage(content="You are a household assistant."),
+            UserMessage(content="Hello"),
+        ],
+        interface_type="test",
+        conversation_id="conv-1",
+        user_name="TestUser",
+        turn_id="turn-1",
+        chat_interface=None,
+        llm_client=service.llm_client,
+        model_selection=ResolvedModelSelection(
+            tier=TIER,
+            requested=None,
+            source="experiment",
+            experiment_id="deep-experiment",
+        ),
+    )
+    replies = [
+        message.reasoning_info
+        async for _event, message in stream
+        if isinstance(message, AssistantMessage) and message.reasoning_info
+    ]
+
+    assert len(replies) == 1
+    reasoning = replies[0]
+    assert (
+        reasoning.get("experiment_id"),
+        reasoning.get("experiment_arm"),
+        reasoning.get("model_tier"),
+        reasoning.get("model_tier_source"),
+    ) == ("deep-experiment", TIER, TIER, "experiment")
+    assert reasoning.get("duration_ms", -1.0) >= 0.0

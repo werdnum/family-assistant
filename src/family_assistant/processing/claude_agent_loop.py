@@ -68,6 +68,7 @@ from family_assistant.llm.messages import (
     ToolMessage,
     UserMessage,
 )
+from family_assistant.llm.model_selection import stamp_model_selection
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.observability.metrics import (
     record_claude_agent_ready,
@@ -229,12 +230,33 @@ class _PendingResponse:
     first_output_at: float | None = None
 
 
+@dataclass(frozen=True)
+class _CallTiming:
+    """How long one API response took, measured once for the row and the metric."""
+
+    duration_seconds: float
+    time_to_first_output_seconds: float | None
+
+    @classmethod
+    def of(cls, response: _PendingResponse) -> _CallTiming:
+        return cls(
+            duration_seconds=time.monotonic() - response.started_at,
+            time_to_first_output_seconds=(
+                response.first_output_at - response.started_at
+                if response.first_output_at is not None
+                else None
+            ),
+        )
+
+
 def _reasoning_info(
     usage: Mapping[str, object] | None,
     *,
     model: str,
     message_id: str | None,
     model_selection: ResolvedModelSelection,
+    duration_seconds: float,
+    time_to_first_output_seconds: float | None,
 ) -> MessageReasoningInfo | None:
     if usage is None:
         return None
@@ -265,10 +287,10 @@ def _reasoning_info(
             info["cache_write_1h_tokens"] = one_hour
     if message_id:
         info["response_id"] = message_id
-    if model_selection.tier is not None:
-        info["model_tier"] = model_selection.tier
-        info["model_tier_source"] = model_selection.source
-    return info
+    info["duration_ms"] = round(duration_seconds * 1000, 1)
+    if time_to_first_output_seconds is not None:
+        info["time_to_first_output_ms"] = round(time_to_first_output_seconds * 1000, 1)
+    return stamp_model_selection(info, model_selection)
 
 
 def _error_for(kind: str, text: str, model: str) -> LLMProviderError:
@@ -519,15 +541,18 @@ class _TurnSession:
         if current.message_id not in self.reported_usage:
             # Counted even when nothing is saved for it: a call that only
             # searched for tools still spent subscription quota.
+            timing = _CallTiming.of(current)
             reasoning = _reasoning_info(
                 current.usage,
                 model=current.model,
                 message_id=current.message_id,
                 model_selection=self.turn.model_selection,
+                duration_seconds=timing.duration_seconds,
+                time_to_first_output_seconds=timing.time_to_first_output_seconds,
             )
             if current.message_id:
                 self.reported_usage.add(current.message_id)
-            self._record_call(current, reasoning, outcome="success")
+            self._record_call(current, reasoning, outcome="success", timing=timing)
         text = "".join(current.text)
         if text.strip() or current.tool_calls:
             await self._emit_done(
@@ -552,9 +577,11 @@ class _TurnSession:
         *,
         outcome: str,
         error_type: str | None = None,
+        timing: _CallTiming | None = None,
     ) -> None:
         """Count one of the session's model calls in the LLM call metrics."""
-        now = time.monotonic()
+        if timing is None:
+            timing = _CallTiming.of(response)
         record_llm_call(
             attribution=CallAttribution(
                 profile_id=self.loop.config.id,
@@ -566,12 +593,8 @@ class _TurnSession:
             operation="agent_session",
             outcome=outcome,
             error_type=error_type,
-            duration_seconds=now - response.started_at,
-            time_to_first_output_seconds=(
-                response.first_output_at - response.started_at
-                if response.first_output_at is not None
-                else None
-            ),
+            duration_seconds=timing.duration_seconds,
+            time_to_first_output_seconds=timing.time_to_first_output_seconds,
             reasoning_info=reasoning,
         )
 
