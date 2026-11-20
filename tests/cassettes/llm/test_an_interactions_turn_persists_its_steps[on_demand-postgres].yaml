@@ -1,0 +1,269 @@
+interactions:
+- request:
+    body: '{"model":"gemini-3.8-flash","input":[{"content":[{"text":"System: [Active
+      Processing Profile: test]\n\nYou are a helpful assistant.\n\nEach user message
+      begins with a [Sent ...] line giving the time it was sent. The line is added
+      by the system, not written by the user; the newest one is the current time.
+      Never include such a line in your reply. A user message that arrives after your
+      tool results, before you have answered, was sent while you were already working:
+      treat it as the latest instruction for the turn, re-evaluate your plan, and
+      make the smallest necessary adjustment before continuing.\n\n## On-Demand Tools\nThe
+      following tools are available on demand. Call `activate_tools` with their names
+      to enable them; once activated, a tool stays available for the rest of the conversation:\n-
+      **add_numbers**: Add two integers and return their sum.","type":"text"}],"type":"user_input"},{"content":[{"text":"[Sent
+      Fri 2026-08-07 12:00 UTC]\nCalculate 5 + 5. Use the add_numbers tool.","type":"text"}],"type":"user_input"}],"store":false,"stream":true,"tools":[{"description":"Activate
+      on-demand tools so you can use them in this conversation. Call with specific
+      tool names from the on-demand catalog, search by keyword, or activate every
+      on-demand tool on a given MCP server.","execution":"client","name":"activate_tools","parameters":{"type":"object","properties":{"tool_names":{"type":"array","items":{"type":"string"},"description":"Names
+      of tools to activate from the on-demand catalog"},"search":{"type":"string","description":"Search
+      keyword to find and activate matching tools. Searches tool names and summaries."},"mcp_server_ids":{"type":"array","items":{"type":"string"},"description":"IDs
+      of on-demand MCP servers to activate. Activates every on-demand tool exposed
+      by each listed server."}}},"type":"tool_search"}]}'
+    headers:
+      accept:
+      - text/event-stream
+      accept-encoding:
+      - gzip, deflate, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1834'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+      x-goog-api-client:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/1SNMQqAMBAE+7wiXK02NpLPyJmsGomJ6CGI5O9qIWg7wzDYEcVoHwUrW/EpVnYF
+        C5xyLGz0SR9H5qTUTbBC5scLmpNDuOmA2Udf1lVT9oG3kXJBeCatHAv+2buirNQFAAD//0rFdEhx
+        SWJJaXF8aQHQJalw50BEwQbFFxTlpxelFhcr4bEDxRSQTQAAAAD//4LaVFySWgCSLCpB8mlKaoWS
+        lYGOEkgS5FmoeSUZ+aXpGSUYfkGYATIYAAAA//9s0sluo0AQgOEH4sBqDIcc2HcwNBDgMnKzxu2w
+        Njbw9HFmDjMj5VpS/SqVvn/Dr2fg6w/h3/Pv8vLR9q/D5u+MNmiq8uAU6R0lTXTpdneXCD+in9Dl
+        AZGtlg0hhw0S4IQ+z26sZqot+wNVv+/N4kGmm7tUpGcpRczl2Zhj4igdk7K4jlzAyg2iKlosAl4l
+        CzHODjYuqM2RPOO2WdvEbAUZ5gt37xa+cHlNfwhOtp70RhOojgOppM34watqWMgMuK9z416mhq2N
+        yZL7xGHYZZCaoBZ4jkiztNwcwzmEiLKTz52TOtzyCY4M/bqdwqJKMpxD/WJXMWQGE/vZcNqEPszQ
+        LXCyIZapxbiKLFSrgDAKrQVz6R1y67mjnqLzMlUA7OQosFX57NveHNUPpVbKY4jIUWJAmBPWTJ7X
+        Bi3lLe+BGNM3FVKlpxVt+ijQtcvYssaj2GFd4Nz7CHVHwpKlSJwoNWggXvs8NuK53uyIjnggTyq2
+        LcaJPqPp8NdUx6JXTKG1rZ6hHE5Yy7tl+fwSusvGQhk5FrlfgfxebjIyp9idbI3wzSSHgKuhv2AT
+        5Xxu3kPE0PGePi8rNKfAMM/FkAWWT+/Pt7cX4//B/fqr5Ed6fzS96H0BAAD//0JN0/kFWFIetoSb
+        XwDSDAAAAP//IpghDBEZIjMFqDs5MScn3tzM2NDA0NLS1NjUxNDMyMDY1ALh/rTSPHDuiwcpBQrn
+        JeaChEFZsgyYDeNL8vNzQLk2sSi9NBdoOzA/V9fiz10AAAAA//8imLsMkXIXkrlK1TFKIOviQW4o
+        jlGyio5RSkxJic8rzU1KLQIKxNYi3A3XFw8NWryhDgAAAP//IhTqhvhCHQAAAP//rJXfCoIwFMbf
+        ZdcG2yJLn6OrIGTNQx0ytblFEr17Z9KmkHjV5c6/fZxv/DYDPN3c2goW2BvZZ+DukMhXRP66Tp1h
+        QFZjVUULvkJNlXInk28I69bZMcGzhE1DxakvCOKqQtvTkl5sPDALT+uXNPa+j2GsVvoCZZzLQ7xx
+        dnqfSJMojcxwHfy2hFcfEputl4gW59STNeH7yJnkMl0JsZJ8z7NcZPlaHvxSBugvFHRgHqhJCoIZ
+        DFJ1qUxJmb9+c8FX7/sHAAD//4LGe0p+HqxOi3bx93ON5eICAAAA//8DAEs5iyWMBwAA
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-encoding:
+      - gzip
+      content-type:
+      - text/event-stream
+      date:
+      - Fri, 20 Nov 2026 09:19:32 GMT
+      server:
+      - scaffolding on HTTPServer2
+      server-timing:
+      - gfet4t7; dur=2565
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"model":"gemini-3.8-flash","input":[{"content":[{"text":"System: [Active
+      Processing Profile: test]\n\nYou are a helpful assistant.\n\nEach user message
+      begins with a [Sent ...] line giving the time it was sent. The line is added
+      by the system, not written by the user; the newest one is the current time.
+      Never include such a line in your reply. A user message that arrives after your
+      tool results, before you have answered, was sent while you were already working:
+      treat it as the latest instruction for the turn, re-evaluate your plan, and
+      make the smallest necessary adjustment before continuing.\n\n## On-Demand Tools\nThe
+      following tools are available on demand. Call `activate_tools` with their names
+      to enable them; once activated, a tool stays available for the rest of the conversation:\n-
+      **add_numbers**: Add two integers and return their sum.","type":"text"}],"type":"user_input"},{"content":[{"text":"[Sent
+      Fri 2026-08-07 12:00 UTC]\nCalculate 5 + 5. Use the add_numbers tool.","type":"text"}],"type":"user_input"},{"signature":"EoEDCv4CAWkUfRPhyLyA+NR1wbL6S+XuIJbb4tG/StU17rLTDXDJBNo0eWyfsMb2hrhV91rAVk2PwfHpUKCh2V3teRLS3Bfk0d19ZO6D/Z9TXz3TZ0xKAMGjxIxq2xZ/QYs4lhs6ZL6EFv8KXu5FfE80h4SVAErtv6DDQZB2SlurfLPqf3eGqIBnUK23soAfOe864+VXVcxKGKz8R0JUmy4Ahtg6UtRGFax5QZdUXtYbFPJdTb2oHtNXo5x8nQXkjOKXoTB0sGa93bDdO+GZEgSrcMzBgMLpFVk7sqdSSy/p83dcwngnHpDiCeCczoR/pA2SQY+Ir/7ufkscjYnS9T1jDb0cMEZgVvZkahX3cetp9htF84LlpbFKAtAICA49Afko+Y+I6tGTrexJR1R6SBqDtJI2KRmRqzNuVFt9MZqQIxuMGCzKQeByIIN6sQLsx3bBkKI/yaSBWcxBkHqTLqJE+NHUYbS4ebNstHkY6YHlQk21TyVwPubHqOGH7ZoXOIN1yw==","type":"thought"},{"arguments":{"tool_names":["add_numbers"]},"id":"call_7631019953541620358","name":"activate_tools","type":"function_call"},{"call_id":"call_7631019953541620358","result":[{"text":"Activated
+      tools: add_numbers. You can now use them for the rest of the conversation.","type":"text"},{"description":"Add
+      two integers and return their sum.","name":"add_numbers","parameters":{"type":"object","properties":{"a":{"type":"integer","description":"First
+      addend."},"b":{"type":"integer","description":"Second addend."}},"required":["a","b"]},"type":"function"}],"name":"activate_tools","type":"function_result"}],"store":false,"stream":true,"tools":[{"description":"Activate
+      on-demand tools so you can use them in this conversation. Call with specific
+      tool names from the on-demand catalog, search by keyword, or activate every
+      on-demand tool on a given MCP server.","execution":"client","name":"activate_tools","parameters":{"type":"object","properties":{"tool_names":{"type":"array","items":{"type":"string"},"description":"Names
+      of tools to activate from the on-demand catalog"},"search":{"type":"string","description":"Search
+      keyword to find and activate matching tools. Searches tool names and summaries."},"mcp_server_ids":{"type":"array","items":{"type":"string"},"description":"IDs
+      of on-demand MCP servers to activate. Activates every on-demand tool exposed
+      by each listed server."}}},"type":"tool_search"}]}'
+    headers:
+      accept:
+      - text/event-stream
+      accept-encoding:
+      - gzip, deflate, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2991'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+      x-goog-api-client:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/1SNMQqAMBAE+7wiXK02NpLPyJmsGomJ6CGI5O9qIWg7wzDYEcVoHwUrW/EpVnYF
+        C5xyLGz0SR9H5qTUTbBC5scLmpNDuOmA2Udf1lVT9oG3kXJBeCatHAv+2buirNQFAAD//0rFdEhx
+        SWJJaXF8aQHQJalw50BEwQbFFxTlpxelFhcr4bEDxRSQTQAAAAD//4LaVFySWgCSLCpB8mlKaoWS
+        lYGOEkgS5FmoeSUZ+aXpGSUYfkGYATIYAAAA//9s0UtzgjAUhuEf1EW4FXThgptiBSOXyGXTiSgM
+        JgKGQAu/vtgu2s64PYt3zjzf3/CMwfGT8Pf9Ue6qsp4fY4+MzRTDZJ2hxwQVAay4JRXx5b6XiGjW
+        O/ViIdk/TMUQoMVSl8/pKIUSAVubjzbY16X7ApdkIJFXn7xYHVvojI6zQxYK41vvrNkHCLpcsrsd
+        45eq4ze15blzOuIM51pID2VTUL2v25RV5JYE/IT3aRMRvD7KkDZJLlD6uoiujeDdlzRRcRAx2T5o
+        8bBO32I97NxhG9iquAAJRNy0nN7nw0bZjFi6a8xIXUEEk/jJdfPa0mmjlWG2NbzMrwDIlME8IwW6
+        /mo1T/gf+/1X6Cn7j+TM/gUAAP//Qo3P/AIsoY4t0vILQJoBAAAA//8imBgMEYkhMwWoOzkxJyfe
+        0NzAzMDCzNLMwMjQwMzUxMDIwgzhgbTSPHDSiwepBQrnJeaChBNTUuLzSnOTUotA6TWxKL00F2g3
+        MCVX1+JPVwAAAAD//yKYrgyR0hWSuUrVMUqJMUpWpjoxSkkguhbhRriyeGg44g1iAAAAAP//IhTE
+        hviCGAAAAP//rFRdC4IwFP0ve1bQKYL7HT0VMda81Gg507tIov/eJm0KiU897n7tcM89Z0XZ0tw6
+        DRsmE0Xew90qJ3EejcYO4gyTNg0KzdFcoXWVJa2Tb0i1ncWYKGqXWIb4aeTOrYRWOBJ2eJH5QRCe
+        6Jc0976PYawU8gJNnJuFuLG4/C8vkwjNaG4H+G0JJx57Kg9RoVpD76gJPskIzWiV5nlKs11Ws7xm
+        Rbn3S5ncbaNggP6hpIOioJ8IEm0j+sZl/urngVfP+wcAAP//gsZ7Sn4erPCOdvH3c43l4gIAAAD/
+        /wMAERjeyXUGAAA=
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-encoding:
+      - gzip
+      content-type:
+      - text/event-stream
+      date:
+      - Fri, 20 Nov 2026 09:19:34 GMT
+      server:
+      - scaffolding on HTTPServer2
+      server-timing:
+      - gfet4t7; dur=1931
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"model":"gemini-3.8-flash","input":[{"content":[{"text":"System: [Active
+      Processing Profile: test]\n\nYou are a helpful assistant.\n\nEach user message
+      begins with a [Sent ...] line giving the time it was sent. The line is added
+      by the system, not written by the user; the newest one is the current time.
+      Never include such a line in your reply. A user message that arrives after your
+      tool results, before you have answered, was sent while you were already working:
+      treat it as the latest instruction for the turn, re-evaluate your plan, and
+      make the smallest necessary adjustment before continuing.\n\n## On-Demand Tools\nThe
+      following tools are available on demand. Call `activate_tools` with their names
+      to enable them; once activated, a tool stays available for the rest of the conversation:\n-
+      **add_numbers**: Add two integers and return their sum.","type":"text"}],"type":"user_input"},{"content":[{"text":"[Sent
+      Fri 2026-08-07 12:00 UTC]\nCalculate 5 + 5. Use the add_numbers tool.","type":"text"}],"type":"user_input"},{"signature":"EoEDCv4CAWkUfRPhyLyA+NR1wbL6S+XuIJbb4tG/StU17rLTDXDJBNo0eWyfsMb2hrhV91rAVk2PwfHpUKCh2V3teRLS3Bfk0d19ZO6D/Z9TXz3TZ0xKAMGjxIxq2xZ/QYs4lhs6ZL6EFv8KXu5FfE80h4SVAErtv6DDQZB2SlurfLPqf3eGqIBnUK23soAfOe864+VXVcxKGKz8R0JUmy4Ahtg6UtRGFax5QZdUXtYbFPJdTb2oHtNXo5x8nQXkjOKXoTB0sGa93bDdO+GZEgSrcMzBgMLpFVk7sqdSSy/p83dcwngnHpDiCeCczoR/pA2SQY+Ir/7ufkscjYnS9T1jDb0cMEZgVvZkahX3cetp9htF84LlpbFKAtAICA49Afko+Y+I6tGTrexJR1R6SBqDtJI2KRmRqzNuVFt9MZqQIxuMGCzKQeByIIN6sQLsx3bBkKI/yaSBWcxBkHqTLqJE+NHUYbS4ebNstHkY6YHlQk21TyVwPubHqOGH7ZoXOIN1yw==","type":"thought"},{"arguments":{"tool_names":["add_numbers"]},"id":"call_7631019953541620358","name":"activate_tools","type":"function_call"},{"call_id":"call_7631019953541620358","result":[{"text":"Activated
+      tools: add_numbers. You can now use them for the rest of the conversation.","type":"text"},{"description":"Add
+      two integers and return their sum.","name":"add_numbers","parameters":{"type":"object","properties":{"a":{"type":"integer","description":"First
+      addend."},"b":{"type":"integer","description":"Second addend."}},"required":["a","b"]},"type":"function"}],"name":"activate_tools","type":"function_result"},{"signature":"Er4BCrsBAWkUfROitD2fWeqN2k1CnK6eDU3QPzfvRU89A3dYy2S2k/IEtyE/NngL+O9kvkTMnbMW6ypOHyHHKUDUSWmuHFrw/Rsc2EsKrteistm6ptcHbVaZac7SlPgoflAunpYrikmXRtbaNYoTkaFV3OloXc0ll58Tjo0Mq9lX6aRTr3EP7WvFYJWASsLvIRE618/XOUtCDHuQtvG4Gya2q7rBYL01/z1xtACjplzG7gSZIBMZQi//Z4vCdU4OLQ==","type":"thought"},{"arguments":{"a":5,"b":5},"id":"call_17060869602106540286","name":"add_numbers","type":"function_call"},{"call_id":"call_17060869602106540286","result":[{"text":"{\"result\":
+      10}","type":"text"}],"name":"add_numbers","type":"function_result"}],"store":false,"stream":true,"tools":[{"description":"Activate
+      on-demand tools so you can use them in this conversation. Call with specific
+      tool names from the on-demand catalog, search by keyword, or activate every
+      on-demand tool on a given MCP server.","execution":"client","name":"activate_tools","parameters":{"type":"object","properties":{"tool_names":{"type":"array","items":{"type":"string"},"description":"Names
+      of tools to activate from the on-demand catalog"},"search":{"type":"string","description":"Search
+      keyword to find and activate matching tools. Searches tool names and summaries."},"mcp_server_ids":{"type":"array","items":{"type":"string"},"description":"IDs
+      of on-demand MCP servers to activate. Activates every on-demand tool exposed
+      by each listed server."}}},"type":"tool_search"}]}'
+    headers:
+      accept:
+      - text/event-stream
+      accept-encoding:
+      - gzip, deflate, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '3529'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+      x-goog-api-client:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/1SNMQqAMBAE+7wiXK02NpLPyJmsGomJ6CGI5O9qIWg7wzDYEcVoHwUrW/EpVnYF
+        C5xyLGz0SR9H5qTUTbBC5scLmpNDuOmA2Udf1lVT9oG3kXJBeCatHAv+2buirNQFAAD//0rFdEhx
+        SWJJaXF8aQHQJalw50BEwQbFFxTlpxelFhcr4bEDxRSQTQAAAAD//4LaVFySWgCSLCpB8mlKaoWS
+        lYGOEkgS5FmoeSUZ+aXpGSUYfkGYATIYAAAA//9sksdug1AQRT+IBTWAl1SDAcNzqN5EmPIoAYN5
+        1K8PThZJJC9nRjoa3XP/gvcwUPwC/L1/kocStvtjjydGmWpRmiJRCGovv1iWfcRry08zdsqbk7TE
+        Abc2Fe2IoSe4JEHHosxfH7cktTgqy1xzP/CtnlSLCRCNQpBBOy9GdrRmT9bSTdunrTTvgHErqcSZ
+        jiQdnSKYzdFhQp51OopZAzwGpG0cqPVS72hlE/uI52R1AHTSdGaiKllWgwM52eN5vlP+PCAkD0DC
+        LRTxAxWY4U2RVfxcP+zpzch7mhSwBSoGxHoYuhYdQ5sU09UjuuOBGYu+Uk4bserXOeqJcOuz+Biy
+        IfZpBmxbDPeKgy1+dVvDm5luacZaZ5Z3Trrxi3e6CGNwwFN3ZRYkiqXfF4568RweasDweRbLY/is
+        w39xH79pv1T4Y2VX+AUAAP//Qk0b+QVYYhBbAsgvAGkGAAAA//8imLAMMRIWONfE55eWFJQSSl0A
+        AAAA//8imLoMkVJXSWoFKIuaKmgrmCrYKhgaIAUJSAp/KAAAAAD//yIUCob4QgEAAAD//6xUywrC
+        MBD8l54tpLFUm+/wpEiI6aLB2EibCkX8dzet2QqWnjxm9sFkJpmZj6zd7W5hIVPoT1Mn8u1adYbh
+        Ms4rK727Qo09+Wa7+kCmRtmmQo6Fb0ieeokCK2t8n4jDM5kOowphD82+jnGtVvoCFe1lER9tIpxo
+        eOes7Fr4nYjPLxY4DwyNN3Pk0ZOYhyLhjBdplqWc7VgpslKsi33QZEixhYYWmofRSMVAMzij6ko1
+        Qc6/5jbZhIa/AQAA//+CRnhKfh6skI528fdzjeXiAgAAAP//AwC5dPrLXQYAAA==
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-encoding:
+      - gzip
+      content-type:
+      - text/event-stream
+      date:
+      - Fri, 20 Nov 2026 09:19:36 GMT
+      server:
+      - scaffolding on HTTPServer2
+      server-timing:
+      - gfet4t7; dur=1981
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,0 +1,358 @@
+interactions:
+- request:
+    body: '{"model":"gemini-3.8-flash","input":[{"content":[{"text":"System: [Active
+      Processing Profile: test]\n\nYou are a helpful assistant.\n\nEach user message
+      begins with a [Sent ...] line giving the time it was sent. The line is added
+      by the system, not written by the user; the newest one is the current time.
+      Never include such a line in your reply. A user message that arrives after your
+      tool results, before you have answered, was sent while you were already working:
+      treat it as the latest instruction for the turn, re-evaluate your plan, and
+      make the smallest necessary adjustment before continuing.","type":"text"}],"type":"user_input"},{"content":[{"text":"[Sent
+      Fri 2026-11-20 09:19 UTC]\nCalculate 5 + 5. Use the add_numbers tool.","type":"text"}],"type":"user_input"}],"store":false,"stream":true,"tools":[{"description":"Add
+      two integers and return their sum.","name":"add_numbers","parameters":{"type":"object","properties":{"a":{"type":"integer","description":"First
+      addend."},"b":{"type":"integer","description":"Second addend."}},"required":["a","b"]},"type":"function"}]}'
+    headers:
+      accept:
+      - text/event-stream
+      accept-encoding:
+      - gzip, deflate, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1083'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+      x-goog-api-client:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/1SNMQqAMBAE+7wiXK02NpLPyJmsGomJ6CGI5O9qIWg7wzDYEcVoHwUrW/EpVnYF
+        C5xyLGz0SR9H5qTUTbBC5scLmpNDuOmA2Udf1lVT9oG3kXJBeCatHAv+2buirNQFAAD//0rFdEhx
+        SWJJaXF8aQHQJalw50BEwQbFFxTlpxelFhcr4bEDxRSQTQAAAAD//4LaVFySWgCSLCpB8mlKaoWS
+        lYGOEkgS5FmoeSUZ+aXpGSUYfkGYATIYAAAA//9sk8eSm0AURT+oF4gkwcILUiNyCzSkjQskQpOz
+        GL7eGnthu2q2d3Hq1nvn/gt+H2NJvgH/zr/IMy66d7HpC6PMkSzNliwE9UfuOg21wd3II91JwbWZ
+        8IR7s39+ZndVbIpPNNqdwhHQsmSrPbu6Dw3vuk/goiVBQbNJmJAaQfUJvYCTHwl8L9itPobLLi8O
+        eypz8rKBPGautbxW9jxcPYTowuGboLqOTa6APibxGsgrWyGlFF24aoIUwCMsowwPuGchEnu4w0hr
+        HXhi+HLUp05XDcPkaRW1CizFh+88b1gwJY6GaI/iafVpLSVJdyJIFGVP7t3bf6G4k5NWzMbeCtMt
+        P8w7kM2KDsSNLMXSiPE9enhKIMO0J46R0Rrpw8UfNq+ClMpnpeaVHTB5U2mp+5I45RiS99dvjefv
+        1W0RFGIJnzXZTC3tDK3r6VkcbZgb99AVeM18BJ9xZe+MdaSFoOlxZ0kdjaMKxhaT8GuwrmLRrYjo
+        eqZq6sbWUgIgz6Oi7iIpkuOoi3SUt/IcbUY+l6PABd0qqdHV9CkCDIZX0NOShvn4WnOqOi8bRxiy
+        4Y9neobqiSPUWK/dLXDvtgHKS7xCsjjticoB8ErAWJYhy9IzWlPTIywhTphX/7gjnNUZi/WNk7fN
+        UA8p9876LfP6Wy2m0Dphm3xYqnVClDoOzJE+s2W4FFoxTBnz+vHjPZH/Zf7518Bvtf5j6lvrXwAA
+        AP//Qs0v+QVYUjW2TJFfANIMAAAA//8imNkMEZktMwWoOzkxJyfe0MTSwMDc2MjA0NLY0NjEwNLY
+        xBLhgbTSPHDWjgepBQrnJeaChBNTUuLzSnOTUotA5UFiUXppLtBuYElRXYs/3wIAAAD//yKYbw2R
+        8i2SuUrVMUqJMUpWpjoxSkkguhbhRriyeGg44g1iAAAAAP//IhTEhviCGAAAAP//rFVBDsIgEPwL
+        5zYBatTyDk8aQ5BulIilUjA2xr9LG6FNbHryyM4uTHbIzIxzSnNrNCyYeDJRC3evgoXyZOS+FWcY
+        vM84obkzV6hDZ1Fssm9J1Y13CaA0ANMSP3U8pIHQynWIHV5oPCAHT9cvaZx9H+O1UsgLVOleHOvG
+        u+l7ZJslakZz38LvSPziEShpT1E5Ncc+SBNziCGK6TonJKd4h0tGSkZX+34pQ3osNLRgH0oGKgrs
+        IJCoK2GrgPw1L6Ouve4fAAAA//+CxntKfh6scox28fdzjeXiAgAAAP//AwDckobz1QcAAA==
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-encoding:
+      - gzip
+      content-type:
+      - text/event-stream
+      date:
+      - Fri, 20 Nov 2026 09:19:24 GMT
+      server:
+      - scaffolding on HTTPServer2
+      server-timing:
+      - gfet4t7; dur=2775
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"model":"gemini-3.8-flash","input":[{"content":[{"text":"System: [Active
+      Processing Profile: test]\n\nYou are a helpful assistant.\n\nEach user message
+      begins with a [Sent ...] line giving the time it was sent. The line is added
+      by the system, not written by the user; the newest one is the current time.
+      Never include such a line in your reply. A user message that arrives after your
+      tool results, before you have answered, was sent while you were already working:
+      treat it as the latest instruction for the turn, re-evaluate your plan, and
+      make the smallest necessary adjustment before continuing.","type":"text"}],"type":"user_input"},{"content":[{"text":"[Sent
+      Fri 2026-11-20 09:19 UTC]\nCalculate 5 + 5. Use the add_numbers tool.","type":"text"}],"type":"user_input"},{"signature":"EsYDCsMDAWkUfROl2vFxKfYJOb+HlririoLodyeTGBlgyPqNnE8/FMMDMm6RJVFKSHxr+7IaWg35aXa1I/2oa3t+0VYA9oANmJqXtxDtO50hf17v+fZ4HkDujNspHSPP3gO9lWjHqlfE+oZ1iuWDu5jPEhBRFuIACWFzXhYeipio5FPBoFxFYImOF049hqJrnJGKKL93GPmEFhBcVOdQiALC83FPxYZruV3Ib11Rr/1PYed8Mm6VwPZnDamBeqoMXbvfzLT+DLj3WBv1hBhKZiTYcSEWDFbo/zq4IlCURiUN9G+b2fsEk9Ex+4fljIbRwC8EzpaintQlSVxjQtAE/tXdk1lrm3OpmRSJeZYvi8qxXRA9ILcWyZjNx4MzbgAIJZnMCn3iYjFZM4a9uWuuBgnuP/no4jlklNIb/+PSS2Yn7CECOOGtCzhQh6YvKfshqA8WnuCGYHLV2/+pKSg3rtbXfqwuf2j6tv8/KDKVq63sFG08/GZJkRvWRTNK+h7ZuF1g0xaG8++wa+qhhX553sPubLS/MAZa4wocTPieke5iJv8DvvKGzCfS6JQeSoQkBbFM0iN1cMGM0P2Gqp4zbdetp7gIgpre4w==","type":"thought"},{"arguments":{"a":5,"b":5},"id":"call_14900732019313409349","name":"add_numbers","type":"function_call"},{"call_id":"call_14900732019313409349","result":[{"text":"{\"result\":
+      10}","type":"text"}],"name":"add_numbers","type":"function_result"}],"store":false,"stream":true,"tools":[{"description":"Add
+      two integers and return their sum.","name":"add_numbers","parameters":{"type":"object","properties":{"a":{"type":"integer","description":"First
+      addend."},"b":{"type":"integer","description":"Second addend."}},"required":["a","b"]},"type":"function"}]}'
+    headers:
+      accept:
+      - text/event-stream
+      accept-encoding:
+      - gzip, deflate, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1973'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+      x-goog-api-client:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/1SNMQqAMBAE+7wiXK02NpLPyJmsGomJ6CGI5O9qIWg7wzDYEcVoHwUrW/EpVnYF
+        C5xyLGz0SR9H5qTUTbBC5scLmpNDuOmA2Udf1lVT9oG3kXJBeCatHAv+2buirNQFAAD//0rFdEhx
+        SWJJaXF8aQHQJalw50BEwQbFFxTlpxelFhcr4bEDxRSQTQAAAAD//4LaVFySWgCSLCpB8mlKaoWS
+        lYGOEkgS5FmoeSUZ+aXpGSUYfkGYATIYAAAA//9skslygkAURT+IhUqLyMIFs0ZbaLQZ3KRwamRq
+        ZG6+PpgsklS5vVXv1Kt77l/wWEYdvgF/5y9y9SD5+Fj5wujtRVFbpMhegu/OHsSg+TgSlvSOgAyM
+        J7AuXCbKuqWzqFg3di3k0CzwEcCJO8i8YljMK0V3XmiElfViUhKE6InS8S6CXMCbCXvWyOfEtVpe
+        Khc/iGHFDuzT87CXYukWRiHYnrV8vZh7oBalOkau3zIH4IsNfdrRIZ2lJAyd28Zi9yvMipDXWykO
+        1J3eDg8OYxAc674SzO425bbq/Wof5CTFXbZNNzydndQwcm1MIrLI0oTcmr22m3cZ7b1mCflYvE5U
+        9bmV4IB2ekCmnLGPiKDRFk2hZ6GdmR8yLG+kNnE5/oGp3p/yiL8aG2LTg/kU0bKZ+ZIAfKVqwrJb
+        rcY5/Bf3+dv2W4U/VkaFXwAAAP//Qk0b+QVYYhBbAsgvAGkGAAAA//8imLAMMRIWONfE55eWFJQS
+        Sl0AAAAA//8imLoMkVJXSWoFKIuaKmgrmCrYKhga6CGFCUgOfzAAAAAA//8iFAyG+IIBAAAA//+s
+        VMsOwiAQ/BfObUKpr/IdnjSGIN0oEUvTUpPG+O9CK1sTm548Muxuhhl2ZjZZ2XttYCFUcKmx0vPt
+        WnmB4TXWSSOcvUHla/LdKvlAuvK6TRdrlpBvSJx74RWWRrue8OOTTIdRhTAHe1+nOFZJdYUS59KI
+        jz4hXiTIzBrRtfDbEf9fvGB5YKidniPvPYmByAmjbJNmWcronhY8KzjbHoImQ4wtFLTQPLTyVDQ0
+        gzOyKmUT5PxrcKNN3vA3AAAA//+CRnhKfh6slI528fdzjeXiAgAAAP//AwC9ZrAtXgYAAA==
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-encoding:
+      - gzip
+      content-type:
+      - text/event-stream
+      date:
+      - Fri, 20 Nov 2026 09:19:27 GMT
+      server:
+      - scaffolding on HTTPServer2
+      server-timing:
+      - gfet4t7; dur=2145
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"model":"gemini-3.8-flash","input":[{"content":[{"text":"System: [Active
+      Processing Profile: test]\n\nYou are a helpful assistant.\n\nEach user message
+      begins with a [Sent ...] line giving the time it was sent. The line is added
+      by the system, not written by the user; the newest one is the current time.
+      Never include such a line in your reply. A user message that arrives after your
+      tool results, before you have answered, was sent while you were already working:
+      treat it as the latest instruction for the turn, re-evaluate your plan, and
+      make the smallest necessary adjustment before continuing.","type":"text"}],"type":"user_input"},{"signature":"EvcBCvQBAWkUfRN3j3uJTgykxR5QFUU/MtpVy7AEOEyhpHuPt5nMGpUT3M/VzA2BFOyWr7V4pDgyrt6/rgQQoZooMtphM+Y2GkyqtQX+7HCrcsVUigFOjRMxlbzN9j9eaha3KbDnH64W3t79tjQVXvyR3UcPMXowozl1lgaaReIOyfdMmpa2Ev9jYCLEvzi+UU3YTtxs5Gwe0+KCfdPSAklUwmKlI2o1ZCahVPUghg6mlkgeuNDL4wmoxWu8M2j7d/CCqK9MzQLEYg0+FNhg5DovQ0MWOQLGnSmUAI9vkV+2iUoExZnh2dFIgPoSGq7Q8u1X953XBsuarw==","type":"thought"},{"content":[{"text":"5
+      + 5 = 10.","type":"text"}],"type":"model_output"},{"content":[{"text":"[Sent
+      Fri 2026-11-20 09:19 UTC]\nCalculate 5 + 5. Use the add_numbers tool.","type":"text"}],"type":"user_input"},{"content":[{"text":"[Sent
+      Fri 2026-11-20 09:19 UTC]\nNow calculate 10 + 10 the same way.","type":"text"}],"type":"user_input"}],"store":false,"stream":true,"tools":[{"description":"Add
+      two integers and return their sum.","name":"add_numbers","parameters":{"type":"object","properties":{"a":{"type":"integer","description":"First
+      addend."},"b":{"type":"integer","description":"Second addend."}},"required":["a","b"]},"type":"function"}]}'
+    headers:
+      accept:
+      - text/event-stream
+      accept-encoding:
+      - gzip, deflate, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1654'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+      x-goog-api-client:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+  response:
+    body:
+      string: !!binary |
+        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
+        fh5sACXaxd/PNZaLCwAAAP//AwC0Eo+t+REAAA==
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-encoding:
+      - gzip
+      content-type:
+      - text/event-stream
+      date:
+      - Fri, 20 Nov 2026 09:19:33 GMT
+      server:
+      - scaffolding on HTTPServer2
+      server-timing:
+      - gfet4t7; dur=6396
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"model":"gemini-3.8-flash","input":[{"content":[{"text":"System: [Active
+      Processing Profile: test]\n\nYou are a helpful assistant.\n\nEach user message
+      begins with a [Sent ...] line giving the time it was sent. The line is added
+      by the system, not written by the user; the newest one is the current time.
+      Never include such a line in your reply. A user message that arrives after your
+      tool results, before you have answered, was sent while you were already working:
+      treat it as the latest instruction for the turn, re-evaluate your plan, and
+      make the smallest necessary adjustment before continuing.","type":"text"}],"type":"user_input"},{"signature":"EvcBCvQBAWkUfRN3j3uJTgykxR5QFUU/MtpVy7AEOEyhpHuPt5nMGpUT3M/VzA2BFOyWr7V4pDgyrt6/rgQQoZooMtphM+Y2GkyqtQX+7HCrcsVUigFOjRMxlbzN9j9eaha3KbDnH64W3t79tjQVXvyR3UcPMXowozl1lgaaReIOyfdMmpa2Ev9jYCLEvzi+UU3YTtxs5Gwe0+KCfdPSAklUwmKlI2o1ZCahVPUghg6mlkgeuNDL4wmoxWu8M2j7d/CCqK9MzQLEYg0+FNhg5DovQ0MWOQLGnSmUAI9vkV+2iUoExZnh2dFIgPoSGq7Q8u1X953XBsuarw==","type":"thought"},{"content":[{"text":"5
+      + 5 = 10.","type":"text"}],"type":"model_output"},{"content":[{"text":"[Sent
+      Fri 2026-11-20 09:19 UTC]\nCalculate 5 + 5. Use the add_numbers tool.","type":"text"}],"type":"user_input"},{"content":[{"text":"[Sent
+      Fri 2026-11-20 09:19 UTC]\nNow calculate 10 + 10 the same way.","type":"text"}],"type":"user_input"},{"signature":"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","type":"thought"},{"arguments":{"a":5,"b":5},"id":"call_9216047022002784811","name":"add_numbers","type":"function_call"},{"arguments":{"a":10,"b":10},"id":"call_9216047022002785228","name":"add_numbers","type":"function_call"},{"call_id":"call_9216047022002784811","result":[{"text":"{\"result\":
+      10}","type":"text"}],"name":"add_numbers","type":"function_result"},{"call_id":"call_9216047022002785228","result":[{"text":"{\"result\":
+      20}","type":"text"}],"name":"add_numbers","type":"function_result"}],"store":false,"stream":true,"tools":[{"description":"Add
+      two integers and return their sum.","name":"add_numbers","parameters":{"type":"object","properties":{"a":{"type":"integer","description":"First
+      addend."},"b":{"type":"integer","description":"Second addend."}},"required":["a","b"]},"type":"function"}]}'
+    headers:
+      accept:
+      - text/event-stream
+      accept-encoding:
+      - gzip, deflate, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '5026'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+      x-goog-api-client:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/1SNMQqAMBAE+7wiXK02NpLPyJmsGomJ6CGI5O9qIWg7wzDYEcVoHwUrW/EpVnYF
+        C5xyLGz0SR9H5qTUTbBC5scLmpNDuOmA2Udf1lVT9oG3kXJBeCatHAv+2buirNQFAAD//0rFdEhx
+        SWJJaXF8aQHQJalw50BEwQbFFxTlpxelFhcr4bEDxRSQTQAAAAD//4LaVFySWgCSLCpB8mlKaoWS
+        lYGOEkgS5FmoeSUZ+aXpGSUYfkGYATIYAAAA//9skktzQ1AAhX9QFzTkYtGFt5Dg4obYdLxlXCTx
+        9usr7aLtTLZn8c2Z852/4G2MPnoB/s6f5O5aNFuxxxMjD6wgDpPA+xXKHRNcuHCNu1UabZUTqZmI
+        gB3jdeXWSRAqeH6knqZniq5XJDtR58bjyfhSZHCi70atc0kNMFJVudN2PRG2ockrUEoUnzgiHADc
+        yeHBB5wxAYfx1XOLx1oZeZ5oj1LasqLdajg+yplYdWUAQwQLpTWjeIcCm03aioDjNSiQO/eD5RL7
+        ch6YAuckTQyqm/ZkycQRfXP26l0Ks+U2SuL61ti9k6dZ1Z/o99VYaJkLqX4xpxRWCYB+iBGFgPPW
+        kAFfKn35mHlzqA63U+n62KsbJmnA9CBbu6gPVn1amMmT3YVUrHmvwaswGpZM5snHdoH/sj5/F36p
+        7cfEpu0LAAD//0JND/kFWGINW6TnF4A0AwAAAP//IpiYDDESEzinxOeXlhSUEkpRAAAAAP//Ipii
+        DJFSVElqBShbmipoK5gq2CoYGsTkGRoAOUDCVsHIACmAQArxhwkAAAD//yIUJob4wgQAAAD//6xU
+        yw6CMBD8l54xKRWM8B2eNKapZaONlRooJsT4727BLiYSTh47++h0prszo6zd7W5hYavQVFMm8u1a
+        dYbhac4rK727Qo05xTZLPpCpUcQpkOUJ+4bkqZcot7LG96w8PNl0GFUIfaj2dYxttdIXqKgvj/ho
+        GuFpkRA1Z2XXwm9J/I0xIHigaLyZY4+mxJVYMsHFZpWmK8F3vMC7ynW+D6IMi2whoYXmYTRSMdAM
+        1qi6Uk3Q86+rm3xCx98AAAD//4LGeEp+Hqycjnbx93ON5eICAAAA//8DAKdbI1lgBgAA
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-encoding:
+      - gzip
+      content-type:
+      - text/event-stream
+      date:
+      - Fri, 20 Nov 2026 09:19:35 GMT
+      server:
+      - scaffolding on HTTPServer2
+      server-timing:
+      - gfet4t7; dur=2012
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+version: 1

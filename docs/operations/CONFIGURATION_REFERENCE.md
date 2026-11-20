@@ -1087,6 +1087,21 @@ A key that is not a field, or one the client sets itself per request (`tools`, `
 `system_instruction`, the response format fields), fails at startup naming the model, rather than
 being dropped from every request. Media resolution defaults to high unless configured.
 
+On-demand tools (`tools_config.on_demand_local_tools`, on-demand MCP servers) use Gemini's native
+**tool retrieval** on the Interactions API: `activate_tools` is declared as a client-side
+`tool_search`, the on-demand tools are not declared, and an activation hands the model the tools'
+definitions in its result, whether `activate_tools` or a skill's `get_note` made it. The declared
+tool list then never changes, so activating a tool no longer costs a prompt-cache miss. It is on by
+default; `native_tool_retrieval: false` turns it off for a model. A model that refuses it (tool
+retrieval is a preview, enabled per model) is detected on its first request, which is resent without
+it, and that client narrows its tool list instead from then on.
+
+```yaml
+llm_parameters:
+  "gemini-3.5-flash-lite":
+    native_tool_retrieval: false # skip the refused first attempt on a model without it
+```
+
 #### OpenAI-compatible extensions
 
 An OpenAI-client parameter the installed SDK does not take as an argument — OpenRouter's `reasoning`

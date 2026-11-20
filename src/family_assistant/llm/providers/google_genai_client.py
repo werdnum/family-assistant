@@ -83,6 +83,7 @@ from family_assistant.llm.providers.gemini_interactions import (
     history_steps,
     interaction_generation_settings,
     interaction_replay_metadata,
+    native_retrieval_tools,
     read_steps,
     tool_choice_setting,
 )
@@ -140,6 +141,33 @@ _T = TypeVar("_T")
 # The llm_parameters key that keeps a Gemini model's chat on generateContent,
 # as use_responses_api does for OpenAI. It is read by the client, not sent.
 USE_INTERACTIONS_API_PARAM = "use_interactions_api"
+
+# The keyword arguments of one ``interactions.create`` chat call.
+# ast-grep-ignore: no-dict-any - **kwargs for the Interactions SDK's create()
+type InteractionRequest = dict[str, Any]
+
+# The llm_parameters key that turns off Gemini's native retrieval of deferred
+# tools for a model (on by default; it is also the kill switch). Read by the
+# client, not sent.
+NATIVE_TOOL_RETRIEVAL_PARAM = "native_tool_retrieval"
+
+
+def _declares_tool_search(request: Mapping[str, object]) -> bool:
+    tools = request.get("tools")
+    return isinstance(tools, list) and any(
+        isinstance(tool, dict) and tool.get("type") == "tool_search" for tool in tools
+    )
+
+
+def _refuses_tool_retrieval(error: BaseException) -> bool:
+    """Whether *error* is the API refusing tool retrieval for this request."""
+    if _http_status(error) != 400:
+        return False
+    message = str(error).lower()
+    return (
+        "tool_search" in message or "tool search" in message or "retrieval" in message
+    )
+
 
 # Statuses that end a chat interaction without an answer. "incomplete" is not
 # one: like a generateContent MAX_TOKENS finish, it returns what was produced.
@@ -692,6 +720,15 @@ class GoogleGenAIClient(BaseLLMClient):
             **self._get_model_specific_params(self.model_name),
         }
         use_interactions_api = request_params.pop(USE_INTERACTIONS_API_PARAM, True)
+        native_tool_retrieval = request_params.pop(NATIVE_TOOL_RETRIEVAL_PARAM, True)
+        if not isinstance(native_tool_retrieval, bool):
+            raise ValueError(
+                f"llm_parameters for Gemini model '{model}' set "
+                f"{NATIVE_TOOL_RETRIEVAL_PARAM}={native_tool_retrieval!r}; it must be "
+                "true or false."
+            )
+        self._native_tool_retrieval = native_tool_retrieval
+        self._native_tool_retrieval_rejected = False
         if not isinstance(use_interactions_api, bool):
             raise ValueError(
                 f"llm_parameters for Gemini model '{model}' set "
@@ -1513,11 +1550,11 @@ class GoogleGenAIClient(BaseLLMClient):
         """Generate response using Google GenAI."""
         # Validate user input before processing
         self._validate_user_input(messages)
-        tools = resolve_deferred_tools(tools, messages)
         if self._interaction_settings is not None:
             return await self._generate_interaction_chat_response(
                 messages, tools, tool_choice, self._interaction_settings
             )
+        tools = resolve_deferred_tools(tools, messages)
 
         with tracer.start_as_current_span("llm.provider.generate") as span:
             telemetry = LLMCallTelemetry(
@@ -1805,21 +1842,36 @@ class GoogleGenAIClient(BaseLLMClient):
         tools: list[ToolDefinition] | None,
         tool_choice: str | None,
         settings: InteractionGenerationSettings,
+        *,
+        native_retrieval: bool,
         # ast-grep-ignore: no-dict-any - **kwargs for the Interactions SDK's create()
     ) -> dict[str, Any]:
-        """``interactions.create`` kwargs for one stateless chat turn."""
+        """``interactions.create`` kwargs for one stateless chat turn.
+
+        *tools* arrive with on-demand ones marked deferred. With
+        *native_retrieval* they become a client-side ``tool_search`` (see
+        ``native_retrieval_tools``); otherwise, or when nothing is deferred,
+        the list is narrowed to what the history has activated, as every
+        adapter without native deferral does.
+        """
 
         def to_contents(batch: list[LLMMessage]) -> list[types.Content]:
             contents = self._convert_messages_to_genai_format(batch)
             assert all(isinstance(content, types.Content) for content in contents)
             return cast("list[types.Content]", contents)
 
+        retrieval = native_retrieval_tools(tools or []) if native_retrieval else None
         steps = history_steps(
             self._process_tool_messages(list(messages)),
             to_contents,
             media_resolution=settings.media_resolution,
+            loaded=retrieval.loaded if retrieval is not None else None,
         )
-        request_tools: list[JsonObject] = function_tools(tools or [])
+        request_tools: list[JsonObject] = (
+            retrieval.tools
+            if retrieval is not None
+            else function_tools(resolve_deferred_tools(tools, messages) or [])
+        )
         if self.enable_url_context:
             request_tools.append({"type": "url_context"})
         if self.enable_google_search:
@@ -1844,6 +1896,36 @@ class GoogleGenAIClient(BaseLLMClient):
         if service_tier is not None:
             request["service_tier"] = service_tier
         return request
+
+    @property
+    def _native_retrieval_enabled(self) -> bool:
+        return self._native_tool_retrieval and not self._native_tool_retrieval_rejected
+
+    async def _create_chat_interaction(
+        self,
+        request: InteractionRequest,
+        without_retrieval: Callable[[], InteractionRequest],
+    ) -> object:
+        """``interactions.create(**request)``, falling back if native retrieval is refused.
+
+        Tool retrieval is a preview, enabled per model. If the API rejects the
+        client-side ``tool_search`` for this model, the request is sent again
+        without it and the client stops asking: the fallback narrows the tool
+        list as before, costing a cache miss per activation but nothing else.
+        """
+        try:
+            return await self.client.aio.interactions.create(**request)
+        except Exception as e:
+            if not (_declares_tool_search(request) and _refuses_tool_retrieval(e)):
+                raise
+            self._native_tool_retrieval_rejected = True
+            logger.warning(
+                "Gemini model %s refused native tool retrieval (%s); "
+                "narrowing its tool list instead from now on",
+                self.model_name,
+                e,
+            )
+        return await self.client.aio.interactions.create(**without_retrieval())
 
     def _interaction_chat_reasoning_info(
         self,
@@ -1880,7 +1962,22 @@ class GoogleGenAIClient(BaseLLMClient):
         """One non-streamed chat turn on the Interactions API."""
         # Built before the span: rendering history happens in this process,
         # and a failure there is not a provider error.
-        request = self._interaction_chat_request(messages, tools, tool_choice, settings)
+        request = self._interaction_chat_request(
+            messages,
+            tools,
+            tool_choice,
+            settings,
+            native_retrieval=self._native_retrieval_enabled,
+        )
+        request["stream"] = False
+
+        def without_retrieval() -> InteractionRequest:
+            fallback = self._interaction_chat_request(
+                messages, tools, tool_choice, settings, native_retrieval=False
+            )
+            fallback["stream"] = False
+            return fallback
+
         with tracer.start_as_current_span("llm.provider.generate") as span:
             telemetry = LLMCallTelemetry(
                 span,
@@ -1895,7 +1992,7 @@ class GoogleGenAIClient(BaseLLMClient):
 
             async def request_success() -> LLMOutput:
                 interaction = _agent_interaction_response(
-                    await self.client.aio.interactions.create(**request, stream=False)
+                    await self._create_chat_interaction(request, without_retrieval)
                 )
                 telemetry.record_response_metadata(
                     resolved_model=interaction.model,
@@ -1957,8 +2054,22 @@ class GoogleGenAIClient(BaseLLMClient):
         event for replay; tool calls are emitted once the stream ends, as the
         generateContent path does.
         """
-        request = self._interaction_chat_request(messages, tools, tool_choice, settings)
+        request = self._interaction_chat_request(
+            messages,
+            tools,
+            tool_choice,
+            settings,
+            native_retrieval=self._native_retrieval_enabled,
+        )
         request["stream"] = True
+
+        def without_retrieval() -> InteractionRequest:
+            fallback = self._interaction_chat_request(
+                messages, tools, tool_choice, settings, native_retrieval=False
+            )
+            fallback["stream"] = True
+            return fallback
+
         span = tracer.start_span("llm.provider.generate_stream")
         telemetry = LLMCallTelemetry(
             span,
@@ -1976,7 +2087,7 @@ class GoogleGenAIClient(BaseLLMClient):
             nonlocal content_yielded
             stream = cast(
                 "AsyncIterator[Any]",
-                await self.client.aio.interactions.create(**request),
+                await self._create_chat_interaction(request, without_retrieval),
             )
             accumulator = InteractionStepAccumulator()
             usage: Usage | None = None
@@ -2322,7 +2433,6 @@ class GoogleGenAIClient(BaseLLMClient):
         """Generate streaming response using Google GenAI."""
         # Validate user input before processing
         self._validate_user_input(messages)
-        tools = resolve_deferred_tools(tools, messages)
 
         if is_interactions_agent_model(self.model_name):
             return self._generate_agent_interaction_stream(messages)
@@ -2330,6 +2440,7 @@ class GoogleGenAIClient(BaseLLMClient):
             return self._generate_interaction_chat_stream(
                 messages, tools, tool_choice, self._interaction_settings
             )
+        tools = resolve_deferred_tools(tools, messages)
         return self._generate_response_stream(messages, tools, tool_choice)
 
     def _extract_agent_input_text(self, messages: Sequence[LLMMessage]) -> str:

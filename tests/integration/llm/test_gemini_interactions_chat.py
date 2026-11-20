@@ -167,3 +167,43 @@ async def test_every_catalog_tool_schema_is_accepted(llm_record_mode: str) -> No
     await client.close()
 
     assert reply.content
+
+
+ACTIVATE_TOOL: ToolDefinition = {
+    "type": "function",
+    "function": {
+        "name": "activate_tools",
+        "description": "Activate on-demand tools by name so you can call them.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "tool_names": {"type": "array", "items": {"type": "string"}}
+            },
+        },
+    },
+}
+
+
+@pytest.mark.no_db
+@pytest.mark.llm_integration
+@pytest.mark.vcr(before_record_response=sanitize_response)
+async def test_a_model_without_tool_retrieval_falls_back(llm_record_mode: str) -> None:
+    """A model that refuses native retrieval still serves the turn, narrowed.
+
+    gemini-3.5-flash-lite rejected client-side ``tool_search`` when this was
+    recorded; the client resends without it and stops asking.
+    """
+    _skip_unless_replayable(llm_record_mode)
+    client = GoogleGenAIClient(
+        api_key=os.getenv("GEMINI_API_KEY", "test-gemini-key"),
+        model="gemini-3.5-flash-lite",
+    )
+
+    reply = await client.generate_response(
+        [UserMessage(content="Say hello.")],
+        tools=[ACTIVATE_TOOL, {**WEATHER_TOOL, "defer_loading": True}],
+    )
+    await client.close()
+
+    assert reply.content
+    assert client._native_retrieval_enabled is False

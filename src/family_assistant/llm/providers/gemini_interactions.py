@@ -26,7 +26,12 @@ from typing import TYPE_CHECKING, cast
 
 from google.genai import types
 
-from family_assistant.llm.messages import AssistantMessage
+from family_assistant.llm.deferred_tools import (
+    ACTIVATE_TOOLS_TOOL_NAME,
+    is_deferred,
+    tool_name,
+)
+from family_assistant.llm.messages import AssistantMessage, ToolMessage
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -434,6 +439,50 @@ def function_tools(tools: Sequence[ToolDefinition]) -> list[JsonObject]:
     return converted
 
 
+@dataclass(frozen=True)
+class NativeRetrievalTools:
+    """A request's tools when Gemini retrieves deferred tools natively.
+
+    ``activate_tools`` is declared as a client-side ``tool_search`` and the
+    deferred tools are not declared at all: their definitions reach the model
+    in the result of whichever tool activated them (``loaded``), so the
+    declared list never changes and an activation costs no cache.
+    """
+
+    tools: list[JsonObject]
+    loaded: dict[str, ToolDefinition]
+
+
+def native_retrieval_tools(
+    tools: Sequence[ToolDefinition],
+) -> NativeRetrievalTools | None:
+    """The native-retrieval form of *tools*, or ``None`` when nothing is deferred."""
+    loaded = {
+        name: tool
+        for tool in tools
+        if is_deferred(tool) and (name := tool_name(tool)) is not None
+    }
+    activate = next(
+        (tool for tool in tools if tool_name(tool) == ACTIVATE_TOOLS_TOOL_NAME), None
+    )
+    if not loaded or activate is None:
+        return None
+    declared = function_tools([
+        tool
+        for tool in tools
+        if not is_deferred(tool) and tool_name(tool) != ACTIVATE_TOOLS_TOOL_NAME
+    ])
+    search = function_tools([activate])[0]
+    declared.append({
+        "type": "tool_search",
+        "execution": "client",
+        "name": search["name"],
+        "description": search["description"],
+        "parameters": search["parameters"],
+    })
+    return NativeRetrievalTools(tools=declared, loaded=loaded)
+
+
 def tool_choice_setting(tool_choice: str | None) -> JsonValue | None:
     """The Interactions ``tool_choice`` for one of our tool choices."""
     if tool_choice in {None, "auto"}:
@@ -657,12 +706,15 @@ def history_steps(
     to_contents: Callable[[list[LLMMessage]], list[types.Content]],
     *,
     media_resolution: str | None,
+    loaded: Mapping[str, ToolDefinition] | None = None,
 ) -> list[JsonObject]:
     """The Interactions input for *messages*.
 
     Assistant messages with stored replay steps are rendered from them and the
     message; runs of everything else go through *to_contents* (the client's own
-    message conversion) and are translated.
+    message conversion) and are translated. With *loaded* (native retrieval),
+    a tool result that activated tools also carries their definitions, which is
+    how a client-side ``tool_search`` hands the model a tool.
     """
     steps: list[JsonObject] = []
     pending: list[LLMMessage] = []
@@ -684,7 +736,40 @@ def history_steps(
         flush()
         steps.extend(_replayed(message, stored))
     flush()
-    return _named_results(steps)
+    steps = _named_results(steps)
+    if loaded:
+        steps = _with_loaded_definitions(steps, messages, loaded)
+    return steps
+
+
+def _with_loaded_definitions(
+    steps: list[JsonObject],
+    messages: Sequence[LLMMessage],
+    loaded: Mapping[str, ToolDefinition],
+) -> list[JsonObject]:
+    """*steps* with each activated tool's definition in the result that activated it.
+
+    Activation is recorded on the tool message (``activated_tools``), whether
+    ``activate_tools`` made it or a skill's ``get_note`` did, so both deliver
+    their tools the same way.
+    """
+    activations = {
+        message.tool_call_id: [
+            name for name in message.activated_tools if name in loaded
+        ]
+        for message in messages
+        if isinstance(message, ToolMessage) and message.activated_tools
+    }
+    rendered: list[JsonObject] = []
+    for step in steps:
+        names = activations.get(str(step.get("call_id")))
+        result = step.get("result")
+        if step.get("type") == "function_result" and names and isinstance(result, list):
+            definitions = function_tools([loaded[name] for name in names])
+            rendered.append({**step, "result": [*result, *definitions]})
+        else:
+            rendered.append(step)
+    return rendered
 
 
 def _named_results(steps: list[JsonObject]) -> list[JsonObject]:
