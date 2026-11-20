@@ -128,6 +128,7 @@ if TYPE_CHECKING:
         AttachmentMetadata,
         AttachmentRegistry,
     )
+    from family_assistant.services.browser_live_view import BrowserLiveViewPublisher
     from family_assistant.services.oauth_credentials import OAuthCredentialResolver
     from family_assistant.services.tool_call_review import TriggerReviewInput
     from family_assistant.storage.database import Database
@@ -342,6 +343,7 @@ class ProcessingService:
         turn_relevance: TurnRelevance | None = None,
         jev_client: JevClient | None = None,
         home_activity_publisher: HomeActivityPublisher | None = None,
+        browser_live_view_publisher: BrowserLiveViewPublisher | None = None,
         delegation_turns: RunningDelegationTurns | None = None,
     ) -> None:
         """Build a profile's service.
@@ -373,6 +375,7 @@ class ProcessingService:
         """
         self.jev_client = jev_client
         self.home_activity_publisher = home_activity_publisher
+        self.browser_live_view_publisher = browser_live_view_publisher
         self.delegation_turns = delegation_turns
         self._llm_client = llm_client
         self._tier_llm_clients: dict[str, LLMInterface] = dict(tier_llm_clients or {})

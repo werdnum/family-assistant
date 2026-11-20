@@ -41,6 +41,10 @@ from family_assistant.security.taint import (
     TaintSourceType,
     TurnTaintState,
 )
+from family_assistant.services.browser_live_view import (
+    BrowserBackendKind,
+    browser_view_frame_url,
+)
 from family_assistant.services.confirmation_service import (
     ConfirmationAlreadyResolvedError,
     ConfirmationAuthorizationError,
@@ -92,6 +96,7 @@ from family_assistant.threads.listing import (
     is_quiet,
     summarize_threads,
 )
+from family_assistant.tools.computer_use_names import COMPUTER_USE_FUNCTION_NAMES
 from family_assistant.tools.confirmation import render_tool_confirmation
 from family_assistant.tools.infrastructure import (
     ToolDescriptorProvider,
@@ -761,6 +766,60 @@ def turn_running_in(hub: ConversationStreamHub) -> Callable[[str], bool]:
     return hub.has_running_turn
 
 
+class BrowserViewFrameInfo(BaseModel):
+    """Metadata for the latest ephemeral live browser screenshot."""
+
+    frame_id: str = Field(
+        ..., description="Monotonic frame identifier for cache busting"
+    )
+    url: str = Field(default="", description="Current browser URL when captured")
+    captured_at: datetime = Field(..., description="UTC timestamp when captured")
+    tool_name: str | None = Field(
+        default=None, description="Browser tool that produced this frame"
+    )
+    backend_kind: BrowserBackendKind = Field(
+        default="local", description="Whether the session runs locally or remotely"
+    )
+    width: int | None = Field(default=None, description="Browser viewport width")
+    height: int | None = Field(default=None, description="Browser viewport height")
+    image_url: str = Field(
+        ..., description="Authenticated URL to fetch the frame image"
+    )
+
+
+class BrowserViewResponse(BaseModel):
+    """Live browser preview status for a conversation or subconversation."""
+
+    available: bool = Field(
+        ..., description="Whether a live browser screenshot is currently available"
+    )
+    frame: BrowserViewFrameInfo | None = Field(
+        default=None, description="Latest captured browser frame metadata, if available"
+    )
+
+
+def _browser_view_frame_info(
+    hub: ConversationStreamHub,
+    conversation_id: str,
+    subconversation_id: str | None = None,
+) -> BrowserViewFrameInfo | None:
+    frame = hub.browser_live_view.get_frame(conversation_id, subconversation_id)
+    if frame is None:
+        return None
+    return BrowserViewFrameInfo(
+        frame_id=frame.frame_id,
+        url=frame.url,
+        captured_at=frame.captured_at,
+        tool_name=frame.tool_name,
+        backend_kind=frame.backend_kind,
+        width=frame.width,
+        height=frame.height,
+        image_url=browser_view_frame_url(
+            conversation_id, subconversation_id, frame.frame_id
+        ),
+    )
+
+
 class ConversationMessagesResponse(BaseModel):
     """Response containing messages for a specific conversation."""
 
@@ -822,6 +881,10 @@ class ConversationMessagesResponse(BaseModel):
             "client distinguish durable tool-only replies from partial rows."
         ),
     )
+    browser_view: BrowserViewFrameInfo | None = Field(
+        default=None,
+        description="Latest ephemeral live browser screenshot metadata, when present.",
+    )
 
 
 class PendingDelegation(BaseModel):
@@ -872,6 +935,7 @@ class SubconversationMessagesResponse(BaseModel):
     has_more_before: bool = False
     has_more_after: bool = False
     active_turns: list["SubconversationActiveTurnInfo"] = Field(default_factory=list)
+    browser_view: BrowserViewFrameInfo | None = None
 
 
 class SharedConversationMessagesResponse(ConversationMessagesResponse):
@@ -2870,6 +2934,13 @@ class ServiceProfile(BaseModel):
             "server refuses them with 409"
         ),
     )
+    has_browser_view: bool = Field(
+        default=False,
+        description=(
+            "Whether this profile drives a local or remote browser that emits "
+            "live viewport screenshots."
+        ),
+    )
 
 
 class ProfilesResponse(BaseModel):
@@ -3793,6 +3864,7 @@ async def get_conversation_messages(
         conversation_kind=conversation_kind,
         thread=thread_response,
         active_turns=active_turns,
+        browser_view=_browser_view_frame_info(hub, conversation_id),
     )
 
 
@@ -3918,7 +3990,8 @@ async def get_subconversation_messages(
         )
     )
 
-    sub_hub = get_stream_hub(request).subconversations
+    hub = get_stream_hub(request)
+    sub_hub = hub.subconversations
     active_turns = _subconversation_turns(request, sub_hub, subconversation_id, user_id)
 
     delegation_model: PendingDelegation | None = None
@@ -3958,6 +4031,100 @@ async def get_subconversation_messages(
         has_more_before=has_more_before,
         has_more_after=has_more_after,
         active_turns=active_turns,
+        browser_view=_browser_view_frame_info(hub, conversation_id, subconversation_id),
+    )
+
+
+def _browser_view_image_response(
+    hub: ConversationStreamHub,
+    conversation_id: str,
+    subconversation_id: str | None = None,
+) -> Response:
+    frame = hub.browser_live_view.get_frame(conversation_id, subconversation_id)
+    if frame is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No live browser screenshot is available",
+        )
+    return Response(
+        content=frame.image_bytes,
+        media_type=frame.mime_type,
+        headers={
+            "Cache-Control": "private, no-store",
+            "X-Browser-Frame-Id": frame.frame_id,
+        },
+    )
+
+
+@chat_api_router.get("/v1/chat/conversations/{conversation_id}/browser-view")
+async def get_conversation_browser_view(
+    conversation_id: str,
+    request: Request,
+    current_user: Annotated[dict, Depends(get_current_user)],
+) -> BrowserViewResponse:
+    """Return metadata for the latest live browser screenshot in a conversation."""
+    await _ensure_user_owns_conversation(
+        request, current_user, conversation_id, allow_new=False
+    )
+    frame_info = _browser_view_frame_info(get_stream_hub(request), conversation_id)
+    return BrowserViewResponse(available=frame_info is not None, frame=frame_info)
+
+
+@chat_api_router.get("/v1/chat/conversations/{conversation_id}/browser-view/frame")
+async def get_conversation_browser_view_frame(
+    conversation_id: str,
+    request: Request,
+    current_user: Annotated[dict, Depends(get_current_user)],
+) -> Response:
+    """Return the latest live browser screenshot image for a conversation."""
+    await _ensure_user_owns_conversation(
+        request, current_user, conversation_id, allow_new=False
+    )
+    return _browser_view_image_response(get_stream_hub(request), conversation_id)
+
+
+@chat_api_router.get(
+    "/v1/chat/conversations/{conversation_id}/subconversations/{subconversation_id}/browser-view"
+)
+async def get_subconversation_browser_view(
+    conversation_id: str,
+    subconversation_id: str,
+    request: Request,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    db_context: Annotated[Database, Depends(get_db)],
+) -> BrowserViewResponse:
+    """Return metadata for the latest live browser screenshot in a subconversation."""
+    await _ensure_user_owns_conversation(
+        request, current_user, conversation_id, allow_new=False
+    )
+    await _ensure_subconversation_in_conversation(
+        db_context, conversation_id, subconversation_id
+    )
+    frame_info = _browser_view_frame_info(
+        get_stream_hub(request), conversation_id, subconversation_id
+    )
+    return BrowserViewResponse(available=frame_info is not None, frame=frame_info)
+
+
+@chat_api_router.get(
+    "/v1/chat/conversations/{conversation_id}/subconversations/{subconversation_id}/browser-view/frame"
+)
+async def get_subconversation_browser_view_frame(
+    conversation_id: str,
+    subconversation_id: str,
+    request: Request,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    db_context: Annotated[Database, Depends(get_db)],
+) -> Response:
+    """Return the latest live browser screenshot image for a subconversation."""
+    await _ensure_user_owns_conversation(
+        request, current_user, conversation_id, allow_new=False
+    )
+    await _ensure_subconversation_in_conversation(
+        db_context, conversation_id, subconversation_id
+    )
+    return _browser_view_image_response(
+        get_stream_hub(request), conversation_id, subconversation_id
     )
 
 
@@ -4605,6 +4772,11 @@ async def get_available_profiles(
                     or profile_id == default_processing_service.service_config.id
                 ),
                 receives_household_context=service_config.receives_household_context,
+                has_browser_view=any(
+                    tool_name.startswith("browser_")
+                    or tool_name in COMPUTER_USE_FUNCTION_NAMES
+                    for tool_name in available_tools
+                ),
                 llm_model=getattr(service_config, "llm_model", None),
                 available_tools=sorted(available_tools),
                 enabled_mcp_servers=sorted(enabled_mcp_servers),

@@ -24,6 +24,8 @@ struct ChatStreamEvent: Equatable {
     let status: String?
     /// A `tool_result` event's outcome, as the backend classified it.
     var toolOutcome: ChatToolStatus? = nil
+    /// Ephemeral live browser preview frame metadata (`browser_frame` event).
+    var browserFrame: ChatBrowserViewFrame? = nil
 }
 
 enum ChatAttachmentSource: String, Equatable {
@@ -46,6 +48,7 @@ enum ChatStreamEventType: String, Equatable {
     case message
     case heartbeat
     case streamDropped
+    case browserFrame
 }
 
 struct ChatConfirmationResult: Equatable {
@@ -152,9 +155,21 @@ final class SSEParser {
                 return baseEvent(type: eventType, errorMessage: errorMessage, status: payload["status"]?.stringValue)
             case .userInput:
                 return baseEvent(type: .userInput, text: payload["content"]?.stringValue)
+            case .browserFrame:
+                let frame = try? JSONDecoder.chatDecoder.decode(ChatBrowserViewFrame.self, from: data)
+                var decoded = baseEvent(type: .browserFrame)
+                decoded.browserFrame = frame
+                return decoded
             default:
                 break
             }
+        }
+
+        if payload["type"]?.stringValue == "browser_frame" {
+            let frame = try? JSONDecoder.chatDecoder.decode(ChatBrowserViewFrame.self, from: data)
+            var decoded = baseEvent(type: .browserFrame)
+            decoded.browserFrame = frame
+            return decoded
         }
 
         if eventType == .text, case .string(let content) = payload["content"] {
@@ -327,6 +342,8 @@ final class SSEParser {
             "userInput"
         case "stream_dropped":
             "streamDropped"
+        case "browser_frame":
+            "browserFrame"
         default:
             value
         }

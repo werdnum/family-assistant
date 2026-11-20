@@ -33,6 +33,7 @@ final class SubconversationPeekViewModel {
     private(set) var isStreaming = false
     private(set) var isListening = false
     var attachmentErrorMessage: String?
+    let browserLiveView: BrowserLiveViewController
 
     @ObservationIgnored private let authManager: AuthManager
     @ObservationIgnored private let apiClient: ChatAPIClient
@@ -68,6 +69,9 @@ final class SubconversationPeekViewModel {
         self.modelTierLabels = modelTierLabels
         self.errorReporter = errorReporter
         self.reconnectBaseDelaySeconds = reconnectBaseDelaySeconds
+        self.browserLiveView = BrowserLiveViewController { path in
+            try await apiClient.downloadAttachment(path: path).0
+        }
     }
 
     deinit {
@@ -101,6 +105,11 @@ final class SubconversationPeekViewModel {
 
     var isFailed: Bool {
         delegation?.status == "failed"
+    }
+
+    var isBrowserProfile: Bool {
+        guard let profileID = delegation?.targetProfileID else { return false }
+        return profileID.contains("browser")
     }
 
     func start() {
@@ -351,6 +360,11 @@ final class SubconversationPeekViewModel {
         switch event.type {
         case .heartbeat, .connected, .userInput:
             return true
+        case .browserFrame:
+            if let frame = event.browserFrame {
+                browserLiveView.apply(frame: frame)
+            }
+            return true
         case .streamDropped:
             return false
         case .turnStarted:
@@ -504,6 +518,9 @@ final class SubconversationPeekViewModel {
             requestText = text
         }
         childDelegations = snapshot.childDelegations
+        if let frame = snapshot.browserView {
+            browserLiveView.apply(frame: frame)
+        }
         loadState = .ready
         rebuildMessages()
     }
@@ -725,6 +742,13 @@ private struct SubconversationPeekScreen: View {
     var body: some View {
         VStack(spacing: 0) {
             statusHeaderBar
+
+            BrowserLiveViewCard(
+                controller: viewModel.browserLiveView,
+                isRunning: !viewModel.isTerminal,
+                isBrowserProfile: viewModel.isBrowserProfile,
+                compact: true
+            )
 
             Group {
                 switch viewModel.loadState {

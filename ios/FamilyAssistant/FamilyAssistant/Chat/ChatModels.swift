@@ -173,6 +173,8 @@ struct ChatProfile: Codable, Equatable, Identifiable {
     /// continued from Home with context, or have a Home turn moved into it.
     /// Elsewhere the server refuses both, so the client does not offer them.
     var receivesHouseholdContext = false
+    /// Whether this profile drives a local or remote browser that emits live screenshots.
+    var hasBrowserView = false
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -186,6 +188,7 @@ struct ChatProfile: Codable, Equatable, Identifiable {
         case modelPresets = "model_presets"
         case defaultModelTier = "default_model_tier"
         case receivesHouseholdContext = "receives_household_context"
+        case hasBrowserView = "has_browser_view"
     }
 
     init(
@@ -199,7 +202,8 @@ struct ChatProfile: Codable, Equatable, Identifiable {
         modelTiers: [ChatModelTier] = [],
         modelPresets: [ChatModelTier] = [],
         defaultModelTier: String? = nil,
-        receivesHouseholdContext: Bool = false
+        receivesHouseholdContext: Bool = false,
+        hasBrowserView: Bool = false
     ) {
         self.id = id
         self.description = description
@@ -212,6 +216,7 @@ struct ChatProfile: Codable, Equatable, Identifiable {
         self.modelPresets = modelPresets
         self.defaultModelTier = defaultModelTier
         self.receivesHouseholdContext = receivesHouseholdContext
+        self.hasBrowserView = hasBrowserView
     }
 
     init(from decoder: Decoder) throws {
@@ -237,6 +242,10 @@ struct ChatProfile: Codable, Equatable, Identifiable {
         receivesHouseholdContext = try container.decodeIfPresent(
             Bool.self,
             forKey: .receivesHouseholdContext
+        ) ?? false
+        hasBrowserView = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .hasBrowserView
         ) ?? false
     }
 
@@ -1047,8 +1056,18 @@ struct ChatPendingDelegation: Decodable, Equatable, Hashable, Identifiable {
         switch targetProfileID {
         case "default_assistant":
             return "Assistant"
-        case "browser":
+        case "browser", "browser_profile":
             return "Browser"
+        case "browser_visual_profile":
+            return "Visual Browser"
+        case "credential_browser_profile":
+            return "Credential Browser"
+        case "credential_browser_visual_profile":
+            return "Credential Visual Browser"
+        case "authenticated_browser_profile":
+            return "Authenticated Browser"
+        case "authenticated_browser_visual_profile":
+            return "Authenticated Visual Browser"
         case "research":
             return "Research"
         case "event_handler":
@@ -1201,6 +1220,81 @@ struct ChatActiveTurnInfo: Decodable, Equatable {
     }
 }
 
+/// Mirrors `BrowserViewFrameInfo` in `web/routers/chat_api.py`.
+struct ChatBrowserViewFrame: Codable, Equatable, Sendable {
+    let frameID: String
+    let url: String
+    let capturedAt: Date?
+    let toolName: String?
+    let backendKind: String?
+    let width: Int?
+    let height: Int?
+    let imageURL: String
+
+    enum CodingKeys: String, CodingKey {
+        case frameID = "frame_id"
+        case url
+        case capturedAt = "captured_at"
+        case toolName = "tool_name"
+        case backendKind = "backend_kind"
+        case width
+        case height
+        case imageURL = "image_url"
+    }
+
+    init(
+        frameID: String,
+        url: String,
+        capturedAt: Date? = nil,
+        toolName: String? = nil,
+        backendKind: String? = nil,
+        width: Int? = nil,
+        height: Int? = nil,
+        imageURL: String
+    ) {
+        self.frameID = frameID
+        self.url = url
+        self.capturedAt = capturedAt
+        self.toolName = toolName
+        self.backendKind = backendKind
+        self.width = width
+        self.height = height
+        self.imageURL = imageURL
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        frameID = try container.decode(String.self, forKey: .frameID)
+        url = try container.decodeIfPresent(String.self, forKey: .url) ?? ""
+        capturedAt = try container.decodeIfPresent(Date.self, forKey: .capturedAt)
+        toolName = try container.decodeIfPresent(String.self, forKey: .toolName)
+        backendKind = try container.decodeIfPresent(String.self, forKey: .backendKind)
+        width = try container.decodeIfPresent(Int.self, forKey: .width)
+        height = try container.decodeIfPresent(Int.self, forKey: .height)
+        imageURL = try container.decode(String.self, forKey: .imageURL)
+    }
+
+    var displayURL: String {
+        let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "about:blank" }
+        if trimmed.lowercased().hasPrefix("https://") {
+            return String(trimmed.dropFirst("https://".count))
+        }
+        if trimmed.lowercased().hasPrefix("http://") {
+            return String(trimmed.dropFirst("http://".count))
+        }
+        return trimmed
+    }
+
+    var formattedToolName: String? {
+        guard let toolName, !toolName.isEmpty else { return nil }
+        let stripped = toolName.hasPrefix("browser_")
+            ? String(toolName.dropFirst("browser_".count))
+            : toolName
+        return stripped.replacingOccurrences(of: "_", with: " ").capitalized
+    }
+}
+
 /// Mirrors `SubconversationMessagesResponse` in `web/routers/chat_api.py`.
 struct ChatSubconversationMessagesResponse: Decodable {
     let conversationID: String
@@ -1215,6 +1309,7 @@ struct ChatSubconversationMessagesResponse: Decodable {
     let hasMoreBefore: Bool
     let hasMoreAfter: Bool
     let activeTurns: [ChatActiveTurnInfo]
+    let browserView: ChatBrowserViewFrame?
 
     enum CodingKeys: String, CodingKey {
         case conversationID = "conversation_id"
@@ -1229,6 +1324,7 @@ struct ChatSubconversationMessagesResponse: Decodable {
         case hasMoreBefore = "has_more_before"
         case hasMoreAfter = "has_more_after"
         case activeTurns = "active_turns"
+        case browserView = "browser_view"
     }
 
     init(from decoder: Decoder) throws {
@@ -1245,6 +1341,7 @@ struct ChatSubconversationMessagesResponse: Decodable {
         hasMoreBefore = try container.decodeIfPresent(Bool.self, forKey: .hasMoreBefore) ?? false
         hasMoreAfter = try container.decodeIfPresent(Bool.self, forKey: .hasMoreAfter) ?? false
         activeTurns = try container.decodeIfPresent([ChatActiveTurnInfo].self, forKey: .activeTurns) ?? []
+        browserView = try container.decodeIfPresent(ChatBrowserViewFrame.self, forKey: .browserView)
     }
 }
 
@@ -1291,6 +1388,8 @@ struct ChatConversationMessagesResponse: Decodable {
     /// What a share link shows: `conversation` or `message`. Sent only by the
     /// shared transcript endpoint.
     let shareScope: String?
+    /// Latest ephemeral live browser preview frame, when present.
+    let browserView: ChatBrowserViewFrame?
 
     enum CodingKeys: String, CodingKey {
         case conversationID = "conversation_id"
@@ -1304,6 +1403,7 @@ struct ChatConversationMessagesResponse: Decodable {
         case latestUserProfileID = "latest_user_profile_id"
         case conversationKind = "conversation_kind"
         case thread
+        case browserView = "browser_view"
     }
 
     init(from decoder: Decoder) throws {
@@ -1321,6 +1421,7 @@ struct ChatConversationMessagesResponse: Decodable {
         )
         thread = try container.decodeIfPresent(ChatThreadSummary.self, forKey: .thread)
         shareScope = try container.decodeIfPresent(String.self, forKey: .shareScope)
+        browserView = try container.decodeIfPresent(ChatBrowserViewFrame.self, forKey: .browserView)
     }
 }
 

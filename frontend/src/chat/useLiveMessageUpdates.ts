@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { conversationStreamUrl } from './conversationStream';
+import { parseBrowserViewFrame } from './LiveBrowserView';
+import type { BrowserViewFrame } from './types';
 
 export interface LiveMessageUpdate {
   internal_id: string;
@@ -21,6 +23,8 @@ export interface UseLiveMessageUpdatesOptions {
    * or a background turn such as a delegation wake-up). `seq` is the
    * turn_started event's own seq, where a stream that follows it starts. */
   onTurnStarted?: (turn: { turnId: string; seq: number }) => void;
+  /** Latest ephemeral browser screenshot metadata for this conversation. */
+  onBrowserFrame?: (frame: BrowserViewFrame) => void;
 }
 
 /**
@@ -32,11 +36,13 @@ export function useLiveMessageUpdates({
   enabled = true,
   onMessageReceived,
   onTurnStarted,
+  onBrowserFrame,
 }: UseLiveMessageUpdatesOptions) {
   const eventSourceRef = useRef<EventSource | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const callbackRef = useRef(onMessageReceived);
   const turnStartedRef = useRef(onTurnStarted);
+  const browserFrameRef = useRef(onBrowserFrame);
   const [reconnectTrigger, setReconnectTrigger] = useState(0);
   // Highest seq this follow stream has acked for the current conversation.
   // Passed as ?ack_seq= on (re)subscribe so the hub can mark covered turns
@@ -59,6 +65,10 @@ export function useLiveMessageUpdates({
   useEffect(() => {
     turnStartedRef.current = onTurnStarted;
   }, [onTurnStarted]);
+
+  useEffect(() => {
+    browserFrameRef.current = onBrowserFrame;
+  }, [onBrowserFrame]);
 
   // Reset the acked-seq baseline when switching conversations. Keyed only on
   // conversationId (not reconnectTrigger) so a reconnect keeps the prior ack
@@ -116,7 +126,7 @@ export function useLiveMessageUpdates({
         follow: true,
         fromSeq: -1,
         ackSeq: ackedSeqRef.current,
-        eventTypes: 'message,turn_started,turn_ended',
+        eventTypes: 'message,turn_started,turn_ended,browser_frame',
       });
 
       // Create EventSource connection
@@ -217,6 +227,17 @@ export function useLiveMessageUpdates({
           callbackRef.current?.({ ...update, conversation_id: conversationId });
         } catch {
           notifyTurnEnded();
+        }
+      });
+
+      eventSource.addEventListener('browser_frame', (event) => {
+        try {
+          const parsed = parseBrowserViewFrame(JSON.parse((event as MessageEvent).data));
+          if (parsed) {
+            browserFrameRef.current?.(parsed);
+          }
+        } catch {
+          // Ignore malformed browser frame notifications.
         }
       });
 

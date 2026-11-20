@@ -170,6 +170,7 @@ final class ChatViewModel {
     var pendingConfirmations: [ChatPendingConfirmation] = []
     /// Background delegations the open conversation is waiting on.
     private(set) var pendingDelegations: [ChatPendingDelegation] = []
+    let browserLiveView: BrowserLiveViewController
     var isLoadingConversations = false
     var isLoadingMessages = false {
         // `sendDraft` refuses to send while messages load, so a follow-up steer
@@ -708,6 +709,9 @@ final class ChatViewModel {
             )
         }
         apiClient = client
+        browserLiveView = BrowserLiveViewController { path in
+            try await client.downloadAttachment(path: path).0
+        }
         syncBreadcrumb("Chat.modelLifecycle", ["event": "created", "conversation_id": conversationID ?? "none"])
         syncCoordinator = SyncCoordinator(
             authManager: authManager,
@@ -1400,6 +1404,20 @@ final class ChatViewModel {
         serverConversationProfileID = nil
         hasConversationMetadata = false
         conversationMetadataLoadFailed = false
+        browserLiveView.reset()
+    }
+
+    var isBrowserProfile: Bool {
+        if let profile = profiles.first(where: { $0.id == selectedProfileID }) {
+            return profile.hasBrowserView
+        }
+        return selectedProfileID.contains("browser")
+    }
+
+    var isBrowserActivityRunning: Bool {
+        isStreaming
+            || !knownRunningTurnIDs.isEmpty
+            || (isBrowserProfile && pendingDelegations.contains { $0.status != "completed" && $0.status != "failed" })
     }
 
     /// Load the open conversation again after the load that would have
@@ -1622,6 +1640,7 @@ final class ChatViewModel {
                 runningTurnIDs: Self.runningTurnIDs(in: response.activeTurns)
             )))
             persistedMessagesConversationID = response.messages.isEmpty ? nil : id
+            browserLiveView.apply(frame: response.browserView)
             await attachDiscoveredActiveTurns(response.activeTurns)
             errorMessage = nil
             // A prior failed load of THIS thread may have left a stale inline banner
@@ -4993,6 +5012,10 @@ final class ChatViewModel {
             // Outside the guard above: this device's own turn may have handed work
             // off, and a delivered result clears it.
             await loadPendingDelegations()
+        case .browserFrame:
+            if let frame = event.browserFrame {
+                browserLiveView.apply(frame: frame)
+            }
         case .userInput:
             // Skip a late follow-stream echo for a turn that has already ended
             // (its persisted steering row is reconciled via history), mirroring
@@ -5590,6 +5613,12 @@ final class ChatViewModel {
     }
 
     private func apply(streamEvent event: ChatStreamEvent, assistantMessageID: String) {
+        if event.type == .browserFrame {
+            if let frame = event.browserFrame {
+                browserLiveView.apply(frame: frame)
+            }
+            return
+        }
         if event.type == .userInput {
             appendUserInput(event)
             return
@@ -5672,7 +5701,7 @@ final class ChatViewModel {
             if event.status == "cancelled" && messages[index].text.isEmpty {
                 messages[index].text = "Response stopped."
             }
-        case .turnStarted, .connected, .message, .heartbeat, .streamDropped, .userInput:
+        case .turnStarted, .connected, .message, .heartbeat, .streamDropped, .userInput, .browserFrame:
             break
         }
     }

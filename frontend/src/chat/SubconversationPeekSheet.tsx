@@ -18,8 +18,10 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { type ChatControls, ChatControlsContext } from './chatControls';
+import { LiveBrowserView } from './LiveBrowserView';
 import { delegationStatusLabel, formatStartedAgo } from './PendingDelegationsChip';
 import { getProfileDisplayName } from './profileNames';
+import { useProfiles } from './profilesContext';
 import { convertSubconversationMessage } from './subconversationMessages';
 import { Thread } from './Thread';
 import { ThreadErrorBoundary } from './ThreadErrorBoundary';
@@ -87,11 +89,17 @@ export const SubconversationPeekSheet: React.FC<SubconversationPeekSheetProps> =
     seedDelegation
   );
 
+  const { profilesById } = useProfiles();
   const activeDelegation = peek.delegation ?? seedDelegation;
   const displayName = activeDelegation
     ? getProfileDisplayName(activeDelegation.target_profile_id)
     : 'Subconversation';
   const statusInfo = peekStatusLabel(activeDelegation, peek.isStreaming);
+  const isBrowserProfile = Boolean(
+    activeDelegation?.target_profile_id &&
+      (profilesById[activeDelegation.target_profile_id]?.has_browser_view ||
+        activeDelegation.target_profile_id.includes('browser'))
+  );
 
   const convertMessage = useCallback(convertSubconversationMessage, []);
 
@@ -279,6 +287,13 @@ export const SubconversationPeekSheet: React.FC<SubconversationPeekSheetProps> =
               : (activeDelegation?.request_preview ?? 'Live read-only subconversation view')}
           </SheetDescription>
         </SheetHeader>
+
+        <LiveBrowserView
+          frame={peek.browserFrame}
+          isRunning={statusInfo.tone === 'active'}
+          isBrowserProfile={isBrowserProfile}
+          compact
+        />
 
         <div className="flex flex-1 flex-col min-h-0 overflow-hidden">
           {isOpen && (

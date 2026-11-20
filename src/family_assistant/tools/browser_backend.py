@@ -380,6 +380,9 @@ class BrowserBackend(Protocol):
     def current_url(self) -> str: ...
 
     @property
+    def backend_kind(self) -> Literal["local", "remote"]: ...
+
+    @property
     def screen_width(self) -> int: ...
 
     @property
@@ -456,6 +459,10 @@ class LocalPlaywrightBackend:
     def current_url(self) -> str:
         page = self._session.page
         return page.url if page is not None else ""
+
+    @property
+    def backend_kind(self) -> Literal["local", "remote"]:
+        return "local"
 
     @property
     def screen_width(self) -> int:
@@ -691,6 +698,10 @@ class RemoteBrowserBackend:
     @property
     def current_url(self) -> str:
         return self._last_url
+
+    @property
+    def backend_kind(self) -> Literal["local", "remote"]:
+        return "remote"
 
     @property
     def autofill_enabled(self) -> bool:
@@ -1558,6 +1569,53 @@ async def get_browser_backend(exec_context: ToolExecutionContext) -> BrowserBack
         return backend
     session: BrowserSession = await get_browser_session(exec_context)
     return LocalPlaywrightBackend(session)
+
+
+async def get_existing_browser_backend(
+    exec_context: ToolExecutionContext,
+) -> BrowserBackend | None:
+    """Return the already-active backend for this context without provisioning one.
+
+    Used by live browser preview capture so a read-only screenshot hook never
+    spins up a headless Playwright process, provisions a remote browser-server
+    session, or records an extra protected-session taint read.
+    """
+    binding = await resolve_authenticated_binding(exec_context)
+    if binding is not None:
+        return binding.backend if binding.backend.session_id is not None else None
+    if _requires_authenticated_binding(exec_context):
+        return None
+    service = getattr(exec_context, "processing_service", None)
+    app_config = getattr(service, "app_config", None) if service is not None else None
+    handoff = app_config.browser_handoff_config if app_config else None
+    autofill_enabled = bool(
+        handoff
+        and exec_context.processing_profile_id in handoff.autofill_capable_profiles
+    )
+    config = _remote_enabled(exec_context)
+    if config is not None:
+        session_key = (await browser_scope_key(exec_context), autofill_enabled)
+        backend = _remote_backends.get(session_key)
+        if backend is None or backend.session_id is None:
+            return None
+        return backend
+    if autofill_enabled:
+        return None
+    session = await get_browser_session(exec_context)
+    if session.page is None:
+        return None
+    return LocalPlaywrightBackend(session)
+
+
+def infer_browser_backend_kind(
+    exec_context: ToolExecutionContext,
+) -> Literal["local", "remote"]:
+    """Best-effort backend kind when a tool already returned screenshot bytes."""
+    if authenticated_binding_for(exec_context.subconversation_id) is not None:
+        return "remote"
+    if _remote_enabled(exec_context) is not None:
+        return "remote"
+    return "local"
 
 
 async def close_browser_backend(exec_context: ToolExecutionContext) -> None:
