@@ -926,7 +926,7 @@ describe('Starting and moving threads from Home', () => {
     const picker = within(dialog).getByTestId('start-thread-profile');
     expect(
       within(picker).getByRole('option', {
-        name: 'Browser_profile (your message only)',
+        name: 'Browser (your message only)',
       })
     ).toBeInTheDocument();
     expect(within(picker).getByRole('option', { name: 'Research' })).toBeInTheDocument();
@@ -934,7 +934,7 @@ describe('Starting and moving threads from Home', () => {
 
     expect(within(dialog).queryByTestId('start-thread-with-context')).not.toBeInTheDocument();
     expect(within(dialog).getByTestId('start-thread-request-only')).toHaveTextContent(
-      "Browser_profile doesn't receive household context"
+      "Browser doesn't receive household context"
     );
     const submit = within(dialog).getByTestId('start-thread-submit');
     expect(submit).toBeDisabled();
@@ -981,7 +981,7 @@ describe('Starting and moving threads from Home', () => {
     expect(quotes).toBeEnabled();
     expect(browsing).toBeDisabled();
     expect(within(browsing).getByTestId('move-option-detail')).toHaveTextContent(
-      "Browser_profile doesn't receive household context"
+      "Browser doesn't receive household context"
     );
     expect(flights).toBeDisabled();
     expect(within(flights).getByTestId('move-option-detail')).toHaveTextContent(

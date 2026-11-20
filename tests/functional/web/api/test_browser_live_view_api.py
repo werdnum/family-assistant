@@ -161,10 +161,25 @@ def test_browser_live_view_store_lru_eviction() -> None:
         width=1280,
         height=720,
     )
-    assert int(f3.frame_id) > int(f2.frame_id) > int(f1.frame_id)
+    assert len({f1.frame_id, f2.frame_id, f3.frame_id}) == 3
     assert store.get_frame("conv-1") == f1
     assert store.get_frame("conv-2") is None
     assert store.get_frame("conv-3", "sub-3") == f3
+
+    # A fresh store (simulating a server restart) emits distinct frame IDs.
+    restarted_store = BrowserLiveViewStore(max_entries=2)
+    f_after_restart = restarted_store.set_frame(
+        conversation_id="conv-1",
+        subconversation_id=None,
+        image_bytes=PNG_BYTES_B,
+        mime_type="image/png",
+        url="https://one.example/restarted",
+        tool_name="browser_open",
+        backend_kind="local",
+        width=1024,
+        height=768,
+    )
+    assert f_after_restart.frame_id != f1.frame_id
 
 
 @pytest.mark.asyncio

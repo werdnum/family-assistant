@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import logging
+import uuid
 from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -123,6 +124,9 @@ class BrowserLiveViewStore:
         self._frames: OrderedDict[tuple[str, str | None], BrowserLiveFrame] = (
             OrderedDict()
         )
+        # Process/instance-unique prefix so frame IDs and cache-busting URLs
+        # never repeat after a server restart while clients remain open.
+        self._store_id = uuid.uuid4().hex[:8]
         self._next_frame_id = 1
 
     def set_frame(
@@ -141,7 +145,7 @@ class BrowserLiveViewStore:
     ) -> BrowserLiveFrame:
         """Store and return the latest frame for ``(conversation_id, subconversation_id)``."""
         optimized_bytes, optimized_mime = _optimize_frame_image(image_bytes, mime_type)
-        frame_id = str(self._next_frame_id)
+        frame_id = f"{self._store_id}-{self._next_frame_id}"
         self._next_frame_id += 1
         frame = BrowserLiveFrame(
             frame_id=frame_id,
