@@ -1161,6 +1161,43 @@ final class SyncCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.followHealth, .connected)
     }
 
+    func testFollowConnect401PersistingAfterHonouredRefreshBacksOffWithoutLatching() async {
+        // The edge gateway keeps answering 401 while it cannot fetch the backend's
+        // JWKS (a restart), but the ungated refresh endpoint honours the credentials.
+        seedStoredAuth()
+        let authManager = makeAuthManager()
+        let refreshRequests = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            XCTAssertEqual(request.url?.path, "/api/auth/refresh")
+            _ = refreshRequests.increment()
+            return .json(#"{"api_token":"rotated","refresh_token":"rotated-refresh","expires_in":7200}"#)
+        }
+        var delayCount = 0
+        let coordinator = SyncCoordinator(
+            authManager: authManager,
+            pathMonitor: StubPathMonitor(isSatisfied: true),
+            followReconnectInitialDelaySeconds: 60,
+            followReconnectMaxDelaySeconds: 60,
+            reconnectDelay: { _ in delayCount += 1 }
+        )
+        let delegate = RecordingSyncStreamDelegate()
+        delegate.followOpenError = ChatAPIError.server(statusCode: 401, detail: nil, retryAfter: nil)
+        delegate.followOpenErrorLimit = 3
+        delegate.hangFollowOpen = true
+        let reconnected = expectation(description: "follow stream reopened after the gateway recovers")
+        reconnected.expectedFulfillmentCount = 4
+        delegate.onFollowOpen = { reconnected.fulfill() }
+        coordinator.delegate = delegate
+
+        coordinator.startFollowStream(conversationID: "conv-1")
+        await fulfillment(of: [reconnected], timeout: 2)
+
+        XCTAssertEqual(refreshRequests.value, 3, "each rejection re-asks the refresh endpoint")
+        XCTAssertEqual(delayCount, 2, "rejections after the first back off like any other drop")
+        XCTAssertFalse(authManager.authRequired)
+        XCTAssertEqual(coordinator.followHealth, .connected)
+    }
+
     func testActivityConnect401WithSuccessfulRefreshReconnectsImmediately() async {
         seedStoredAuth()
         let authManager = makeAuthManager()

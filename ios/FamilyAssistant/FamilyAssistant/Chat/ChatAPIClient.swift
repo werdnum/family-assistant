@@ -355,7 +355,7 @@ struct ChatAPIClient {
             method: "POST"
         )
         let (data, response) = try await urlSession.dataExpectingJSON(for: request, authWallError: ChatAPIError.authWall)
-        try validateNonIdempotentResponse(
+        try await validateNonIdempotentResponse(
             response: response,
             data: data,
             capturedAuthEpoch: capturedAuthEpoch,
@@ -372,7 +372,7 @@ struct ChatAPIClient {
             method: "DELETE"
         )
         let (data, response) = try await urlSession.dataExpectingJSON(for: request, authWallError: ChatAPIError.authWall)
-        try validateNonIdempotentResponse(
+        try await validateNonIdempotentResponse(
             response: response,
             data: data,
             capturedAuthEpoch: capturedAuthEpoch,
@@ -1088,8 +1088,11 @@ struct ChatAPIClient {
         let (retryData, retryResponse) = try await urlSession.dataExpectingJSON(for: retryRequest, authWallError: ChatAPIError.authWall)
         try rejectAuthWall(response: retryResponse, data: retryData)
         if (retryResponse as? HTTPURLResponse)?.statusCode == 401 {
-            authManager.markAuthRequiredIfCurrent(capturedEpoch: capturedEpoch)
-            throw AuthError.noCredentials
+            // The refresh endpoint just honoured these credentials, so the session
+            // is not what was rejected (see `AuthManager.sessionEndedAfterRejection`).
+            throw AuthError.transient(
+                underlying: ChatAPIError.server(statusCode: 401, detail: nil, retryAfter: nil)
+            )
         }
         return (retryData, retryResponse)
     }
@@ -1123,23 +1126,29 @@ struct ChatAPIClient {
     }
 
     /// A rejected mutation must never be replayed automatically because the server
-    /// may have applied it before returning. Latch re-authentication instead so a
-    /// subsequent user action starts with fresh credentials.
+    /// may have applied it before returning. Refresh instead, so a subsequent user
+    /// action starts with fresh credentials; only a rejected refresh asks the user
+    /// to sign in again.
     private func validateNonIdempotentResponse(
         response: URLResponse,
         data: Data,
         capturedAuthEpoch: Int,
         rejectedAccessToken: String?
-    ) throws {
+    ) async throws {
         try rejectAuthWall(response: response, data: data)
         if let statusCode = (response as? HTTPURLResponse)?.statusCode,
            statusCode == 401 || statusCode == 403
         {
-            if authManager.markAuthRequiredIfCurrent(
-                capturedEpoch: capturedAuthEpoch,
+            if await authManager.sessionEndedAfterRejection(
+                ownerEpoch: capturedAuthEpoch,
                 rejectedAccessToken: rejectedAccessToken
             ) {
                 throw AuthError.noCredentials
+            }
+            if statusCode == 401 {
+                throw AuthError.transient(
+                    underlying: ChatAPIError.server(statusCode: 401, detail: nil, retryAfter: nil)
+                )
             }
         }
         try validate(response: response, data: data)

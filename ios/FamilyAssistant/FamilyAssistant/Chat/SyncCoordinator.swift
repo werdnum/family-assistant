@@ -597,12 +597,13 @@ final class SyncCoordinator {
                     if case ChatAPIError.server(let statusCode, _, _) = error, statusCode == 410 {
                         self.delegate?.followBufferRotated(generation: generation)
                     }
-                    // A response-time 401/403 on connect is a terminal auth failure,
-                    // not an ordinary transient drop: replaying the rejected token
-                    // would spin the backoff forever. Force one coalesced refresh; if
-                    // it succeeds retry the connect at once (skip the backoff sleep),
-                    // otherwise the delegate has latched `authRequired` and the loop
-                    // must stop.
+                    // A response-time 401/403 on connect: force one coalesced
+                    // refresh; if it succeeds retry the connect at once (skip the
+                    // backoff sleep), otherwise the delegate has latched
+                    // `authRequired` and the loop must stop. A rejection that
+                    // survives a successful refresh is not the session's (see
+                    // `AuthManager.sessionEndedAfterRejection`), so it backs off like
+                    // any other drop, re-asking the refresh endpoint each time.
                     if case ChatAPIError.server(let statusCode, _, _) = error,
                        statusCode == 401 || statusCode == 403 {
                         if !authRefreshAlreadyAttempted {
@@ -624,7 +625,10 @@ final class SyncCoordinator {
                             } catch {
                                 streamError = error
                             }
-                        } else {
+                        } else if await self.authManager.sessionEndedAfterRejection(
+                            ownerEpoch: loopEpoch,
+                            rejectedAccessToken: nil
+                        ) {
                             self.authManager.markAuthRequiredIfCurrent(capturedEpoch: loopEpoch)
                             deliberateStop = true
                         }
@@ -756,11 +760,10 @@ final class SyncCoordinator {
                     }
                 } catch {
                     streamError = error
-                    // A response-time 401/403 on connect is a terminal auth failure
-                    // (see the follow loop): force one coalesced refresh and retry at
-                    // once on success, otherwise stop — the delegate has latched
-                    // `authRequired` and replaying the rejected token would spin the
-                    // backoff forever.
+                    // A response-time 401/403 on connect (see the follow loop): force
+                    // one coalesced refresh and retry at once on success, otherwise
+                    // stop — the delegate has latched `authRequired`. A rejection that
+                    // survives a successful refresh backs off like any other drop.
                     if case ChatAPIError.server(let statusCode, _, _) = error,
                        statusCode == 401 || statusCode == 403 {
                         if !authRefreshAlreadyAttempted {
@@ -790,7 +793,10 @@ final class SyncCoordinator {
                                 streamError = error
                                 self.apply(.activityDropped(generation: generation, cleanEOF: false))
                             }
-                        } else {
+                        } else if await self.authManager.sessionEndedAfterRejection(
+                            ownerEpoch: loopEpoch,
+                            rejectedAccessToken: nil
+                        ) {
                             self.authManager.markAuthRequiredIfCurrent(capturedEpoch: loopEpoch)
                             self.apply(.activityDropped(generation: generation, cleanEOF: false))
                             self.reportStreamDisconnect(

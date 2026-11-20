@@ -73,6 +73,28 @@ final class AuthManagerTests: XCTestCase {
         }
     }
 
+    func testWebBridgeRejectedByGatewayWithHonouredRefreshIsTransient() async {
+        // While the backend restarts the edge gateway cannot fetch its JWKS and
+        // answers 401; the ungated refresh endpoint still honours the credentials.
+        seedStoredAuth(apiToken: "valid", refreshToken: "refresh", expiresIn: 7200)
+        let auth = makeAuthManager()
+        AuthBackendURLProtocol.respond { request in
+            if request.url?.path == "/api/auth/refresh" {
+                return .json(#"{"api_token":"rotated","refresh_token":"refresh","expires_in":7200}"#)
+            }
+            return .json("Jwks remote fetch is failed", statusCode: 401, headers: ["Content-Type": "text/plain"])
+        }
+        do {
+            try await auth.prepareWebSession()
+            XCTFail("Rejected bridge must fail")
+        } catch AuthError.transient {
+            XCTAssertFalse(auth.authRequired)
+            XCTAssertEqual(KeychainHelper.readString(key: "fa_api_token"), "rotated")
+        } catch {
+            XCTFail("Expected a transient failure, got \(error)")
+        }
+    }
+
     #if os(iOS)
     func testSessionBridgeInstallsBothJWTAndApplicationCookies() async throws {
         let auth = makeAuthManager()
@@ -639,6 +661,25 @@ final class AuthManagerTests: XCTestCase {
             authManager.authRequired,
             "authRequired must be latched so in-place sign-in is presented"
         )
+    }
+
+    func testBootstrapKeepsSessionWhenGatewayRejectsBridgeButRefreshIsHonoured() async {
+        seedStoredAuth(apiToken: "valid-api-token", refreshToken: "refresh-token", expiresIn: 7200)
+        let authManager = makeAuthManager()
+        AuthBackendURLProtocol.respond { request in
+            if request.url?.path == "/api/auth/refresh" {
+                return .json(#"{"api_token":"rotated","refresh_token":"refresh-token","expires_in":7200}"#)
+            }
+            XCTAssertEqual(request.url?.path, "/api/auth/token-session")
+            return .json("Jwks remote fetch is failed", statusCode: 401, headers: ["Content-Type": "text/plain"])
+        }
+
+        await authManager.bootstrapSession()
+
+        XCTAssertTrue(authManager.isAuthenticated)
+        XCTAssertFalse(authManager.authRequired)
+        XCTAssertEqual(KeychainHelper.readString(key: "fa_api_token"), "rotated")
+        XCTAssertEqual(KeychainHelper.readString(key: "fa_refresh_token"), "refresh-token")
     }
 
     func testBootstrapSessionCompletesNormallyWhenSessionBridgeSucceeds() async {

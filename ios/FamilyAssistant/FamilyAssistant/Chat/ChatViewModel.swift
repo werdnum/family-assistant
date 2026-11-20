@@ -2850,8 +2850,10 @@ final class ChatViewModel {
             )
         } catch let ChatAPIError.server(statusCode, _, _) where statusCode == 401 || statusCode == 403 {
             // First attempt got a 401/403. Try one forced refresh; if it succeeds,
-            // retry once. If the refresh fails or the retry also 401/403s, the error
-            // bubbles up so the existing catch in runSendTurn latches signInRequired.
+            // retry once. A rejected refresh is terminal (it latched `authRequired`);
+            // a retry that is rejected again is not, because the refresh endpoint
+            // just honoured the credentials (see
+            // `AuthManager.sessionEndedAfterRejection`).
             do {
                 try await authManager.refreshIfNeeded(force: true, ownerEpoch: ownerEpoch)
             } catch {
@@ -2862,10 +2864,9 @@ final class ChatViewModel {
                 try Task.checkCancellation()
                 switch error {
                 case AuthError.authRejected, AuthError.noCredentials:
-                    // Terminal rejection (or superseded session): propagate as the
-                    // original 401/403 so runSendTurn's catch latches signInRequired
-                    // (epoch-fenced; a no-op for a stale send).
-                    throw ChatAPIError.server(statusCode: statusCode, detail: nil, retryAfter: nil)
+                    // Terminal rejection (or superseded session): runSendTurn's catch
+                    // finalizes the bubble without a Retry affordance.
+                    throw AuthError.noCredentials
                 default:
                     // Transient refresh failure: surface it via the normal path.
                     throw error
@@ -3337,19 +3338,10 @@ final class ChatViewModel {
                     conversationID: id, turnID: turnID, to: previousSummary
                 )
             }
-            // A 401/403 on turn-start (revoked token) routes through the central
-            // signInRequired path: latch it via `markAuthRequiredIfCurrent` so the
-            // toolbar's authRequired affordance drives re-auth. Tagging the error as
-            // `AuthError.noCredentials` also makes `presentInlineSendFailure` suppress
-            // its inline retry, which would just re-POST into the same rejection
-            // (finding 7).
-            let underlyingError: Error
-            if case ChatAPIError.server(let statusCode, _, _) = error, statusCode == 401 || statusCode == 403 {
-                authManager.markAuthRequiredIfCurrent(capturedEpoch: startEpoch)
-                underlyingError = AuthError.noCredentials
-            } else {
-                underlyingError = error
-            }
+            // A terminal auth failure on turn-start has already latched
+            // `authRequired`; `presentInlineSendFailure` suppresses its inline retry,
+            // which would just re-POST into the same rejection (finding 7). A 401/403
+            // that survived a successful refresh keeps its Retry: the session is fine.
             // Retry re-POSTs the SAME turn id, which cannot double-send whether or not
             // the server got it (it dedupes on the id). Surface inline at the point
             // of action with that retry affordance, not a modal.
@@ -3358,7 +3350,7 @@ final class ChatViewModel {
                 session: session,
                 postAccepted: startSucceeded,
                 lastAppliedSeq: lastSeq,
-                underlyingError: underlyingError
+                underlyingError: error
             )
         }
         finishStreaming(streamToken)

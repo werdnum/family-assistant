@@ -336,7 +336,12 @@ final class AuthManager {
         do {
             try await establishSession(apiToken: activeToken)
         } catch AuthError.authRejected {
-            if isCurrentAuthEpoch(epoch) { clearLocalAuthState() }
+            guard isCurrentAuthEpoch(epoch) else { return }
+            if await sessionEndedAfterRejection(ownerEpoch: epoch, rejectedAccessToken: activeToken) {
+                if isCurrentAuthEpoch(epoch) { clearLocalAuthState() }
+            } else {
+                logger.warning("Session bridge rejected, but the refresh endpoint still honours the credentials; keeping local auth state")
+            }
         } catch is CancellationError {
             return
         } catch {
@@ -685,6 +690,31 @@ final class AuthManager {
         }
     }
 
+    /// Whether a 401/403 on a gateway-gated request means the session is over.
+    ///
+    /// A rejection alone proves nothing: the edge gateway verifies JWTs against
+    /// the backend's JWKS and answers 401 whenever it cannot fetch it, which is
+    /// every request while the backend restarts. Only the refresh endpoint, which
+    /// the gateway does not gate, can say the credentials are dead, so this forces
+    /// one coalesced refresh. A rejected refresh latches ``authRequired`` inside
+    /// ``performRefresh(ownerEpoch:)``; a successful or transiently failed one
+    /// means the caller should report a transient failure, not ask for sign-in.
+    @MainActor
+    func sessionEndedAfterRejection(ownerEpoch: Int, rejectedAccessToken: String?) async -> Bool {
+        do {
+            try await refreshIfNeeded(
+                force: true,
+                ownerEpoch: ownerEpoch,
+                rejectedAccessToken: rejectedAccessToken
+            )
+            return false
+        } catch AuthError.authRejected, AuthError.noCredentials {
+            return true
+        } catch {
+            return false
+        }
+    }
+
     // MARK: - Session Establishment
 
     /// Renew embedded-browser credentials only from the native token flow.
@@ -696,8 +726,10 @@ final class AuthManager {
         do {
             try await establishSession(apiToken: token)
         } catch AuthError.authRejected {
-            if isCurrentAuthEpoch(epoch) { markAuthRequired() }
-            throw AuthError.authRejected
+            if await sessionEndedAfterRejection(ownerEpoch: epoch, rejectedAccessToken: token) {
+                throw AuthError.authRejected
+            }
+            throw AuthError.transient(underlying: AuthError.authRejected)
         }
         guard isCurrentAuthEpoch(epoch) else { throw AuthError.noCredentials }
     }
