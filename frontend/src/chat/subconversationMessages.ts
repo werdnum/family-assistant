@@ -1,6 +1,6 @@
 import { LOADING_MARKER } from './constants';
 import { interleaveTextAndToolCalls, isToolCallDisplay } from './orderedParts';
-import { isTerminalToolOutcome, type ToolOutcome } from './toolOutcome';
+import { isTerminalToolOutcome, type TerminalToolOutcome } from './toolOutcome';
 import type {
   ActiveTurnInfo,
   BackendAttachment,
@@ -31,7 +31,7 @@ export interface LiveToolCall {
   args: Record<string, unknown>;
   argsText: string;
   result?: string;
-  outcome?: ToolOutcome;
+  outcome?: TerminalToolOutcome;
   display?: MessageContent['display'];
   attachments?: BackendAttachment[];
   textOffset: number;
@@ -66,8 +66,8 @@ function parseToolArguments(argumentSource: unknown): Record<string, unknown> {
 
 function normalizeAttachment(att: BackendAttachment): BackendAttachment {
   const url =
-    att.content_url ||
-    att.url ||
+    (typeof att.content_url === 'string' && att.content_url) ||
+    (typeof att.url === 'string' && att.url) ||
     (att.attachment_id ? `/api/attachments/${att.attachment_id}` : undefined);
   return {
     ...att,
@@ -119,7 +119,7 @@ export function buildSubconversationMessages(
   replayingTurnIds: Set<string>
 ): Message[] {
   const toolResponses = new Map<string, string>();
-  const toolOutcomes = new Map<string, ToolOutcome>();
+  const toolOutcomes = new Map<string, TerminalToolOutcome>();
   const toolAttachments = new Map<string, BackendAttachment[]>();
 
   for (const msg of rows) {
@@ -261,9 +261,7 @@ export function buildSubconversationMessages(
           id: normalized.attachment_id || `att_${userAttachments.length}`,
           type: attType,
           name: normalized.name || 'Attachment',
-          contentType: mimeType || undefined,
           content: normalized.content_url,
-          status: { type: 'complete' },
         });
       }
     }

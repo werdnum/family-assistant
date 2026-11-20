@@ -8,7 +8,7 @@ import {
   type LiveToolCall,
   type SubconversationMessagesResponse,
 } from './subconversationMessages';
-import { isTerminalToolOutcome, type ToolOutcome } from './toolOutcome';
+import { isTerminalToolOutcome, type TerminalToolOutcome } from './toolOutcome';
 import type {
   ActiveTurnInfo,
   BackendAttachment,
@@ -367,7 +367,7 @@ export function useSubconversationPeek(
         const callId = data.tool_call_id;
         const resultText =
           typeof data.result === 'string' ? data.result : JSON.stringify(data.result ?? '');
-        const outcome: ToolOutcome = isTerminalToolOutcome(data.outcome)
+        const outcome: TerminalToolOutcome = isTerminalToolOutcome(data.outcome)
           ? data.outcome
           : 'succeeded';
         const attachments = Array.isArray(data.attachments)
@@ -715,14 +715,15 @@ export function useSubconversationPeek(
       return;
     }
     const oldest = persistedRowsRef.current[0];
-    if (!oldest?.internal_id) {
+    const beforeId = oldest?.internal_id !== undefined ? Number(oldest.internal_id) : Number.NaN;
+    if (!Number.isFinite(beforeId)) {
       return;
     }
     setOlderMessagesStatus('loading');
     const capturedKey = `${conversationId}::${subconversationId}`;
     void fetch(
       subconversationMessagesUrl(conversationId, subconversationId, {
-        beforeId: oldest.internal_id,
+        beforeId,
       })
     )
       .then(async (response) => {

@@ -99,7 +99,6 @@ export const SubconversationPeekSheet: React.FC<SubconversationPeekSheetProps> =
     messages: peek.messages,
     isRunning: peek.isStreaming,
     isSendDisabled: true,
-    // @ts-expect-error - assistant-ui external store signature mismatch
     onNew: noopOnNew,
     // @ts-expect-error - assistant-ui convertMessage return type mismatch
     convertMessage,
