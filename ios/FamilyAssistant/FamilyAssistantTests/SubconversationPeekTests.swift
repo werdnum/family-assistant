@@ -262,4 +262,149 @@ final class SubconversationPeekTests: XCTestCase {
         XCTAssertEqual(vm.messages.last?.text, "The cron job was paused.")
         XCTAssertGreaterThanOrEqual(messagesFetches, 2)
     }
+
+    func testPeekRetriesTerminalSnapshotAfterTransientFailure() async throws {
+        let streamController = HangingStream()
+        var messagesFetches = 0
+
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if path == "/api/v1/chat/conversations/conv-retry/subconversations/sub-retry/messages" {
+                messagesFetches += 1
+                if messagesFetches == 1 {
+                    return .json(
+                        """
+                        {
+                          "conversation_id": "conv-retry",
+                          "subconversation_id": "sub-retry",
+                          "delegation": {
+                            "delegation_id": "deleg-retry",
+                            "target_profile_id": "engineer",
+                            "status": "running",
+                            "request_preview": "Check retry",
+                            "created_at": "2026-11-20T09:00:00Z",
+                            "started_at": "2026-11-20T09:00:02Z",
+                            "completed_at": null,
+                            "cancel_requested": false,
+                            "children_total": 0,
+                            "children_finished": 0,
+                            "subconversation_id": "sub-retry"
+                          },
+                          "delegation_error": null,
+                          "request_text": "Check retry",
+                          "child_delegations": [],
+                          "messages": [],
+                          "count": 0,
+                          "total_messages": 0,
+                          "has_more_before": false,
+                          "has_more_after": false,
+                          "active_turns": [
+                            {
+                              "turn_id": "sub-turn-retry",
+                              "started_at": "2026-11-20T09:00:02Z",
+                              "first_seq": 0,
+                              "latest_seq": 1,
+                              "status": "running"
+                            }
+                          ]
+                        }
+                        """
+                    )
+                }
+                if messagesFetches == 2 {
+                    return .json(#"{"detail":"temporary error"}"#, statusCode: 503)
+                }
+                return .json(
+                    """
+                    {
+                      "conversation_id": "conv-retry",
+                      "subconversation_id": "sub-retry",
+                      "delegation": {
+                        "delegation_id": "deleg-retry",
+                        "target_profile_id": "engineer",
+                        "status": "completed",
+                        "request_preview": "Check retry",
+                        "created_at": "2026-11-20T09:00:00Z",
+                        "started_at": "2026-11-20T09:00:02Z",
+                        "completed_at": "2026-11-20T09:00:20Z",
+                        "cancel_requested": false,
+                        "children_total": 0,
+                        "children_finished": 0,
+                        "subconversation_id": "sub-retry"
+                      },
+                      "delegation_error": null,
+                      "request_text": "Check retry",
+                      "child_delegations": [],
+                      "messages": [
+                        {
+                          "internal_id": 21,
+                          "role": "assistant",
+                          "content": "Recovered after transient failure.",
+                          "timestamp": "2026-11-20T09:00:20Z",
+                          "turn_id": "sub-turn-retry",
+                          "processing_profile_id": "engineer"
+                        }
+                      ],
+                      "count": 1,
+                      "total_messages": 1,
+                      "has_more_before": false,
+                      "has_more_after": false,
+                      "active_turns": []
+                    }
+                    """
+                )
+            }
+
+            if path == "/api/v1/chat/conversations/conv-retry/subconversations/sub-retry/stream" {
+                // Keep stream open after turn_ended to verify the client exits
+                // the stream and retries the snapshot instead of waiting forever.
+                return .hangingStream(
+                    """
+                    event: heartbeat
+                    data: {}
+
+                    event: text
+                    data: {"seq":1,"turn_id":"sub-turn-retry","content":"Recovered after transient failure."}
+
+                    event: turn_ended
+                    data: {"seq":2,"turn_id":"sub-turn-retry","status":"complete"}
+
+                    """,
+                    controller: streamController
+                )
+            }
+
+            return .json("{}", statusCode: 404)
+        }
+
+        let auth = makeAuthManager()
+        let client = ChatAPIClient(authManager: auth)
+        let seed = ChatPendingDelegation(
+            delegationID: "deleg-retry",
+            targetProfileID: "engineer",
+            status: "running",
+            requestPreview: "Check retry",
+            createdAt: Date(),
+            subconversationID: "sub-retry"
+        )
+        let vm = SubconversationPeekViewModel(
+            conversationID: "conv-retry",
+            subconversationID: "sub-retry",
+            seedDelegation: seed,
+            authManager: auth,
+            apiClient: client,
+            reconnectBaseDelaySeconds: 0.01
+        )
+
+        vm.start()
+        defer {
+            vm.stop()
+            streamController.finish()
+        }
+
+        try await waitUntil { vm.isTerminal && !vm.isListening }
+        XCTAssertEqual(vm.statusLabel, "Completed")
+        XCTAssertEqual(vm.messages.last?.text, "Recovered after transient failure.")
+        XCTAssertEqual(messagesFetches, 3)
+    }
 }

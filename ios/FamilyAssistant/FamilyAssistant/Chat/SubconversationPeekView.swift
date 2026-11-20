@@ -37,11 +37,13 @@ final class SubconversationPeekViewModel {
     @ObservationIgnored private let authManager: AuthManager
     @ObservationIgnored private let apiClient: ChatAPIClient
     @ObservationIgnored private let errorReporter: ErrorReporter
+    @ObservationIgnored private let reconnectBaseDelaySeconds: Double
     @ObservationIgnored private var persistedRows: [ChatBackendMessage] = []
     @ObservationIgnored private var activeTurns: [ChatActiveTurnInfo] = []
     @ObservationIgnored private var replayingTurnID: String?
     @ObservationIgnored private var liveMessage: ChatMessage?
     @ObservationIgnored private var pendingText = ""
+    @ObservationIgnored private var needsSnapshotReconcile = false
     @ObservationIgnored private var streamTask: Task<Void, Never>?
     @ObservationIgnored private var flushTask: Task<Void, Never>?
     @ObservationIgnored private var pollTask: Task<Void, Never>?
@@ -54,7 +56,8 @@ final class SubconversationPeekViewModel {
         authManager: AuthManager,
         apiClient: ChatAPIClient,
         modelTierLabels: [String: String] = [:],
-        errorReporter: ErrorReporter = .shared
+        errorReporter: ErrorReporter = .shared,
+        reconnectBaseDelaySeconds: Double = 1.0
     ) {
         self.conversationID = conversationID
         self.subconversationID = subconversationID
@@ -64,6 +67,7 @@ final class SubconversationPeekViewModel {
         self.apiClient = apiClient
         self.modelTierLabels = modelTierLabels
         self.errorReporter = errorReporter
+        self.reconnectBaseDelaySeconds = reconnectBaseDelaySeconds
     }
 
     deinit {
@@ -208,11 +212,30 @@ final class SubconversationPeekViewModel {
         }
 
         isListening = true
+        needsSnapshotReconcile = false
         updateIdlePollTask(generation: generation)
         var attempt = 0
 
         while generation == runGeneration, !Task.isCancelled, attempt <= Self.maxReconnectAttempts {
             do {
+                if needsSnapshotReconcile {
+                    let reconciled = try await apiClient.getSubconversationMessages(
+                        conversationID: conversationID,
+                        subconversationID: subconversationID,
+                        limit: Self.pageLimit
+                    )
+                    guard generation == runGeneration, !Task.isCancelled else { return }
+                    needsSnapshotReconcile = false
+                    clearLiveBubble()
+                    replayingTurnID = nil
+                    apply(snapshot: reconciled)
+                    updateIdlePollTask(generation: generation)
+                    if !shouldStayConnected(snapshot: reconciled) {
+                        break
+                    }
+                    attempt = 0
+                }
+
                 let stream = try await apiClient.streamSubconversation(
                     conversationID: conversationID,
                     subconversationID: subconversationID,
@@ -240,35 +263,49 @@ final class SubconversationPeekViewModel {
                     }
                 }
 
-                if receivedRealEvent {
+                if receivedRealEvent && !needsSnapshotReconcile {
                     attempt = 0
                 }
                 guard generation == runGeneration, !Task.isCancelled else { return }
 
-                if stopAfterStream && isTerminal {
+                if stopAfterStream && !needsSnapshotReconcile && isTerminal {
                     break
                 }
 
+                if needsSnapshotReconcile {
+                    attempt += 1
+                    if attempt > Self.maxReconnectAttempts {
+                        break
+                    }
+                    let delaySeconds = min(reconnectBaseDelaySeconds * pow(2.0, Double(attempt - 1)), 10.0)
+                    try? await Task.sleep(for: .seconds(delaySeconds))
+                    continue
+                }
+
                 // Reconcile state after stream EOF or stream_dropped before deciding to reconnect.
-                if let refreshed = try? await apiClient.getSubconversationMessages(
-                    conversationID: conversationID,
-                    subconversationID: subconversationID,
-                    limit: Self.pageLimit
-                ) {
+                do {
+                    let refreshed = try await apiClient.getSubconversationMessages(
+                        conversationID: conversationID,
+                        subconversationID: subconversationID,
+                        limit: Self.pageLimit
+                    )
                     guard generation == runGeneration, !Task.isCancelled else { return }
                     apply(snapshot: refreshed)
                     if !shouldStayConnected(snapshot: refreshed) {
                         clearLiveBubble()
+                        replayingTurnID = nil
                         rebuildMessages()
                         break
                     }
+                } catch {
+                    needsSnapshotReconcile = true
                 }
 
                 attempt += 1
                 if attempt > Self.maxReconnectAttempts {
                     break
                 }
-                let delaySeconds = min(pow(2.0, Double(attempt - 1)), 10.0)
+                let delaySeconds = min(reconnectBaseDelaySeconds * pow(2.0, Double(attempt - 1)), 10.0)
                 try? await Task.sleep(for: .seconds(delaySeconds))
             } catch let ChatAPIError.server(statusCode, _, _) where statusCode == 410 {
                 guard generation == runGeneration, !Task.isCancelled else { return }
@@ -287,6 +324,8 @@ final class SubconversationPeekViewModel {
                         rebuildMessages()
                         break
                     }
+                } else {
+                    needsSnapshotReconcile = true
                 }
                 nextFromSeq = -1
                 attempt = 0
@@ -296,7 +335,7 @@ final class SubconversationPeekViewModel {
                 if attempt > Self.maxReconnectAttempts {
                     break
                 }
-                let delaySeconds = min(pow(2.0, Double(attempt - 1)), 10.0)
+                let delaySeconds = min(reconnectBaseDelaySeconds * pow(2.0, Double(attempt - 1)), 10.0)
                 try? await Task.sleep(for: .seconds(delaySeconds))
             }
         }
@@ -376,7 +415,11 @@ final class SubconversationPeekViewModel {
             if event.attachmentSource == .response {
                 ensureLiveBubble(turnID: event.turnID)
                 if var live = liveMessage {
-                    live.attachments.append(contentsOf: event.attachments)
+                    let existingIDs = Set(live.attachments.map(\.id))
+                    let fresh = event.attachments.filter { !existingIDs.contains($0.id) }
+                    if !fresh.isEmpty {
+                        live.attachments.append(contentsOf: fresh)
+                    }
                     live.isLoading = false
                     liveMessage = live
                     rebuildMessages()
@@ -406,32 +449,46 @@ final class SubconversationPeekViewModel {
             return true
         case .turnEnded:
             flushPendingTextNow()
-            clearLiveBubble()
-            replayingTurnID = nil
-            if let refreshed = try? await apiClient.getSubconversationMessages(
-                conversationID: conversationID,
-                subconversationID: subconversationID,
-                limit: Self.pageLimit
-            ) {
+            do {
+                let refreshed = try await apiClient.getSubconversationMessages(
+                    conversationID: conversationID,
+                    subconversationID: subconversationID,
+                    limit: Self.pageLimit
+                )
                 guard generation == runGeneration else { return false }
+                clearLiveBubble()
+                replayingTurnID = nil
                 apply(snapshot: refreshed)
                 updateIdlePollTask(generation: generation)
                 return shouldStayConnected(snapshot: refreshed)
+            } catch {
+                // Force bounded snapshot reconciliation instead of staying idle
+                // on a healthy follow stream with stale running state.
+                if var live = liveMessage {
+                    live.isLoading = false
+                    live.status = .complete
+                    liveMessage = live
+                    rebuildMessages()
+                }
+                isStreaming = false
+                needsSnapshotReconcile = true
+                return false
             }
-            rebuildMessages()
-            return true
         case .message:
-            if let refreshed = try? await apiClient.getSubconversationMessages(
-                conversationID: conversationID,
-                subconversationID: subconversationID,
-                limit: Self.pageLimit
-            ) {
+            do {
+                let refreshed = try await apiClient.getSubconversationMessages(
+                    conversationID: conversationID,
+                    subconversationID: subconversationID,
+                    limit: Self.pageLimit
+                )
                 guard generation == runGeneration else { return false }
                 apply(snapshot: refreshed)
                 updateIdlePollTask(generation: generation)
                 return shouldStayConnected(snapshot: refreshed)
+            } catch {
+                needsSnapshotReconcile = true
+                return false
             }
-            return true
         }
     }
 

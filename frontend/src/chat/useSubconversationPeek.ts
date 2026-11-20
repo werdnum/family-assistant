@@ -22,7 +22,11 @@ const POLLABLE_IDLE_STATUSES = new Set(['queued', 'awaiting_remote', 'awaiting_c
 const PAGE_LIMIT = 50;
 const STATUS_POLL_MS = 15000;
 const MAX_RECONNECT_ATTEMPTS = 5;
-const BASE_RECONNECT_DELAY_MS = 1000;
+
+export const subconversationPeekTuning = {
+  baseReconnectDelayMs: 1000,
+  maxReconnectDelayMs: 10000,
+};
 
 export interface SubconversationPeekState {
   messages: Message[];
@@ -226,6 +230,8 @@ export function useSubconversationPeek(
       });
     };
 
+    let needsSnapshotReconcile = false;
+
     const handleFrame = async (
       eventType: string,
       data: Record<string, unknown>,
@@ -251,8 +257,6 @@ export function useSubconversationPeek(
       }
 
       if (eventType === 'turn_ended') {
-        setLiveTurn(null);
-        setReplayingTurnId(null);
         try {
           const refreshed = await fetchSnapshot(
             conversationId,
@@ -260,6 +264,8 @@ export function useSubconversationPeek(
             controller.signal
           );
           if (refreshed && isStillActive()) {
+            setLiveTurn(null);
+            setReplayingTurnId(null);
             applySnapshot(refreshed);
             const hasRunning = (refreshed.active_turns ?? []).some((t) => t.status === 'running');
             const isTerminal =
@@ -269,10 +275,13 @@ export function useSubconversationPeek(
               return 'stop';
             }
           }
+          return 'continue';
         } catch {
-          // Ignore refresh failure if aborted or transient; next reconnect reconciles.
+          // Force bounded snapshot reconciliation instead of staying idle on a
+          // healthy follow stream with stale running state.
+          needsSnapshotReconcile = true;
+          return 'stop';
         }
-        return 'continue';
       }
 
       if (eventType === 'message' && typeof data.reason === 'string') {
@@ -292,10 +301,11 @@ export function useSubconversationPeek(
               return 'stop';
             }
           }
+          return 'continue';
         } catch {
-          // Ignore transient refresh failure.
+          needsSnapshotReconcile = true;
+          return 'stop';
         }
-        return 'continue';
       }
 
       // Content / tool / attachment / error frames all update the active live turn.
@@ -378,8 +388,25 @@ export function useSubconversationPeek(
         return 'continue';
       }
 
-      if (data.attachment && typeof data.attachment === 'object') {
-        const attachment = data.attachment as BackendAttachment;
+      if (eventType === 'attachment' || data.type === 'attachment') {
+        // Ignore trigger uploads republished onto the stream; only render
+        // assistant/tool response attachments live.
+        if (data.source === 'trigger') {
+          return 'continue';
+        }
+        const attachmentId =
+          typeof data.attachment_id === 'string' ? data.attachment_id : undefined;
+        if (!attachmentId) {
+          return 'continue';
+        }
+        const attachment: BackendAttachment = {
+          attachment_id: attachmentId,
+          content_url: typeof data.content_url === 'string' ? data.content_url : undefined,
+          mime_type: typeof data.mime_type === 'string' ? data.mime_type : undefined,
+          description: typeof data.description === 'string' ? data.description : undefined,
+          size: typeof data.size === 'number' ? data.size : undefined,
+          name: typeof data.name === 'string' ? data.name : undefined,
+        };
         setLiveTurn((prev) => {
           const base: LiveSubconversationTurn = prev ?? {
             turnId: frameTurnId ?? `live_${Date.now()}`,
@@ -389,6 +416,9 @@ export function useSubconversationPeek(
             profileId: targetProfileIdRef.current,
             startedAt: new Date(),
           };
+          if (base.attachments.some((existing) => existing.attachment_id === attachmentId)) {
+            return base;
+          }
           return { ...base, attachments: [...base.attachments, attachment] };
         });
         return 'continue';
@@ -448,17 +478,64 @@ export function useSubconversationPeek(
       setIsListening(true);
       let attempt = 0;
 
+      const waitBackoff = async (retryNumber: number) => {
+        const delay = Math.min(
+          subconversationPeekTuning.baseReconnectDelayMs * 2 ** (retryNumber - 1),
+          subconversationPeekTuning.maxReconnectDelayMs
+        );
+        await new Promise<void>((resolve) => {
+          const timer = window.setTimeout(resolve, delay);
+          controller.signal.addEventListener(
+            'abort',
+            () => {
+              window.clearTimeout(timer);
+              resolve();
+            },
+            { once: true }
+          );
+        });
+      };
+
       while (isStillActive() && attempt <= MAX_RECONNECT_ATTEMPTS) {
         try {
-          const streamResponse = await fetch(
-            subconversationStreamUrl(conversationId, subconversationId, nextFromSeq),
-            {
-              headers: { Accept: 'text/event-stream' },
-              signal: controller.signal,
+          if (needsSnapshotReconcile) {
+            const check = await fetchSnapshot(conversationId, subconversationId, controller.signal);
+            if (!check || !isStillActive()) {
+              break;
             }
-          );
+            needsSnapshotReconcile = false;
+            setLiveTurn(null);
+            setReplayingTurnId(null);
+            applySnapshot(check);
+            const stillRunning = (check.active_turns ?? []).some((t) => t.status === 'running');
+            const nowTerminal =
+              check.delegation !== null &&
+              TERMINAL_DELEGATION_STATUSES.has(check.delegation.status);
+            if (!stillRunning && nowTerminal) {
+              break;
+            }
+            attempt = 0;
+          }
+
+          const streamAbort = new AbortController();
+          const onOuterAbort = () => streamAbort.abort();
+          controller.signal.addEventListener('abort', onOuterAbort, { once: true });
+          let streamResponse: Response;
+          try {
+            streamResponse = await fetch(
+              subconversationStreamUrl(conversationId, subconversationId, nextFromSeq),
+              {
+                headers: { Accept: 'text/event-stream' },
+                signal: streamAbort.signal,
+              }
+            );
+          } catch (err) {
+            controller.signal.removeEventListener('abort', onOuterAbort);
+            throw err;
+          }
 
           if (streamResponse.status === 410) {
+            controller.signal.removeEventListener('abort', onOuterAbort);
             // Buffer rotated past requested seq: reload persisted history (keeping
             // all persisted rows) and switch to live tailing.
             setReplayingTurnId(null);
@@ -485,6 +562,7 @@ export function useSubconversationPeek(
           }
 
           if (!streamResponse.ok || !streamResponse.body) {
+            controller.signal.removeEventListener('abort', onOuterAbort);
             throw new Error(`Subconversation stream failed (${streamResponse.status})`);
           }
 
@@ -494,49 +572,59 @@ export function useSubconversationPeek(
           let shouldStop = false;
           let receivedRealEvent = false;
 
-          while (isStillActive()) {
-            const { value, done } = await reader.read();
-            if (done) {
-              break;
-            }
-            buffer += decoder.decode(value, { stream: true });
-            const blocks = buffer.split(/\r?\n\r?\n/);
-            buffer = blocks.pop() ?? '';
-            for (const block of blocks) {
-              if (!block.trim()) {
-                continue;
+          try {
+            while (isStillActive()) {
+              const { value, done } = await reader.read();
+              if (done) {
+                break;
               }
-              const parsed = parseSseFrame(block);
-              if (!parsed) {
-                continue;
+              buffer += decoder.decode(value, { stream: true });
+              const blocks = buffer.split(/\r?\n\r?\n/);
+              buffer = blocks.pop() ?? '';
+              for (const block of blocks) {
+                if (!block.trim()) {
+                  continue;
+                }
+                const parsed = parseSseFrame(block);
+                if (!parsed) {
+                  continue;
+                }
+                if (parsed.eventType !== 'heartbeat' && parsed.eventType !== 'stream_dropped') {
+                  receivedRealEvent = true;
+                }
+                const action = await handleFrame(parsed.eventType, parsed.data, (seq) => {
+                  nextFromSeq = seq + 1;
+                });
+                if (action === 'stop') {
+                  shouldStop = true;
+                  break;
+                }
               }
-              if (parsed.eventType !== 'heartbeat' && parsed.eventType !== 'stream_dropped') {
-                receivedRealEvent = true;
-              }
-              const action = await handleFrame(parsed.eventType, parsed.data, (seq) => {
-                nextFromSeq = seq + 1;
-              });
-              if (action === 'stop') {
-                shouldStop = true;
+              if (shouldStop) {
+                streamAbort.abort();
+                void reader.cancel().catch(() => {});
                 break;
               }
             }
-            if (shouldStop) {
-              try {
-                await reader.cancel();
-              } catch {
-                // Reader may already be closed.
-              }
-              break;
-            }
+          } finally {
+            controller.signal.removeEventListener('abort', onOuterAbort);
           }
 
-          if (receivedRealEvent) {
+          if (receivedRealEvent && !needsSnapshotReconcile) {
             attempt = 0;
           }
 
           if (!isStillActive()) {
             break;
+          }
+
+          if (needsSnapshotReconcile) {
+            attempt += 1;
+            if (attempt > MAX_RECONNECT_ATTEMPTS) {
+              break;
+            }
+            await waitBackoff(attempt);
+            continue;
           }
 
           let reachedTerminal = false;
@@ -555,7 +643,7 @@ export function useSubconversationPeek(
               }
             }
           } catch {
-            // Fall through to backoff reconnect.
+            needsSnapshotReconcile = true;
           }
 
           if (reachedTerminal || !isStillActive()) {
@@ -569,18 +657,7 @@ export function useSubconversationPeek(
           if (attempt > MAX_RECONNECT_ATTEMPTS) {
             break;
           }
-          const eofDelay = Math.min(BASE_RECONNECT_DELAY_MS * 2 ** (attempt - 1), 10000);
-          await new Promise<void>((resolve) => {
-            const timer = window.setTimeout(resolve, eofDelay);
-            controller.signal.addEventListener(
-              'abort',
-              () => {
-                window.clearTimeout(timer);
-                resolve();
-              },
-              { once: true }
-            );
-          });
+          await waitBackoff(attempt);
         } catch (err) {
           if (!isStillActive() || (err instanceof DOMException && err.name === 'AbortError')) {
             break;
@@ -589,18 +666,7 @@ export function useSubconversationPeek(
           if (attempt > MAX_RECONNECT_ATTEMPTS) {
             break;
           }
-          const delay = Math.min(BASE_RECONNECT_DELAY_MS * 2 ** (attempt - 1), 10000);
-          await new Promise<void>((resolve) => {
-            const timer = window.setTimeout(resolve, delay);
-            controller.signal.addEventListener(
-              'abort',
-              () => {
-                window.clearTimeout(timer);
-                resolve();
-              },
-              { once: true }
-            );
-          });
+          await waitBackoff(attempt);
         }
       }
 

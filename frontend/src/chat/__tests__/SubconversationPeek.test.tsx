@@ -5,6 +5,7 @@ import { resetLocalStorageMock } from '../../test/mocks/localStorageMock';
 import { server } from '../../test/setup.js';
 import { renderChatApp } from '../../test/utils/renderChatApp';
 import type { PendingDelegation } from '../usePendingDelegations';
+import { subconversationPeekTuning } from '../useSubconversationPeek';
 
 const makeDelegation = (overrides: Partial<PendingDelegation> = {}): PendingDelegation => ({
   delegation_id: 'deleg-1',
@@ -318,5 +319,168 @@ describe('subconversation peek sheet', () => {
     await waitFor(() => {
       expect(within(sheet).getByText('Convene the council')).toBeVisible();
     });
+  });
+
+  it('decodes flat live attachment SSE events and retries a transiently failed terminal snapshot', async () => {
+    const prevBase = subconversationPeekTuning.baseReconnectDelayMs;
+    const prevMax = subconversationPeekTuning.maxReconnectDelayMs;
+    subconversationPeekTuning.baseReconnectDelayMs = 10;
+    subconversationPeekTuning.maxReconnectDelayMs = 20;
+
+    try {
+      const sse = createSseStream();
+      let messagesFetchCount = 0;
+      const runningDelegation = makeDelegation();
+
+      server.use(
+        http.get('/api/v1/chat/conversations/:conversationId/pending-delegations', ({ params }) =>
+          HttpResponse.json({
+            conversation_id: params.conversationId,
+            delegations: params.conversationId === 'conv-peek' ? [runningDelegation] : [],
+          })
+        ),
+        http.get(
+          '/api/v1/chat/conversations/:conversationId/subconversations/:subconversationId/messages',
+          ({ params }) => {
+            messagesFetchCount += 1;
+            if (messagesFetchCount === 1) {
+              return HttpResponse.json({
+                conversation_id: params.conversationId,
+                subconversation_id: params.subconversationId,
+                delegation: runningDelegation,
+                delegation_error: null,
+                request_text: 'Generate a chart',
+                child_delegations: [],
+                messages: [
+                  {
+                    internal_id: 401,
+                    role: 'user',
+                    content: 'Generate a chart',
+                    timestamp: '2026-11-20T09:00:02+00:00',
+                    turn_id: 'sub-turn-attach',
+                  },
+                ],
+                count: 1,
+                total_messages: 1,
+                has_more_before: false,
+                has_more_after: false,
+                active_turns: [
+                  {
+                    turn_id: 'sub-turn-attach',
+                    started_at: '2026-11-20T09:00:02+00:00',
+                    first_seq: 0,
+                    latest_seq: 1,
+                    status: 'running',
+                  },
+                ],
+              });
+            }
+            if (messagesFetchCount === 2) {
+              // Transient failure right on turn_ended — must retry instead of staying idle.
+              return HttpResponse.json({ detail: 'temporary outage' }, { status: 503 });
+            }
+            return HttpResponse.json({
+              conversation_id: params.conversationId,
+              subconversation_id: params.subconversationId,
+              delegation: {
+                ...runningDelegation,
+                status: 'completed',
+                completed_at: '2026-11-20T09:00:30+00:00',
+              },
+              delegation_error: null,
+              request_text: 'Generate a chart',
+              child_delegations: [],
+              messages: [
+                {
+                  internal_id: 401,
+                  role: 'user',
+                  content: 'Generate a chart',
+                  timestamp: '2026-11-20T09:00:02+00:00',
+                  turn_id: 'sub-turn-attach',
+                },
+                {
+                  internal_id: 402,
+                  role: 'assistant',
+                  content: 'Here is the chart.',
+                  timestamp: '2026-11-20T09:00:30+00:00',
+                  turn_id: 'sub-turn-attach',
+                  processing_profile_id: 'engineer',
+                },
+              ],
+              count: 2,
+              total_messages: 2,
+              has_more_before: false,
+              has_more_after: false,
+              active_turns: [],
+            });
+          }
+        ),
+        http.get(
+          '/api/v1/chat/conversations/:conversationId/subconversations/:subconversationId/stream',
+          () =>
+            new HttpResponse(sse.stream, {
+              headers: { 'Content-Type': 'text/event-stream' },
+            })
+        )
+      );
+
+      await renderChatApp({
+        waitForReady: true,
+        initialEntries: ['/chat?conversation_id=conv-peek'],
+      });
+
+      fireEvent.click(await screen.findByTestId('pending-delegation'));
+      const sheet = await screen.findByTestId('subconversation-peek-sheet');
+
+      await waitFor(() => {
+        expect(within(sheet).getByText('Generate a chart')).toBeVisible();
+      });
+
+      // Emit a trigger attachment (must be ignored) and a flat response
+      // attachment payload matching HubTurnEventPublisher.
+      sse.send('turn_started', { seq: 0, turn_id: 'sub-turn-attach' });
+      sse.send('attachment', {
+        seq: 1,
+        turn_id: 'sub-turn-attach',
+        type: 'attachment',
+        source: 'trigger',
+        attachment_id: 'att-trigger',
+        content_url: '/api/attachments/att-trigger',
+        mime_type: 'image/png',
+        description: 'Ignored upload',
+      });
+      sse.send('attachment', {
+        seq: 2,
+        turn_id: 'sub-turn-attach',
+        type: 'attachment',
+        source: 'response',
+        attachment_id: 'att-chart',
+        content_url: '/api/attachments/att-chart',
+        mime_type: 'image/png',
+        description: 'Live chart output',
+      });
+      sse.send('text', { seq: 3, turn_id: 'sub-turn-attach', content: 'Here is the chart.' });
+
+      await waitFor(() => {
+        const img = within(sheet).getByAltText('Live chart output');
+        expect(img).toHaveAttribute('src', '/api/attachments/att-chart');
+      });
+      expect(within(sheet).queryByAltText('Ignored upload')).not.toBeInTheDocument();
+
+      // Emit turn_ended while keeping the SSE stream open; snapshot #2 returns
+      // 503, so the hook must break out, retry snapshot #3, and settle cleanly.
+      sse.send('turn_ended', { seq: 4, turn_id: 'sub-turn-attach', status: 'complete' });
+
+      await waitFor(() => {
+        expect(within(sheet).getByTestId('subconversation-peek-status-badge')).toHaveTextContent(
+          'Completed'
+        );
+      });
+      expect(messagesFetchCount).toBe(3);
+      sse.close();
+    } finally {
+      subconversationPeekTuning.baseReconnectDelayMs = prevBase;
+      subconversationPeekTuning.maxReconnectDelayMs = prevMax;
+    }
   });
 });
