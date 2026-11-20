@@ -8,6 +8,8 @@ ring buffer.
 
 from __future__ import annotations
 
+import json
+from dataclasses import asdict
 from typing import TYPE_CHECKING
 
 import pytest
@@ -21,6 +23,10 @@ from family_assistant.llm import (
     LLMStreamEvent,
     ToolCallFunction,
     ToolCallItem,
+)
+from family_assistant.llm.google_types import (
+    GeminiProviderMetadata,
+    GeminiThoughtSignature,
 )
 from family_assistant.llm.messages import SystemMessage, ToolMessage, UserMessage
 from family_assistant.llm.request_buffer import LLMRequestBuffer, get_request_buffer
@@ -458,3 +464,46 @@ class TestUsageFinalization:
         finalized = telemetry.finalize_usage(None)
 
         assert "time_to_first_output_ms" not in finalized
+
+
+class TestBufferRecordResponse:
+    def test_provider_metadata_on_a_tool_call_is_recorded_as_plain_json(
+        self, exporter: InMemorySpanExporter, buffer: LLMRequestBuffer
+    ) -> None:
+        """``asdict`` leaves ``GeminiProviderMetadata`` live; the record must not."""
+        telemetry = _telemetry(exporter)
+        output = LLMOutput(
+            tool_calls=[
+                ToolCallItem(
+                    id="call_1",
+                    type="function",
+                    function=ToolCallFunction(name="lookup", arguments="{}"),
+                    provider_metadata=GeminiProviderMetadata(
+                        thought_signature=GeminiThoughtSignature(b"signature")
+                    ),
+                )
+            ]
+        )
+
+        telemetry.finish_success(asdict(output))
+        telemetry.span.end()
+
+        response = buffer.get_recent()[0].response
+        assert response is not None
+        assert json.loads(json.dumps(response)) == response
+        assert response["tool_calls"][0]["provider_metadata"] == (
+            GeminiProviderMetadata(
+                thought_signature=GeminiThoughtSignature(b"signature")
+            ).to_dict()
+        )
+
+    def test_a_response_holding_an_unserializable_value_is_not_recorded(
+        self, exporter: InMemorySpanExporter, buffer: LLMRequestBuffer
+    ) -> None:
+        """One bad record must not reach the buffer and fail every export."""
+        telemetry = _telemetry(exporter)
+
+        telemetry.finish_success({"content": object()})
+        telemetry.span.end()
+
+        assert buffer.get_recent() == []

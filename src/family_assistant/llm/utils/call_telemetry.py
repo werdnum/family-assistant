@@ -20,6 +20,7 @@ import logging
 import os
 import time
 import uuid
+from dataclasses import fields, is_dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -98,6 +99,38 @@ def _payload_chars(value: object) -> int:
     if value is None:
         return 0
     return len(str(value))
+
+
+def _json_safe(value: object) -> object:
+    """Reduce a provider response to plain JSON values for the ring buffer.
+
+    Providers hand ``asdict(llm_output)`` to the buffer, and ``asdict`` stops at
+    anything that is not a dataclass -- ``GeminiProviderMetadata`` on a tool
+    call, for one -- leaving a live object that the diagnostics export cannot
+    serialize. Anything that is neither JSON nor convertible raises, so the
+    record is refused at write time instead of failing every export after it.
+    """
+    if value is None or isinstance(value, str | int | float | bool):
+        return value
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_json_safe(item) for item in value]
+    to_dict = getattr(value, "to_dict", None)
+    if callable(to_dict):
+        return _json_safe(to_dict())
+    if is_dataclass(value) and not isinstance(value, type):
+        return {f.name: _json_safe(getattr(value, f.name)) for f in fields(value)}
+    raise TypeError(
+        f"Unserializable {type(value).__name__} in LLM response for diagnostics"
+    )
+
+
+# ast-grep-ignore: no-dict-any - Serialized LLM response for the diagnostics buffer
+def _json_safe_response(response: dict[str, Any] | None) -> dict[str, Any] | None:
+    if response is None:
+        return None
+    return {str(key): _json_safe(item) for key, item in response.items()}
 
 
 class LLMCallTelemetry:
@@ -434,7 +467,7 @@ class LLMCallTelemetry:
                     messages=self._message_dicts,
                     tools=self._tools,
                     tool_choice=self._tool_choice,
-                    response=response,
+                    response=_json_safe_response(response),
                     duration_ms=self.elapsed_ms,
                     error=error,
                     provider=self.provider,
@@ -449,4 +482,4 @@ class LLMCallTelemetry:
                 )
             )
         except Exception as record_err:
-            logger.debug(f"Failed to record LLM request: {record_err}")
+            logger.warning(f"Failed to record LLM request: {record_err}")
