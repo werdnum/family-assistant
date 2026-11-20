@@ -209,6 +209,7 @@ def test_the_council_is_reached_only_by_delegation(shipped_config: AppConfig) ->
                 "list_delegations",
                 "cancel_delegation",
                 "delegate_to_service",
+                "execute_script",
                 *HOUSEHOLD_READS,
             },
         ),
@@ -218,6 +219,7 @@ def test_the_council_is_reached_only_by_delegation(shipped_config: AppConfig) ->
                 "get_delegation_status",
                 "list_delegations",
                 "delegate_to_service",
+                "execute_script",
                 *HOUSEHOLD_READS,
             },
         ),
@@ -255,7 +257,14 @@ def test_neither_profile_changes_anything_in_the_household(
         is ToolPolicyDecision.ALLOW
     }
 
-    expected = {"delegate_to_service", "report_technical_problem", "finish_thread"}
+    # execute_script is tagged state-changing, but a script calls only the
+    # tools this engine already grants.
+    expected = {
+        "delegate_to_service",
+        "report_technical_problem",
+        "finish_thread",
+        "execute_script",
+    }
     if delegation is not None:
         expected.add(delegation)
     assert writers == expected
