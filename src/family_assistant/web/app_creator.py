@@ -76,6 +76,7 @@ from family_assistant.web.routers.vite_pages import (
 from family_assistant.web.routers.webhooks import webhooks_router
 from family_assistant.web.template_utils import get_static_asset
 from family_assistant.web.turn_resumption import WEB_STREAM_RESUMER, WebTurnResumer
+from family_assistant.web.unhandled_errors import install_unhandled_exception_logging
 
 logger = logging.getLogger(__name__)
 
@@ -253,6 +254,8 @@ def create_app() -> FastAPI:
         middleware=middleware,
         lifespan=lifespan,
     )
+
+    install_unhandled_exception_logging(new_app)
 
     # --- Store shared objects on app.state ---
     new_app.state.templates = templates
