@@ -199,9 +199,14 @@ jobs:
           if-no-files-found: error
           retention-days: 1
           compression-level: 1
+  # Verification-only builds for PRs / merge groups when Dockerfile or dependency
+  # lockfiles change. Skipped on push to main because build-containers.yml already
+  # builds and pushes these images on main; never writes to buildcache-* because
+  # those tags must stay aligned with the layer digests actually deployed by
+  # build-containers.yml so cluster nodes can reuse cached layers across rollouts.
   build-main-container:
     needs: [prepare, detect-changes]
-    if: needs.detect-changes.outputs.dockerfile_changes == 'true'
+    if: github.event_name != 'push' && needs.detect-changes.outputs.dockerfile_changes == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -237,7 +242,7 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build main application image (verification + cache)
+      - name: Build main application image (verification)
         uses: docker/build-push-action@v7.4.0
         with:
           context: .
@@ -248,10 +253,9 @@ jobs:
             type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:buildcache-${{ matrix.arch }}
             type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:buildcache
             type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:main
-          cache-to: ${{ github.event.pull_request.head.repo.fork != true && format('type=registry,ref={0}/{1}:buildcache-{2},mode=max', env.REGISTRY, env.IMAGE_PREFIX, matrix.arch) || '' }}
   build-devcontainer:
     needs: [prepare, detect-changes]
-    if: needs.detect-changes.outputs.dockerfile_changes == 'true'
+    if: github.event_name != 'push' && needs.detect-changes.outputs.dockerfile_changes == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -287,7 +291,7 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build devcontainer image (verification + cache)
+      - name: Build devcontainer image (verification)
         uses: docker/build-push-action@v7.4.0
         with:
           context: .
@@ -298,7 +302,6 @@ jobs:
             type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:cache-devcontainer-dev-${{ matrix.arch }}
             type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:cache-devcontainer-dev
             type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}:devcontainer-main
-          cache-to: ${{ github.event.pull_request.head.repo.fork != true && format('type=registry,ref={0}/{1}:cache-devcontainer-dev-{2},mode=max', env.REGISTRY, env.IMAGE_PREFIX, matrix.arch) || '' }}
   lint:
     needs: [prepare, build-ci-container, detect-changes]
     if: |
