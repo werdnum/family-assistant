@@ -396,6 +396,8 @@ struct ChatThreadView: View {
     /// pushed thread is popped. Otherwise every appearance lands at the bottom.
     var keepsScrollPositionOnReappear = false
 
+    @State private var peekedDelegation: ChatPendingDelegation?
+
     var body: some View {
         VStack(spacing: 0) {
             PendingConfirmationsBanner(viewModel: viewModel)
@@ -403,7 +405,11 @@ struct ChatThreadView: View {
                 messageScrollArea
             }
 
-            PendingDelegationsChip(viewModel: viewModel)
+            PendingDelegationsChip(viewModel: viewModel) { delegation in
+                if delegation.subconversationID != nil {
+                    peekedDelegation = delegation
+                }
+            }
             ThreadInlineBanner(viewModel: viewModel)
             Divider()
             ChatComposerView(viewModel: viewModel)
@@ -412,6 +418,22 @@ struct ChatThreadView: View {
         // so nothing read underneath is marked read.
         .onAppear { viewModel.setOnScreen(true) }
         .onDisappear { viewModel.setOnScreen(false) }
+        .onChange(of: viewModel.conversationID) { _, _ in
+            peekedDelegation = nil
+        }
+        .sheet(item: $peekedDelegation) { delegation in
+            if let context = viewModel.subconversationPeekContext(),
+               delegation.subconversationID != nil {
+                SubconversationPeekSheetView(
+                    conversationID: context.conversationID,
+                    rootDelegation: delegation,
+                    authManager: context.authManager,
+                    apiClient: context.apiClient,
+                    modelTierLabels: viewModel.modelTierLabels,
+                    onClose: { peekedDelegation = nil }
+                )
+            }
+        }
     }
 
     private var messageScrollArea: some View {
@@ -1823,25 +1845,31 @@ private struct PendingConfirmationsBanner: View {
 /// long-running handoff shows progress until its result arrives as a message.
 private struct PendingDelegationsChip: View {
     var viewModel: ChatViewModel
+    var onSelect: ((ChatPendingDelegation) -> Void)? = nil
 
     var body: some View {
         if !viewModel.pendingDelegations.isEmpty {
             TimelineView(.periodic(from: .now, by: 30)) { context in
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(viewModel.pendingDelegations) { delegation in
-                        HStack(spacing: 6) {
-                            ProgressView()
-                                .controlSize(.mini)
-                            Text(
-                                "\(Text(delegation.profileDisplayName).fontWeight(.medium)) · \(delegation.statusLabel) · \(delegation.startedAgo(now: context.date))"
-                            )
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
+                        let canPeek = onSelect != nil && delegation.subconversationID != nil
+                        if canPeek {
+                            Button {
+                                onSelect?(delegation)
+                            } label: {
+                                delegationRow(delegation, now: context.date, showChevron: true)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityElement(children: .combine)
+                            .accessibilityHint("Double-tap to peek into this subconversation. \(delegation.requestPreview)")
+                            .accessibilityIdentifier("pending-delegation")
+                        } else {
+                            delegationRow(delegation, now: context.date, showChevron: false)
+                                .accessibilityElement(children: .combine)
+                                .accessibilityHint(delegation.requestPreview)
+                                .accessibilityIdentifier("pending-delegation")
                         }
-                        .accessibilityElement(children: .combine)
-                        .accessibilityHint(delegation.requestPreview)
-                        .accessibilityIdentifier("pending-delegation")
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1850,6 +1878,29 @@ private struct PendingDelegationsChip: View {
             .padding(.vertical, 6)
             .background(Color.secondary.opacity(0.08))
             .accessibilityIdentifier("pending-delegations")
+        }
+    }
+
+    private func delegationRow(
+        _ delegation: ChatPendingDelegation,
+        now: Date,
+        showChevron: Bool
+    ) -> some View {
+        HStack(spacing: 6) {
+            ProgressView()
+                .controlSize(.mini)
+            Text(
+                "\(Text(delegation.profileDisplayName).fontWeight(.medium)) · \(delegation.statusLabel) · \(delegation.startedAgo(now: now))"
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            if showChevron {
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
         }
     }
 }

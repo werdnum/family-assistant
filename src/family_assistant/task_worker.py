@@ -573,6 +573,21 @@ class _WakeTurnHost:
         await self.end_turn(status)
 
 
+@dataclass
+class _SubconversationTurnHost:
+    """Publishes a delegated subconversation turn's live events to the stream hub."""
+
+    on_stream_event: Callable[[LLMStreamEvent], Awaitable[None]] | None = None
+    end_turn: Callable[[TurnStatus, str | None], Awaitable[None]] | None = None
+    _ended: bool = False
+
+    async def end(self, status: TurnStatus, error: str | None = None) -> None:
+        if self._ended or self.end_turn is None:
+            return
+        self._ended = True
+        await self.end_turn(status, error)
+
+
 _NEXT_NOTIFY_STAGE: dict[DelegationNotifyStage, DelegationNotifyStage] = {
     "initial": "failed_forward",
     "failed_forward": "canned_pending",
@@ -2773,6 +2788,74 @@ class TaskWorker:
         elapsed = (now - started_at).total_seconds() if started_at else 0.0
         return self._delegated_turn_budget() - elapsed
 
+    @contextlib.asynccontextmanager
+    async def _host_subconversation_turn(
+        self,
+        exec_context: ToolExecutionContext,
+        run: DelegationRunDict,
+        turn_id: str,
+    ) -> AsyncGenerator[_SubconversationTurnHost]:
+        """Register a delegated subconversation turn on the subconversation hub."""
+        subconversation_id = run["subconversation_id"]
+        if self.stream_hub is None or subconversation_id is None:
+            yield _SubconversationTurnHost()
+            return
+
+        sub_hub = self.stream_hub.subconversations
+        clock = exec_context.clock or self.clock
+        await sub_hub.start_turn(
+            subconversation_id,
+            turn_id=turn_id,
+            user_id=run["user_id"] or "",
+            started_at=clock.now(),
+            reject_if_running=False,
+        )
+        publisher = HubTurnEventPublisher(
+            hub=sub_hub,
+            conversation_id=subconversation_id,
+            turn_id=turn_id,
+            db_context=exec_context.db_context,
+            attachment_registry=exec_context.attachment_registry,
+            acting_user_id=run["user_id"],
+        )
+
+        async def end(status: TurnStatus, error: str | None) -> None:
+            await publisher.flush()
+            await sub_hub.end_turn(
+                subconversation_id,
+                turn_id=turn_id,
+                status=status,
+                error=error,
+            )
+
+        host = _SubconversationTurnHost(
+            on_stream_event=publisher.publish,
+            end_turn=end,
+        )
+        try:
+            yield host
+        except BaseException:
+            await host.end("failed", None)
+            raise
+        await host.end("complete", None)
+
+    async def _notify_subconversation_hub(
+        self, run: DelegationRunDict, *, reason: str
+    ) -> None:
+        """Nudge any live peeker watching ``run['subconversation_id']`` to reload."""
+        subconversation_id = run["subconversation_id"]
+        if self.stream_hub is None or subconversation_id is None:
+            return
+        sub_hub = self.stream_hub.subconversations
+        if sub_hub.subscriber_count(subconversation_id) == 0:
+            return
+        await sub_hub.publish(
+            subconversation_id,
+            "message",
+            turn_id=None,
+            payload={"reason": reason, "status": run["status"]},
+        )
+
     async def _drive_delegated_turn(
         self,
         exec_context: ToolExecutionContext,
@@ -2793,67 +2876,80 @@ class TaskWorker:
         clock = exec_context.clock or self.clock
         delegation_id = run["delegation_id"]
         confirmation_sources: set[int] = set()
-        if kind == "continuation":
-            turn = self._run_delegation_continuation(
-                exec_context,
-                run,
-                local_target,
-                confirmation_sources,
-                turn_id=turn_id,
-                controller=controller,
-                resume=resume,
-            )
-        else:
-            turn = self._run_delegated_request(
-                exec_context,
-                run,
-                local_target,
-                confirmation_sources,
-                turn_id=turn_id,
-                controller=controller,
-                resume=resume,
-            )
-        turn_budget = self._remaining_turn_budget(run, clock.now())
-        deadline = asyncio.timeout(turn_budget)
-        try:
-            async with deadline:
-                result = await self._run_stoppable_delegated_turn(
-                    exec_context, delegation_id, local_target, turn
+        async with self._host_subconversation_turn(
+            exec_context, run, turn_id
+        ) as sub_host:
+            if kind == "continuation":
+                turn = self._run_delegation_continuation(
+                    exec_context,
+                    run,
+                    local_target,
+                    confirmation_sources,
+                    turn_id=turn_id,
+                    controller=controller,
+                    resume=resume,
+                    on_stream_event=sub_host.on_stream_event,
                 )
-        except Exception:
-            if deadline.expired():
+            else:
+                turn = self._run_delegated_request(
+                    exec_context,
+                    run,
+                    local_target,
+                    confirmation_sources,
+                    turn_id=turn_id,
+                    controller=controller,
+                    resume=resume,
+                    on_stream_event=sub_host.on_stream_event,
+                )
+            turn_budget = self._remaining_turn_budget(run, clock.now())
+            deadline = asyncio.timeout(turn_budget)
+            try:
+                async with deadline:
+                    result = await self._run_stoppable_delegated_turn(
+                        exec_context, delegation_id, local_target, turn
+                    )
+            except Exception:
+                if deadline.expired():
+                    await self._withdraw_stopped_turn_confirmations(
+                        exec_context, run, confirmation_sources
+                    )
+                    await self._fail_timed_out_delegation_run(
+                        exec_context,
+                        delegation_id=delegation_id,
+                        budget_seconds=self._delegated_turn_budget(),
+                    )
+                    await sub_host.end("failed", "timed_out")
+                    return
+                error = traceback.format_exc()
+                logger.exception(
+                    "Delegated profile run %s raised during execution.", delegation_id
+                )
+                await self._fail_delegation_run(
+                    exec_context,
+                    delegation_id=delegation_id,
+                    error=error,
+                )
+                await sub_host.end("failed", error)
+                return
+
+            if result is None:
+                if controller.suspend_requested:
+                    logger.info(
+                        "Delegated turn of run %s was suspended for shutdown.",
+                        delegation_id,
+                    )
+                    await sub_host.end("failed", "suspended")
+                    return
                 await self._withdraw_stopped_turn_confirmations(
                     exec_context, run, confirmation_sources
                 )
-                await self._fail_timed_out_delegation_run(
-                    exec_context,
-                    delegation_id=delegation_id,
-                    budget_seconds=self._delegated_turn_budget(),
-                )
+                await sub_host.end("cancelled", "cancelled")
                 return
-            error = traceback.format_exc()
-            logger.exception(
-                "Delegated profile run %s raised during execution.", delegation_id
+            await self._settle_delegated_turn(exec_context, run, result)
+            await sub_host.end(
+                "failed" if result.error_traceback else "complete",
+                result.error_traceback,
             )
-            await self._fail_delegation_run(
-                exec_context,
-                delegation_id=delegation_id,
-                error=error,
-            )
-            return
-
-        if result is None:
-            if controller.suspend_requested:
-                logger.info(
-                    "Delegated turn of run %s was suspended for shutdown.",
-                    delegation_id,
-                )
-                return
-            await self._withdraw_stopped_turn_confirmations(
-                exec_context, run, confirmation_sources
-            )
-            return
-        await self._settle_delegated_turn(exec_context, run, result)
 
     async def _defer_delegated_run(
         self,
@@ -3082,6 +3178,7 @@ class TaskWorker:
         turn_id: str,
         controller: _SuspendableTurnController,
         resume: bool,
+        on_stream_event: Callable[[LLMStreamEvent], Awaitable[None]] | None = None,
     ) -> ChatInteractionResult:
         """Run a delegation's first turn, on the request it was created with."""
         content_parts = cast(
@@ -3124,6 +3221,7 @@ class TaskWorker:
                 payload_present=False,
             ),
             model_selection=_frozen_model_selection(run, local_target),
+            on_stream_event=on_stream_event,
         )
 
     async def _start_thread_first_turn(
@@ -3264,6 +3362,7 @@ class TaskWorker:
         turn_id: str,
         controller: _SuspendableTurnController,
         resume: bool,
+        on_stream_event: Callable[[LLMStreamEvent], Awaitable[None]] | None = None,
     ) -> ChatInteractionResult:
         """Run the turn that follows a run's own delegations finishing.
 
@@ -3335,6 +3434,7 @@ class TaskWorker:
                 payload_present=True,
             ),
             model_selection=_frozen_model_selection(run, local_target),
+            on_stream_event=on_stream_event,
         )
 
     async def _record_continuation_results(
@@ -3564,6 +3664,9 @@ class TaskWorker:
             await settlement.on_committed()
         if on_committed is not None:
             await on_committed()
+        await self._notify_subconversation_hub(
+            terminal_run, reason="delegation_settled"
+        )
         await self._schedule_delegation_reconcile(exec_context, terminal_run)
         await self._queue_delegation_delivery(exec_context, terminal_run, force=False)
         return True
@@ -4782,6 +4885,7 @@ class TaskWorker:
             await settlement.on_committed()
         if on_committed is not None:
             await on_committed()
+        await self._notify_subconversation_hub(run, reason="delegation_failed")
         await self._schedule_delegation_reconcile(exec_context, run)
         await self._queue_delegation_delivery(exec_context, run, force=force_notify)
         return True

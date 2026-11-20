@@ -3246,12 +3246,57 @@ class MessageHistoryRepository(BaseRepository):
         Returns:
             Tuple of (messages, has_more_before, has_more_after)
         """
+        subconversation_condition = (
+            None
+            if include_subconversations
+            else message_history_table.c.subconversation_id.is_(None)
+        )
+        return await self._get_messages_paginated(
+            conversation_id=conversation_id,
+            subconversation_condition=subconversation_condition,
+            before=before,
+            after=after,
+            limit=limit,
+            before_id=before_id,
+        )
+
+    async def get_subconversation_messages_paginated(
+        self,
+        conversation_id: str,
+        subconversation_id: str,
+        before: datetime | None = None,
+        after: datetime | None = None,
+        limit: int = 50,
+        before_id: int | None = None,
+    ) -> tuple[list[MessageHistoryRow], bool, bool]:
+        """Get paginated visible messages belonging to a single subconversation."""
+        return await self._get_messages_paginated(
+            conversation_id=conversation_id,
+            subconversation_condition=(
+                message_history_table.c.subconversation_id == subconversation_id
+            ),
+            before=before,
+            after=after,
+            limit=limit,
+            before_id=before_id,
+        )
+
+    async def _get_messages_paginated(
+        self,
+        *,
+        conversation_id: str,
+        subconversation_condition: ColumnElement[bool] | None,
+        before: datetime | None = None,
+        after: datetime | None = None,
+        limit: int = 50,
+        before_id: int | None = None,
+    ) -> tuple[list[MessageHistoryRow], bool, bool]:
         conditions = [
             message_history_table.c.conversation_id == conversation_id,
             _visible_message_condition(),
         ]
-        if not include_subconversations:
-            conditions.append(message_history_table.c.subconversation_id.is_(None))
+        if subconversation_condition is not None:
+            conditions.append(subconversation_condition)
 
         # Add timestamp conditions
         if before_id is not None:
@@ -3323,10 +3368,8 @@ class MessageHistoryRepository(BaseRepository):
                 message_history_table.c.timestamp < after,
                 _visible_message_condition(),
             ]
-            if not include_subconversations:
-                before_conditions.append(
-                    message_history_table.c.subconversation_id.is_(None)
-                )
+            if subconversation_condition is not None:
+                before_conditions.append(subconversation_condition)
             check_before_stmt = (
                 select(message_history_table.c.internal_id)
                 .where(*before_conditions)
@@ -3341,6 +3384,20 @@ class MessageHistoryRepository(BaseRepository):
             has_more_after = False
 
         return messages, has_more_before, has_more_after
+
+    async def get_subconversation_message_count(
+        self, conversation_id: str, subconversation_id: str
+    ) -> int:
+        """Get the total number of visible messages in a single subconversation."""
+        stmt = select(
+            func.count(message_history_table.c.internal_id).label("count")
+        ).where(
+            message_history_table.c.conversation_id == conversation_id,
+            message_history_table.c.subconversation_id == subconversation_id,
+            _visible_message_condition(),
+        )
+        row = await self._db.fetch_one(stmt)
+        return row["count"] if row else 0
 
     async def get_conversation_message_count(
         self, conversation_id: str, include_subconversations: bool = True

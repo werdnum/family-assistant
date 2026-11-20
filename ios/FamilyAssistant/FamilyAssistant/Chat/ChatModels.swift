@@ -973,7 +973,7 @@ struct ChatPendingConfirmationsResponse: Decodable {
 
 /// A background delegation the conversation is still waiting to hear back from.
 /// Mirrors `PendingDelegation` in `web/routers/chat_api.py`.
-struct ChatPendingDelegation: Decodable, Equatable, Identifiable {
+struct ChatPendingDelegation: Decodable, Equatable, Hashable, Identifiable {
     let delegationID: String
     let targetProfileID: String
     let status: String
@@ -984,8 +984,35 @@ struct ChatPendingDelegation: Decodable, Equatable, Identifiable {
     let cancelRequested: Bool
     let childrenTotal: Int
     let childrenFinished: Int
+    let subconversationID: String?
 
     var id: String { delegationID }
+
+    init(
+        delegationID: String,
+        targetProfileID: String,
+        status: String,
+        requestPreview: String,
+        createdAt: Date,
+        startedAt: Date? = nil,
+        completedAt: Date? = nil,
+        cancelRequested: Bool = false,
+        childrenTotal: Int = 0,
+        childrenFinished: Int = 0,
+        subconversationID: String? = nil
+    ) {
+        self.delegationID = delegationID
+        self.targetProfileID = targetProfileID
+        self.status = status
+        self.requestPreview = requestPreview
+        self.createdAt = createdAt
+        self.startedAt = startedAt
+        self.completedAt = completedAt
+        self.cancelRequested = cancelRequested
+        self.childrenTotal = childrenTotal
+        self.childrenFinished = childrenFinished
+        self.subconversationID = subconversationID
+    }
 
     enum CodingKeys: String, CodingKey {
         case delegationID = "delegation_id"
@@ -998,6 +1025,22 @@ struct ChatPendingDelegation: Decodable, Equatable, Identifiable {
         case cancelRequested = "cancel_requested"
         case childrenTotal = "children_total"
         case childrenFinished = "children_finished"
+        case subconversationID = "subconversation_id"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        delegationID = try container.decode(String.self, forKey: .delegationID)
+        targetProfileID = try container.decode(String.self, forKey: .targetProfileID)
+        status = try container.decode(String.self, forKey: .status)
+        requestPreview = try container.decode(String.self, forKey: .requestPreview)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        startedAt = try container.decodeIfPresent(Date.self, forKey: .startedAt)
+        completedAt = try container.decodeIfPresent(Date.self, forKey: .completedAt)
+        cancelRequested = try container.decodeIfPresent(Bool.self, forKey: .cancelRequested) ?? false
+        childrenTotal = try container.decodeIfPresent(Int.self, forKey: .childrenTotal) ?? 0
+        childrenFinished = try container.decodeIfPresent(Int.self, forKey: .childrenFinished) ?? 0
+        subconversationID = try container.decodeIfPresent(String.self, forKey: .subconversationID)
     }
 
     var profileDisplayName: String {
@@ -1122,14 +1165,86 @@ struct ChatConfirmationDetail: Decodable, Equatable {
 struct ChatActiveTurnInfo: Decodable, Equatable {
     let turnID: String
     let startedAt: Date
+    let firstSeq: Int?
     let latestSeq: Int
     let status: String
 
     enum CodingKeys: String, CodingKey {
         case turnID = "turn_id"
         case startedAt = "started_at"
+        case firstSeq = "first_seq"
         case latestSeq = "latest_seq"
         case status
+    }
+
+    init(
+        turnID: String,
+        startedAt: Date,
+        firstSeq: Int? = nil,
+        latestSeq: Int,
+        status: String
+    ) {
+        self.turnID = turnID
+        self.startedAt = startedAt
+        self.firstSeq = firstSeq
+        self.latestSeq = latestSeq
+        self.status = status
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        turnID = try container.decode(String.self, forKey: .turnID)
+        startedAt = try container.decode(Date.self, forKey: .startedAt)
+        firstSeq = try container.decodeIfPresent(Int.self, forKey: .firstSeq)
+        latestSeq = try container.decode(Int.self, forKey: .latestSeq)
+        status = try container.decode(String.self, forKey: .status)
+    }
+}
+
+/// Mirrors `SubconversationMessagesResponse` in `web/routers/chat_api.py`.
+struct ChatSubconversationMessagesResponse: Decodable {
+    let conversationID: String
+    let subconversationID: String
+    let delegation: ChatPendingDelegation?
+    let delegationError: String?
+    let requestText: String?
+    let childDelegations: [ChatPendingDelegation]
+    let messages: [ChatBackendMessage]
+    let count: Int
+    let totalMessages: Int
+    let hasMoreBefore: Bool
+    let hasMoreAfter: Bool
+    let activeTurns: [ChatActiveTurnInfo]
+
+    enum CodingKeys: String, CodingKey {
+        case conversationID = "conversation_id"
+        case subconversationID = "subconversation_id"
+        case delegation
+        case delegationError = "delegation_error"
+        case requestText = "request_text"
+        case childDelegations = "child_delegations"
+        case messages
+        case count
+        case totalMessages = "total_messages"
+        case hasMoreBefore = "has_more_before"
+        case hasMoreAfter = "has_more_after"
+        case activeTurns = "active_turns"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        conversationID = try container.decode(String.self, forKey: .conversationID)
+        subconversationID = try container.decode(String.self, forKey: .subconversationID)
+        delegation = try container.decodeIfPresent(ChatPendingDelegation.self, forKey: .delegation)
+        delegationError = try container.decodeIfPresent(String.self, forKey: .delegationError)
+        requestText = try container.decodeIfPresent(String.self, forKey: .requestText)
+        childDelegations = try container.decodeIfPresent([ChatPendingDelegation].self, forKey: .childDelegations) ?? []
+        messages = try container.decodeIfPresent([ChatBackendMessage].self, forKey: .messages) ?? []
+        count = try container.decodeIfPresent(Int.self, forKey: .count) ?? messages.count
+        totalMessages = try container.decodeIfPresent(Int.self, forKey: .totalMessages) ?? messages.count
+        hasMoreBefore = try container.decodeIfPresent(Bool.self, forKey: .hasMoreBefore) ?? false
+        hasMoreAfter = try container.decodeIfPresent(Bool.self, forKey: .hasMoreAfter) ?? false
+        activeTurns = try container.decodeIfPresent([ChatActiveTurnInfo].self, forKey: .activeTurns) ?? []
     }
 }
 

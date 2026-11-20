@@ -6,9 +6,8 @@ import {
   useExternalStoreRuntime,
 } from '@assistant-ui/react';
 import { MessagesSquare } from 'lucide-react';
-import type { ErrorInfo, ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import React, {
-  Component,
   useCallback,
   useEffect,
   useImperativeHandle,
@@ -44,8 +43,10 @@ import { type ModelTier, useProfiles } from './profilesContext';
 import { ShareConversationButton } from './ShareConversationButton';
 import { ShareMessageDialog, sharedReplyId } from './ShareMessageDialog';
 import { type ContinueAnchor, StartThreadDialog, threadProfiles } from './StartThreadDialog';
+import { SubconversationPeekSheet } from './SubconversationPeekSheet';
 import { Thread } from './Thread';
 import { ThreadBanner } from './ThreadBanner';
+import { ThreadErrorBoundary } from './ThreadErrorBoundary';
 import { ThreadStateDot } from './ThreadStateDot';
 import { ToolConfirmationProvider } from './ToolConfirmationContext';
 import { markThreadDone, type ThreadAttachment } from './threadsApi';
@@ -65,7 +66,7 @@ import {
 import { useConversationShareLink } from './useConversationShareLink';
 import { useLiveMessageUpdates } from './useLiveMessageUpdates';
 import { useMarkRead } from './useMarkRead';
-import { usePendingDelegations } from './usePendingDelegations';
+import { type PendingDelegation, usePendingDelegations } from './usePendingDelegations';
 import { useStreamingResponse } from './useStreamingResponse';
 
 // Stable empty list for profiles that offer no choice of tier, so the
@@ -103,46 +104,6 @@ function modelTierFor(
   return state && state.conversationId === conversationId && state.profileId === profileId
     ? state
     : null;
-}
-
-// Error boundary to catch transient @assistant-ui/store tapClientLookup race
-// condition errors during rendering (assistant-ui/assistant-ui#3395).
-// Without this boundary, the error propagates up and destroys the entire
-// React tree. The boundary catches the error, briefly renders null, then
-// re-mounts children with a fresh key so the tap system can reinitialize.
-interface ThreadErrorBoundaryState {
-  hasError: boolean;
-  retryKey: number;
-}
-
-class ThreadErrorBoundary extends Component<{ children: ReactNode }, ThreadErrorBoundaryState> {
-  state: ThreadErrorBoundaryState = { hasError: false, retryKey: 0 };
-
-  static getDerivedStateFromError(): Partial<ThreadErrorBoundaryState> {
-    return { hasError: true };
-  }
-
-  componentDidCatch(error: Error, _info: ErrorInfo): void {
-    if (
-      !error.message?.includes('tapClientLookup') &&
-      !error.message?.includes('useClientLookup')
-    ) {
-      throw error;
-    }
-    // Schedule re-mount with a new key so children get a fresh fiber tree
-    if (this.state.retryKey < 3) {
-      queueMicrotask(() => {
-        this.setState((s) => ({ hasError: false, retryKey: s.retryKey + 1 }));
-      });
-    }
-  }
-
-  render(): ReactNode {
-    if (this.state.hasError) {
-      return null;
-    }
-    return <React.Fragment key={this.state.retryKey}>{this.props.children}</React.Fragment>;
-  }
 }
 
 // Fallback reconcile for a turn that gave up while still running server-side. The
@@ -608,6 +569,28 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
   const shareLink = useConversationShareLink(conversationId);
   const { delegations: pendingDelegations, refresh: refreshPendingDelegations } =
     usePendingDelegations(conversationId);
+  const [peekStack, setPeekStack] = useState<PendingDelegation[]>([]);
+  useEffect(() => {
+    setPeekStack([]);
+  }, [conversationId]);
+  const handlePeekDelegation = useCallback((delegation: PendingDelegation) => {
+    if (!delegation.subconversation_id) {
+      return;
+    }
+    setPeekStack([delegation]);
+  }, []);
+  const handlePushPeekDelegation = useCallback((delegation: PendingDelegation) => {
+    if (!delegation.subconversation_id) {
+      return;
+    }
+    setPeekStack((prev) => [...prev, delegation]);
+  }, []);
+  const handlePopPeekDelegation = useCallback(() => {
+    setPeekStack((prev) => prev.slice(0, -1));
+  }, []);
+  const handleClosePeek = useCallback(() => {
+    setPeekStack([]);
+  }, []);
   const [persistedConversationId, setPersistedConversationId] = useState<string | null>(null);
   // Always-current mirror of conversationId, so a deferred follow-up timer can
   // synchronously check whether the conversation changed before it fires.
@@ -3178,6 +3161,7 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
       olderMessagesStatus,
       loadOlderMessages: () => void loadOlderMessages(),
       pendingDelegations,
+      onPeekDelegation: handlePeekDelegation,
       conversationLoadStatus,
       retryConversationLoad,
       sendAsThread: isHome
@@ -3204,6 +3188,7 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
       olderMessagesStatus,
       loadOlderMessages,
       pendingDelegations,
+      handlePeekDelegation,
     ]
   );
 
@@ -3352,6 +3337,13 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
           )}
         </>
       )}
+      <SubconversationPeekSheet
+        conversationId={conversationId}
+        delegationStack={peekStack}
+        onPushDelegation={handlePushPeekDelegation}
+        onPopDelegation={handlePopPeekDelegation}
+        onClose={handleClosePeek}
+      />
     </div>
   );
 

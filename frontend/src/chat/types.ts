@@ -236,6 +236,7 @@ export interface BackendConversationMessage extends Record<string, unknown> {
 export interface ActiveTurnInfo {
   turn_id: string;
   started_at?: string;
+  first_seq?: number;
   latest_seq?: number;
   // 'running' | 'complete' | 'failed'
   status: string;

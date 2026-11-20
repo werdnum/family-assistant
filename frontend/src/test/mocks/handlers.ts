@@ -200,6 +200,35 @@ export const handlers = [
     return HttpResponse.json({ conversation_id: params.conversationId, delegations: [] });
   }),
 
+  http.get(
+    '/api/v1/chat/conversations/:conversationId/subconversations/:subconversationId/messages',
+    ({ params }) => {
+      return HttpResponse.json({
+        conversation_id: params.conversationId,
+        subconversation_id: params.subconversationId,
+        delegation: null,
+        delegation_error: null,
+        request_text: null,
+        child_delegations: [],
+        messages: [],
+        count: 0,
+        total_messages: 0,
+        has_more_before: false,
+        has_more_after: false,
+        active_turns: [],
+      });
+    }
+  ),
+
+  http.get(
+    '/api/v1/chat/conversations/:conversationId/subconversations/:subconversationId/stream',
+    () => {
+      return new HttpResponse('event: heartbeat\ndata: {}\n\n', {
+        headers: { 'Content-Type': 'text/event-stream' },
+      });
+    }
+  ),
+
   // Mock pending durable confirmations endpoint
   http.get('/api/v1/chat/confirmations/pending', () => {
     return HttpResponse.json({ confirmations: [] });

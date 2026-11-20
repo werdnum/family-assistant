@@ -74,6 +74,7 @@ from family_assistant.storage.repositories.conversation_threads import (
     ConversationThread,
 )
 from family_assistant.storage.repositories.delegation_runs import (
+    DelegationRunDict,
     PendingDelegationSummary,
 )
 from family_assistant.storage.repositories.turn_feedback import (
@@ -845,11 +846,32 @@ class PendingDelegation(BaseModel):
         description="Delegations this one started itself, e.g. council members."
     )
     children_finished: int
+    subconversation_id: str | None = Field(
+        default=None,
+        description="Subconversation identifier for read-only live peeking.",
+    )
 
 
 class PendingDelegationsResponse(BaseModel):
     conversation_id: str
     delegations: list[PendingDelegation]
+
+
+class SubconversationMessagesResponse(BaseModel):
+    """Read-only transcript and live status for a delegated subconversation."""
+
+    conversation_id: str
+    subconversation_id: str
+    delegation: PendingDelegation | None = None
+    delegation_error: str | None = None
+    request_text: str | None = None
+    child_delegations: list[PendingDelegation] = Field(default_factory=list)
+    messages: list[ConversationMessage]
+    count: int
+    total_messages: int
+    has_more_before: bool = False
+    has_more_after: bool = False
+    active_turns: list["SubconversationActiveTurnInfo"] = Field(default_factory=list)
 
 
 class SharedConversationMessagesResponse(ConversationMessagesResponse):
@@ -883,6 +905,14 @@ class ActiveTurnInfo(BaseModel):
     status: str = Field(
         ...,
         description="Turn status: 'running', 'complete', 'failed', or 'cancelled'",
+    )
+
+
+class SubconversationActiveTurnInfo(ActiveTurnInfo):
+    """Retained turn state for a delegated subconversation, including ``first_seq``."""
+
+    first_seq: int = Field(
+        ..., description="First seq published for this turn, for clean mid-turn replay"
     )
 
 
@@ -1374,6 +1404,18 @@ def _serialize_active_turn(turn: TurnRecord) -> ActiveTurnInfo:
     )
 
 
+def _serialize_subconversation_active_turn(
+    turn: TurnRecord,
+) -> SubconversationActiveTurnInfo:
+    return SubconversationActiveTurnInfo(
+        turn_id=turn.turn_id,
+        started_at=turn.started_at,
+        first_seq=turn.first_seq,
+        latest_seq=turn.latest_seq,
+        status=turn.status,
+    )
+
+
 def _owned_turns(
     hub: ConversationStreamHub, conversation_id: str, user_id: str
 ) -> list[ActiveTurnInfo]:
@@ -1383,6 +1425,44 @@ def _owned_turns(
         for turn in hub.active_turns(conversation_id)
         if turn.user_id == user_id
     ]
+
+
+def _subconversation_turns(
+    request: Request,
+    sub_hub: ConversationStreamHub,
+    subconversation_id: str,
+    user_id: str,
+) -> list[SubconversationActiveTurnInfo]:
+    """Return retained turn state for a subconversation owned by ``user_id``."""
+    resolver = get_user_identity_resolver(request)
+    canonical_caller = _canonicalize_owner_id(resolver, user_id)
+    return [
+        _serialize_subconversation_active_turn(turn)
+        for turn in sub_hub.active_turns(subconversation_id)
+        if not turn.user_id
+        or _canonicalize_owner_id(resolver, turn.user_id) == canonical_caller
+    ]
+
+
+async def _ensure_subconversation_in_conversation(
+    db_context: Database,
+    conversation_id: str,
+    subconversation_id: str,
+) -> DelegationRunDict | None:
+    """Verify ``subconversation_id`` belongs to ``conversation_id``; 404 otherwise."""
+    run = await db_context.delegation_runs.get_latest_for_subconversation(
+        conversation_id=conversation_id,
+        subconversation_id=subconversation_id,
+    )
+    if run is not None:
+        return run
+    count = await db_context.message_history.get_subconversation_message_count(
+        conversation_id,
+        subconversation_id,
+    )
+    if count == 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    return None
 
 
 def _canonicalize_owner_id(
@@ -2034,56 +2114,27 @@ async def start_chat_turn(
     )
 
 
-@chat_api_router.get(
-    "/v1/chat/conversations/{conversation_id}/stream", response_model=None
-)
-async def api_chat_conversation_stream(
-    conversation_id: str,
+async def _build_hub_sse_response(
+    *,
     request: Request,
-    current_user: Annotated[dict, Depends(get_current_user)],
-    from_seq: int = 0,
-    ack_seq: int = -1,
-    follow: bool = False,
-    event_types: str | None = None,
+    hub: ConversationStreamHub,
+    stream_key: str,
+    observed_conversation_id: str,
+    stream_kind: str,
+    from_seq: int,
+    ack_seq: int,
+    follow: bool,
+    event_types: str | None,
+    active_turns_fn: Callable[[], Sequence[ActiveTurnInfo]],
+    has_running_turn_fn: Callable[[], bool],
 ) -> StreamingResponse | JSONResponse:
-    """Subscribe to a conversation's resumable event stream from ``from_seq``.
-
-    * Replays buffered events ``>= from_seq`` then tails live ones.
-    * On buffer underrun (``from_seq`` below the oldest cached seq) returns
-      410 Gone with ``active_turns`` populated, so the client can render a
-      "still thinking" placeholder while falling back to history reload.
-    * ``ack_seq`` lets a reconnecting client tell the server it already
-      received events up to that seq; the hub uses this to suppress redundant
-      disconnect-push notifications.
-    * ``event_types`` is an optional comma-separated allow-list (e.g.
-      ``event_types=message,turn_ended``). When set, only events whose type is
-      in the set are emitted — EXCEPT the lifecycle/control frames
-      ``turn_ended``, ``heartbeat`` and ``stream_dropped``, which are always
-      emitted so the client still knows when to stop / reload / reconnect. The
-      filter applies to both replayed and live events. Follow clients that only
-      reload history use this to skip the token firehose.
-    * ``follow`` controls lifetime:
-        - ``false`` (default): "watch my reply / resume" mode. Drain the
-          buffer and stream any in-flight turn through its ``turn_ended``,
-          then close once no turn is still running. This is the dominant flow
-          (send-then-watch, refresh-mid-turn resume) and terminates cleanly.
-        - ``true``: always-on live-updates mode. Stay open with periodic
-          heartbeats so the connection also surfaces turns that start later
-          (e.g. a reply triggered from another device). Clients that prefer
-          a reconnect loop can keep using ``follow=false`` and re-subscribe.
-    """
-    user_id = await _ensure_user_owns_conversation(
-        request, current_user, conversation_id, allow_new=False
-    )
-    hub = get_stream_hub(request)
+    """Shared resumable SSE responder for conversation and subconversation hubs."""
     allowed_event_types = _parse_event_types(event_types)
     shutdown_event = _get_shutdown_event(request)
     heartbeat_interval = _get_heartbeat_interval(request)
 
     try:
-        handle = await hub.subscribe(
-            conversation_id, from_seq=from_seq, ack_seq=ack_seq
-        )
+        handle = await hub.subscribe(stream_key, from_seq=from_seq, ack_seq=ack_seq)
     except OutOfBufferError as exc:
         return JSONResponse(
             status_code=status.HTTP_410_GONE,
@@ -2092,16 +2143,9 @@ async def api_chat_conversation_stream(
                 "requested_from_seq": exc.requested_from_seq,
                 "min_available_seq": exc.min_available_seq,
                 "active_turns": [
-                    info.model_dump(mode="json")
-                    for info in _owned_turns(hub, conversation_id, user_id)
+                    info.model_dump(mode="json") for info in active_turns_fn()
                 ],
             },
-        )
-
-    def _has_running_turn() -> bool:
-        return any(
-            turn.user_id == user_id and turn.status == "running"
-            for turn in hub.active_turns(conversation_id)
         )
 
     def _drain_queue() -> list[StreamEvent]:
@@ -2150,7 +2194,7 @@ async def api_chat_conversation_stream(
             # is nothing left to watch. Drain anything that landed in the queue
             # in the snapshot/check window (a turn that just ended leaves its
             # tail + turn_ended there) before closing, or those events are lost.
-            if not follow and not _has_running_turn():
+            if not follow and not has_running_turn_fn():
                 for drained in _drain_queue():
                     if _should_emit(drained.type, allowed_event_types):
                         yield format_sse_event(drained)
@@ -2183,7 +2227,7 @@ async def api_chat_conversation_stream(
                     # Heartbeat timeout. If the hub dropped this subscriber (its
                     # queue overflowed), tell the client to reconnect instead of
                     # silently heartbeating into a discarded subscription.
-                    if not hub.is_subscribed(conversation_id, handle.queue):
+                    if not hub.is_subscribed(stream_key, handle.queue):
                         yield (
                             "event: stream_dropped\n"
                             'data: {"reason": "queue_overflow"}\n\n'
@@ -2191,7 +2235,7 @@ async def api_chat_conversation_stream(
                         return
                     _notify_heartbeat_observer(request)
                     yield "event: heartbeat\ndata: {}\n\n"
-                    if not follow and not _has_running_turn():
+                    if not follow and not has_running_turn_fn():
                         for drained in _drain_queue():
                             if _should_emit(drained.type, allowed_event_types):
                                 yield format_sse_event(drained)
@@ -2204,7 +2248,7 @@ async def api_chat_conversation_stream(
                 if (
                     event.type == "turn_ended"
                     and not follow
-                    and not _has_running_turn()
+                    and not has_running_turn_fn()
                 ):
                     return
 
@@ -2220,13 +2264,13 @@ async def api_chat_conversation_stream(
             finally:
                 # Synchronous + lock-free so it still runs when the ASGI server
                 # cancels this generator on client disconnect.
-                hub.unsubscribe(conversation_id, handle.queue)
+                hub.unsubscribe(stream_key, handle.queue)
 
     return StreamingResponse(
         observed_stream(
             event_generator(),
-            kind="conversation",
-            conversation_id=conversation_id,
+            kind=stream_kind,
+            conversation_id=observed_conversation_id,
             follow=follow,
         ),
         media_type="text/event-stream",
@@ -2235,6 +2279,108 @@ async def api_chat_conversation_stream(
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },
+    )
+
+
+@chat_api_router.get(
+    "/v1/chat/conversations/{conversation_id}/stream", response_model=None
+)
+async def api_chat_conversation_stream(
+    conversation_id: str,
+    request: Request,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    from_seq: int = 0,
+    ack_seq: int = -1,
+    follow: bool = False,
+    event_types: str | None = None,
+) -> StreamingResponse | JSONResponse:
+    """Subscribe to a conversation's resumable event stream from ``from_seq``.
+
+    * Replays buffered events ``>= from_seq`` then tails live ones.
+    * On buffer underrun (``from_seq`` below the oldest cached seq) returns
+      410 Gone with ``active_turns`` populated, so the client can render a
+      "still thinking" placeholder while falling back to history reload.
+    * ``ack_seq`` lets a reconnecting client tell the server it already
+      received events up to that seq; the hub uses this to suppress redundant
+      disconnect-push notifications.
+    * ``event_types`` is an optional comma-separated allow-list (e.g.
+      ``event_types=message,turn_ended``). When set, only events whose type is
+      in the set are emitted — EXCEPT the lifecycle/control frames
+      ``turn_ended``, ``heartbeat`` and ``stream_dropped``, which are always
+      emitted so the client still knows when to stop / reload / reconnect. The
+      filter applies to both replayed and live events. Follow clients that only
+      reload history use this to skip the token firehose.
+    * ``follow`` controls lifetime:
+        - ``false`` (default): "watch my reply / resume" mode. Drain the
+          buffer and stream any in-flight turn through its ``turn_ended``,
+          then close once no turn is still running. This is the dominant flow
+          (send-then-watch, refresh-mid-turn resume) and terminates cleanly.
+        - ``true``: always-on live-updates mode. Stay open with periodic
+          heartbeats so the connection also surfaces turns that start later
+          (e.g. a reply triggered from another device). Clients that prefer
+          a reconnect loop can keep using ``follow=false`` and re-subscribe.
+    """
+    user_id = await _ensure_user_owns_conversation(
+        request, current_user, conversation_id, allow_new=False
+    )
+    hub = get_stream_hub(request)
+    return await _build_hub_sse_response(
+        request=request,
+        hub=hub,
+        stream_key=conversation_id,
+        observed_conversation_id=conversation_id,
+        stream_kind="conversation",
+        from_seq=from_seq,
+        ack_seq=ack_seq,
+        follow=follow,
+        event_types=event_types,
+        active_turns_fn=lambda: _owned_turns(hub, conversation_id, user_id),
+        has_running_turn_fn=lambda: any(
+            turn.user_id == user_id and turn.status == "running"
+            for turn in hub.active_turns(conversation_id)
+        ),
+    )
+
+
+@chat_api_router.get(
+    "/v1/chat/conversations/{conversation_id}/subconversations/{subconversation_id}/stream",
+    response_model=None,
+)
+async def api_chat_subconversation_stream(
+    conversation_id: str,
+    subconversation_id: str,
+    request: Request,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    db_context: Annotated[Database, Depends(get_db)],
+    from_seq: int = 0,
+    ack_seq: int = -1,
+    follow: bool = True,
+    event_types: str | None = None,
+) -> StreamingResponse | JSONResponse:
+    """Read-only resumable SSE stream for peeking into a delegated subconversation."""
+    user_id = await _ensure_user_owns_conversation(
+        request, current_user, conversation_id, allow_new=False
+    )
+    await _ensure_subconversation_in_conversation(
+        db_context, conversation_id, subconversation_id
+    )
+    sub_hub = get_stream_hub(request).subconversations
+
+    def _active() -> Sequence[ActiveTurnInfo]:
+        return _subconversation_turns(request, sub_hub, subconversation_id, user_id)
+
+    return await _build_hub_sse_response(
+        request=request,
+        hub=sub_hub,
+        stream_key=subconversation_id,
+        observed_conversation_id=f"{conversation_id}/{subconversation_id}",
+        stream_kind="subconversation",
+        from_seq=from_seq,
+        ack_seq=ack_seq,
+        follow=follow,
+        event_types=event_types,
+        active_turns_fn=_active,
+        has_running_turn_fn=lambda: any(turn.status == "running" for turn in _active()),
     )
 
 
@@ -3677,6 +3823,7 @@ def pending_delegation_response(entry: PendingDelegationSummary) -> PendingDeleg
         cancel_requested=run["cancel_requested_at"] is not None,
         children_total=entry["children_total"],
         children_finished=entry["children_finished"],
+        subconversation_id=run["subconversation_id"],
     )
 
 
@@ -3702,6 +3849,115 @@ async def get_pending_delegations(
     return PendingDelegationsResponse(
         conversation_id=conversation_id,
         delegations=[pending_delegation_response(entry) for entry in pending],
+    )
+
+
+@chat_api_router.get(
+    "/v1/chat/conversations/{conversation_id}/subconversations/{subconversation_id}/messages"
+)
+async def get_subconversation_messages(
+    conversation_id: str,
+    subconversation_id: str,
+    request: Request,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    db_context: Annotated[Database, Depends(get_db)],
+    attachment_registry: Annotated[
+        "AttachmentRegistry", Depends(get_attachment_registry)
+    ],
+    before_id: int | None = None,
+    before: str | None = None,
+    after: str | None = None,
+    limit: int = 50,
+) -> SubconversationMessagesResponse:
+    """Get read-only messages and live turn state for a delegated subconversation."""
+    user_id = await _ensure_user_owns_conversation(
+        request, current_user, conversation_id, allow_new=False
+    )
+    run = await _ensure_subconversation_in_conversation(
+        db_context, conversation_id, subconversation_id
+    )
+
+    before_dt = None
+    after_dt = None
+    try:
+        if before:
+            before_dt = datetime.fromisoformat(before.replace("Z", "+00:00"))
+        if after:
+            after_dt = datetime.fromisoformat(after.replace("Z", "+00:00"))
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid timestamp format. Use ISO format (e.g., 2024-01-15T10:30:00Z): {e}",
+        ) from e
+
+    effective_limit = 500 if limit <= 0 else limit
+    (
+        messages,
+        has_more_before,
+        has_more_after,
+    ) = await db_context.message_history.get_subconversation_messages_paginated(
+        conversation_id=conversation_id,
+        subconversation_id=subconversation_id,
+        before=before_dt,
+        after=after_dt,
+        limit=effective_limit,
+        before_id=before_id,
+    )
+
+    await enrich_persisted_attachments(
+        messages,
+        db_context=db_context,
+        attachment_registry=attachment_registry,
+        acting_user_id=user_id,
+    )
+    response_messages = serialize_conversation_messages(messages, {})
+    total_message_count = (
+        await db_context.message_history.get_subconversation_message_count(
+            conversation_id,
+            subconversation_id,
+        )
+    )
+
+    sub_hub = get_stream_hub(request).subconversations
+    active_turns = _subconversation_turns(request, sub_hub, subconversation_id, user_id)
+
+    delegation_model: PendingDelegation | None = None
+    if run is not None:
+        (
+            children_total,
+            children_finished,
+        ) = await db_context.delegation_runs.count_children_for_subconversation(
+            conversation_id=conversation_id,
+            source_subconversation_id=subconversation_id,
+        )
+        delegation_model = pending_delegation_response(
+            PendingDelegationSummary(
+                run=run,
+                children_total=children_total,
+                children_finished=children_finished,
+            )
+        )
+
+    pending_children = await db_context.delegation_runs.list_pending_children(
+        conversation_id=conversation_id,
+        source_subconversation_id=subconversation_id,
+    )
+
+    return SubconversationMessagesResponse(
+        conversation_id=conversation_id,
+        subconversation_id=subconversation_id,
+        delegation=delegation_model,
+        delegation_error=run["error"] if run is not None else None,
+        request_text=run["request_text"] if run is not None else None,
+        child_delegations=[
+            pending_delegation_response(entry) for entry in pending_children
+        ],
+        messages=response_messages,
+        count=len(response_messages),
+        total_messages=total_message_count,
+        has_more_before=has_more_before,
+        has_more_after=has_more_after,
+        active_turns=active_turns,
     )
 
 
