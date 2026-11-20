@@ -10,7 +10,9 @@ import base64
 import json
 from typing import TYPE_CHECKING, cast
 
+import httpx
 import pytest
+from google import genai
 from google.genai import types
 
 from family_assistant.llm import ToolCallFunction, ToolCallItem
@@ -64,7 +66,9 @@ def _client(
 def _input(client: GoogleGenAIClient, messages: list[LLMMessage]) -> list[JsonObject]:
     settings = client._interaction_settings
     assert settings is not None
-    return client._interaction_chat_request(messages, None, None, settings)["input"]
+    return client._interaction_chat_request(
+        messages, None, None, settings, native_retrieval=False
+    )["input"]
 
 
 def _at(value: object, *path: str | int) -> object:
@@ -435,7 +439,11 @@ def test_tool_choice_reaches_the_request_generation_config() -> None:
     }
 
     request = client._interaction_chat_request(
-        [UserMessage(content="hi")], [tool], "required", settings
+        [UserMessage(content="hi")],
+        [tool],
+        "required",
+        settings,
+        native_retrieval=False,
     )
 
     assert request["generation_config"]["tool_choice"] == "any"
@@ -448,7 +456,7 @@ def test_grounding_tools_are_declared_as_interactions_tools() -> None:
     assert settings is not None
 
     request = client._interaction_chat_request(
-        [UserMessage(content="hi")], None, None, settings
+        [UserMessage(content="hi")], None, None, settings, native_retrieval=False
     )
 
     assert request["tools"] == [{"type": "url_context"}, {"type": "google_search"}]
@@ -668,3 +676,195 @@ class TestStreamFolding:
         accumulator.stop(0)
 
         assert read_steps(accumulator.steps).thought_summaries == ["Plan more"]
+
+
+# --- Native tool retrieval ---------------------------------------------------
+
+ACTIVATE: ToolDefinition = {
+    "type": "function",
+    "function": {
+        "name": "activate_tools",
+        "description": "Activate on-demand tools by name.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "tool_names": {"type": "array", "items": {"type": "string"}}
+            },
+        },
+    },
+}
+WEATHER: ToolDefinition = {
+    "type": "function",
+    "function": {
+        "name": "get_weather",
+        "description": "Weather forecast for a city.",
+        "parameters": {"type": "object", "properties": {"city": {"type": "string"}}},
+    },
+}
+NOTE: ToolDefinition = {
+    "type": "function",
+    "function": {"name": "get_note", "description": "Load a note.", "parameters": {}},
+}
+DECLARED: list[ToolDefinition] = [NOTE, ACTIVATE, {**WEATHER, "defer_loading": True}]
+
+
+def _native_request(messages: list[LLMMessage]) -> dict[str, object]:
+    client = _client()
+    settings = client._interaction_settings
+    assert settings is not None
+    return client._interaction_chat_request(
+        messages, DECLARED, None, settings, native_retrieval=True
+    )
+
+
+class TestNativeToolRetrieval:
+    def test_activate_tools_becomes_a_client_tool_search(self) -> None:
+        request = _native_request([UserMessage(content="hi")])
+
+        assert request["tools"] == [
+            {
+                "type": "function",
+                "name": "get_note",
+                "description": "Load a note.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+            {
+                "type": "tool_search",
+                "execution": "client",
+                "name": "activate_tools",
+                "description": "Activate on-demand tools by name.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "tool_names": {"type": "array", "items": {"type": "string"}}
+                    },
+                },
+            },
+        ]
+
+    def test_an_activation_delivers_the_definition_in_its_result(self) -> None:
+        result = ToolMessage(
+            tool_call_id="call_1", name="activate_tools", content="Activated."
+        )
+        result.activated_tools = ["get_weather"]
+        messages: list[LLMMessage] = [
+            UserMessage(content="Weather?"),
+            AssistantMessage(
+                tool_calls=[
+                    _call("call_1", "activate_tools", {"tool_names": ["get_weather"]})
+                ]
+            ),
+            result,
+        ]
+
+        steps = _native_request(messages)["input"]
+
+        assert isinstance(steps, list)
+        assert steps[2]["result"] == [
+            {"type": "text", "text": "Activated."},
+            {
+                "type": "function",
+                "name": "get_weather",
+                "description": "Weather forecast for a city.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"city": {"type": "string"}},
+                },
+            },
+        ]
+
+    def test_a_skill_activation_delivers_its_tools_the_same_way(self) -> None:
+        result = ToolMessage(tool_call_id="call_1", name="get_note", content="{}")
+        result.activated_tools = ["get_weather"]
+        messages: list[LLMMessage] = [
+            UserMessage(content="Load the weather skill."),
+            AssistantMessage(tool_calls=[_call("call_1", "get_note", {})]),
+            result,
+        ]
+
+        steps = _native_request(messages)["input"]
+
+        assert isinstance(steps, list)
+        assert _at(steps, 2, "result", 1, "name") == "get_weather"
+
+    def test_without_native_retrieval_the_list_is_narrowed(self) -> None:
+        client = _client()
+        settings = client._interaction_settings
+        assert settings is not None
+
+        request = client._interaction_chat_request(
+            [UserMessage(content="hi")],
+            DECLARED,
+            None,
+            settings,
+            native_retrieval=False,
+        )
+
+        assert [tool["name"] for tool in request["tools"]] == [
+            "get_note",
+            "activate_tools",
+        ]
+
+    def test_the_flag_turns_native_retrieval_off(self) -> None:
+        client = GoogleGenAIClient(
+            api_key="test-key",
+            model=MODEL,
+            model_parameters={MODEL: {"native_tool_retrieval": False}},
+        )
+
+        assert client._native_retrieval_enabled is False
+
+
+_REFUSAL = {
+    "error": {
+        "code": 400,
+        "message": "tool search is not supported for this model",
+        "status": "INVALID_ARGUMENT",
+    }
+}
+_REPLY = {
+    "id": "interaction-1",
+    "status": "completed",
+    "model": MODEL,
+    "steps": [{"type": "model_output", "content": [{"type": "text", "text": "ok"}]}],
+    "usage": {"total_input_tokens": 3, "total_output_tokens": 1, "total_tokens": 4},
+}
+
+
+async def test_a_refused_retrieval_falls_back_and_stays_off() -> None:
+    requests: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        requests.append(body)
+        refused = any(
+            tool.get("type") == "tool_search" for tool in body.get("tools", [])
+        )
+        return httpx.Response(
+            400 if refused else 200, json=_REFUSAL if refused else _REPLY
+        )
+
+    client = _client()
+    client.client = genai.Client(
+        api_key="test-key",
+        http_options=types.HttpOptions(
+            api_version="v1beta",
+            httpx_async_client=httpx.AsyncClient(
+                transport=httpx.MockTransport(handler)
+            ),
+        ),
+    )
+
+    first = await client.generate_response([UserMessage(content="hi")], tools=DECLARED)
+    second = await client.generate_response([UserMessage(content="hi")], tools=DECLARED)
+
+    assert first.content == "ok" and second.content == "ok"
+    declared = [
+        [tool["type"] for tool in cast("list[dict[str, str]]", body["tools"])]
+        for body in requests
+    ]
+    assert declared == [
+        ["function", "tool_search"],
+        ["function", "function"],
+        ["function", "function"],
+    ]

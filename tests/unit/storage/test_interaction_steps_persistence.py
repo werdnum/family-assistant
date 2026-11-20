@@ -97,6 +97,8 @@ async def test_a_round_tripped_message_replays_its_steps(db_context: Database) -
     settings = client._interaction_settings
     assert settings is not None
 
-    request = client._interaction_chat_request([restored], None, None, settings)
+    request = client._interaction_chat_request(
+        [restored], None, None, settings, native_retrieval=False
+    )
 
     assert request["input"] == STEPS

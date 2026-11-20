@@ -42,6 +42,7 @@ from family_assistant.tools.metadata import (
     ToolTag,
     make_local_tool_metadata,
 )
+from family_assistant.tools.on_demand import OnDemandToolsView
 from family_assistant.tools.policy import (
     PolicyEngine,
     ToolPolicyConfig,
@@ -155,9 +156,16 @@ def gemini_http_api_debug_config(
 
 
 def _processing_service(
-    db_engine: AsyncEngine, llm_client: GoogleGenAIClient
+    db_engine: AsyncEngine,
+    llm_client: GoogleGenAIClient,
+    *,
+    on_demand_tool_names: set[str] | None = None,
 ) -> ProcessingService:
-    """A ProcessingService over *llm_client* with the replay tool and context."""
+    """A ProcessingService over *llm_client* with the replay tool and context.
+
+    With *on_demand_tool_names*, those tools are withheld until activated, as a
+    profile's ``on_demand_local_tools`` are.
+    """
     local_tools = LocalToolsProvider(registrations=_REPLAY_REGISTRATIONS)
     composite_tools = CompositeToolsProvider(providers=[local_tools])
     tools_provider = PolicyEnforcingToolsProvider(
@@ -207,6 +215,14 @@ def _processing_service(
         # body differ from the recording on every run, so no cassette can ever
         # replay.
         clock=MockClock(datetime(2026, 8, 7, 12, 0, 0, tzinfo=UTC)),
+        on_demand_view=(
+            OnDemandToolsView(
+                wrapped_provider=tools_provider,
+                on_demand_tool_names=on_demand_tool_names,
+            )
+            if on_demand_tool_names
+            else None
+        ),
     )
 
 
@@ -404,17 +420,28 @@ def vcr_config(vcr_config: dict[str, object]) -> dict[str, object]:
     return {**vcr_config, "ignore_hosts": ["test"]}
 
 
-@pytest_asyncio.fixture
+@pytest_asyncio.fixture(params=[False, True], ids=["eager", "on_demand"])
 async def interactions_client(
+    request: pytest.FixtureRequest,
     db_engine: AsyncEngine,
     attachment_registry_fixture: AttachmentRegistry,
 ) -> AsyncGenerator[AsyncClient]:
+    """The chat API on Interactions, with the replay tool eager or on demand.
+
+    On demand, the model has to activate ``add_numbers`` before calling it, so
+    the turn exercises native tool retrieval: ``activate_tools`` declared as a
+    client-side ``tool_search``, the definition delivered in its result.
+    """
     llm_client = GoogleGenAIClient(
         api_key=os.getenv("GEMINI_API_KEY") or "test-key",
         model="gemini-3.8-flash",
     )
     app.state.database_engine = db_engine
-    app.state.processing_service = _processing_service(db_engine, llm_client)
+    app.state.processing_service = _processing_service(
+        db_engine,
+        llm_client,
+        on_demand_tool_names={_REPLAY_TOOL_NAME} if request.param else None,
+    )
     app.state.attachment_registry = attachment_registry_fixture
     app.state.web_chat_interface = WebChatInterface(db_engine)
     app.state.debug_mode = True

@@ -1,0 +1,161 @@
+interactions:
+- request:
+    body: '{"model":"gemini-3.8-flash","input":[{"content":[{"text":"System: [Active
+      Processing Profile: test]\n\nYou are a helpful assistant.\n\nEach user message
+      begins with a [Sent ...] line giving the time it was sent. The line is added
+      by the system, not written by the user; the newest one is the current time.
+      Never include such a line in your reply. A user message that arrives after your
+      tool results, before you have answered, was sent while you were already working:
+      treat it as the latest instruction for the turn, re-evaluate your plan, and
+      make the smallest necessary adjustment before continuing.","type":"text"}],"type":"user_input"},{"content":[{"text":"[Sent
+      Fri 2026-08-07 12:00 UTC]\nCalculate 5 + 5. Use the add_numbers tool.","type":"text"}],"type":"user_input"}],"store":false,"stream":true,"tools":[{"description":"Add
+      two integers and return their sum.","name":"add_numbers","parameters":{"type":"object","properties":{"a":{"type":"integer","description":"First
+      addend."},"b":{"type":"integer","description":"Second addend."}},"required":["a","b"]},"type":"function"}]}'
+    headers:
+      accept:
+      - text/event-stream
+      accept-encoding:
+      - gzip, deflate, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1083'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+      x-goog-api-client:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/1SNMQqAMBAE+7wiXK02NpLPyJmsGomJ6CGI5O9qIWg7wzDYEcVoHwUrW/EpVnYF
+        C5xyLGz0SR9H5qTUTbBC5scLmpNDuOmA2Udf1lVT9oG3kXJBeCatHAv+2buirNQFAAD//0rFdEhx
+        SWJJaXF8aQHQJalw50BEwQbFFxTlpxelFhcr4bEDxRSQTQAAAAD//4LaVFySWgCSLCpB8mlKaoWS
+        lYGOEkgS5FmoeSUZ+aXpGSUYfkGYATIYAAAA//9sks2SojAYRR+IBdBGCIteYAQ18iMI2MNmKhCU
+        vyYogaBPP/TMYmaqevndxalb93z/gpcxOPkG/Dv/Ig/VrVuKPb4wVh8j1B+QeWnia+iSgHojsubq
+        PkESvLZua5edFcGSxHrHtU/W4TIMdjTeXsudfmDJpcjTeirBq8r5s4gqhu9Wsx6cNXjOLgfc0ftj
+        3muz9Dxozg91OSemRoJmg7gwDQfZWUxvhOzTctTb3HO4zqnBpDSm2yxBQVXggO6JdFRe3VhzC6/Y
+        xlM/hHEksxLYEAlrMLFolORSWt5Q+wb2/QhDMJv6BMdKVQDqMXBpXKjj48SQRhmL5dA86jCrV63a
+        2A+r3jBZNva73lsLOHPPPZsGSNorJz6vakBsiR2y4mq8+ejj1g5NslH2xukWRq2apid+63DR0lqw
+        ev60MZRAcKJS/hrukG8rKTUUZyVnpvsIV4qciDPTsXh/X97mf8E//1r5VvUfe4vqXwAAAP//Qk1D
+        +QVYYhpbQskvAGkGAAAA//8imAANEQkwMwWoOzkxJyfe0NTC0tLM1NzMzMjUwMDC0NzYwAjhgbTS
+        PHByjwepBQrnJeaChBNTUuLzSnOTUotAeSSxKL00F2g3MPdU1+JPywAAAAD//yKYlg2R0jKSuUrV
+        MUqJMUpWpjoxSkkguhbhRriyeGg44g1iAAAAAP//IhTEhviCGAAAAP//rJVdC8IgFIb/i9cL1L42
+        f0dXRYi5Q0lrLqfRiP57OtINGrvq0vPly3nlcYImUt+aCmbAlsBi4O6UxwpPcHOtOEPPA21Fxa2+
+        Qu0rab7OviFVN84OCbrN0DjETx33hBSVsh1ihxcaDsjC04YlDb3vYxwrhbxAmebiGNfOju8jeZak
+        6Yq7Fn5b4hOPiRUOEpVVU+q9NZHNDFFMNwtCFhTvcMFIwZZ4H5bSE3WmoAXzUNJLUWB6g0RdClP6
+        zF//kOhr8P0DAAD//4LGe0p+HqzCiHbx93ON5eICAAAA//8DAMgKSODpBgAA
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-encoding:
+      - gzip
+      content-type:
+      - text/event-stream
+      date:
+      - Fri, 20 Nov 2026 09:19:30 GMT
+      server:
+      - scaffolding on HTTPServer2
+      server-timing:
+      - gfet4t7; dur=2339
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"model":"gemini-3.8-flash","input":[{"content":[{"text":"System: [Active
+      Processing Profile: test]\n\nYou are a helpful assistant.\n\nEach user message
+      begins with a [Sent ...] line giving the time it was sent. The line is added
+      by the system, not written by the user; the newest one is the current time.
+      Never include such a line in your reply. A user message that arrives after your
+      tool results, before you have answered, was sent while you were already working:
+      treat it as the latest instruction for the turn, re-evaluate your plan, and
+      make the smallest necessary adjustment before continuing.","type":"text"}],"type":"user_input"},{"content":[{"text":"[Sent
+      Fri 2026-08-07 12:00 UTC]\nCalculate 5 + 5. Use the add_numbers tool.","type":"text"}],"type":"user_input"},{"signature":"EpUCCpICAWkUfRMaQdNuCExiqv8aQzDMlFhnET8haU7nt6monJhRQGdUDfhG7IoVWecZjvh4zictyeTioJqEk5sL54yxMt4tL7pKcp6x+yI6LY1L7pvo1TwdbswWo6JQbSwv2aaHZhu7lcNLt7td9o+ZUdDbVCQieJQdHa+K0znujtEJ3oBN1Xw9Kax0QF8CwEsAJwk0VWhENsjO9JOOTJ84xA7v8ui104CpJ4MdUe1urPoC6dooU/RAK78bj3l1kFrEjBo//9HGpN5w8xtNMSA94VlftaOtij4aF+oIbef92OCXglskVB0H9PgRTl1ZZPtgnJeldjwojxmFJ8+4QPd+czsq8tDi+Z90L3/bAMrR30/VwSo7Jw==","type":"thought"},{"arguments":{"a":5,"b":5},"id":"call_15899657662500817302","name":"add_numbers","type":"function_call"},{"call_id":"call_15899657662500817302","result":[{"text":"{\"result\":
+      10}","type":"text"}],"name":"add_numbers","type":"function_result"}],"store":false,"stream":true,"tools":[{"description":"Add
+      two integers and return their sum.","name":"add_numbers","parameters":{"type":"object","properties":{"a":{"type":"integer","description":"First
+      addend."},"b":{"type":"integer","description":"Second addend."}},"required":["a","b"]},"type":"function"}]}'
+    headers:
+      accept:
+      - text/event-stream
+      accept-encoding:
+      - gzip, deflate, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1737'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+      x-goog-api-client:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/1SNMQqAMBAE+7wiXK02NpLPyJmsGomJ6CGI5O9qIWg7wzDYEcVoHwUrW/EpVnYF
+        C5xyLGz0SR9H5qTUTbBC5scLmpNDuOmA2Udf1lVT9oG3kXJBeCatHAv+2buirNQFAAD//0rFdEhx
+        SWJJaXF8aQHQJalw50BEwQbFFxTlpxelFhcr4bEDxRSQTQAAAAD//4LaVFySWgCSLCpB8mlKaoWS
+        lYGOEkgS5FmoeSUZ+aXpGSUYfkGYATIYAAAA//9skkuTojAURn9QFkhHeSx6ARkk8ooKgrCZAiW8
+        ohgeAv3rx55ZdE9Vb+/i1K3vnO/g1xhD+gP47/2T3FfF/fVY94kxeIsQvyAtak706LVxyrcl7KAo
+        xCORxPIxJ06Pc3s9KkcbyZ4kr3CRGDcmoWaxD7itotv6eLkrUWeAAdiXE0xz9Tael2QgoHti9mEw
+        9x5yN9zoRks0NWY2qRZAzTuFJVAQKxq6T/FxsZ4lKSe1pYRmyUSu2HVRdu3SLNMcARghLC8UGZY6
+        0f7B141PJuFeP4MWO5impjvm1OTmOnIWd/YjfFJi3XlsunEfMjmtQ09PkszUZETaDtT9vmahlzIC
+        SKEKyuEMRb33umbB7bZvtMbVdnD+MMChXuXQq9Cm7J3rrIqiJguBFUHbf8NcCc7b2t+vAg6rB2Aa
+        kK4OZWo6DbwDVmHt4FPfzZJIWC2HfNO+BSgqV7Mw+CcXh79qLpEuORcGWR91jcePXM+5NL2/v5L6
+        X/7vL2M/ZvDP7CuDPwAAAP//Qk1f+QVYUgG2RJRfANIMAAAA//8imDgNMRInOOfF55eWFJQSSqEA
+        AAAA//8imEINkVJoSWoFKJubKmgrmCrYKhgihQhIBn8gAAAAAP//IscmAz2SrAAAAAD//yIUzob4
+        whkAAAD//6xV0QrCMAz8lz1v0HUyWb/DJ0VK7YIW6ypbJwzx3003mwmOPfnYa5JecuG6YDfa3e4W
+        VpyPnIcikW/fqTOMTTivrPTuCg3GFJsy/UCmQWHmC4b6f0PyNEiUUFnjh0Qcnsl8mKYQ6lDu6xjL
+        aqUvUFNdFvFpEQivUmLmrOw7+M2IC07PbAND480SedQkurZIOONllucZZztWibwSBd+HmYxeuxLQ
+        QfswGqkYaEdlVFOrNozzr78LyYSCvwEAAP//gkZ4Sn4erCqJdvH3c43l4gIAAAD//wMA8HjZhQMH
+        AAA=
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-encoding:
+      - gzip
+      content-type:
+      - text/event-stream
+      date:
+      - Fri, 20 Nov 2026 09:19:32 GMT
+      server:
+      - scaffolding on HTTPServer2
+      server-timing:
+      - gfet4t7; dur=1364
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+version: 1

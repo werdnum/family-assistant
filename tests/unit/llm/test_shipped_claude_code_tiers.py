@@ -24,12 +24,12 @@ from family_assistant.config_models import (
     ProcessingConfig,
     RetryModelConfig,
 )
+from family_assistant.llm.deferred_tools import ACTIVATE_TOOLS_TOOL_NAME
 from family_assistant.llm.model_tiers import resolve_claude_agent_model
 from family_assistant.processing.claude_agent_loop import CLAUDE_CODE_OAUTH_TOKEN_ENV
 from family_assistant.processing.service import ProcessingService
 from family_assistant.security.taint import SinkClass
 from family_assistant.storage.database import Database
-from family_assistant.tools.on_demand import ACTIVATE_TOOLS_TOOL_NAME
 from tests.mocks.fake_claude_code import FakeClaudeCode, FakeResponse, FakeText
 
 if TYPE_CHECKING:

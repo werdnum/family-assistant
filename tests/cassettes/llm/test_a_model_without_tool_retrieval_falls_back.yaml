@@ -1,0 +1,119 @@
+interactions:
+- request:
+    body: '{"model":"gemini-3.5-flash-lite","input":[{"content":[{"text":"Say hello.","type":"text"}],"type":"user_input"}],"store":false,"stream":false,"tools":[{"description":"Activate
+      on-demand tools by name so you can call them.","execution":"client","name":"activate_tools","parameters":{"type":"object","properties":{"tool_names":{"type":"array","items":{"type":"string"}}}},"type":"tool_search"}]}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '393'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+      x-goog-api-client:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/w3LQQ6AIAwF0as0f+0JuIwhUoUErLbFDeHusprkJTPAqqIIA43N4sUIcJFKxlGP
+        TMXoFifrzyPqnOgUJc+LmySu2HCsrqncX6wl7cpvZ3PM+QNTJVYpXAAAAA==
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-encoding:
+      - gzip
+      content-type:
+      - application/json; charset=UTF-8
+      date:
+      - Fri, 20 Nov 2026 09:21:53 GMT
+      server:
+      - scaffolding on HTTPServer2
+      server-timing:
+      - gfet4t7; dur=205
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-xss-protection:
+      - '0'
+    status:
+      code: 400
+      message: Bad Request
+- request:
+    body: '{"model":"gemini-3.5-flash-lite","input":[{"content":[{"text":"Say hello.","type":"text"}],"type":"user_input"}],"store":false,"stream":false,"tools":[{"description":"Activate
+      on-demand tools by name so you can call them.","name":"activate_tools","parameters":{"type":"object","properties":{"tool_names":{"type":"array","items":{"type":"string"}}}},"type":"function"}]}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '369'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+      user-agent:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+      x-goog-api-client:
+      - google-genai-sdk/3.6.1 gl-python/3.14.5
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAC/3xSa2/aQBD8K+59jSk+zCNYiqpAeAUITURUoKrQ2V7sw4fP2OvEBvHfe3YCRWrV
+        jze3Ozs7s0eSIMM0IRZx5C4SgOASnaQJ84BYR4ISmVijDCBUNc2W/onwMErxgjdudXKNrO18vZMu
+        ExxzYv08kj8PgpAhKWjOradfZ1KHOT64F1bjjMsUr6e19YssKdZpAn93oC9Tz8frDx5y5P9QftKJ
+        EwMr9rZIzag1K5RWasbcaFs1ajWaq8KOyP1/QQLxG3eUEA6xqlKehi6LCycThCgpPUi4FyqrY+Ur
+        6YXJGJ77UX9ozP3O4+qlS/cHFjQ6+c00WM3sJ3N/O16aeWfUkz+ewanfUD7dLqA7y7lRrQ675kbu
+        F7P9bDeaBPZD0PLdx7HNZvItn798Pxh7sWzTVzftTD006as9MR9iY9kdrA7Z/XaTDYxOy6+LquMF
+        g55YDDOeNWmK7oJG/XGVTmBQl9k7vb8rgsqjQvGno+SkH9WlhAghlluVcVpkCELIL9pQvmsOC7WR
+        5oOItFymGqro829XREVDmfnHW50GnCMucWlvwSk4uZoSMwe5DFV7WadQD3Yqyor5tVHZCJb4FXVX
+        QE6/AQAA//8DAPLtg7HJAgAA
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-encoding:
+      - gzip
+      content-type:
+      - application/json
+      date:
+      - Fri, 20 Nov 2026 09:21:56 GMT
+      server:
+      - scaffolding on HTTPServer2
+      server-timing:
+      - gfet4t7; dur=3659
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-content-type-options:
+      - nosniff
+      x-frame-options:
+      - SAMEORIGIN
+      x-xss-protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
+version: 1

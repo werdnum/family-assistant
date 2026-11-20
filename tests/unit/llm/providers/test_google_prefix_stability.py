@@ -37,7 +37,10 @@ from family_assistant.llm.messages import AssistantMessage, LLMMessage, UserMess
 from family_assistant.llm.providers.gemini_interactions import (
     interaction_replay_metadata,
 )
-from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
+from family_assistant.llm.providers.google_genai_client import (
+    GoogleGenAIClient,
+    InteractionRequest,
+)
 from family_assistant.storage.delegation_runs import delegation_wake_instruction
 from tests.unit.llm.agent_loop_conversations import (
     STEP,
@@ -131,7 +134,9 @@ def _interaction_steps(
     """The Interactions input steps a chat request carries."""
     settings = client._interaction_settings
     assert settings is not None
-    request = client._interaction_chat_request(messages, None, None, settings)
+    request = client._interaction_chat_request(
+        messages, None, None, settings, native_retrieval=False
+    )
     return [("step", step) for step in request["input"]]
 
 
@@ -220,3 +225,32 @@ class TestGooglePrefixStability:
         _assert_each_request_extends_the_previous_one(
             steps, _interaction_steps, _decorate
         )
+
+    @given(st.lists(STEP, min_size=1, max_size=12))
+    @_PROPERTY_SETTINGS
+    def test_native_retrieval_keeps_the_tool_list_fixed(
+        self, steps: list[Step]
+    ) -> None:
+        """With native retrieval an activation appends; nothing ahead of it changes."""
+        client = GoogleGenAIClient(api_key="test-key", model=MODEL)
+        settings = client._interaction_settings
+        assert settings is not None
+        history = opening()
+
+        def request(messages: list[LLMMessage]) -> InteractionRequest:
+            return client._interaction_chat_request(
+                messages, TOOLS, None, settings, native_retrieval=True
+            )
+
+        first = request(history)
+        previous_input = first["input"]
+        for index, step in enumerate(steps):
+            history.extend(
+                messages_for(step, index, history, _decorate_with_recorded_steps)
+            )
+            if not sends_a_request(history):
+                continue
+            current = request(history)
+            assert current["tools"] == first["tools"]
+            assert current["input"][: len(previous_input)] == previous_input
+            previous_input = current["input"]

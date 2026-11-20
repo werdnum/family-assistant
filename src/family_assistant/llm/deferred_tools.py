@@ -27,6 +27,12 @@ if TYPE_CHECKING:
     from family_assistant.tools.types import ToolDefinition
 
 
+# The meta-tool that activates deferred tools. Defined here, beside the rest of
+# the deferral contract, because an adapter that renders activation natively
+# has to recognise it without importing the tools package.
+ACTIVATE_TOOLS_TOOL_NAME = "activate_tools"
+
+
 def tool_name(tool: ToolDefinition) -> str | None:
     """The function name a tool definition declares."""
     function = tool.get("function")

@@ -26,6 +26,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
+from family_assistant.llm.deferred_tools import ACTIVATE_TOOLS_TOOL_NAME
 from family_assistant.tools.infrastructure import (
     ToolDescriptorProvider,
     ToolsProvider,
@@ -43,8 +44,6 @@ logger = logging.getLogger(__name__)
 
 
 _EMPTY_ACTIVATED: frozenset[str] = frozenset()
-
-ACTIVATE_TOOLS_TOOL_NAME = "activate_tools"
 
 # Names a real tool may not take, because a consumer intercepts them before
 # dispatch reaches the wrapped provider.

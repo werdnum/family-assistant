@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, Field
 
 from family_assistant.llm.custom_instructions import CUSTOM_INSTRUCTIONS_KEY
+from family_assistant.llm.deferred_tools import ACTIVATE_TOOLS_TOOL_NAME
 from family_assistant.llm.factory import LLMClientFactory
 from family_assistant.llm.messages import (
     AssistantMessage,
@@ -35,7 +36,6 @@ from family_assistant.llm.messages import (
 )
 from family_assistant.llm.model_tiers import resolve_entry_client_config
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
-from family_assistant.tools.on_demand import ACTIVATE_TOOLS_TOOL_NAME
 
 if TYPE_CHECKING:
     from family_assistant.config_models import AppConfig
