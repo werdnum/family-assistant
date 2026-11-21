@@ -1923,6 +1923,16 @@ class TaintTrackingToolsProvider(ToolsProvider):
         # not isinstance, so it silently strips capabilities.
         self._profile = profile
 
+    @property
+    def tool_call_reviewer(self) -> ToolCallReviewer | None:
+        """The configured tool-call reviewer, if any."""
+        return self._tool_call_reviewer
+
+    @property
+    def review_config(self) -> ToolCallReviewConfig | None:
+        """The configured tool-call review settings, if any."""
+        return self._review_config
+
     def _record_sink_approval(
         self,
         context: ToolExecutionContext,
@@ -2780,24 +2790,24 @@ class TaintTrackingToolsProvider(ToolsProvider):
             and evaluation.mode is TaintPolicyMode.OBSERVE
             and not static_review
         )
-        confined_exemption = (
+        confined_exemption = False
+        confined_exemption_reason: str | None = None
+        if (
             taint_review
             and not watched
             and evaluation is not None
             and not static_review
-            and self._is_confined_review_exempt(
+        ):
+            (
+                confined_exemption,
+                confined_exemption_reason,
+            ) = await self._evaluate_disclosure_exemption(
                 descriptor=descriptor,
+                context=context,
                 state=state,
                 sink_class=sink_class,
                 evaluation=evaluation,
-                review_messages=context.tool_call_review_messages,
-                active_request_role=(
-                    context.tool_call_review_trigger.active_request_role
-                    if context.tool_call_review_trigger is not None
-                    else "user"
-                ),
             )
-        )
 
         constraints = self._review_constraints(
             taint_evaluation=evaluation,
@@ -2839,6 +2849,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 call_id=call_id,
                 state=state,
                 evaluation=evaluation,
+                reason=confined_exemption_reason,
             )
         elif (
             forecast_review
@@ -3236,6 +3247,114 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 result=result,
             )
         return result
+
+    _NON_UNCHECKED_BROWSER_TOOLS = frozenset({
+        "browser_autofill",
+        "browser_report_login_outcome",
+        "browser_claim_handback",
+    })
+
+    async def _evaluate_disclosure_exemption(
+        self,
+        *,
+        descriptor: ToolDescriptor,
+        context: ToolExecutionContext,
+        state: TurnTaintState,
+        sink_class: SinkClass,
+        evaluation: TaintPolicyEvaluation,
+    ) -> tuple[bool, str | None]:
+        """Decide whether a disclosure-sink review resolves to audit."""
+        from family_assistant.tools.browser_session import (  # noqa: PLC0415
+            BROWSER_BRIEF_REVIEW_PROFILES,
+            browser_scope_key,
+            has_recorded_browser_session_review_mode,
+        )
+
+        scope = await browser_scope_key(context)
+        if (
+            context.processing_profile_id in BROWSER_BRIEF_REVIEW_PROFILES
+            or has_recorded_browser_session_review_mode(scope)
+        ):
+            exempt = await self._is_browser_unchecked_exempt(
+                descriptor=descriptor,
+                context=context,
+                scope=scope,
+                state=state,
+                sink_class=sink_class,
+                evaluation=evaluation,
+            )
+            if exempt:
+                return (
+                    True,
+                    "Browser brief-review exemption: session brief was reviewed "
+                    "unchecked with no sensitive reads, handback, or protected session.",
+                )
+            return False, None
+
+        exempt = self._is_confined_review_exempt(
+            descriptor=descriptor,
+            state=state,
+            sink_class=sink_class,
+            evaluation=evaluation,
+            review_messages=context.tool_call_review_messages,
+            active_request_role=(
+                context.tool_call_review_trigger.active_request_role
+                if context.tool_call_review_trigger is not None
+                else "user"
+            ),
+        )
+        return exempt, None
+
+    async def _is_browser_unchecked_exempt(
+        self,
+        *,
+        descriptor: ToolDescriptor,
+        context: ToolExecutionContext,
+        scope: str,
+        state: TurnTaintState,
+        sink_class: SinkClass,
+        evaluation: TaintPolicyEvaluation,
+    ) -> bool:
+        """Whether a browser action in an ``unchecked`` delegated session resolves to audit."""
+        from family_assistant.services.tool_call_review import (  # noqa: PLC0415
+            browser_session_handed_back,
+        )
+        from family_assistant.tools.browser_backend import (  # noqa: PLC0415
+            is_protected_browser_session,
+        )
+        from family_assistant.tools.browser_session import (  # noqa: PLC0415
+            BROWSER_TOOL_NAMES,
+            is_browser_scope_handed_back,
+            is_browser_scope_unchecked,
+            mark_browser_scope_checked,
+        )
+
+        if (
+            self._review_config is not None
+            and not self._review_config.browser_brief_review_enabled
+        ):
+            return False
+        if (
+            self._include_aggregated_context is not False
+            or sink_class not in _REVIEW_DISCLOSURE_SINKS
+            or evaluation.verdict_floor is not None
+            or context.subconversation_id is None
+        ):
+            return False
+        is_browser_tool = (
+            descriptor.name in BROWSER_TOOL_NAMES or ToolTag.BROWSER in descriptor.tags
+        ) and descriptor.name not in self._NON_UNCHECKED_BROWSER_TOOLS
+        if not is_browser_tool:
+            return False
+        if (
+            state.sensitive_reads
+            or await is_protected_browser_session(context)
+            or is_browser_scope_handed_back(scope)
+            or browser_session_handed_back(context.tool_call_review_messages or ())
+        ):
+            mark_browser_scope_checked(scope)
+            return False
+        return is_browser_scope_unchecked(scope)
 
     def _is_confined_review_exempt(
         self,
@@ -3680,6 +3799,16 @@ class TaintTrackingToolsProvider(ToolsProvider):
                     ),
                 )
             )
+        browser_handed_back = False
+        if ToolTag.BROWSER in descriptor.tags:
+            from family_assistant.tools.browser_session import (  # noqa: PLC0415
+                browser_scope_key,
+                is_browser_scope_handed_back,
+            )
+
+            browser_handed_back = is_browser_scope_handed_back(
+                await browser_scope_key(context)
+            )
         review_input = ToolCallReviewInput(
             messages=messages,
             descriptor=descriptor,
@@ -3700,6 +3829,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
             else (),
             watched_call=watched,
             human_decisions=human_decisions,
+            browser_handed_back=browser_handed_back,
         )
         constraints = program_review_constraints(review_input, constraints)
         if enforce_constraints is not None:
@@ -4311,6 +4441,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
         call_id: str | None,
         state: TurnTaintState,
         evaluation: TaintPolicyEvaluation,
+        reason: str | None = None,
     ) -> None:
         review_context: TaintAuditReviewContext = {
             "delegating_contexts": [
@@ -4336,7 +4467,8 @@ class TaintTrackingToolsProvider(ToolsProvider):
             requested_outcome=TaintPolicyOutcome.ADJUDICATE.value,
             effective_outcome=TaintPolicyOutcome.AUDIT.value,
             mode=evaluation.mode.value,
-            reason=(
+            reason=reason
+            or (
                 "Confined-profile disclosure exemption: aggregated context is "
                 "excluded, the reviewer window is current-turn-only, and the turn "
                 "has no sensitive reads or high-taint history."
@@ -4852,6 +4984,20 @@ class TaintTrackingToolsProvider(ToolsProvider):
             state_before_execution=state_before_execution,
             result=result,
         )
+        if (
+            context.subconversation_id is not None
+            and context.taint_tracker is not None
+            and context.taint_tracker.snapshot().sensitive_reads
+        ):
+            from family_assistant.tools.browser_session import (  # noqa: PLC0415
+                browser_scope_key,
+                is_browser_scope_unchecked,
+                mark_browser_scope_checked,
+            )
+
+            scope = await browser_scope_key(context)
+            if is_browser_scope_unchecked(scope):
+                mark_browser_scope_checked(scope)
         if recorded is not None:
             recorded_state, result_tier = recorded
             await self._record_result_taint_audit(

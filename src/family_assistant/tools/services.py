@@ -35,7 +35,10 @@ from family_assistant.security.taint import (
     merge_taint_state_origins,
     unknown_external_taint_metadata,
 )
+from family_assistant.security.taint_audit import taint_audit_sources
 from family_assistant.services.tool_call_review import (
+    BrowserBriefReviewMode,
+    ToolCallReviewStatus,
     TriggerReviewInput,
     build_delegation_review_trigger,
     collect_earlier_requests,
@@ -47,7 +50,15 @@ from family_assistant.storage.delegation_runs import (
     delegated_subconversation_id,
 )
 from family_assistant.storage.tasks import TaskPriority
-from family_assistant.tools.browser_session import delegated_browser_scope
+from family_assistant.tools.browser_session import (
+    BROWSER_BRIEF_REVIEW_PROFILES,
+    browser_scope_key,
+    continues_parent_browser_tab,
+    delegated_browser_scope,
+    initialize_browser_session_review_mode,
+    is_browser_scope_unchecked,
+    mark_browser_scope_checked,
+)
 from family_assistant.tools.outcomes import ACTION_DECLINED_PREFIX
 from family_assistant.tools.types import (
     ConfirmationOutcome,
@@ -539,6 +550,199 @@ async def _completed_delegation_result(
     return ToolResult(text=final_text_reply, attachments=delegated_attachments)
 
 
+async def _record_browser_brief_review_audit(
+    exec_context: ToolExecutionContext,
+    *,
+    target_service_id: str,
+    subconversation_id: str,
+    scope: str,
+    mode: BrowserBriefReviewMode,
+    status: str,
+    reason: str,
+    latency_ms: float,
+    used_fallback: bool,
+    is_resume: bool,
+    has_attachments: bool,
+) -> None:
+    """Persist one audit event for an upfront browser delegation brief review."""
+    state = (
+        exec_context.taint_tracker.snapshot()
+        if exec_context.taint_tracker is not None
+        else TurnTaintState.empty()
+    )
+    await exec_context.db_context.taint_audit_events.add(
+        event_id=str(uuid.uuid4()),
+        event_type="browser_brief_review",
+        conversation_id=exec_context.conversation_id,
+        turn_id=exec_context.turn_id,
+        processing_profile_id=target_service_id,
+        subconversation_id=subconversation_id,
+        tool_name="delegate_to_service",
+        tool_call_id=exec_context.tool_call_id,
+        sink_class=None,
+        max_tier=state.max_tier.config_value,
+        result_tier=None,
+        sources=taint_audit_sources(state),
+        requested_outcome="browser_brief_review",
+        effective_outcome=mode.value,
+        mode=None,
+        reason=reason,
+        arguments_summary=None,
+        artifact_id=None,
+        review_verdict=mode.value,
+        review_status=status,
+        review_latency_ms=float(latency_ms),
+        review_context={
+            "delegating_contexts": ["browser_brief_review"],
+            "allowed_verdicts": [
+                BrowserBriefReviewMode.CHECKED.value,
+                BrowserBriefReviewMode.UNCHECKED.value,
+            ],
+            "fallback_verdict": BrowserBriefReviewMode.CHECKED.value,
+            "browser_scope": scope,
+            "is_resume": is_resume,
+            "has_attachments": has_attachments,
+            "used_fallback": used_fallback,
+            "total_source_count": state.total_source_count,
+            "distinct_source_count": state.distinct_source_count,
+            "omitted_source_count": state.omitted_source_count,
+        },
+    )
+
+
+async def review_browser_delegation_brief(
+    exec_context: ToolExecutionContext,
+    *,
+    target_service: object,
+    source_service_id: str | None,
+    target_service_id: str,
+    subconversation_id: str,
+    brief_text: str,
+    has_attachments: bool,
+    is_resume: bool,
+) -> None:
+    """Decide upfront whether a delegated browser session runs checked or unchecked.
+
+    Never blocks the delegation and never prompts a human. Fails closed to
+    ``checked`` on any missing reviewer, disabled toggle, attachment, error,
+    timeout, malformed output, exhausted review budget, or post-restart resume.
+    """
+    if target_service_id not in BROWSER_BRIEF_REVIEW_PROFILES:
+        return
+    service_config = getattr(target_service, "service_config", None)
+    if getattr(service_config, "include_aggregated_context", False):
+        return
+    parent_service = getattr(exec_context, "processing_service", None)
+    app_config = getattr(parent_service, "app_config", None)
+    handoff = getattr(app_config, "browser_handoff_config", None)
+    if handoff is not None and target_service_id in handoff.autofill_capable_profiles:
+        return
+
+    if await continues_parent_browser_tab(
+        exec_context,
+        parent_service,
+        source_service_id,
+        target_service_id,
+    ):
+        if has_attachments:
+            parent_scope = await browser_scope_key(exec_context)
+            mark_browser_scope_checked(parent_scope)
+        return
+
+    scope = f"{exec_context.conversation_id or 'default'}/{subconversation_id}"
+
+    # Local import: infrastructure imports tool modules transitively.
+    from family_assistant.tools.infrastructure import (  # noqa: PLC0415
+        TaintTrackingToolsProvider,
+        find_provider_by_type,
+    )
+
+    target_tools_provider = getattr(target_service, "tools_provider", None)
+    taint_provider = (
+        find_provider_by_type(target_tools_provider, TaintTrackingToolsProvider)
+        if target_tools_provider is not None
+        else None
+    )
+    review_config = taint_provider.review_config if taint_provider is not None else None
+    reviewer = taint_provider.tool_call_reviewer if taint_provider is not None else None
+
+    if review_config is not None and not review_config.browser_brief_review_enabled:
+        mark_browser_scope_checked(scope)
+        return
+
+    if is_resume and not is_browser_scope_unchecked(scope):
+        # Already checked, or the application restarted while history persisted:
+        # fail closed without invoking the reviewer.
+        mark_browser_scope_checked(scope)
+        return
+
+    if has_attachments:
+        mark_browser_scope_checked(scope)
+        await _record_browser_brief_review_audit(
+            exec_context,
+            target_service_id=target_service_id,
+            subconversation_id=subconversation_id,
+            scope=scope,
+            mode=BrowserBriefReviewMode.CHECKED,
+            status="attachment_forced_checked",
+            reason="Delegation carries attachments; browser session runs in checked mode.",
+            latency_ms=0,
+            used_fallback=False,
+            is_resume=is_resume,
+            has_attachments=True,
+        )
+        return
+
+    if reviewer is None:
+        mark_browser_scope_checked(scope)
+        await _record_browser_brief_review_audit(
+            exec_context,
+            target_service_id=target_service_id,
+            subconversation_id=subconversation_id,
+            scope=scope,
+            mode=BrowserBriefReviewMode.CHECKED,
+            status=ToolCallReviewStatus.DISABLED_FALLBACK.value,
+            reason="Tool-call reviewer is not configured; browser session runs in checked mode.",
+            latency_ms=0,
+            used_fallback=True,
+            is_resume=is_resume,
+            has_attachments=False,
+        )
+        return
+
+    budget_exhausted = (
+        review_config is not None
+        and exec_context.tool_call_review_state.review_count
+        >= review_config.max_reviews_per_turn
+    )
+    if not budget_exhausted:
+        exec_context.tool_call_review_state.review_count += 1
+
+    result = await reviewer.review_browser_brief(
+        brief_text,
+        budget_exhausted=budget_exhausted,
+    )
+    if is_resume:
+        if result.mode is BrowserBriefReviewMode.CHECKED:
+            mark_browser_scope_checked(scope)
+    else:
+        initialize_browser_session_review_mode(scope, result.mode.value)
+
+    await _record_browser_brief_review_audit(
+        exec_context,
+        target_service_id=target_service_id,
+        subconversation_id=subconversation_id,
+        scope=scope,
+        mode=result.mode,
+        status=result.status.value,
+        reason=result.reason,
+        latency_ms=result.latency_ms,
+        used_fallback=result.used_fallback,
+        is_resume=is_resume,
+        has_attachments=False,
+    )
+
+
 async def _synchronous_delegation_result(
     exec_context: ToolExecutionContext,
     *,
@@ -578,6 +782,16 @@ async def _synchronous_delegation_result(
         _inherited_authenticated_binding(exec_context, subconversation_id),
         delegated_browser_scope(exec_context, subconversation_id, target_service_id),
     ):
+        await review_browser_delegation_brief(
+            exec_context,
+            target_service=target_service,
+            source_service_id=exec_context.processing_profile_id,
+            target_service_id=target_service_id,
+            subconversation_id=subconversation_id,
+            brief_text=delegation_brief_text(content_parts),
+            has_attachments=any(part.get("type") != "text" for part in content_parts),
+            is_resume=False,
+        )
         return await _run_synchronous_delegation(
             exec_context,
             target_service=target_service,
@@ -1899,6 +2113,17 @@ async def delegate_to_service_tool(
         acting_user_id=exec_context.user_id,
     )
 
+    await review_browser_delegation_brief(
+        exec_context,
+        target_service=target_service,
+        source_service_id=source_service_id,
+        target_service_id=target_service_id,
+        subconversation_id=subconversation_id,
+        brief_text=user_request,
+        has_attachments=bool(attachment_ids),
+        is_resume=resumed_subconversation_id is not None,
+    )
+
     enqueue_result = await _enqueue_delegation(
         exec_context,
         source_service_id=source_service_id,
@@ -1972,6 +2197,17 @@ async def start_delegation(
         subconversation_id=subconversation_id,
         trigger_content_parts=content_parts,
         acting_user_id=exec_context.user_id,
+    )
+
+    await review_browser_delegation_brief(
+        exec_context,
+        target_service=target_service,
+        source_service_id=source_service_id,
+        target_service_id=target_service_id,
+        subconversation_id=subconversation_id,
+        brief_text=user_request,
+        has_attachments=False,
+        is_resume=resumed_subconversation_id is not None,
     )
 
     enqueue_result = await _enqueue_delegation(
