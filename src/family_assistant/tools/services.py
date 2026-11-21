@@ -668,6 +668,22 @@ async def review_browser_delegation_brief(
 
     if review_config is not None and not review_config.browser_brief_review_enabled:
         mark_browser_scope_checked(scope)
+        await _record_browser_brief_review_audit(
+            exec_context,
+            target_service_id=target_service_id,
+            subconversation_id=subconversation_id,
+            scope=scope,
+            mode=BrowserBriefReviewMode.CHECKED,
+            status=ToolCallReviewStatus.DISABLED_FALLBACK.value,
+            reason=(
+                "Browser brief review is disabled; browser session runs in "
+                "checked mode."
+            ),
+            latency_ms=0,
+            used_fallback=True,
+            is_resume=is_resume,
+            has_attachments=has_attachments,
+        )
         return
 
     if is_resume and not is_browser_scope_unchecked(scope):

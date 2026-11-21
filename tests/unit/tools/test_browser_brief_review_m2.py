@@ -648,3 +648,43 @@ async def test_visual_hop_resume_restart_handback_and_private_read_transitions(
     assert "Action blocked" in priv_res.get_text()
     assert get_browser_session_review_mode("conv-m2/sub-priv") == "checked"
     assert ToolCallReviewStatus.MODEL_VERDICT.value == "model_verdict"
+
+
+@pytest.mark.asyncio
+async def test_disabled_brief_review_records_disabled_fallback_audit_event(
+    db_engine: AsyncEngine,
+) -> None:
+    clear_browser_session_review_modes()
+    llm = _ScriptedReviewerLLM()
+    provider, _ = _build_browser_provider(
+        llm,
+        review_config=ToolCallReviewConfig(browser_brief_review_enabled=False),
+    )
+    browser_svc = _service_stub(provider)
+    parent_ctx = _make_context(
+        db_engine, subconversation_id=None, profile_id="default_assistant"
+    )
+    await review_browser_delegation_brief(
+        parent_ctx,
+        target_service=browser_svc,
+        source_service_id="default_assistant",
+        target_service_id="browser_profile",
+        subconversation_id="sub-disabled",
+        brief_text="Compare Hobart hotel prices.",
+        has_attachments=False,
+        is_resume=False,
+    )
+    assert llm.brief_calls == []
+    assert get_browser_session_review_mode("conv-m2/sub-disabled") == "checked"
+    db = Database(db_engine)
+    events = [
+        event
+        for event in await db.taint_audit_events.list_for_conversation("conv-m2")
+        if event["event_type"] == "browser_brief_review"
+    ]
+    assert len(events) == 1
+    assert events[0]["review_status"] == ToolCallReviewStatus.DISABLED_FALLBACK.value
+    assert events[0]["effective_outcome"] == "checked"
+    review_context = events[0]["review_context_json"]
+    assert review_context is not None
+    assert review_context.get("used_fallback") is True
