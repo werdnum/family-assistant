@@ -709,13 +709,27 @@ async def test_ineligible_unattended_review_confirmation_denies_without_deferral
     )
 
     assert isinstance(result, ToolResult)
-    assert "Action blocked by automatic review" in result.get_text()
-    assert "result is not independent and terminal" in result.get_text()
+    assert not result.get_text().startswith("Action blocked")
+    assert "Human confirmation is required before running 'reviewed_tool'" in (
+        result.get_text()
+    )
+    assert "Report what decision or approval is needed" in result.get_text()
     assert executions == 0
     pending = await ConfirmationService(db=context.db_context).list_pending_for_user(
         user_id="owner-user"
     )
     assert pending == []
+    audit_events = await context.db_context.taint_audit_events.list_for_turn(
+        "ineligible-unattended-review"
+    )
+    undeliverable = [
+        event
+        for event in audit_events
+        if event["event_type"] == "tool_call_review_confirmation"
+    ]
+    assert len(undeliverable) == 1
+    assert undeliverable[0]["review_status"] == "confirm_undeliverable"
+    assert undeliverable[0]["effective_outcome"] == "confirm_undeliverable"
 
 
 async def test_hard_static_confirm_keeps_existing_unattended_deferral(
@@ -1267,11 +1281,20 @@ async def test_missing_reviewer_keeps_unknown_external_sandbox_fallback_confirm(
 
     assert executions == 0
     assert isinstance(result, ToolResult)
-    assert "human confirmation is required but unavailable" in result.get_text()
+    assert not result.get_text().startswith("Action blocked")
+    assert "Human confirmation is required before running 'reviewed_tool'" in (
+        result.get_text()
+    )
     events = await _review_events(context)
     assert len(events) == 1
     assert events[0]["review_verdict"] == ToolCallReviewVerdict.CONFIRM.value
     assert events[0]["review_status"] == ToolCallReviewStatus.DISABLED_FALLBACK.value
+    all_events = await context.db_context.taint_audit_events.list_for_turn(
+        "sandbox-fallback-turn"
+    )
+    assert any(
+        event["review_status"] == "confirm_undeliverable" for event in all_events
+    )
 
 
 async def test_terminal_review_denial_records_trusted_result_metadata(

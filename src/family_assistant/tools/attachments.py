@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 from family_assistant.tools.taint_helpers import (
     inherit_attachment_taint,
-    record_sensitive_read,
+    record_attachment_read,
 )
 from family_assistant.tools.types import ToolResult
 
@@ -171,11 +171,13 @@ async def _read_text_attachment(
     attachment_metadata = await registry.get_attachment(
         exec_context.db_context, attachment_id, acting_user_id=exec_context.user_id
     )
-    record_sensitive_read(
+    await record_attachment_read(
         exec_context,
-        kind="attachments",
+        attachment_id=attachment_id,
+        attachment_metadata=(
+            attachment_metadata.metadata if attachment_metadata is not None else None
+        ),
         qualifier=f"text:{attachment_id}",
-        surfaced_ids=[attachment_id],
     )
     inherit_attachment_taint(
         exec_context,

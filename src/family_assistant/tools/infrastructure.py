@@ -1691,7 +1691,15 @@ async def _ambient_review_context(context: ToolExecutionContext) -> str | None:
         AmbientReviewContextProvider,
     )
 
-    providers = getattr(context.processing_service, "context_providers", None) or ()
+    service = context.processing_service
+    if service is None:
+        return None
+    service_config = getattr(service, "service_config", None)
+    if service_config is not None and not getattr(
+        service_config, "include_aggregated_context", False
+    ):
+        return None
+    providers = getattr(service, "context_providers", None) or ()
     fragments: list[str] = []
     for provider in providers:
         if isinstance(provider, AmbientReviewContextProvider):
@@ -1818,12 +1826,12 @@ def _is_escalatable_review_denial(
     result: ToolCallReviewResult,
     constraints: ToolCallReviewConstraints,
 ) -> bool:
-    """Return whether a model freely chose deny where confirm was available."""
+    """Return whether a model freely chose deny when a non-deny verdict was available."""
     return (
         result.verdict is ToolCallReviewVerdict.DENY
         and result.status is ToolCallReviewStatus.MODEL_VERDICT
         and not result.used_fallback
-        and ToolCallReviewVerdict.CONFIRM in constraints.available_verdicts
+        and bool(constraints.available_verdicts - {ToolCallReviewVerdict.DENY})
     )
 
 
@@ -3055,6 +3063,9 @@ class TaintTrackingToolsProvider(ToolsProvider):
                         static_evaluation=static_evaluation,
                         taint_evaluation=evaluation,
                     ),
+                    state=state,
+                    sink_class=sink_class,
+                    mode=evaluation.mode if evaluation is not None else None,
                 )
                 if confirmation_result is not None:
                     # The confirmation outcome is synthetic: the tool never ran,
@@ -3173,6 +3184,8 @@ class TaintTrackingToolsProvider(ToolsProvider):
         previous_definition_gate = context.definition_gate_outcome
         previous_policy_audit_event_id = context.policy_audit_event_id
         previous_in_flight_result_taint = context.in_flight_result_taint
+        previous_sensitive_read_exempted = context.sensitive_read_exempted
+        sensitive_read_exempted = False
         if inline_confirmation_authorization is not None:
             context.tool_confirmation_authorization = inline_confirmation_authorization
         context.definition_gate_outcome = definition_gate
@@ -3184,6 +3197,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 self._taint_policy_config.default_unspecified_tool_output_tier
             ),
         )
+        context.sensitive_read_exempted = False
         _approve_confirmed_script(context, name, arguments, call_id)
         try:
             result = await execute_authorized()
@@ -3197,9 +3211,11 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 )
             raise
         finally:
+            sensitive_read_exempted = context.sensitive_read_exempted
             context.definition_gate_outcome = previous_definition_gate
             context.policy_audit_event_id = previous_policy_audit_event_id
             context.in_flight_result_taint = previous_in_flight_result_taint
+            context.sensitive_read_exempted = previous_sensitive_read_exempted
             if inline_confirmation_authorization is not None:
                 context.tool_confirmation_authorization = (
                     previous_confirmation_authorization
@@ -3210,6 +3226,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 descriptor=descriptor,
                 context=context,
                 state_before_execution=state_before_execution,
+                exempted=sensitive_read_exempted,
             )
             await self._record_result_taint_and_audit(
                 descriptor=descriptor,
@@ -3262,7 +3279,10 @@ class TaintTrackingToolsProvider(ToolsProvider):
                         f"{state.max_tier.config_value}."
                         f"{taint_evaluation.sink_class.value}"
                     ),
-                    description=taint_evaluation.reason,
+                    description=(
+                        f"Turn taint ({state.max_tier.config_value}) requires "
+                        "review for this call."
+                    ),
                 )
             )
         if (
@@ -3722,11 +3742,17 @@ class TaintTrackingToolsProvider(ToolsProvider):
             if not forecast:
                 review_state.consecutive_denials += 1
                 review_state.total_denials += 1
-        elif result.verdict is not ToolCallReviewVerdict.DENY:
-            # A non-escalatable deny (for example a timeout fallback or a
-            # deny-only policy floor) is not evidence of another model
-            # denial, but neither is it evidence that the denial streak
-            # ended. Only an allow/confirm verdict resets that streak.
+        elif (
+            result.verdict is not ToolCallReviewVerdict.DENY
+            and not result.used_fallback
+            and not (
+                result.verdict is ToolCallReviewVerdict.CONFIRM
+                and self._review_confirmation_unavailable(descriptor, context)
+            )
+        ):
+            # A non-escalatable deny, a fallback verdict (for example a timeout
+            # falling back to confirm), or an undeliverable confirm neither
+            # increments nor resets the denial streak.
             review_state.forecast_consecutive_denials = 0
             if not forecast:
                 review_state.consecutive_denials = 0
@@ -4333,34 +4359,48 @@ class TaintTrackingToolsProvider(ToolsProvider):
         call_id: str | None,
         reason: str,
         authorization: ToolCallReviewAuthorization,
+        state: TurnTaintState | None = None,
+        sink_class: SinkClass | None = None,
+        mode: TaintPolicyMode | None = None,
     ) -> _ConfirmationGateResult | None:
         name = descriptor.name
-        if context.request_confirmation_callback is None:
-            return _ConfirmationGateResult(
-                result=ToolResult(
-                    text=(
-                        f"{ACTION_BLOCKED_PREFIX} for tool '{name}': "
-                        f"human confirmation is required but unavailable. {reason}"
-                    ),
-                    attachments=None,
+        if self._review_confirmation_unavailable(descriptor, context):
+            audit_state = (
+                state
+                if state is not None
+                else (
+                    context.taint_tracker.snapshot()
+                    if context.taint_tracker is not None
+                    else TurnTaintState.empty()
+                )
+            )
+            await self._record_taint_audit_event(
+                context=context,
+                event_type="tool_call_review_confirmation",
+                tool_name=name,
+                tool_call_id=call_id,
+                sink_class=sink_class.value if sink_class is not None else None,
+                state=audit_state,
+                requested_outcome=ToolCallReviewVerdict.CONFIRM.value,
+                effective_outcome="confirm_undeliverable",
+                mode=mode.value if mode is not None else None,
+                reason=reason,
+                arguments_summary=_summarize_tool_arguments(
+                    arguments,
+                    safe_keys=_descriptor_argument_keys(descriptor),
                 ),
-                action_attempted=False,
+                review_verdict=ToolCallReviewVerdict.CONFIRM.value,
+                review_status="confirm_undeliverable",
+                review_latency_ms=None,
             )
-        if (
-            isinstance(
-                context.request_confirmation_callback,
-                DeferredConfirmationCallback,
-            )
-            and context.request_confirmation_callback.is_deferred_confirmation()
-            and not descriptor.deferred_confirmation_eligible
-        ):
             return _ConfirmationGateResult(
                 result=ToolResult(
                     text=(
-                        f"{ACTION_BLOCKED_PREFIX} for tool '{name}': "
-                        "human confirmation is required, but deferred execution is "
-                        "unsafe because this call's result is not independent and "
-                        f"terminal. {reason}"
+                        f"Human confirmation is required before running '{name}', "
+                        "but no interactive confirmation prompt is available in "
+                        f"this run (the tool was not executed). {reason} "
+                        "Report what decision or approval is needed back to the "
+                        "user or calling conversation."
                     ),
                     attachments=None,
                 ),
@@ -4690,10 +4730,11 @@ class TaintTrackingToolsProvider(ToolsProvider):
         descriptor: ToolDescriptor,
         context: ToolExecutionContext,
         state_before_execution: TurnTaintState | None,
+        exempted: bool = False,
     ) -> None:
         """Record the conservative fallback for an uninstrumented private read."""
         tracker = context.taint_tracker
-        if tracker is None or not _is_sensitive_read_descriptor(descriptor):
+        if exempted or tracker is None or not _is_sensitive_read_descriptor(descriptor):
             return
         live_state = tracker.snapshot()
         if (

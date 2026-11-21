@@ -18,6 +18,55 @@ if TYPE_CHECKING:
 
     from family_assistant.tools.types import ToolExecutionContext
 
+PUBLIC_BROWSER_SNAPSHOT_SCOPE_KEY = "public_browser_snapshot_scope"
+
+
+def is_own_public_browser_snapshot(
+    attachment_metadata: Mapping[str, object] | None,
+    *,
+    current_browser_scope: str | None,
+) -> bool:
+    """Whether an attachment carries the affirmative public-browser-snapshot stamp for this scope.
+
+    Stamped at auto-conversion time only for unprotected, non-handed-back
+    browser sessions. Historical attachments, user uploads, and snapshots from
+    other scopes or protected/handed-back sessions lack a matching stamp and
+    fall back to ordinary private-read accounting.
+    """
+    if not current_browser_scope or attachment_metadata is None:
+        return False
+    if attachment_metadata.get("large_result_auto_convert") is not True:
+        return False
+    snapshot_scope = attachment_metadata.get(PUBLIC_BROWSER_SNAPSHOT_SCOPE_KEY)
+    return isinstance(snapshot_scope, str) and snapshot_scope == current_browser_scope
+
+
+async def record_attachment_read(
+    exec_context: ToolExecutionContext,
+    *,
+    attachment_id: str,
+    attachment_metadata: Mapping[str, object] | None,
+    qualifier: str,
+) -> None:
+    """Record private-read accounting for an attachment read, skipping own public browser snapshots."""
+    from family_assistant.tools.browser_session import (  # noqa: PLC0415 - avoid cycle with browser_session
+        browser_scope_key,
+    )
+
+    current_scope = await browser_scope_key(exec_context)
+    if is_own_public_browser_snapshot(
+        attachment_metadata,
+        current_browser_scope=current_scope,
+    ):
+        exec_context.sensitive_read_exempted = True
+        return
+    record_sensitive_read(
+        exec_context,
+        kind="attachments",
+        qualifier=qualifier,
+        surfaced_ids=[attachment_id],
+    )
+
 
 def record_sensitive_read(
     exec_context: ToolExecutionContext,

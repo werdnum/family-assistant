@@ -12,8 +12,13 @@ import logging
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, TypedDict
 
-from family_assistant.security.taint import TurnTaintState, artifact_taint_sources
+from family_assistant.security.taint import (
+    SensitiveReadScope,
+    TurnTaintState,
+    artifact_taint_sources,
+)
 from family_assistant.storage.database import Database
+from family_assistant.tools.taint_helpers import is_own_public_browser_snapshot
 
 if TYPE_CHECKING:
     import builtins
@@ -260,6 +265,8 @@ class AttachmentAPI:
         db_context: Database | None = None,
         user_id: str | None = None,
         taint_tracker: TurnTaintTracker | None = None,
+        execution_context: ToolExecutionContext | None = None,
+        browser_scope: str | None = None,
     ) -> None:
         """
         Initialize the attachment API.
@@ -274,13 +281,55 @@ class AttachmentAPI:
             taint_tracker: The running turn's taint. A created attachment is
                 stamped from it, and a read merges the attachment's own
                 provenance into it, as the attachment tools do.
+            execution_context: Active tool execution context, used to resolve the
+                current browser scope for the public-browser-snapshot carve-out.
+            browser_scope: Explicit browser scope override when no execution context
+                is supplied.
         """
         self.attachment_registry = attachment_registry
         self._taint_tracker = taint_tracker
+        self._execution_context = execution_context
+        self._browser_scope = browser_scope
         self.conversation_id = conversation_id
         self.db_engine = db_engine
         self.db_context = db_context
         self._acting_user_id = user_id
+
+    async def _current_browser_scope(self) -> str | None:
+        if self._execution_context is not None:
+            from family_assistant.tools.browser_session import (  # noqa: PLC0415
+                browser_scope_key,
+            )
+
+            return await browser_scope_key(self._execution_context)
+        return self._browser_scope
+
+    async def _record_attachment_access(
+        self,
+        attachment_id: str,
+        attachment: AttachmentMetadata | None,
+        *,
+        qualifier: str,
+    ) -> None:
+        """Record private-read accounting for script attachment access."""
+        if self._taint_tracker is None:
+            return
+        current_scope = await self._current_browser_scope()
+        if attachment is not None and is_own_public_browser_snapshot(
+            attachment.metadata,
+            current_browser_scope=current_scope,
+        ):
+            return
+        scope = SensitiveReadScope(
+            kind="attachments",
+            qualifier=qualifier,
+            surfaced_ids=frozenset({attachment_id}),
+        )
+        self._taint_tracker.replace(
+            self._taint_tracker.snapshot().add_sensitive_read(
+                scope, query_origin="model_generated"
+            )
+        )
 
     def _merge_provenance(self, attachment: AttachmentMetadata) -> None:
         """Merge an attachment's stored provenance into the turn that sees it.
@@ -304,6 +353,9 @@ class AttachmentAPI:
             return
         metadata = await self.attachment_registry.get_attachment(
             db_ctx, attachment_id, acting_user_id=self._acting_user_id
+        )
+        await self._record_attachment_access(
+            attachment_id, metadata, qualifier=f"script_read:{attachment_id}"
         )
         if metadata is None:
             return
@@ -367,6 +419,11 @@ class AttachmentAPI:
             if not attachment:
                 return None
 
+            await self._record_attachment_access(
+                attachment.attachment_id,
+                attachment,
+                qualifier=f"script_get:{attachment.attachment_id}",
+            )
             self._merge_provenance(attachment)
             return AttachmentInfoDict(
                 attachment_id=attachment.attachment_id,
@@ -408,6 +465,11 @@ class AttachmentAPI:
             )
 
             for att in attachments:
+                await self._record_attachment_access(
+                    att.attachment_id,
+                    att,
+                    qualifier=f"script_list:{att.attachment_id}",
+                )
                 self._merge_provenance(att)
             return [
                 AttachmentInfoDict(
@@ -540,4 +602,5 @@ def create_attachment_api(
         db_context=execution_context.db_context,
         user_id=execution_context.user_id,
         taint_tracker=execution_context.taint_tracker,
+        execution_context=execution_context,
     )

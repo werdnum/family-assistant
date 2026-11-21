@@ -89,7 +89,9 @@ async def _seed(db: Database) -> None:
     )
 
 
-async def _what_the_reviewer_read(db: Database) -> str:
+async def _what_the_reviewer_read(
+    db: Database, *, include_aggregated_context: bool = True
+) -> str:
     """Review an ambient note write in an external turn; return the reviewer's prompt.
 
     The reviewer denies, so the write is refused and the notes the prompt
@@ -130,6 +132,7 @@ async def _what_the_reviewer_read(db: Database) -> str:
             history_max_age_hours=1,
             tools_config=ToolsConfig(),
             delegation_security_level=DelegationSecurityLevel.BLOCKED,
+            include_aggregated_context=include_aggregated_context,
         ),
         context_providers=[notes_provider(db)],
         server_url=None,
@@ -184,3 +187,19 @@ async def test_unreviewed_titles_never_reach_the_reviewer(
     assert "Web digest" not in reviewer_prompt
     assert "UNREVIEWED BODY" not in reviewer_prompt
     assert "Unreviewed reference title" not in reviewer_prompt
+
+
+@pytest.mark.asyncio
+async def test_ambient_context_omitted_when_profile_excludes_aggregated_context(
+    db_engine: AsyncEngine,
+) -> None:
+    db = Database(db_engine)
+    await _seed(db)
+
+    reviewer_prompt = await _what_the_reviewer_read(
+        db, include_aggregated_context=False
+    )
+
+    assert "Roll clothes." not in reviewer_prompt
+    assert "Pack for a trip" not in reviewer_prompt
+    assert "[No ambient notes or skills were supplied.]" in reviewer_prompt

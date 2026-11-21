@@ -587,6 +587,11 @@ class ToolExecutionContext:
     download that is the turn's first external read, say. Registration merges
     this so the attachment carries the tier its own result will raise the turn to.
     """
+    sensitive_read_exempted: bool = False
+    """Set by an attachment reader when a call only read an eligible own-scope
+    public browser snapshot, so the generic fallback in
+    ``TaintTrackingToolsProvider`` does not overwrite the carve-out. Reset and
+    restored per tool call by the provider."""
     tool_call_review_state: ToolCallReviewTurnState = field(
         default_factory=ToolCallReviewTurnState
     )

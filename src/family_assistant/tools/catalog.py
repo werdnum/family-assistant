@@ -1022,7 +1022,7 @@ _CORE_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     ),
     "scroll": _metadata(
         ToolTag.BROWSER,
-        ToolTag.STATE_CHANGING,
+        ToolTag.READ_ONLY,
         ToolTag.EXTERNAL_COMM,
         ToolTag.OUTPUT_UNTRUSTED,
     ),
@@ -1059,7 +1059,7 @@ _CORE_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     ),
     "wait": _metadata(
         ToolTag.BROWSER,
-        ToolTag.STATE_CHANGING,
+        ToolTag.READ_ONLY,
         ToolTag.EXTERNAL_COMM,
         ToolTag.OUTPUT_UNTRUSTED,
     ),

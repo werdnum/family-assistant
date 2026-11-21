@@ -15,7 +15,10 @@ from typing import TYPE_CHECKING
 
 from family_assistant.scripting.apis.attachments import ScriptAttachment
 from family_assistant.tools import jq_worker
-from family_assistant.tools.taint_helpers import inherit_attachment_taint
+from family_assistant.tools.taint_helpers import (
+    inherit_attachment_taint,
+    record_attachment_read,
+)
 from family_assistant.tools.types import ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
@@ -100,6 +103,12 @@ async def jq_query_tool(
                 text=f"Error: Attachment with ID {attachment_id} not found."
             )
 
+        await record_attachment_read(
+            exec_context,
+            attachment_id=attachment_id_str,
+            attachment_metadata=attachment.metadata,
+            qualifier=f"jq:{attachment_id_str}",
+        )
         inherit_attachment_taint(
             exec_context,
             attachment_metadata=attachment.metadata,

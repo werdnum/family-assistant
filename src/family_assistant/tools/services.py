@@ -59,7 +59,7 @@ from family_assistant.tools.types import (
 from family_assistant.utils.clock import SystemClock
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Iterable
+    from collections.abc import Awaitable, Callable, Iterable, Sequence
     from datetime import datetime
 
     from family_assistant.config_models import ToolsConfig
@@ -616,6 +616,18 @@ async def _inherited_authenticated_binding(
         release_borrowed_session(subconversation_id)
 
 
+def delegation_brief_text(content_parts: Sequence[ContentPartDict]) -> str:
+    """Extract human-readable brief text from delegated content parts."""
+    text_parts = [
+        text
+        for part in content_parts
+        if part.get("type") == "text" and isinstance(text := part.get("text"), str)
+    ]
+    if text_parts:
+        return "\n\n".join(text_parts)
+    return json.dumps(list(content_parts), sort_keys=True)
+
+
 async def _run_synchronous_delegation(
     exec_context: ToolExecutionContext,
     *,
@@ -651,7 +663,7 @@ async def _run_synchronous_delegation(
             ),
             tool_call_review_trigger=await _delegation_review_trigger(
                 exec_context,
-                definition=json.dumps(content_parts, sort_keys=True),
+                definition=delegation_brief_text(content_parts),
             ),
             model_selection=model_selection,
         )

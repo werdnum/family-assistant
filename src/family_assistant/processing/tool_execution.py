@@ -22,7 +22,14 @@ from family_assistant.security.taint import (
     TurnTaintState,
     merge_taint_state_into_tracker,
 )
+from family_assistant.services.tool_call_review import browser_session_handed_back
 from family_assistant.tools.attachment_utils import is_attachment_id
+from family_assistant.tools.browser_backend import is_protected_browser_session
+from family_assistant.tools.browser_session import (
+    BROWSER_TOOL_NAMES,
+    browser_scope_key,
+    is_browser_scope_handed_back,
+)
 from family_assistant.tools.computer_use_names import COMPUTER_USE_FUNCTION_NAMES
 from family_assistant.tools.confirmation import confirmation_arguments_block_reason
 from family_assistant.tools.infrastructure import (
@@ -32,7 +39,9 @@ from family_assistant.tools.infrastructure import (
     ToolsProvider,
     confirmation_outcome_to_tool_result,
 )
+from family_assistant.tools.metadata import ToolTag
 from family_assistant.tools.outcomes import ACTION_CANCELLED_PREFIX, is_error_data
+from family_assistant.tools.taint_helpers import PUBLIC_BROWSER_SNAPSHOT_SCOPE_KEY
 from family_assistant.tools.types import (
     ToolAttachment,
     ToolCallBatch,
@@ -632,6 +641,50 @@ class ToolExecutor:
                     return acting_user_id
         return None
 
+    _NON_PUBLIC_BROWSER_TOOLS = frozenset({
+        "browser_autofill",
+        "browser_report_login_outcome",
+        "browser_claim_handback",
+    })
+
+    async def _public_browser_snapshot_metadata(
+        self,
+        *,
+        function_name: str,
+        owner_user_id: str | None,
+        tool_execution_context: ToolExecutionContext | None,
+    ) -> dict[str, object] | None:
+        """Affirmative scope stamp for an oversized unprotected public browser output."""
+        if (
+            tool_execution_context is None
+            or owner_user_id is not None
+            or function_name in self._NON_PUBLIC_BROWSER_TOOLS
+        ):
+            return None
+        is_browser_tool = function_name in BROWSER_TOOL_NAMES
+        if not is_browser_tool and isinstance(
+            self.tools_provider, ToolDescriptorProvider
+        ):
+            descriptor = await self.tools_provider.get_tool_descriptor(function_name)
+            is_browser_tool = (
+                descriptor is not None and ToolTag.BROWSER in descriptor.tags
+            )
+        if not is_browser_tool:
+            return None
+        if (
+            tool_execution_context.taint_tracker is not None
+            and tool_execution_context.taint_tracker.snapshot().sensitive_reads
+        ):
+            return None
+        if await is_protected_browser_session(tool_execution_context):
+            return None
+        scope = await browser_scope_key(tool_execution_context)
+        if is_browser_scope_handed_back(scope) or browser_session_handed_back(
+            tool_execution_context.tool_call_review_messages or ()
+        ):
+            return None
+        return {PUBLIC_BROWSER_SNAPSHOT_SCOPE_KEY: scope}
+
     async def _handle_large_text_result(
         self,
         *,
@@ -643,10 +696,16 @@ class ToolExecutor:
         taint_metadata: TaintMetadata | None,
         acting_user_id: str | None,
         arguments: dict[str, object] | None,
+        tool_execution_context: ToolExecutionContext | None = None,
     ) -> tuple[str, list[str]]:
         """Convert oversized text results into attachment references."""
         owner_user_id = await self._large_result_owner(
             function_name, acting_user_id, arguments=arguments, db_context=db_context
+        )
+        extra_metadata = await self._public_browser_snapshot_metadata(
+            function_name=function_name,
+            owner_user_id=owner_user_id,
+            tool_execution_context=tool_execution_context,
         )
         (
             new_content,
@@ -659,6 +718,7 @@ class ToolExecutor:
             call_id,
             taint_metadata,
             owner_user_id=owner_user_id,
+            extra_metadata=extra_metadata,
         )
         if auto_attachment_id is None:
             return new_content, []
@@ -744,6 +804,7 @@ class ToolExecutor:
         taint_metadata: TaintMetadata | None,
         acting_user_id: str | None,
         arguments: dict[str, object] | None,
+        tool_execution_context: ToolExecutionContext | None = None,
     ) -> _ToolOutput:
         """Convert ToolResult into stream payload, message, and attachment IDs."""
         # Read before a large result's data is moved into an attachment below.
@@ -761,6 +822,7 @@ class ToolExecutor:
             taint_metadata=taint_metadata,
             acting_user_id=acting_user_id,
             arguments=arguments,
+            tool_execution_context=tool_execution_context,
         )
         auto_attachment_ids: list[str] = []
         if large_result_attachment_ids:
@@ -832,6 +894,7 @@ class ToolExecutor:
         taint_metadata: TaintMetadata | None,
         acting_user_id: str | None,
         arguments: dict[str, object] | None,
+        tool_execution_context: ToolExecutionContext | None = None,
     ) -> _ToolOutput:
         """Convert plain string-like tool output into stream/message payload."""
         content_for_stream = str(result)
@@ -847,6 +910,7 @@ class ToolExecutor:
             taint_metadata=taint_metadata,
             acting_user_id=acting_user_id,
             arguments=arguments,
+            tool_execution_context=tool_execution_context,
         )
         return _ToolOutput(
             content_for_stream=content_for_stream,
@@ -1181,6 +1245,7 @@ class ToolExecutor:
                     taint_metadata=result_taint_metadata,
                     acting_user_id=user_id,
                     arguments=arguments,
+                    tool_execution_context=tool_execution_context,
                 )
             else:
                 result_taint_metadata = (
@@ -1195,6 +1260,7 @@ class ToolExecutor:
                     taint_metadata=result_taint_metadata,
                     acting_user_id=user_id,
                     arguments=arguments,
+                    tool_execution_context=tool_execution_context,
                 )
                 if result_taint_metadata is not None:
                     output = replace(

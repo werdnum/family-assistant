@@ -1512,6 +1512,21 @@ def _record_protected_session_read(
     )
 
 
+async def is_protected_browser_session(exec_context: ToolExecutionContext) -> bool:
+    """Whether this context drives a credential-autofill or authenticated-site browser."""
+    if await resolve_authenticated_binding(exec_context) is not None:
+        return True
+    if _requires_authenticated_binding(exec_context):
+        return True
+    service = getattr(exec_context, "processing_service", None)
+    app_config = getattr(service, "app_config", None) if service is not None else None
+    handoff = app_config.browser_handoff_config if app_config else None
+    return bool(
+        handoff
+        and exec_context.processing_profile_id in handoff.autofill_capable_profiles
+    )
+
+
 async def get_browser_backend(exec_context: ToolExecutionContext) -> BrowserBackend:
     """Resolve the browser backend for this execution context.
 

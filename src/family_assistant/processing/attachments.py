@@ -596,6 +596,7 @@ Call attach_to_response with your selected attachment IDs."""
         *,
         owner_user_id: str | None = None,
         threshold_kb: int | None = None,
+        extra_metadata: Mapping[str, object] | None = None,
     ) -> tuple[str, str | None]:
         """
         Check if a tool result is too large and convert it to an attachment if necessary.
@@ -655,6 +656,8 @@ Call attach_to_response with your selected attachment IDs."""
             "auto_display": False,
             "large_result_auto_convert": True,
         }
+        if extra_metadata:
+            attachment_metadata.update(extra_metadata)
 
         registered_metadata = (
             await self.attachment_registry.store_and_register_tool_attachment(

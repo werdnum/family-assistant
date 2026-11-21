@@ -1277,9 +1277,12 @@ def test_delegated_run_renders_the_propagated_originating_request() -> None:
 
     assert "<trusted_originating_request>" in prompt
     assert "ORIGINATING HUMAN REQUEST" in prompt
-    # The goal itself was composed on a tainted turn and still stubs.
-    assert "DELEGATED GOAL TEXT" not in prompt
-    assert "<trigger_definition_stub>" in prompt
+    # The goal itself was composed on a tainted turn: rendered as non-authoritative
+    # worker context inside <delegated_brief>, never as <trusted_trigger_definition>.
+    assert "<delegated_brief>" in prompt
+    assert "DELEGATED GOAL TEXT" in prompt
+    assert "<trusted_trigger_definition>" not in prompt
+    assert "<trigger_definition_stub>" not in prompt
 
 
 @pytest.mark.no_db
