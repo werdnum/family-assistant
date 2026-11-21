@@ -1758,7 +1758,10 @@ async def test_missing_reviewer_fallback_runs_no_effects(
 
     assert effects == []
     assert isinstance(result, ToolResult)
-    assert "confirmation is required but unavailable" in result.get_text().lower()
+    assert "human confirmation is required before running" in result.get_text().lower()
+    assert (
+        "no interactive confirmation prompt is available" in result.get_text().lower()
+    )
 
 
 @pytest.mark.asyncio

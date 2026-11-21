@@ -198,10 +198,30 @@ class BrowserSession:
 # Session storage keyed by browser scope (see ``browser_scope_key``).
 _sessions: dict[str, BrowserSession] = {}
 
+# Browser scopes where a human has completed a handback to the agent. Tracked
+# at scope level so the handed-back posture survives across turns in the same
+# browser session and prevents later snapshots from being stamped as public.
+_handed_back_scopes: set[str] = set()
+
 # The browser scope of each delegated subconversation. Queued delegations are
 # resolved from their run row and memoized here; inline delegations have no run
 # row, so ``delegated_browser_scope`` registers them for the child's lifetime.
 _subconversation_scopes: dict[str, str] = {}
+
+
+def mark_browser_scope_handed_back(scope: str) -> None:
+    """Record that a human handed this browser scope back to the agent."""
+    _handed_back_scopes.add(scope)
+
+
+def is_browser_scope_handed_back(scope: str) -> bool:
+    """Return whether a human previously handed this browser scope back."""
+    return scope in _handed_back_scopes
+
+
+def clear_handed_back_scopes() -> None:
+    """Clear tracked handed-back browser scopes (for test isolation)."""
+    _handed_back_scopes.clear()
 
 
 async def browser_scope_key(exec_context: ToolExecutionContext) -> str:
@@ -349,6 +369,7 @@ async def get_browser_session(exec_context: ToolExecutionContext) -> BrowserSess
 async def close_browser_session(exec_context: ToolExecutionContext) -> None:
     """Close and remove the browser session for this turn's browser scope."""
     session_key = await browser_scope_key(exec_context)
+    _handed_back_scopes.discard(session_key)
     if session_key in _sessions:
         await _sessions[session_key].close()
         del _sessions[session_key]

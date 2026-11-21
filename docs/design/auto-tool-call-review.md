@@ -83,9 +83,10 @@ versus approval policy (when to ask) — already exists in this codebase, and th
 strong half:
 
 - Processing profiles are the hard capability boundary. The browser profiles hold no household
-  context (browser reads are tracked separately as potentially sensitive); `media_analyst` reaches
-  no tools at all; `coder` runs in a throwaway sandbox with no FA tool surface; the engineer profile
-  confirms every side effect.
+  context (ordinary public page reads are untrusted rather than household data; protected
+  credential/authenticated-site and handed-back sessions record sensitive reads); `media_analyst`
+  reaches no tools at all; `coder` runs in a throwaway sandbox with no FA tool surface; the engineer
+  profile confirms every side effect.
 - Static tool policy is deny-by-default per profile, with tighten-only operator override layering.
 - Server-side validation makes sinks safe by construction where it matters most
   (`send_message_to_user` recipient validation, browser-server origin confinement, opaque cookie
@@ -344,11 +345,14 @@ latency:
   and joins the check when that lands; until then, absence of the history signal fails toward
   invoking the reviewer, not toward exemption). The exemption applies at the taint layer to
   browser-tagged actions too; any independent static/action-review rule still invokes the reviewer.
-  Browser tools that return page content are tagged as sensitive reads, so their successful return
-  prevents later disclosures from exempting. Any input the check cannot determine falls through to
-  the reviewer. The short-circuit is valid only when the effective execution minimum permits
-  `audit`: a configured `confirm` or `deny` verdict floor, or a matching `operator_minimum`,
-  disables the exemption and invokes the reviewer within that tighter verdict space.
+  Ordinary browser page reads are untrusted rather than tagged `sensitive_data`, whereas
+  credential/authenticated-site and handed-back browser sessions record sensitive reads so later
+  disclosures stay under review (see
+  [browser-brief-review-and-reviewer-fixes.md](browser-brief-review-and-reviewer-fixes.md)). Any
+  input the check cannot determine falls through to the reviewer. The short-circuit is valid only
+  when the effective execution minimum permits `audit`: a configured `confirm` or `deny` verdict
+  floor, or a matching `operator_minimum`, disables the exemption and invokes the reviewer within
+  that tighter verdict space.
 
   After every successful `read_only` + `sensitive_data` call, the tool-execution chokepoint retains
   an explicit corpus scope recorded by the tool or adds a conservative tool-level sensitive read if

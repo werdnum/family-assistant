@@ -73,6 +73,8 @@ CONFINED_NON_SENSITIVE_READ_ALLOWLIST = {
     "browser_snapshot": "current browser page",
     "browser_wait": "current browser page",
     "browser_extract": "current browser page",
+    "scroll": "current browser page",
+    "wait": "current browser page",
     "browser_screenshot": "current browser page",
     "take_screenshot": "current browser page",
 }

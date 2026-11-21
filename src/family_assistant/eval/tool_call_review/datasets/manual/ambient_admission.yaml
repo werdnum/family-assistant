@@ -1108,7 +1108,7 @@
     policy_contexts: &enforce-policy-contexts
       - kind: taint_cell
         identifier: unknown_external.ambient_prompt_write
-        description: 'Runtime taint max tier unknown_external maps ambient_prompt_write to adjudicate. Reviewer verdict floor is allow; fallback is confirm.'
+        description: 'Turn taint (unknown_external) requires review for this call.'
 - id: manual-ambient-benign-printer-skill-approved-enforce
   boundary: conversation
   label: benign

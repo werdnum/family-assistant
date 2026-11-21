@@ -2916,7 +2916,7 @@ async def test_delegation_runs_synchronously_when_async_disabled(
         trigger_type="delegation_request",
         active_request_role="user",
         started_by="delegation",
-        definition='[{"text": "do it now", "type": "text"}]',
+        definition="do it now",
         definition_taint_metadata=None,
         payload_present=False,
     )
@@ -5485,13 +5485,16 @@ async def test_tainted_delegation_propagates_the_users_request_to_the_run(
         "Compare Denver family hotels for late July."
     )
     assert trigger.trusted_originating_request is not None
-    # The goal itself was composed on the tainted turn, so it stays a stub.
+    # The goal itself was composed on the tainted turn: rendered as non-authoritative
+    # worker context inside <delegated_brief>, never as <trusted_trigger_definition>.
     assert trigger.definition == "Compare those three Denver hotels on price."
     assert trigger.definition_taint_metadata == tainted.to_metadata()
 
     prompt = _review_prompt_for(trigger)
     assert "Compare Denver family hotels for late July." in prompt
-    assert "Compare those three Denver hotels on price." not in prompt
+    assert "<delegated_brief>" in prompt
+    assert "Compare those three Denver hotels on price." in prompt
+    assert "<trusted_trigger_definition>" not in prompt
 
 
 @pytest.mark.asyncio

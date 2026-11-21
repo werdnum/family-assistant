@@ -2463,7 +2463,10 @@ async def test_sandbox_network_after_unknown_external_blocks_without_confirmatio
     audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
 
     assert isinstance(result, ToolResult)
-    assert "human confirmation is required but unavailable" in result.get_text()
+    assert not result.get_text().startswith("Action blocked")
+    assert "Human confirmation is required before running 'worker_tool'" in (
+        result.get_text()
+    )
     assert "fallback 'confirm'" in result.get_text()
     policy_events = [
         event for event in audit_events if event["event_type"] == "policy_evaluation"

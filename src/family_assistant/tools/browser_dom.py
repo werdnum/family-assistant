@@ -45,8 +45,11 @@ from family_assistant.tools.browser_page_tools import SNAPSHOT_RETURNING_TOOLS
 from family_assistant.tools.browser_session import (
     BrowserSession,
     browser_operation,
+    browser_scope_key,
     get_browser_session,
+    mark_browser_scope_handed_back,
 )
+from family_assistant.tools.taint_helpers import record_sensitive_read
 from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
 from family_assistant.utils.scraping import convert_html_bytes_to_markdown
 
@@ -743,6 +746,13 @@ async def browser_claim_handback_tool(
             text=f"Browser handback claim failed: {exc}",
             data={"error": "claim_failed", "detail": str(exc)},
         )
+    mark_browser_scope_handed_back(await browser_scope_key(exec_context))
+    record_sensitive_read(
+        exec_context,
+        kind="tool",
+        qualifier="browser_handback",
+        surfaced_ids=(),
+    )
     # Return a fresh snapshot so the agent sees the current page state
     try:
         session = await get_browser_session(exec_context)
