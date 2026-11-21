@@ -450,6 +450,7 @@ class ToolCallReviewConfig(BaseModel):
     escalation: ToolCallReviewEscalationConfig = Field(
         default_factory=ToolCallReviewEscalationConfig
     )
+    browser_brief_review_enabled: bool = True
     guidance: str = ""
 
 

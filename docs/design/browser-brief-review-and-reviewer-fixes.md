@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (implementing milestones 1–3). Adjusts the confined-profile disclosure exemption of
+Implemented (Milestones 1–3). Adjusts the confined-profile disclosure exemption of
 [risk-adjudicated-taint-enforcement.md](risk-adjudicated-taint-enforcement.md) for browser sessions,
 extends the upfront-review model of
 [script-execution-review-boundary.md](script-execution-review-boundary.md) to browser delegations,

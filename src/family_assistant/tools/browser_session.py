@@ -28,7 +28,7 @@ import random
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Concatenate
+from typing import TYPE_CHECKING, Concatenate, Literal
 
 from rebrowser_playwright.async_api import (
     Browser,
@@ -195,8 +195,20 @@ class BrowserSession:
             self.playwright = None
 
 
+# Browser profiles governed by upfront brief review (clean-room browsing).
+BROWSER_BRIEF_REVIEW_PROFILES = frozenset({
+    "browser_profile",
+    "browser_visual_profile",
+})
+
+BrowserSessionReviewMode = Literal["checked", "unchecked"]
+
 # Session storage keyed by browser scope (see ``browser_scope_key``).
 _sessions: dict[str, BrowserSession] = {}
+
+# Monotonic in-memory review mode per browser scope (unchecked -> checked only).
+# Unknown scopes fail closed to ``checked``.
+_session_review_modes: dict[str, BrowserSessionReviewMode] = {}
 
 # Browser scopes where a human has completed a handback to the agent. Tracked
 # at scope level so the handed-back posture survives across turns in the same
@@ -209,9 +221,55 @@ _handed_back_scopes: set[str] = set()
 _subconversation_scopes: dict[str, str] = {}
 
 
+def get_browser_session_review_mode(scope: str) -> BrowserSessionReviewMode:
+    """Return the active review mode for ``scope``, failing closed to ``checked``."""
+    if scope in _handed_back_scopes:
+        return "checked"
+    return _session_review_modes.get(scope, "checked")
+
+
+def has_recorded_browser_session_review_mode(scope: str) -> bool:
+    """Return whether ``scope`` has an explicit recorded brief-review mode."""
+    return scope in _session_review_modes
+
+
+def initialize_browser_session_review_mode(
+    scope: str, mode: BrowserSessionReviewMode
+) -> BrowserSessionReviewMode:
+    """Initialize an initial delegation's browser scope review mode monotonically.
+
+    A scope that is already ``checked`` or handed back can never move back to
+    ``unchecked``.
+    """
+    if scope in _handed_back_scopes or _session_review_modes.get(scope) == "checked":
+        _session_review_modes[scope] = "checked"
+        return "checked"
+    _session_review_modes[scope] = mode
+    return mode
+
+
+def mark_browser_scope_checked(scope: str) -> None:
+    """Permanently latch ``scope`` into ``checked`` mode."""
+    _session_review_modes[scope] = "checked"
+
+
+def is_browser_scope_unchecked(scope: str) -> bool:
+    """Return whether ``scope`` is currently authorized to run in ``unchecked`` mode."""
+    return (
+        scope not in _handed_back_scopes
+        and _session_review_modes.get(scope) == "unchecked"
+    )
+
+
+def clear_browser_session_review_modes() -> None:
+    """Clear in-memory browser session review modes (for test isolation)."""
+    _session_review_modes.clear()
+
+
 def mark_browser_scope_handed_back(scope: str) -> None:
     """Record that a human handed this browser scope back to the agent."""
     _handed_back_scopes.add(scope)
+    _session_review_modes[scope] = "checked"
 
 
 def is_browser_scope_handed_back(scope: str) -> bool:
@@ -285,6 +343,21 @@ async def _inherited_scope(
     if parent is None:
         return conversation_id
     return await _subconversation_scope(exec_context, conversation_id, parent)
+
+
+async def continues_parent_browser_tab(
+    exec_context: ToolExecutionContext,
+    source_service: object,
+    source_profile_id: str | None,
+    target_profile_id: str,
+) -> bool:
+    """Whether a delegated turn shares its parent's browser tab and scope."""
+    return await _continues_parent_tab(
+        exec_context,
+        source_service,
+        source_profile_id,
+        target_profile_id,
+    )
 
 
 async def _continues_parent_tab(
@@ -370,6 +443,7 @@ async def close_browser_session(exec_context: ToolExecutionContext) -> None:
     """Close and remove the browser session for this turn's browser scope."""
     session_key = await browser_scope_key(exec_context)
     _handed_back_scopes.discard(session_key)
+    _session_review_modes.pop(session_key, None)
     if session_key in _sessions:
         await _sessions[session_key].close()
         del _sessions[session_key]

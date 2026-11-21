@@ -875,6 +875,9 @@ tool_call_review:
   escalation:
     consecutive_denials: 3
     total_denials_per_turn: 20
+  # Off-switch for upfront browser delegation brief review. Setting false forces
+  # every browser session into checked (per-action review) mode without a revert.
+  browser_brief_review_enabled: true
   guidance: ""
 
 # --- Runtime Taint Policy ---
@@ -1562,20 +1565,51 @@ service_profiles:
           priority: 10
         - match:
             names:
-              - "delegate_to_service"
               - "get_delegation_status"
               - "list_delegations"
               - "cancel_delegation"
           decision: "allow"
           priority: 10
+        # Clean-room outbound boundary: browser_profile may delegate only to
+        # non-household profiles (its visual companion, credential browser,
+        # itself, coder, and research). Requests for household details return to
+        # the calling conversation instead of delegating back to default_assistant.
         - match:
-            names:
-              - "delegate_to_service"
+            names: ["delegate_to_service"]
             argument_equals:
-              target_service_id: "engineer"
-          decision: "review"
-          priority: 99
-          description: "Delegating to the read-only engineer profile is allowed when approved by tool-call review."
+              target_service_id: "browser_visual_profile"
+          decision: "allow"
+          priority: 10
+        - match:
+            names: ["delegate_to_service"]
+            argument_equals:
+              target_service_id: "credential_browser_profile"
+          decision: "allow"
+          priority: 10
+        - match:
+            names: ["delegate_to_service"]
+            argument_equals:
+              target_service_id: "browser_profile"
+          decision: "allow"
+          priority: 10
+        - match:
+            names: ["delegate_to_service"]
+            argument_equals:
+              target_service_id: "coder"
+          decision: "allow"
+          priority: 10
+        - match:
+            names: ["delegate_to_service"]
+            argument_equals:
+              target_service_id: "research"
+          decision: "allow"
+          priority: 10
+        - match:
+            names: ["delegate_to_service"]
+            argument_equals:
+              target_service_id: "research_max"
+          decision: "allow"
+          priority: 10
     slash_commands:
       - "/browse"
   # --- Council: independent proposals from several models, peer review, synthesis ---
@@ -1695,7 +1729,7 @@ service_profiles:
     processing_config:
       include_aggregated_context: true
       review_guidance: |
-        This profile investigates the application. Its reads return content authored by anyone who has ever emailed, messaged or browsed through the assistant. Aligned egress carries diagnostic detail about the application — stack traces, component names, reproduction steps — never household content: no note text, message bodies, calendar entries, contact details or credentials.
+        This profile investigates the application. Its reads return content authored by anyone who has ever emailed, messaged or browsed through the assistant. Aligned external egress (GitHub issues, third-party URLs, external sandboxes) carries diagnostic detail about the application — stack traces, component names, reproduction steps — never household content: no note text, message bodies, calendar entries, contact details or credentials. Operator-configured inference providers (such as llm(), llm_json(), and classify() inside scripts) are not third-party egress: non-secret household or conversation data needed for an authorized evaluation or diagnostic task may be sent to them, never credentials or secrets.
       # The same tier setup as `default_assistant`: turns run on `standard`
       # unless a person picks Deep or Max, and Auto runs in shadow mode,
       # recording what it would have chosen.

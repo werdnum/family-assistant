@@ -459,10 +459,10 @@ async def test_resolve_tool_policy_reports_review_for_flipped_rules(
     entry = data_conf["profiles"][0]
     assert entry["raw"]["decision"] == "confirm"
 
-    # 5. Into-engineer delegation on default_assistant, browser_profile, telephone, complex_tasks -> review
+    # 5. Into-engineer delegation on default_assistant, telephone, complex_tasks -> review;
+    #    browser_profile is pinned to non-household targets -> deny.
     for delegating_pid in (
         "default_assistant",
-        "browser_profile",
         "telephone",
         "complex_tasks",
     ):
@@ -476,3 +476,13 @@ async def test_resolve_tool_policy_reports_review_for_flipped_rules(
         assert isinstance(data_into, dict)
         entry = data_into["profiles"][0]
         assert entry["raw"]["decision"] == "review", f"Failed for {delegating_pid}"
+
+    res_browser = await resolve_tool_policy(
+        context,
+        tool_name="delegate_to_service",
+        profile_id="browser_profile",
+        arguments={"target_service_id": "engineer"},
+    )
+    data_browser = res_browser.get_data()
+    assert isinstance(data_browser, dict)
+    assert data_browser["profiles"][0]["raw"]["decision"] == "deny"

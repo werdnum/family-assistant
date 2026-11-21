@@ -178,6 +178,9 @@ class TaintAuditReviewContext(TypedDict, total=False):
     total_source_count: int
     distinct_source_count: int
     omitted_source_count: int
+    browser_scope: str
+    is_resume: bool
+    has_attachments: bool
 
 
 class TaintAuditEventRow(TypedDict):

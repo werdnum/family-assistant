@@ -2432,6 +2432,7 @@ tool_call_review:
   escalation:
     consecutive_denials: 3
     total_denials_per_turn: 20
+  browser_brief_review_enabled: true
   guidance: >-
     Optional deployment-wide trusted guidance about routine workflows.
 ```
@@ -2558,17 +2559,29 @@ taint `adjudicate` match the same call, one reviewer invocation receives both co
 verdict spaces and fallbacks merge toward the stricter result. A `confirm` verdict with no available
 confirmation path degrades to a structured denial.
 
-The confined-profile exemption skips a taint-only disclosure review only when
-`include_aggregated_context` is `false`, the turn recorded no sensitive reads or high-taint history,
-no effective `confirm`/`deny` floor applies, and the reviewer message window proves it contains only
-the current turn (system scaffolding followed by the current user message, with no prior user,
-assistant, tool, or error rows). This taint-layer exemption also applies to browser-tagged actions;
-independent static/action-review rules are unchanged. Browser tools that return page content are
-tagged as sensitive reads, so a successful browser read disables the exemption for later
-disclosures. A missing or ambiguous message window fails toward review. The exemption resolves to
-`audit`, never `allow`. Destination-bearing local tools declare their destination argument in
-trusted metadata; an exact whole-value match in the current trusted request is passed to the
-reviewer as evidence, not as authorization. URL matching normalizes scheme and host case but
+The confined-profile exemption skips a taint-only disclosure review for non-browser confined
+profiles only when `include_aggregated_context` is `false`, the turn recorded no sensitive reads or
+high-taint history, no effective `confirm`/`deny` floor applies, and the reviewer message window
+proves it contains only the current turn (system scaffolding followed by the current user message,
+with no prior user, assistant, tool, or error rows).
+
+Delegated `browser_profile` and `browser_visual_profile` sessions use **upfront brief review**
+instead: when a delegation opens a browser session, `ToolCallReviewer` classifies the brief once as
+`unchecked` (public browsing with no household identity, secrets, or private data) or `checked`
+(per-action security review). `browser_profile`'s outbound `delegate_to_service` policy is pinned to
+non-household targets (`browser_visual_profile`, `credential_browser_profile`, self, `coder`,
+`research`, `research_max`). In `unchecked` mode, taint-only disclosure reviews on browser tools
+resolve to `audit`, while static policy rules, verdict floors, `execute_script`, `coder`, shopping
+tools, and native computer-use safety confirmations remain enforced. Mode transitions are in-memory,
+keyed by `browser_scope_key`, and strictly one-way (`unchecked` → `checked`): delegations with
+attachments, reviewer errors/timeouts/exhausted budgets, resumed delegations after a restart, human
+handbacks (`browser_claim_handback`), protected credential/authenticated-site sessions, direct
+`/browse` sessions, and any recorded `sensitive_read` all stay or flip `checked`. Set
+`tool_call_review.browser_brief_review_enabled: false` to force every browser session into `checked`
+mode without a code change. A missing or ambiguous message window fails toward review. The exemption
+resolves to `audit`, never `allow`. Destination-bearing local tools declare their destination
+argument in trusted metadata; an exact whole-value match in the current trusted request is passed to
+the reviewer as evidence, not as authorization. URL matching normalizes scheme and host case but
 preserves path, query, and fragment case; non-URL destinations retain case-insensitive text
 normalization.
 

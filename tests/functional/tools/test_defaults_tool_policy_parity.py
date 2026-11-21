@@ -329,10 +329,12 @@ def test_delegation_to_engineer_is_review_gated_not_blocked() -> None:
     profile_by_id = {profile.id: profile for profile in profiles}
     delegate = _delegate_descriptor()
 
-    # Every profile that can delegate at all must route the engineer through a
-    # review gate (never an unconditional allow or confirm). browser_profile
-    # and telephone each replace tools_policy wholesale, so each needs its own
-    # gate; default_assistant and complex_tasks inherit default_profile_settings.
+    # Every profile that can delegate to the engineer must route it through a
+    # review gate (never an unconditional allow or confirm). browser_profile is
+    # a clean room whose outbound delegations are pinned to non-household
+    # targets, so it denies engineer outright like the other confined browser
+    # profiles; telephone replaces tools_policy wholesale and keeps its gate;
+    # default_assistant and complex_tasks inherit default_profile_settings.
     source_engines = {
         "default_profile_settings": PolicyEngine.from_policy_config(
             default_settings.tools_policy
@@ -343,9 +345,6 @@ def test_delegation_to_engineer_is_review_gated_not_blocked() -> None:
         "telephone": PolicyEngine.from_policy_config(
             profile_by_id["telephone"].tools_policy
         ),
-        "browser_profile": PolicyEngine.from_policy_config(
-            profile_by_id["browser_profile"].tools_policy
-        ),
     }
 
     for source_id, engine in source_engines.items():
@@ -355,6 +354,36 @@ def test_delegation_to_engineer_is_review_gated_not_blocked() -> None:
             can_confirm=True,
         )
         assert to_engineer.decision is ToolPolicyDecision.REVIEW, source_id
+
+    browser_engine = PolicyEngine.from_policy_config(
+        profile_by_id["browser_profile"].tools_policy
+    )
+    for allowed_target in (
+        "browser_visual_profile",
+        "credential_browser_profile",
+        "browser_profile",
+        "coder",
+        "research",
+        "research_max",
+    ):
+        decision = browser_engine.evaluate_for_execution(
+            delegate,
+            arguments={"target_service_id": allowed_target},
+            can_confirm=True,
+        )
+        assert decision.decision is ToolPolicyDecision.ALLOW, allowed_target
+    for denied_target in (
+        "default_assistant",
+        "complex_tasks",
+        "engineer",
+        "reminder",
+    ):
+        decision = browser_engine.evaluate_for_execution(
+            delegate,
+            arguments={"target_service_id": denied_target},
+            can_confirm=True,
+        )
+        assert decision.decision is ToolPolicyDecision.DENY, denied_target
 
     # Profiles that block specific internal targets outright keep blocking them.
     for source_id in ("default_profile_settings", "complex_tasks", "telephone"):
