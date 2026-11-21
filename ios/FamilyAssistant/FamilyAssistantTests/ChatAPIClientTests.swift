@@ -383,6 +383,32 @@ final class ChatAPIClientTests: XCTestCase {
         }
     }
 
+    func testConversationShareMutation401WithHonouredRefreshIsTransientWithoutRetry() async throws {
+        seedRefreshToken()
+        let mutationRequests = AtomicCounter()
+        let refreshRequests = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            if request.url?.path == "/api/auth/refresh" {
+                _ = refreshRequests.increment()
+                return .json(#"{"api_token":"rotated","refresh_token":"rotated-refresh","expires_in":7200}"#)
+            }
+            _ = mutationRequests.increment()
+            return .json("Jwks remote fetch is failed", statusCode: 401, headers: ["Content-Type": "text/plain"])
+        }
+        let authManager = makeAuthManager()
+
+        do {
+            _ = try await ChatAPIClient(authManager: authManager)
+                .createShare(target: .conversation("web_conv_share"))
+            XCTFail("Expected the rejected mutation to fail")
+        } catch AuthError.transient {
+            XCTAssertEqual(mutationRequests.value, 1, "a mutation must not be replayed")
+            XCTAssertEqual(refreshRequests.value, 1)
+            XCTAssertFalse(authManager.authRequired)
+            XCTAssertEqual(KeychainHelper.readString(key: "fa_api_token"), "rotated")
+        }
+    }
+
     func testConversationShareAuthWallDoesNotClearCredentials() async throws {
         ChatMockBackendURLProtocol.respond { _ in
             .json(
@@ -418,8 +444,7 @@ final class ChatAPIClientTests: XCTestCase {
             _ = try await ChatAPIClient(authManager: authManager)
                 .createShare(target: .conversation("web_conv_share"))
             XCTFail("Expected the stale mutation to fail")
-        } catch let ChatAPIError.server(statusCode, _, _) {
-            XCTAssertEqual(statusCode, 401)
+        } catch AuthError.transient {
             XCTAssertEqual(requestCount.value, 1)
             XCTAssertFalse(authManager.authRequired)
             XCTAssertEqual(
@@ -1174,7 +1199,10 @@ final class ChatAPIClientTests: XCTestCase {
         XCTAssertFalse(authManager.authRequired)
     }
 
-    func testResponse401TwiceLatchesAuthRequiredWithoutFurtherRetry() async throws {
+    func testResponse401AfterHonouredRefreshIsTransientAndKeepsCredentials() async throws {
+        // The edge gateway answers 401 while it cannot fetch the backend's JWKS (a
+        // backend restart). The refresh endpoint is not gated, so it still honours
+        // the credentials: the session is fine and must not be thrown away.
         seedRefreshToken()
         let getRequests = AtomicCounter()
         let refreshRequests = AtomicCounter()
@@ -1186,7 +1214,7 @@ final class ChatAPIClientTests: XCTestCase {
                 return .json(#"{"api_token":"rotated","refresh_token":"rotated-refresh","expires_in":7200}"#)
             case "/api/v1/profiles":
                 _ = getRequests.increment()
-                return .json(#"{"detail":"still expired"}"#, statusCode: 401)
+                return .json("Jwks remote fetch is failed", statusCode: 401, headers: ["Content-Type": "text/plain"])
             default:
                 return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
             }
@@ -1195,17 +1223,11 @@ final class ChatAPIClientTests: XCTestCase {
         do {
             _ = try await ChatAPIClient(authManager: authManager).listProfiles()
             XCTFail("Expected a persistent 401 to throw")
-        } catch AuthError.noCredentials {
+        } catch AuthError.transient {
             XCTAssertEqual(getRequests.value, 2, "the GET is retried exactly once, not repeatedly")
             XCTAssertEqual(refreshRequests.value, 1)
-            XCTAssertTrue(authManager.authRequired, "a persistent 401 latches the terminal auth state")
-            // Finding 6: the freshly-saved (but still-rejected) rotated token must
-            // be cleared, not just have authRequired latched — otherwise other
-            // request paths would keep replaying it.
-            XCTAssertNil(
-                KeychainHelper.readString(key: "fa_api_token"),
-                "a rejected retry token must be cleared so other paths cannot replay it"
-            )
+            XCTAssertFalse(authManager.authRequired, "an honoured refresh means the session is still good")
+            XCTAssertEqual(KeychainHelper.readString(key: "fa_api_token"), "rotated")
         }
     }
 
