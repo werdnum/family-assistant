@@ -38,6 +38,13 @@ HISTORY_PREAMBLE = (
     "the request that follows it, not a request in itself."
 )
 
+INTERRUPTED_RUN_PREAMBLE = (
+    "You already started on this request, but the run was interrupted, for "
+    "example by a server restart. These are the steps it took. Each tool call "
+    "listed here has already run, and its result is shown. Continue from where "
+    "the run stopped, and do not repeat a call that has already taken effect."
+)
+
 # The content of an Anthropic user message, in the shape the Agent SDK's
 # streaming input passes through to Claude Code unchanged.
 type SessionContentBlock = dict[str, object]
@@ -61,7 +68,9 @@ def build_session_prompt(
     The opening message is the trailing run of user messages -- the request
     that opened the turn, and any scaffolding the service appended after it.
     Everything between the system prompt and that run is earlier conversation
-    and is rendered as a transcript ahead of it.
+    and is rendered as a transcript ahead of it. A resumed turn also carries
+    the rows its interrupted run saved; those follow the request, as the steps
+    already taken, rather than being run again.
     """
     system_parts: list[str] = []
     body = list(messages)
@@ -70,10 +79,16 @@ def build_session_prompt(
         body.pop(0)
     system_parts.extend(addition for addition in system_prompt_additions if addition)
 
-    split = len(body)
+    # A resumed turn replays the rows its interrupted run saved after its
+    # opening, so the opening is the last run of user messages, not
+    # necessarily the trailing one.
+    end = len(body)
+    while end > 0 and not isinstance(body[end - 1], UserMessage):
+        end -= 1
+    split = end
     while split > 0 and isinstance(body[split - 1], UserMessage):
         split -= 1
-    history, opening = body[:split], body[split:]
+    history, opening, progress = body[:split], body[split:end], body[end:]
     if not opening:
         msg = "A Claude Agent SDK turn needs a user message to open it."
         raise ValueError(msg)
@@ -84,7 +99,17 @@ def build_session_prompt(
     for message in opening:
         assert isinstance(message, UserMessage)
         content.extend(_user_content_blocks(message))
+    if progress:
+        content.append({"type": "text", "text": _render_interrupted_run(progress)})
     return SessionPrompt(system_prompt="\n\n".join(system_parts), content=content)
+
+
+def _render_interrupted_run(progress: Sequence[LLMMessage]) -> str:
+    lines = ["<interrupted_run>", INTERRUPTED_RUN_PREAMBLE, ""]
+    for message in progress:
+        lines.extend(_transcript_lines(message))
+    lines.append("</interrupted_run>")
+    return "\n".join(lines)
 
 
 def resumed_opening(

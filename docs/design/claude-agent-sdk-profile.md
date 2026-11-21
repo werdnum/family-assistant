@@ -123,6 +123,11 @@ the first message rather than as a resumed Claude Code session, so the history F
 saves stays the only copy, and windowing and compaction work unchanged. Within a turn the
 conversation is native: real tool calls, real results, Claude Code's own caching.
 
+A turn interrupted by a restart is resumed the same way. A fresh session opens with the turn's
+request, followed by the steps its interrupted run saved, rendered as a transcript of calls that
+have already run, and continues from there. Claude Code's own transcript of the interrupted session
+is not resumed: it may stop partway through a tool call, while the saved history is complete.
+
 ### It is observable from outside
 
 Each model call inside a session is counted in the ordinary LLM call and token metrics, under

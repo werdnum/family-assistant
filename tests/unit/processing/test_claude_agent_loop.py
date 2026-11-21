@@ -35,6 +35,7 @@ from family_assistant.llm.model_selection import (
     ResolvedModelSelection,
 )
 from family_assistant.llm.model_tiers import ClaudeAgentModel
+from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.processing.claude_agent_loop import (
     build_claude_agent_loop,
@@ -77,7 +78,6 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from family_assistant.llm.messages import LLMMessage
-    from family_assistant.llm.tool_call import ToolCallItem
     from family_assistant.processing.types import ToolExecutionResult
 
 TIER = "claude_opus_5_5"
@@ -275,6 +275,67 @@ async def test_opening_message_carries_the_request(db_engine: AsyncEngine) -> No
 
     texts = [block["text"] for block in fake.prompts[0]["content"]]
     assert any("Hello there" in text for text in texts)
+
+
+@pytest.mark.asyncio
+async def test_resumed_turn_continues_after_its_saved_tool_calls(
+    db_engine: AsyncEngine,
+) -> None:
+    """A turn interrupted mid-run (a redeploy) resumes from the rows it saved."""
+    db = Database(db_engine)
+    empty = TurnTaintState.empty().to_metadata()
+    saved: list[LLMMessage] = [
+        UserMessage(
+            content="Weather in Paris?",
+            taint_metadata=empty,
+            authorship_taint_metadata=empty,
+        ),
+        AssistantMessage(
+            tool_calls=[
+                ToolCallItem(
+                    id="call-1",
+                    type="function",
+                    function=ToolCallFunction(
+                        name="get_weather", arguments={"city": "Paris"}
+                    ),
+                )
+            ],
+            taint_metadata=empty,
+        ),
+        ToolMessage(
+            tool_call_id="call-1",
+            name="get_weather",
+            content="Weather in Paris: 21C, sunny",
+            taint_metadata=empty,
+        ),
+    ]
+    for message in saved:
+        await db.message_history.add_message(
+            message,
+            interface_type="test",
+            conversation_id="conv-1",
+            turn_id="turn-1",
+            timestamp=datetime.now(UTC),
+            processing_profile_id="claude_agent",
+        )
+    fake = _reply("It's sunny.")
+
+    reply = await _service(fake).handle_chat_interaction(
+        db_context=db,
+        interface_type="test",
+        conversation_id="conv-1",
+        trigger_content_parts=[{"type": "text", "text": "Weather in Paris?"}],
+        trigger_interface_message_id="msg-1",
+        user_name="TestUser",
+        turn_id="turn-1",
+        resume=True,
+    )
+
+    texts = _opening_texts(fake)
+    assert reply.text_reply == "It's sunny."
+    assert "Weather in Paris?" in texts[0]
+    assert "Weather in Paris: 21C, sunny" in texts[-1]
+    assert "do not repeat a call" in texts[-1]
 
 
 @pytest.mark.asyncio
