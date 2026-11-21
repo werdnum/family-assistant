@@ -2179,7 +2179,15 @@ class ProcessingService:
                 target=resumed_turn_opening,
                 trigger_attachments=turn_attachments,
             )
-        messages_for_llm.extend(processed_content_parts.messages)
+        # On a resume they go beside the prompt they belong to, ahead of the
+        # rows the interrupted run produced, as the original run had them.
+        if resumed_turn_opening is not None:
+            injection_at = self._index_after(messages_for_llm, resumed_turn_opening)
+            messages_for_llm[injection_at:injection_at] = (
+                processed_content_parts.messages
+            )
+        else:
+            messages_for_llm.extend(processed_content_parts.messages)
         # A reply to a thread carries a summary of the thread's attachments. It is
         # rebuilt rather than persisted, which is acceptable only because such a
         # turn already replaces the history with the whole thread, so its prompt
@@ -2195,7 +2203,8 @@ class ProcessingService:
             )
             if resumed_turn_opening is not None:
                 messages_for_llm.insert(
-                    self._index_after(messages_for_llm, resumed_turn_opening),
+                    self._index_after(messages_for_llm, resumed_turn_opening)
+                    + len(processed_content_parts.messages),
                     thread_context_message,
                 )
             else:
