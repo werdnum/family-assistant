@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import delete, insert, select
 from sqlalchemy.sql import functions as func
@@ -16,6 +16,8 @@ from family_assistant.storage.claude_agent_sessions import (
 from family_assistant.storage.repositories.base import BaseRepository
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from family_assistant.security.taint import TaintMetadata
     from family_assistant.storage.database import DatabaseTransaction
 
@@ -111,6 +113,18 @@ class ClaudeAgentSessionsRepository(BaseRepository):
 
         await self._db.atomic(write)
 
+    async def take_turn(self, turn_id: str) -> ClaudeAgentSessionTurn | None:
+        """Remove and return the session recorded for ``turn_id``, if one was."""
+
+        async def take(txn: DatabaseTransaction) -> ClaudeAgentSessionTurn | None:
+            row = await txn.fetch_one(select(_turns).where(_turns.c.turn_id == turn_id))
+            if row is None:
+                return None
+            await txn.execute(delete(_turns).where(_turns.c.turn_id == turn_id))
+            return _session_turn(row)
+
+        return await self._db.atomic(take)
+
     async def latest_turn(
         self,
         *,
@@ -136,16 +150,7 @@ class ClaudeAgentSessionsRepository(BaseRepository):
             .order_by(_turns.c.id.desc())
             .limit(1)
         )
-        if row is None:
-            return None
-        return ClaudeAgentSessionTurn(
-            session_id=row["session_id"],
-            turn_id=row["turn_id"],
-            model=row["model"],
-            effort=row["effort"],
-            system_prompt_sha256=row["system_prompt_sha256"],
-            taint_metadata_json=row["taint_metadata_json"],
-        )
+        return None if row is None else _session_turn(row)
 
     async def delete_sessions_idle_since(self, cutoff: datetime) -> None:
         """Delete every session with no transcript entry newer than ``cutoff``."""
@@ -167,3 +172,15 @@ class ClaudeAgentSessionsRepository(BaseRepository):
             )
 
         await self._db.atomic(prune)
+
+
+# ast-grep-ignore: no-dict-any - database row has dynamic columns from query
+def _session_turn(row: Mapping[str, Any]) -> ClaudeAgentSessionTurn:
+    return ClaudeAgentSessionTurn(
+        session_id=row["session_id"],
+        turn_id=row["turn_id"],
+        model=row["model"],
+        effort=row["effort"],
+        system_prompt_sha256=row["system_prompt_sha256"],
+        taint_metadata_json=row["taint_metadata_json"],
+    )

@@ -52,7 +52,11 @@ HEARTBEAT_SECONDS = 30.0
 
 # How long a graceful shutdown waits for turns to reach a loop boundary before
 # cancelling them. Kept well inside Kubernetes' termination grace period.
-SUSPEND_GRACE_SECONDS = 15.0
+SUSPEND_GRACE_SECONDS = 60.0
+# When a turn that can be interrupted cleanly -- a Claude Agent SDK session --
+# stops waiting for its running tools and interrupts them, leaving the rest of
+# the grace for the session to wind down and be recorded for resuming.
+SUSPEND_INTERRUPT_AFTER_SECONDS = 45.0
 # After cancelling stragglers, how long to let their teardown run.
 CANCEL_TEARDOWN_SECONDS = 5.0
 

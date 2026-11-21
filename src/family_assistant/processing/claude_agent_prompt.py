@@ -112,6 +112,19 @@ def _render_interrupted_run(progress: Sequence[LLMMessage]) -> str:
     return "\n".join(lines)
 
 
+SUSPENDED_RESUME_INSTRUCTION = (
+    "The server restarted while you were working on this, and interrupted you; "
+    "the interruption was not the user's. Carry on with the request from where "
+    "you stopped. A tool call recorded as interrupted did not finish and may or "
+    "may not have taken effect, so check before repeating it."
+)
+
+
+def suspended_opening() -> list[SessionContentBlock]:
+    """The message that continues a session a graceful shutdown interrupted."""
+    return [{"type": "text", "text": SUSPENDED_RESUME_INSTRUCTION}]
+
+
 def resumed_opening(
     added: Sequence[LLMMessage], instruction: str
 ) -> list[SessionContentBlock]:

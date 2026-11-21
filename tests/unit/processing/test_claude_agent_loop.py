@@ -36,18 +36,25 @@ from family_assistant.llm.model_selection import (
 )
 from family_assistant.llm.model_tiers import ClaudeAgentModel
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
-from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.processing import (
+    ProcessingService,
+    ProcessingServiceConfig,
+    claude_agent_loop,
+)
 from family_assistant.processing.claude_agent_loop import (
     build_claude_agent_loop,
     mcp_tool_name,
     probe_verdict,
+)
+from family_assistant.processing.claude_agent_prompt import (
+    SUSPENDED_RESUME_INSTRUCTION,
 )
 from family_assistant.processing.claude_agent_sessions import (
     database_session_store,
     session_working_directory,
 )
 from family_assistant.processing.quiet_turn import END_TURN_QUIETLY_TOOL_NAME
-from family_assistant.processing.types import ChatInteractionResult
+from family_assistant.processing.types import ChatInteractionResult, MidTurnUserInput
 from family_assistant.security.taint import (
     SourceTrustTier,
     TaintSource,
@@ -76,7 +83,7 @@ from tests.mocks.mock_llm import RuleBasedMockLLMClient
 from tests.mocks.mock_tools_provider import MockToolsProvider
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Awaitable, Callable, Mapping, Sequence
 
     from family_assistant.llm.content_parts import ContentPartDict
     from family_assistant.llm.messages import LLMMessage
@@ -113,9 +120,12 @@ def _service(
     options_seen: list[ClaudeAgentOptions] | None = None,
     default_tier: str = TIER,
     attachment_registry: AttachmentRegistry | None = None,
+    extra_tools: Mapping[str, Callable[..., Awaitable[str]]] | None = None,
 ) -> ProcessingService:
     tools = MockToolsProvider()
     tools.add_tool("get_weather", get_weather)
+    for name, tool in (extra_tools or {}).items():
+        tools.add_tool(name, tool)
     config = ProcessingServiceConfig(
         prompts={"system_prompt": "You are a household assistant."},
         timezone=ZoneInfo("UTC"),
@@ -389,6 +399,154 @@ async def test_resumed_turn_keeps_its_attachment_with_the_request(
     assert any("Paris forecast" in text for text in texts[:-1])
     assert "Weather in Paris: 21C, sunny" in texts[-1]
     assert "do not repeat a call" in texts[-1]
+
+
+class _Shutdown:
+    """A turn's stop handle, which a graceful shutdown asks to suspend."""
+
+    def __init__(self) -> None:
+        self.suspending = False
+
+    async def drain_pending_mid_turn_inputs(self) -> list[MidTurnUserInput]:
+        return []
+
+    def should_interrupt(self) -> bool:
+        return self.suspending
+
+    @property
+    def suspend_requested(self) -> bool:
+        return self.suspending
+
+
+type _StatusTool = Callable[..., Awaitable[str]]
+
+
+def _shutdown_during_call(shutdown: _Shutdown) -> _StatusTool:
+    async def check_status(exec_context: ToolExecutionContext) -> str:
+        shutdown.suspending = True
+        return "All systems normal."
+
+    return check_status
+
+
+def _still_thinking() -> FakeResponse:
+    """The model's next response, which a shutdown interrupts before it ends."""
+    return FakeResponse([FakeText("Done.")], ready=asyncio.Event())
+
+
+async def _run_until_suspended(
+    db_engine: AsyncEngine,
+    fake: FakeClaudeCode,
+    tool: Callable[[_Shutdown], _StatusTool],
+) -> _Shutdown:
+    shutdown = _Shutdown()
+    with pytest.raises(asyncio.CancelledError):
+        await _service(
+            fake, extra_tools={"check_status": tool(shutdown)}
+        ).handle_chat_interaction(
+            db_context=Database(db_engine),
+            interface_type="test",
+            conversation_id="conv-1",
+            trigger_content_parts=[{"type": "text", "text": "Check the status."}],
+            trigger_interface_message_id="msg-1",
+            user_name="TestUser",
+            turn_id="turn-1",
+            mid_turn_input_provider=shutdown,
+        )
+    return shutdown
+
+
+def _status_call() -> FakeResponse:
+    return FakeResponse([FakeToolUse(name=mcp_tool_name("check_status"), input={})])
+
+
+@pytest.mark.asyncio
+async def test_shutdown_interrupts_the_session_once_its_tools_have_returned(
+    db_engine: AsyncEngine,
+) -> None:
+    fake = FakeClaudeCode(responses=[_status_call(), _still_thinking()])
+
+    await _run_until_suspended(db_engine, fake, _shutdown_during_call)
+
+    saved = await _saved(db_engine)
+    session = await Database(db_engine).claude_agent_sessions.take_turn("turn-1")
+    assert fake.interrupted
+    assert any(
+        isinstance(row, ToolMessage) and row.content == "All systems normal."
+        for row in saved
+    )
+    assert not any(
+        isinstance(row, AssistantMessage) and row.content == "Done." for row in saved
+    )
+    assert session is not None
+    assert session.session_id == SESSION_ID
+
+
+@pytest.mark.asyncio
+async def test_a_turn_resumed_after_shutdown_continues_its_session(
+    db_engine: AsyncEngine,
+) -> None:
+    await _run_until_suspended(
+        db_engine,
+        FakeClaudeCode(responses=[_status_call(), _still_thinking()]),
+        _shutdown_during_call,
+    )
+    options: list[ClaudeAgentOptions] = []
+    fake = _reply("Everything is fine.")
+
+    reply = await _resume(
+        _service(fake, options_seen=options),
+        Database(db_engine),
+        [{"type": "text", "text": "Check the status."}],
+    )
+
+    assert options[0].resume == SESSION_ID
+    assert _opening_texts(fake) == [SUSPENDED_RESUME_INSTRUCTION]
+    assert reply.text_reply == "Everything is fine."
+
+
+@pytest.mark.asyncio
+async def test_a_resumed_attempt_uses_up_its_checkpoint(
+    db_engine: AsyncEngine,
+) -> None:
+    """An attempt that is lost leaves the next to rebuild, not to go back."""
+    await _run_until_suspended(
+        db_engine,
+        FakeClaudeCode(responses=[_status_call(), _still_thinking()]),
+        _shutdown_during_call,
+    )
+
+    await _resume(
+        _service(FakeClaudeCode(responses=[], api_key_source="ANTHROPIC_API_KEY")),
+        Database(db_engine),
+        [{"type": "text", "text": "Check the status."}],
+    )
+
+    assert await Database(db_engine).claude_agent_sessions.take_turn("turn-1") is None
+
+
+@pytest.mark.asyncio
+async def test_shutdown_interrupts_a_tool_still_running_near_the_end_of_the_grace(
+    db_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(claude_agent_loop, "SUSPEND_INTERRUPT_AFTER_SECONDS", 0.0)
+    monkeypatch.setattr(claude_agent_loop, "_STOP_POLL_SECONDS", 0.01)
+
+    def hang_during_call(shutdown: _Shutdown) -> _StatusTool:
+        async def check_status(exec_context: ToolExecutionContext) -> str:
+            shutdown.suspending = True
+            await asyncio.Event().wait()
+            return "unreachable"
+
+        return check_status
+
+    fake = FakeClaudeCode(responses=[_status_call()])
+
+    await _run_until_suspended(db_engine, fake, hang_during_call)
+
+    session = await Database(db_engine).claude_agent_sessions.take_turn("turn-1")
+    assert fake.interrupted
+    assert session is not None
 
 
 @pytest.mark.asyncio

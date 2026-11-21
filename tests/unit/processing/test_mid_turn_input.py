@@ -50,6 +50,10 @@ class MidTurnProvider:
     def should_interrupt(self) -> bool:
         return False
 
+    @property
+    def suspend_requested(self) -> bool:
+        return False
+
 
 class ToolProvider:
     async def get_tool_definitions(

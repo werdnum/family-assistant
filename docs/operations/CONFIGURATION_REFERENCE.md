@@ -209,12 +209,14 @@ seconds later; a delivery is not held back, because its run was already admitted
 
 A web, iOS or Telegram chat turn that is running when the process stops is resumed by the next
 process; Telegram slash-command turns are not. On SIGTERM the process suspends running turns at a
-safe point (letting a tool that has started finish), waits up to 15 seconds for them, and hands them
-off so the replacement resumes them as soon as its task workers start. A turn killed without a
-graceful shutdown (SIGKILL, OOM, node loss) is resumed about two minutes later, once its lease
-expires. Resumption runs on the task worker pool as an interactive `resume_interrupted_turn` task.
+safe point (letting a tool that has started finish), waits up to 60 seconds for them, and hands them
+off so the replacement resumes them as soon as its task workers start. A turn on a Claude Code tier
+is interrupted cleanly instead, after 45 seconds if a tool is still running, and the replacement
+resumes the same Claude Code session. A turn killed without a graceful shutdown (SIGKILL, OOM, node
+loss) is resumed about two minutes later, once its lease expires. Resumption runs on the task worker
+pool as an interactive `resume_interrupted_turn` task.
 
-Give the pod at least 45 seconds to stop (`terminationGracePeriodSeconds`; Kubernetes defaults to
+Give the pod at least 90 seconds to stop (`terminationGracePeriodSeconds`; Kubernetes defaults to
 30\) so the suspension window and the rest of shutdown fit inside it. See
 [docs/design/turn-resumption-across-restarts.md](../design/turn-resumption-across-restarts.md).
 
@@ -3793,8 +3795,8 @@ global rules at the maximum priority, which is what makes it effective. The ship
 profile withholds all of them, because none is safe in a fully untrusted context:
 `read_text_attachment` and `jq_query` resolve any attachment the acting user owns rather than only
 the current turn's artifacts, `report_technical_problem` persists model-supplied text, and
-`finish_thread` echoes a reply into the user's Home, and `execute_script`'s attachment API reads
-any attachment the acting user owns while its Keychute API is egress.
+`finish_thread` echoes a reply into the user's Home, and `execute_script`'s attachment API reads any
+attachment the acting user owns while its Keychute API is egress.
 
 ```yaml
 service_profiles:
