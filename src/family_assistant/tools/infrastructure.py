@@ -3272,6 +3272,18 @@ class TaintTrackingToolsProvider(ToolsProvider):
             taint_evaluation is not None
             and taint_evaluation.requested_outcome is TaintPolicyOutcome.ADJUDICATE
         ):
+            observed_admission = (
+                taint_evaluation.effective_outcome != taint_evaluation.requested_outcome
+                and taint_evaluation.sink_class is SinkClass.AMBIENT_PROMPT_WRITE
+            )
+            description = (
+                taint_evaluation.reason
+                if observed_admission
+                else (
+                    f"Turn taint ({state.max_tier.config_value}) requires "
+                    "review for this call."
+                )
+            )
             contexts.append(
                 DelegatingPolicyContext(
                     kind="taint_cell",
@@ -3279,10 +3291,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
                         f"{state.max_tier.config_value}."
                         f"{taint_evaluation.sink_class.value}"
                     ),
-                    description=(
-                        f"Turn taint ({state.max_tier.config_value}) requires "
-                        "review for this call."
-                    ),
+                    description=description,
                 )
             )
         if (
