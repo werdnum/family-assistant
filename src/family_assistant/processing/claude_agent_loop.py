@@ -39,10 +39,14 @@ from claude_agent_sdk import (
     SessionStore,
     StreamEvent,
     TextBlock,
+    ToolResultBlock,
     ToolUseBlock,
 )
 from claude_agent_sdk import (
     SystemMessage as SdkSystemMessage,
+)
+from claude_agent_sdk import (
+    UserMessage as SdkUserMessage,
 )
 from claude_agent_sdk.types import (
     HookCallback,
@@ -83,6 +87,9 @@ from family_assistant.security.taint import (
     merge_taint_state_into_tracker,
     prompt_window_taint,
 )
+from family_assistant.services.turn_resumption import (
+    SUSPEND_INTERRUPT_AFTER_SECONDS,
+)
 from family_assistant.tools.infrastructure import (
     collect_system_prompt_addition,
     get_tool_definitions_for_advertisement,
@@ -95,6 +102,7 @@ from .claude_agent_prompt import (
     SessionPrompt,
     build_session_prompt,
     resumed_opening,
+    suspended_opening,
 )
 from .claude_agent_sessions import (
     WakeScope,
@@ -103,6 +111,7 @@ from .claude_agent_sessions import (
     remove_local_transcript,
     session_to_resume,
     session_working_directory,
+    suspended_session_to_resume,
 )
 from .llm_loop import LLMStreamingLoop, without_unavailable_thread_tools
 from .quiet_turn import (
@@ -173,6 +182,10 @@ _SESSION_ENV = {
     **dict.fromkeys(_BLANKED_CREDENTIAL_ENV, ""),
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
 }
+
+# How often a turn waiting on its session checks whether it has been asked to
+# stop. Nothing else wakes it while a tool or the model is busy.
+_STOP_POLL_SECONDS = 1.0
 
 type ClientFactory = Callable[[ClaudeAgentOptions], ClaudeSDKClient]
 
@@ -379,6 +392,10 @@ class _TurnSession:
         self.reported_usage: set[str] = set()
         self.pending_attachment_ids: list[str] = []
         self.turn_ending = False
+        # A graceful shutdown asked this turn to stop: when, and whether the
+        # session has been interrupted for it.
+        self.suspend_started_at: float | None = None
+        self.suspended = False
         self.quiet_reason: str | None = None
         self.result: ResultMessage | None = None
         self.outcome = "error"
@@ -678,13 +695,60 @@ class _TurnSession:
         else:
             await self.inbox.put(_Done())
 
+    async def _next_item(self, client: ClaudeSDKClient) -> _QueueItem:
+        """The session's next item, watching for a stop while waiting for it."""
+        provider = self.turn.mid_turn_input_provider
+        if provider is None:
+            return await self.inbox.get()
+        while True:
+            if provider.should_interrupt():
+                if not provider.suspend_requested:
+                    raise asyncio.CancelledError("Turn interrupted by user")
+                await self._suspend(client)
+            try:
+                return await asyncio.wait_for(self.inbox.get(), _STOP_POLL_SECONDS)
+            except TimeoutError:
+                continue
+
+    async def _suspend(self, client: ClaudeSDKClient) -> None:
+        """Stop the session for a graceful shutdown, as Ctrl-C would.
+
+        The session is interrupted between steps, once Claude Code holds the
+        results of every call it made (see ``_on_tool_results``), so nothing
+        it worked out is lost; until then the model may also finish the turn
+        by itself. Near the end of the grace it is interrupted wherever it is,
+        and Claude Code records a running call as interrupted, so the session
+        can still be recorded and resumed.
+        """
+        if self.suspended:
+            return
+        now = time.monotonic()
+        if self.suspend_started_at is None:
+            self.suspend_started_at = now
+            logger.info(
+                "Suspending Claude agent session %s of turn %s for shutdown "
+                "(%d tool call(s) running)",
+                self.session_id,
+                self.turn.turn_id,
+                len(self.outstanding),
+            )
+        if now - self.suspend_started_at >= SUSPEND_INTERRUPT_AFTER_SECONDS:
+            await self._interrupt_for_suspend(client)
+
+    async def _on_tool_results(self, client: ClaudeSDKClient) -> None:
+        """Claude Code has taken tool results: a step boundary."""
+        if self.suspend_started_at is not None and not self.outstanding:
+            await self._interrupt_for_suspend(client)
+
+    async def _interrupt_for_suspend(self, client: ClaudeSDKClient) -> None:
+        if not self.suspended:
+            self.suspended = True
+            await client.interrupt()
+
     async def _drive(self, client: ClaudeSDKClient) -> None:
         """Consume the session until it ends, or until this turn has."""
-        provider = self.turn.mid_turn_input_provider
         while True:
-            if provider is not None and provider.should_interrupt():
-                raise asyncio.CancelledError("Turn interrupted by user")
-            item = await self.inbox.get()
+            item = await self._next_item(client)
             if isinstance(item, _Failed):
                 raise item.error
             if isinstance(item, _Done):
@@ -722,6 +786,9 @@ class _TurnSession:
                 await self._on_stream_event(item)
             elif isinstance(item, SdkAssistantMessage):
                 await self._on_assistant(item)
+            elif isinstance(item, SdkUserMessage):
+                if _carries_tool_results(item):
+                    await self._on_tool_results(client)
             elif isinstance(item, ResultMessage):
                 self.result = item
 
@@ -751,6 +818,12 @@ class _TurnSession:
             # A resumed session runs in a config directory the SDK removes.
             if self.session_id is not None and self.resume is None:
                 remove_local_transcript(self.session_id, cwd)
+        if self.suspended:
+            # What the interrupted response had begun is not a reply: the
+            # session that resumes the turn holds it, and writes the reply.
+            self.outcome = "suspended"
+            await self._record_session(prompt.system_prompt)
+            raise asyncio.CancelledError("Turn suspended for shutdown")
         await self._flush()
         await self._finish()
         await self._record_session(prompt.system_prompt)
@@ -769,7 +842,7 @@ class _TurnSession:
 
     async def _record_session(self, system_prompt: str) -> None:
         """Make the session resumable, if the store holds all of it."""
-        if self.outcome != "completed" or self.session_id is None:
+        if self.outcome not in {"completed", "suspended"} or self.session_id is None:
             return
         if self.session_store.write_failed or self.mirror_failed:
             logger.warning(
@@ -850,7 +923,8 @@ class _TurnSession:
         try:
             await self.run(prompt, definitions)
         except BaseException as exc:
-            self.outcome = _failure_outcome(exc)
+            if not self.suspended:
+                self.outcome = _failure_outcome(exc)
             raise
         finally:
             record_claude_agent_session(profile, self.outcome)
@@ -866,6 +940,13 @@ class _TurnSession:
                 time.monotonic() - self.started_at,
                 f"{result.duration_api_ms / 1000:.1f}" if result else None,
             )
+
+
+def _carries_tool_results(message: SdkUserMessage) -> bool:
+    content = message.content
+    return not isinstance(content, str) and any(
+        isinstance(block, ToolResultBlock) for block in content
+    )
 
 
 def _failure_outcome(exc: BaseException) -> str:
@@ -1049,7 +1130,30 @@ class ClaudeAgentLoop(LLMStreamingLoop):
             turn_id=turn_id,
         )
         resumed_session_id: str | None = None
-        if trailing_instruction:
+        suspended, suspended_decision = await suspended_session_to_resume(
+            db_context, scope, model=model, system_prompt=prompt.system_prompt
+        )
+        if suspended_decision != "no_session":
+            logger.info(
+                "Claude agent turn %s on profile %s resumed after a shutdown: %s",
+                turn_id,
+                self.config.id,
+                suspended_decision,
+            )
+        if suspended is not None:
+            # A turn a graceful shutdown interrupted: its session holds the
+            # turn so far, its own reasoning included, and carries on with it.
+            resumed_session_id = suspended.session_id
+            merge_taint_state_into_tracker(
+                taint_tracker,
+                TurnTaintState.from_metadata(
+                    suspended.taint_metadata_json, preserve_origin=True
+                ),
+            )
+            prompt = SessionPrompt(
+                system_prompt=prompt.system_prompt, content=suspended_opening()
+            )
+        elif trailing_instruction:
             stored, decision = await session_to_resume(
                 db_context, scope, model=model, system_prompt=prompt.system_prompt
             )

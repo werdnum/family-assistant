@@ -48,6 +48,27 @@ A wake resumes the latest stored session for its conversation and profile when:
 A resumed session opens with the wake's own rows (the child results and the wake notice) followed by
 the wake instruction, in place of the rendered transcript.
 
+### A turn interrupted by a shutdown resumes its own session
+
+A turn still running when the process shuts down gracefully is stopped the way Ctrl-C stops Claude
+Code, rather than cancelled: the session is interrupted, which ends it cleanly with its transcript
+in the store, and is recorded against the turn. The process that resumes the turn resumes that
+session, opening it with a note that a restart interrupted it, not the user, so the model carries on
+with its own reasoning and the raw results it worked from.
+
+The interrupt is placed so that as little as possible is lost:
+
+- **Between steps.** Once Claude Code has taken the results of every call it made, so nothing the
+  model worked out is cut short. Until then the model may also finish the turn by itself.
+- **At a deadline, otherwise.** Shortly before the shutdown grace runs out, wherever the session is.
+  Claude Code records a call still running as interrupted, and the resumed model is told such a call
+  may or may not have taken effect.
+
+The resume handler already closes, rather than resumes, a turn whose conversation has moved on, so
+the only check left is the setup one wakes use. A session that cannot be resumed (a crash with no
+graceful shutdown, a changed setup) falls back to rebuilding the turn from the rows its interrupted
+run saved, as a fresh session.
+
 ### Taint
 
 A resumed session holds everything its earlier turns saw, including tool results that may since have
@@ -57,8 +78,14 @@ than a rebuild would start from.
 
 ## Deliberate simplifications
 
-- **Only wakes resume.** An ordinary follow-up starts a fresh session with the rendered transcript,
-  so the stored session never becomes a long-lived second copy of the conversation.
+- **Only wakes and interrupted turns resume.** An ordinary follow-up starts a fresh session with the
+  rendered transcript, so the stored session never becomes a long-lived second copy of the
+  conversation.
+- **A crash still loses the session.** Nothing records a session until it ends, so a process killed
+  without a graceful shutdown leaves only the rebuild.
+- **An interrupted turn that then fails keeps its interrupted session as the conversation's
+  latest.** A later wake may resume it; it knows the turn up to the interruption, and the failure is
+  in the history it is shown.
 - **Divergence is not reconciled.** Anything in between means rebuild, not appending the difference.
 - **Edits to earlier history are not detected.** The check is on what has been added since the
   session; a row edited or deleted in the meantime is not noticed.
@@ -73,3 +100,6 @@ than a rebuild would start from.
   that a failed store write leaves the session unresumable.
 - A real Claude Code session that delegates, is resumed from the database store, and answers from
   what it knew before the delegation.
+- Loop tests for a shutdown interrupting a session between steps and at the deadline, and for the
+  resumed turn continuing its session; and a real Claude Code session interrupted both ways, resumed
+  from the store with only the restart note, finishing the task it had been given.

@@ -51,6 +51,11 @@ class MidTurnInputProvider(Protocol):
         """Return whether the active turn should halt before more work starts."""
         ...
 
+    @property
+    def suspend_requested(self) -> bool:
+        """Whether the halt is a graceful shutdown, to be resumed elsewhere."""
+        ...
+
 
 class ChatInteractionStatus(Enum):
     """Outcome status for ProcessingService.handle_chat_interaction."""

@@ -16,7 +16,7 @@ spec:
     spec:
       # Room for in-progress chat turns to suspend and hand off on shutdown, so
       # the replacement pod resumes them (see CONFIGURATION_REFERENCE.md).
-      terminationGracePeriodSeconds: 60
+      terminationGracePeriodSeconds: 90
       containers:
         - name: family-assistant
           image: your-registry.example.com/family-assistant:latest # Your specified image

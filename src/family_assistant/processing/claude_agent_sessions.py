@@ -3,7 +3,8 @@
 The Agent SDK mirrors each session's transcript to ``DatabaseSessionStore`` and
 reads it back from there to resume. A turn whose whole transcript reached the
 store is recorded against its session; a delegation wake resumes that session
-only while it still agrees with the conversation's history. See
+only while it still agrees with the conversation's history, and a turn a
+graceful shutdown interrupted resumes its own. See
 docs/design/claude-agent-session-resume.md.
 """
 
@@ -38,6 +39,7 @@ SESSION_RETENTION = timedelta(days=7)
 type WakeDecision = Literal[
     "resumed", "no_session", "conversation_moved_on", "setup_changed"
 ]
+type SuspendedResumeDecision = Literal["resumed", "no_session", "setup_changed"]
 
 
 def session_working_directory() -> str:
@@ -154,6 +156,32 @@ async def session_to_resume(
     )
     if latest_turn_id != session.turn_id:
         return None, "conversation_moved_on"
+    if (
+        session.model != model.model
+        or session.effort != model.effort
+        or session.system_prompt_sha256 != system_prompt_digest(system_prompt)
+    ):
+        return None, "setup_changed"
+    return session, "resumed"
+
+
+async def suspended_session_to_resume(
+    db: Database,
+    scope: WakeScope,
+    *,
+    model: ClaudeAgentModel,
+    system_prompt: str,
+) -> tuple[ClaudeAgentSessionTurn | None, SuspendedResumeDecision]:
+    """The session a turn resumed after a shutdown should continue, if any.
+
+    A turn only has a session recorded before it finishes when a graceful
+    shutdown interrupted that session and recorded it for this. The resume
+    handler has already established that nothing has happened in the
+    conversation since, so only the setup is checked.
+    """
+    session = await db.claude_agent_sessions.turn(scope.turn_id)
+    if session is None:
+        return None, "no_session"
     if (
         session.model != model.model
         or session.effort != model.effort

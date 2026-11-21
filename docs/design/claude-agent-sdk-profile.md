@@ -123,10 +123,11 @@ the first message rather than as a resumed Claude Code session, so the history F
 saves stays the only copy, and windowing and compaction work unchanged. Within a turn the
 conversation is native: real tool calls, real results, Claude Code's own caching.
 
-A turn interrupted by a restart is resumed the same way. A fresh session opens with the turn's
-request, followed by the steps its interrupted run saved, rendered as a transcript of calls that
-have already run, and continues from there. Claude Code's own transcript of the interrupted session
-is not resumed: it may stop partway through a tool call, while the saved history is complete.
+A turn interrupted by a graceful shutdown is the exception: its session is interrupted cleanly and
+the next process resumes it (see [claude-agent-session-resume.md](claude-agent-session-resume.md)).
+Where that is not possible, after a crash or a change of setup, the turn is rebuilt: a fresh session
+opens with the turn's request, followed by the steps its interrupted run saved, rendered as a
+transcript of calls that have already run, and continues from there.
 
 ### It is observable from outside
 

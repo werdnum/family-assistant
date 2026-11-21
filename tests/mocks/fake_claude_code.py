@@ -52,6 +52,9 @@ class FakeResponse:
     blocks: Sequence[FakeText | FakeToolUse]
     model: str = "claude-opus-5-5"
     error: str | None = None
+    # The model is still working on this response until the event is set; one
+    # never set stands for a response an interrupt cuts short.
+    ready: asyncio.Event | None = None
 
 
 @dataclass
@@ -82,6 +85,7 @@ class FakeClaudeCode(Transport):
         self._ready = False
         self._script: asyncio.Task[None] | None = None
         self._mcp_id = 0
+        self._played: list[FakeResponse] = []
 
     # -- Transport ----------------------------------------------------------
 
@@ -129,6 +133,7 @@ class FakeClaudeCode(Transport):
                 if self._script is not None:
                     self._script.cancel()
                 await self._respond(frame["request_id"], {})
+                await self._mirror_transcript()
                 await self._emit_result(subtype="error_during_execution", aborted=True)
             else:
                 await self._respond(frame["request_id"], {})
@@ -218,14 +223,20 @@ class FakeClaudeCode(Transport):
                 "session_id": SESSION_ID,
             })
         for response in self.responses:
+            if response.ready is not None:
+                await response.ready.wait()
             await self._play(response)
-        if self.transcript_path is not None:
+        await self._mirror_transcript()
+        await self._emit_result(subtype=self.result_subtype)
+
+    async def _mirror_transcript(self) -> None:
+        if self.transcript_path is not None and not self.transcript:
             entries = [
                 {"type": "user", "uuid": str(uuid.uuid4()), "message": prompt}
                 for prompt in self.prompts[-1:]
             ] + [
                 {"type": "assistant", "uuid": str(uuid.uuid4()), "text": text}
-                for response in self.responses
+                for response in self._played
                 for text in (b.text for b in response.blocks if isinstance(b, FakeText))
             ]
             self.transcript.extend(entries)
@@ -234,9 +245,9 @@ class FakeClaudeCode(Transport):
                 "filePath": self.transcript_path,
                 "entries": entries,
             })
-        await self._emit_result(subtype=self.result_subtype)
 
     async def _play(self, response: FakeResponse) -> None:
+        self._played.append(response)
         message_id = f"msg_{uuid.uuid4().hex[:24]}"
         usage = {
             "input_tokens": 2,
