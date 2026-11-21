@@ -178,8 +178,13 @@ async def suspended_session_to_resume(
     shutdown interrupted that session and recorded it for this. The resume
     handler has already established that nothing has happened in the
     conversation since, so only the setup is checked.
+
+    The record is used up by this attempt: the resumed session writes a new
+    one if it stops cleanly again, and if it is lost instead, the next attempt
+    rebuilds from the rows saved since rather than going back to a checkpoint
+    that predates them.
     """
-    session = await db.claude_agent_sessions.turn(scope.turn_id)
+    session = await db.claude_agent_sessions.take_turn(scope.turn_id)
     if session is None:
         return None, "no_session"
     if (

@@ -65,9 +65,12 @@ The interrupt is placed so that as little as possible is lost:
   may or may not have taken effect.
 
 The resume handler already closes, rather than resumes, a turn whose conversation has moved on, so
-the only check left is the setup one wakes use. A session that cannot be resumed (a crash with no
-graceful shutdown, a changed setup) falls back to rebuilding the turn from the rows its interrupted
-run saved, as a fresh session.
+the only check left is the setup one wakes use. Each record is used once: an attempt that resumes a
+session takes its record, and writes a new one only if it too stops cleanly, so an attempt that is
+lost leaves the next to rebuild from the rows it saved rather than going back to an older checkpoint
+that predates them. A session that cannot be resumed (a crash with no graceful shutdown, a changed
+setup) falls back to rebuilding the turn from the rows its interrupted run saved, as a fresh
+session.
 
 ### Taint
 
@@ -83,9 +86,6 @@ than a rebuild would start from.
   conversation.
 - **A crash still loses the session.** Nothing records a session until it ends, so a process killed
   without a graceful shutdown leaves only the rebuild.
-- **An interrupted turn that then fails keeps its interrupted session as the conversation's
-  latest.** A later wake may resume it; it knows the turn up to the interruption, and the failure is
-  in the history it is shown.
 - **Divergence is not reconciled.** Anything in between means rebuild, not appending the difference.
 - **Edits to earlier history are not detected.** The check is on what has been added since the
   session; a row edited or deleted in the meantime is not noticed.

@@ -113,12 +113,17 @@ class ClaudeAgentSessionsRepository(BaseRepository):
 
         await self._db.atomic(write)
 
-    async def turn(self, turn_id: str) -> ClaudeAgentSessionTurn | None:
-        """The session recorded for ``turn_id``, if one was."""
-        row = await self._db.fetch_one(
-            select(_turns).where(_turns.c.turn_id == turn_id)
-        )
-        return None if row is None else _session_turn(row)
+    async def take_turn(self, turn_id: str) -> ClaudeAgentSessionTurn | None:
+        """Remove and return the session recorded for ``turn_id``, if one was."""
+
+        async def take(txn: DatabaseTransaction) -> ClaudeAgentSessionTurn | None:
+            row = await txn.fetch_one(select(_turns).where(_turns.c.turn_id == turn_id))
+            if row is None:
+                return None
+            await txn.execute(delete(_turns).where(_turns.c.turn_id == turn_id))
+            return _session_turn(row)
+
+        return await self._db.atomic(take)
 
     async def latest_turn(
         self,

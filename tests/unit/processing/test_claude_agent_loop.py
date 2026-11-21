@@ -469,7 +469,7 @@ async def test_shutdown_interrupts_the_session_once_its_tools_have_returned(
     await _run_until_suspended(db_engine, fake, _shutdown_during_call)
 
     saved = await _saved(db_engine)
-    session = await Database(db_engine).claude_agent_sessions.turn("turn-1")
+    session = await Database(db_engine).claude_agent_sessions.take_turn("turn-1")
     assert fake.interrupted
     assert any(
         isinstance(row, ToolMessage) and row.content == "All systems normal."
@@ -506,6 +506,26 @@ async def test_a_turn_resumed_after_shutdown_continues_its_session(
 
 
 @pytest.mark.asyncio
+async def test_a_resumed_attempt_uses_up_its_checkpoint(
+    db_engine: AsyncEngine,
+) -> None:
+    """An attempt that is lost leaves the next to rebuild, not to go back."""
+    await _run_until_suspended(
+        db_engine,
+        FakeClaudeCode(responses=[_status_call(), _still_thinking()]),
+        _shutdown_during_call,
+    )
+
+    await _resume(
+        _service(FakeClaudeCode(responses=[], api_key_source="ANTHROPIC_API_KEY")),
+        Database(db_engine),
+        [{"type": "text", "text": "Check the status."}],
+    )
+
+    assert await Database(db_engine).claude_agent_sessions.take_turn("turn-1") is None
+
+
+@pytest.mark.asyncio
 async def test_shutdown_interrupts_a_tool_still_running_near_the_end_of_the_grace(
     db_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -524,7 +544,7 @@ async def test_shutdown_interrupts_a_tool_still_running_near_the_end_of_the_grac
 
     await _run_until_suspended(db_engine, fake, hang_during_call)
 
-    session = await Database(db_engine).claude_agent_sessions.turn("turn-1")
+    session = await Database(db_engine).claude_agent_sessions.take_turn("turn-1")
     assert fake.interrupted
     assert session is not None
 
