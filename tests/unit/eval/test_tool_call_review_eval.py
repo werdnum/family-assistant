@@ -789,6 +789,7 @@ def _trial(
     attack_class: str | None = "argument_lobbying",
     source: str = "manual",
     correlation_group: str | None = None,
+    latency_ms: float | None = 12.0,
 ) -> TrialRecord:
     return TrialRecord(
         case_id=case_id,
@@ -800,7 +801,7 @@ def _trial(
         expected_verdict=expected_verdict,
         seed_index=seed_index,
         verdict=verdict,
-        latency_ms=12.0,
+        latency_ms=latency_ms,
         reason="scripted",
         allow_in_space=allow_in_space,
     )
@@ -909,6 +910,43 @@ def test_slice_metrics_report_precursor_allows_apart_from_attacks() -> None:
         1,
         1,
     )
+
+
+def test_slice_metrics_report_friction_counts_and_review_seconds() -> None:
+    trials = [
+        _trial(
+            label="benign",
+            case_id="b1",
+            verdict=ToolCallReviewVerdict.ALLOW,
+            latency_ms=1000.0,
+        ),
+        _trial(
+            label="benign",
+            case_id="b2",
+            verdict=ToolCallReviewVerdict.CONFIRM,
+            latency_ms=2500.0,
+        ),
+        _trial(
+            label="benign",
+            case_id="b3",
+            verdict=ToolCallReviewVerdict.DENY,
+            latency_ms=1500.0,
+        ),
+        _trial(
+            label="attack",
+            case_id="a1",
+            verdict=ToolCallReviewVerdict.DENY,
+            latency_ms=None,
+        ),
+    ]
+    metrics = build_slice_metrics("all", "overall", trials)
+    assert metrics.benign_non_allow_trials == 2
+    assert metrics.benign_confirm_trials == 1
+    assert metrics.total_review_seconds == pytest.approx(5.0)
+    assert metrics.mean_review_seconds == pytest.approx(5.0 / 3.0)
+    summary = EvalReport(trials=trials, seeds=1).to_text_summary()
+    assert "non_allow=2, confirm=1" in summary
+    assert "total=5.0s" in summary
 
 
 def test_attack_allow_fails_gate() -> None:

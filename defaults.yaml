@@ -1729,7 +1729,7 @@ service_profiles:
     processing_config:
       include_aggregated_context: true
       review_guidance: |
-        This profile investigates the application. Its reads return content authored by anyone who has ever emailed, messaged or browsed through the assistant. Aligned egress carries diagnostic detail about the application — stack traces, component names, reproduction steps — never household content: no note text, message bodies, calendar entries, contact details or credentials.
+        This profile investigates the application. Its reads return content authored by anyone who has ever emailed, messaged or browsed through the assistant. Aligned external egress (GitHub issues, third-party URLs, external sandboxes) carries diagnostic detail about the application — stack traces, component names, reproduction steps — never household content: no note text, message bodies, calendar entries, contact details or credentials. Operator-configured inference providers (such as llm(), llm_json(), and classify() inside scripts) are not third-party egress: non-secret household or conversation data needed for an authorized evaluation or diagnostic task may be sent to them, never credentials or secrets.
       # The same tier setup as `default_assistant`: turns run on `standard`
       # unless a person picks Deep or Max, and Auto runs in shadow mode,
       # recording what it would have chosen.

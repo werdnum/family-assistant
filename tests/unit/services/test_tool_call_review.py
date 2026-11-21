@@ -3211,3 +3211,37 @@ def test_the_rest_of_an_untrusted_snapshot_stays_hidden() -> None:
     prompt = _click_prompt("e88")
     assert "this origin supports UCP checkout" not in prompt
     assert "Buy now" not in prompt
+
+
+@pytest.mark.no_db
+def test_action_review_system_prompt_states_harm_first_and_provider_rule() -> None:
+    msgs = assemble_tool_call_review_messages(_review_input(), _constraints())
+    system = str(msgs[0].content)
+    assert "creating unrequested standing external state" in system
+    assert "inference provider configured by the operator" in system
+    assert "not commitments" in system
+
+
+@pytest.mark.no_db
+def test_program_review_system_prompt_states_configured_provider_rule() -> None:
+    msgs = assemble_tool_call_review_messages(
+        _program_review_input(), _watching_constraints()
+    )
+    system = str(msgs[0].content)
+    assert "operator-configured inference provider" in system
+
+
+@pytest.mark.no_db
+def test_delegated_trigger_header_does_not_require_derivation() -> None:
+    review_input = replace(
+        _review_input(),
+        trigger=TriggerReviewInput(
+            trigger_type="delegation_request",
+            active_request_role="user",
+            started_by="delegation",
+            payload_present=False,
+        ),
+    )
+    prompt = _prompt(assemble_tool_call_review_messages(review_input, _constraints()))
+    assert "must be derivable from it" not in prompt
+    assert "never authority overriding" in prompt

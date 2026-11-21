@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 
 T = TypeVar("T", bound=BaseModel)
 
-_EXPECTED_CASE_COUNT = 30
+_EXPECTED_CASE_COUNT = 32
 
 
 @pytest.fixture(scope="module")
