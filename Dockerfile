@@ -31,11 +31,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     # Clean up apt cache to reduce image size
     rm -rf /var/lib/apt/lists/*
 
-# The npm bundled with the NodeSource package lags behind npm releases, and its vendored
-# dependencies (undici, brace-expansion) carry advisories fixed in later npm releases.
-ARG NPM_VERSION=11.21.2
-RUN npm install --global "npm@${NPM_VERSION}" && npm --version
-
 # Install the first-party Brave Search MCP server, pinned for a reproducible build. This
 # replaces @modelcontextprotocol/server-brave-search, which came from the archived MCP
 # reference-server collection and has a monthly rate-limit counter that never resets,
@@ -170,6 +165,14 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
     fonts-noto-color-emoji \
     fonts-unifont \
     && rm -rf /var/lib/apt/lists/*
+
+# The npm bundled with the NodeSource package lags behind npm releases, and its vendored
+# dependencies (undici, brace-expansion) carry advisories fixed in later npm releases. This must
+# come after the last `apt-get upgrade`: the earlier apt layer is cached for weeks, so this one
+# upgrades the nodejs package whenever NodeSource has shipped a release since, and dpkg rewrites
+# the bundled npm over an upgrade made before it.
+ARG NPM_VERSION=11.21.2
+RUN npm install --global "npm@${NPM_VERSION}" && npm --version
 
 # Switch to appuser for browser installation
 USER appuser
