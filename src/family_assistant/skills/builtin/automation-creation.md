@@ -40,23 +40,23 @@ with the full tool set and the ability to delegate. So a weekly check that invol
 website works: say so in the wake context, and the woken turn delegates to the browser profile
 itself. Whatever it will need, it needs at wake time, not now.
 
-**Event wakes always run under `event_handler`,** whoever created them — the triggering event is
-untrusted content and the woken turn reads it, so it is deliberately confined. It can read notes,
-search the calendar and documents, query recent events, publish MQTT, and message the user. It
-cannot browse, delegate, run scripts, or touch the calendar and automations. Scope an event
-`wake_llm` to that list.
+**Event wakes run under `event_handler` by default,** whoever created them — an untrusted triggering
+event is read by the woken turn, so it is deliberately confined. It can read notes, search the
+calendar and documents, query recent events, publish MQTT, and message the user. It cannot browse,
+delegate, run scripts, or touch the calendar and automations. **Exception:** event sources or MCP
+servers the operator has declared `trusted_events: true` (such as Home Assistant or Tuit when so
+configured) wake under the creating profile instead, with its full tool set.
 
-**An event script's `wake_llm()` also wakes `event_handler`.** The script itself runs under the
-creating profile, which is safe on its own: a script is deterministic, so an attacker who controls
-the event can influence the arguments but not which tools get called. The turn it wakes reads the
-event, though, so that turn gets the same confinement as an event `wake_llm`. A script is a good way
-to filter events cheaply and wake only for the ones worth looking at, but it is not a way to give an
-event automation more capability than the list above.
+**An event script's `wake_llm()` follows the same rule.** The script itself runs under the creating
+profile, which is safe on its own: a script is deterministic, so an attacker who controls the event
+can influence the arguments but not which tools get called. When the script calls `wake_llm()`, an
+untrusted event source wakes `event_handler` while a `trusted_events` source wakes the creating
+profile.
 
-So when an event response needs more than `event_handler` can do, have the script do the work
-deterministically and leave the outcome in data — a note the user (or a later scheduled automation)
-picks up. If it genuinely needs judgement over the event content, that judgement belongs in
-`event_handler`, within the tools listed above.
+So when an event response on an untrusted source needs more than `event_handler` can do, have the
+script do the work deterministically and leave the outcome in data — a note the user (or a later
+scheduled automation) picks up. If it genuinely needs judgement over untrusted event content, that
+judgement belongs in `event_handler`, within the tools listed above.
 
 One more thing worth knowing: an automation owned by a different profile cannot be updated from
 here. `update_automation` fails with an ownership error naming the owning profile. Recreate it here
@@ -144,13 +144,14 @@ with known content, data collection. Scripts run immediately, cost nothing per r
 identically every time.
 
 Use `action_type="wake_llm"` when the response needs judgement — when what to do depends on reading
-the situation. For an event automation, check the wake against what `event_handler` can reach (see
-above) before choosing it.
+the situation. For an event automation on an untrusted source, check the wake against what
+`event_handler` can reach (see above) before choosing it; on a `trusted_events` source it wakes
+under the creating profile.
 
 A script can also call `wake_llm()` conditionally, which is often the best of both: cheap
 deterministic filtering, waking only when something is actually worth the user's attention. In a
-schedule automation the wake runs under the creating profile; in an event automation it runs under
-`event_handler` (see above).
+schedule automation or on a `trusted_events` event source the wake runs under the creating profile;
+on an untrusted event source it runs under `event_handler` (see above).
 
 Prefer a script where a script suffices.
 

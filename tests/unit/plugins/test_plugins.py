@@ -47,6 +47,9 @@ def test_plugin_tools_join_the_tool_catalogue_with_their_metadata() -> None:
     assert ToolTag.EXTERNAL_COMM in (
         LOCAL_TOOL_METADATA_BY_NAME["call_home_assistant_action"].tags
     )
+    assert ToolTag.OUTPUT_TRUSTED in (
+        LOCAL_TOOL_METADATA_BY_NAME["get_camera_snapshot"].tags
+    )
 
 
 def test_join_tool_registrations_refuses_a_duplicate_name() -> None:
@@ -162,6 +165,29 @@ plugins:
         assert default.api_url == "http://ha.local:8123"
         assert default.token == SecretStr("env-token")
         assert default.context_template == "{{ states('sun.sun') }}"
+        assert default.trusted_events is False
+
+    def test_trusted_events_is_configurable_per_instance(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            """
+plugins:
+  home_assistant:
+    default:
+      trusted_events: true
+"""
+        )
+        monkeypatch.setenv("HOMEASSISTANT_URL", "http://ha.local:8123")
+        monkeypatch.setenv("HOMEASSISTANT_API_KEY", "env-token")
+        config = load_config(
+            defaults_file_path=str(tmp_path / "missing_defaults.yaml"),
+            config_file_path=str(config_file),
+            prompts_file_path=str(tmp_path / "missing_prompts.yaml"),
+            load_dotenv_file=False,
+        )
+        assert config.plugins.home_assistant["default"].trusted_events is True
 
     @pytest.mark.parametrize("token", ["token", ""])
     def test_an_instance_without_a_url_is_left_out(self, token: str) -> None:

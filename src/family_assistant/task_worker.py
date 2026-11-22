@@ -667,9 +667,10 @@ class LlmCallbackPayload(TypedDict, total=False):
     # Profile the woken turn should run under. Event-triggered wakes (an event
     # listener's wake_llm, or wake_llm() from an event listener's script) carry
     # the restricted "event_handler" profile (untrusted trigger) unless the
-    # listener watches a trusted_events MCP server; schedule,
-    # scheduled-script and future-callback wakes carry their originating profile. Absent for reminders
-    # (which switch to the "reminder" profile) and legacy tasks (run as default).
+    # listener watches a trusted event source or trusted_events MCP server;
+    # schedule, scheduled-script and future-callback wakes carry their
+    # originating profile. Absent for reminders (which switch to the "reminder"
+    # profile) and legacy tasks (run as default).
     processing_profile_id: str
     # Reviewer-only trigger metadata. Kept separate from callback_context so an
     # external event payload can never be mistaken for an automation definition.
@@ -677,7 +678,8 @@ class LlmCallbackPayload(TypedDict, total=False):
     tool_call_review_trigger_definition: str | None
     tool_call_review_trigger_payload_present: bool
     # Set when the payload comes from a source the operator declared trusted
-    # (an MCP server with trusted_events), so it adds no taint to the turn.
+    # (an event source or MCP server with trusted_events), so it adds no taint
+    # to the turn.
     tool_call_review_trigger_payload_trusted: bool
     # A one-shot callback has no durable definition table, so its definition
     # record rides the payload beside the definition it describes. Absent for
@@ -717,6 +719,10 @@ class ScriptExecutionPayload(TypedDict, total=False):
     # user) that created the automation, so validation and execution agree.
     processing_profile_id: str
     created_by_user_id: str
+    # Set when the triggering event comes from a source or MCP server configured
+    # with trusted_events, so the script firing adds no trigger taint and any
+    # wake_llm() it calls wakes under its creating profile instead of event_handler.
+    tool_call_review_trigger_payload_trusted: bool
     # A one-shot script action has no durable definition table, so its record
     # rides the payload beside the action config it describes. A firing from a
     # durable automation or listener carries one too and resolution ignores it:
@@ -7731,6 +7737,8 @@ async def _process_script_wake_llm(
     event_data: dict[str, Any],
     listener_id: str | None,
     home_owner_user_id: str | None,
+    *,
+    payload_trusted: bool = False,
 ) -> None:
     """Process wake_llm calls accumulated during script execution.
 
@@ -7741,7 +7749,9 @@ async def _process_script_wake_llm(
 
     A script fired by an event listener wakes under ``event_handler``, as the
     listener's own wake_llm action would: the wake carries the untrusted event
-    to a turn that reads it. A scheduled script wakes under its own profile.
+    to a turn that reads it. A listener on a ``trusted_events`` source/server
+    (with a recorded creating profile) or a scheduled script wakes under its
+    own profile.
 
     Args:
         exec_context: The execution context with DB access
@@ -7749,6 +7759,8 @@ async def _process_script_wake_llm(
         event_data: The original event data that triggered the script
         listener_id: ID of the event listener that ran the script
         home_owner_user_id: Whose Home the script's own wakes land in, if any
+        payload_trusted: Whether the triggering event came from a trusted event
+            source or MCP server.
     """
 
     # A script running under a confined profile (allow_wake_llm disabled) must
@@ -7756,7 +7768,10 @@ async def _process_script_wake_llm(
     # Refuse here, mirroring the create_automation/execute_action guard.
     assert_wake_llm_allowed(ActionType.WAKE_LLM, exec_context.allow_wake_llm)
     wake_profile_id = (
-        EVENT_HANDLER_PROFILE_ID if listener_id else exec_context.processing_profile_id
+        EVENT_HANDLER_PROFILE_ID
+        if listener_id
+        and not (payload_trusted and exec_context.processing_profile_id is not None)
+        else exec_context.processing_profile_id
     )
 
     to_source = [ctx for ctx in wake_contexts if not ctx.get("new_conversation")]
@@ -8431,6 +8446,9 @@ async def handle_script_execution(
                     listener_id=listener_id,
                     home_owner_user_id=home_owner_for(
                         payload.get("config") or {}, exec_context.user_id
+                    ),
+                    payload_trusted=bool(
+                        payload.get("tool_call_review_trigger_payload_trusted")
                     ),
                 )
 

@@ -82,6 +82,7 @@ class EventProcessor:
         timezone: tzinfo | None = None,
         profile_wake_llm_flags: Mapping[str, bool] | None = None,
         trusted_event_server_ids: Collection[str] = (),
+        trusted_event_sources: Collection[str] = (),
     ) -> None:
         """
         Initialize event processor.
@@ -100,10 +101,14 @@ class EventProcessor:
             trusted_event_server_ids: MCP servers configured with
                 ``trusted_events``, whose wakes run under the listener's origin
                 profile instead of event_handler.
+            trusted_event_sources: Event source IDs (e.g. ``home_assistant``)
+                configured with ``trusted_events``, whose wakes run under the
+                listener's origin profile instead of event_handler.
         """
         self.sources = sources
         self.profile_wake_llm_flags = profile_wake_llm_flags
         self.trusted_event_server_ids = frozenset(trusted_event_server_ids)
+        self.trusted_event_sources = frozenset(trusted_event_sources)
         self.event_storage = EventStorage(
             sample_interval_hours, get_db_context_func=get_db_context_func
         )
@@ -415,9 +420,9 @@ class EventProcessor:
         # content). A wake_llm turn processes that content and is the injectable
         # component, so it runs under the restricted "event_handler" profile
         # rather than the listener creator's (often full-trust) profile -- unless
-        # the event comes from an MCP server the operator declared trusted_events
-        # for. Script actions keep running under the creating profile so their
-        # validated tool set matches execution.
+        # the event comes from a source or MCP server the operator declared
+        # trusted_events for. Script actions keep running under the creating
+        # profile so their validated tool set matches execution.
         payload_trusted = self._payload_is_trusted(listener)
         if action_type == ActionType.WAKE_LLM:
             # The event_handler routing must not launder a wake the origin
@@ -471,8 +476,11 @@ class EventProcessor:
         )
 
     def _payload_is_trusted(self, listener: EventListenerDict) -> bool:
-        """Whether the listener's events come from a trusted_events MCP server."""
-        if str(listener["source_id"]) != EventSourceType.mcp.value:
+        """Whether the listener's events come from a trusted source or MCP server."""
+        source_id = str(listener["source_id"])
+        if source_id in self.trusted_event_sources:
+            return True
+        if source_id != EventSourceType.mcp.value:
             return False
         server_id = (listener["match_conditions"] or {}).get(SERVER_KEY)
         return server_id in self.trusted_event_server_ids

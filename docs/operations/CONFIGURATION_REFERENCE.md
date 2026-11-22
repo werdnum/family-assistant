@@ -1920,15 +1920,20 @@ plugins:
       # Run the state-change event source that automations and event listeners use.
       # Only one instance may have it on.
       events: true
+      # Trust state-change event payloads like Home Assistant's output_trusted
+      # read tools: event wakes run under their creating profile instead of
+      # event_handler, and the payload adds no trigger taint.
+      trusted_events: false
 ```
 
-| Key                | Default | Notes                                                      |
-| ------------------ | ------- | ---------------------------------------------------------- |
-| `api_url`          | None    | Base URL, without `/api`. Required to start the instance.  |
-| `token`            | None    | Long-lived access token. **Sensitive.** Required to start. |
-| `verify_ssl`       | `true`  |                                                            |
-| `context_template` | None    | Backs `get_home_status`; no template means no such tool.   |
-| `events`           | `true`  | The `home_assistant` event source.                         |
+| Key                | Default | Notes                                                                                      |
+| ------------------ | ------- | ------------------------------------------------------------------------------------------ |
+| `api_url`          | None    | Base URL, without `/api`. Required to start the instance.                                  |
+| `token`            | None    | Long-lived access token. **Sensitive.** Required to start.                                 |
+| `verify_ssl`       | `true`  |                                                                                            |
+| `context_template` | None    | Backs `get_home_status`; no template means no such tool.                                   |
+| `events`           | `true`  | The `home_assistant` event source.                                                         |
+| `trusted_events`   | `false` | Run `home_assistant` event wakes under their creating profile with no event-payload taint. |
 
 An instance missing `api_url` or `token` is not started, with a warning at startup, and profiles
 that would use it run without Home Assistant.
@@ -4920,14 +4925,15 @@ Each automation polls with its creator's credential for that server: their `user
 can only watch servers they have a credential for, and only ever hears what that server would show
 them. stdio servers are not polled.
 
-By default an event's payload is untrusted, like a Home Assistant or webhook event: a `wake_llm`
-automation on it runs under the restricted `event_handler` profile, and the payload taints the turn
-`unknown_external`. Set `trusted_events: true` on a server to say its event payloads are as
-trustworthy as its tool output (the operator's call, typically for a server whose tools are already
-tagged `output_trusted`). A `wake_llm` automation on that server then runs under the profile that
-created it, with that profile's tools, and the payload adds no taint. The automation's own
-instruction is still judged by how it was authored. An automation stored with no creating profile
-keeps running as `event_handler`, and so does a script action's `wake_llm()`.
+By default an event's payload is untrusted, like a webhook event (or a Home Assistant event without
+`trusted_events`): a `wake_llm` automation on it runs under the restricted `event_handler` profile,
+and the payload taints the turn `unknown_external`. Set `trusted_events: true` on a server to say
+its event payloads are as trustworthy as its tool output (the operator's call, typically for a
+server whose tools are already tagged `output_trusted`). A `wake_llm` automation (and a script
+action's `wake_llm()`) on that server then runs under the profile that created it, with that
+profile's tools, and the event payload adds no taint. The automation's own instruction is still
+judged by how it was authored. An automation stored with no creating profile keeps running as
+`event_handler`.
 
 ```yaml
 mcp_config:
