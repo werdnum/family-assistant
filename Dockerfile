@@ -31,11 +31,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     # Clean up apt cache to reduce image size
     rm -rf /var/lib/apt/lists/*
 
-# The npm bundled with the NodeSource package lags behind npm releases, and its vendored
-# dependencies (undici, brace-expansion) carry advisories fixed in later npm releases.
-ARG NPM_VERSION=11.21.2
-RUN npm install --global "npm@${NPM_VERSION}" && npm --version
-
 # Install the first-party Brave Search MCP server, pinned for a reproducible build. This
 # replaces @modelcontextprotocol/server-brave-search, which came from the archived MCP
 # reference-server collection and has a monthly rate-limit counter that never resets,
@@ -171,6 +166,14 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
     fonts-unifont \
     && rm -rf /var/lib/apt/lists/*
 
+# The npm bundled with the NodeSource package lags behind npm releases, and its vendored
+# dependencies (undici, brace-expansion) carry advisories fixed in later npm releases. This must
+# come after the last `apt-get upgrade`: the earlier apt layer is cached for weeks, so this one
+# upgrades the nodejs package whenever NodeSource has shipped a release since, and dpkg rewrites
+# the bundled npm over an upgrade made before it.
+ARG NPM_VERSION=11.21.2
+RUN npm install --global "npm@${NPM_VERSION}" && npm --version
+
 # Switch to appuser for browser installation
 USER appuser
 RUN python -m rebrowser_playwright install chromium && \
@@ -237,6 +240,13 @@ RUN set -eu; \
         done; \
     done; \
     [ "$found" = 1 ] || { echo "no uv-managed Python found" >&2; exit 1; }
+
+# The npm that NodeSource bundles vendors undici 6.28.0 and brace-expansion 5.0.9, which carry
+# advisories; the npm upgrade above replaces them. Scanners still report those versions against
+# the published image, so list every copy in the final filesystem and fail if a vulnerable one
+# survives, whichever layer it came from.
+COPY docker/check-node-vendored.js /tmp/check-node-vendored.js
+RUN node /tmp/check-node-vendored.js && rm /tmp/check-node-vendored.js
 USER appuser
 
 # --- Runtime Configuration ---
