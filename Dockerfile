@@ -237,6 +237,13 @@ RUN set -eu; \
         done; \
     done; \
     [ "$found" = 1 ] || { echo "no uv-managed Python found" >&2; exit 1; }
+
+# The npm that NodeSource bundles vendors undici 6.28.0 and brace-expansion 5.0.9, which carry
+# advisories; the npm upgrade above replaces them. Scanners still report those versions against
+# the published image, so list every copy in the final filesystem and fail if a vulnerable one
+# survives, whichever layer it came from.
+COPY docker/check-node-vendored.js /tmp/check-node-vendored.js
+RUN node /tmp/check-node-vendored.js && rm /tmp/check-node-vendored.js
 USER appuser
 
 # --- Runtime Configuration ---
