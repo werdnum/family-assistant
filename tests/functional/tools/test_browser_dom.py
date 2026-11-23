@@ -888,6 +888,13 @@ async def test_screenshot_coordinate_hover_and_click_on_non_a11y_target(
     hovered = await browser_hover_at_tool(exec_context, 320, 140)
     assert "hovered-arrow" in hovered.get_text()
 
+    # Hover invalidated the prior screenshot; take a fresh one before clicking.
+    stale = await browser_click_at_tool(exec_context, 320, 140)
+    stale_data = stale.get_data()
+    assert isinstance(stale_data, dict)
+    assert stale_data["error"] == "no_valid_screenshot"
+
+    await browser_screenshot_tool(exec_context)
     clicked = await browser_click_at_tool(exec_context, 320, 140)
     assert "clicked-arrow" in clicked.get_text()
 
@@ -939,8 +946,8 @@ async def test_scroll_page_and_container_and_click_after_scroll(
     assert isinstance(stale_data, dict)
     assert stale_data["error"] == "no_valid_screenshot"
 
-    # Scroll the main document down to bring #lower-icon (top: 1200px) into the viewport.
-    await browser_hover_at_tool(exec_context, 0, 0)
+    # Scroll the main document down directly (without manually moving the pointer
+    # out of #scroll-box first) to bring #lower-icon (top: 1200px) into the viewport.
     await browser_scroll_tool(exec_context, "down", amount=1000)
     shot = await browser_screenshot_tool(exec_context)
     shot_data = shot.get_data()

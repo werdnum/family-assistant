@@ -596,6 +596,7 @@ async def browser_click_tool(
         await backend.click(ref)
     except StaleRefError as exc:
         return await _stale_ref_result(exec_context, backend, exc, query)
+    backend.invalidate_screenshot("page clicked")
     await backend.settle()
     return await _snapshot_result(exec_context, backend, query=query)
 
@@ -612,6 +613,7 @@ async def browser_hover_tool(
         await backend.hover(ref)
     except StaleRefError as exc:
         return await _stale_ref_result(exec_context, backend, exc, query)
+    backend.invalidate_screenshot("pointer hovered")
     return await _snapshot_result(exec_context, backend, query=query)
 
 
@@ -636,6 +638,7 @@ async def browser_click_at_tool(
         css_y,
     )
     await backend.mouse_click(css_x, css_y)
+    backend.invalidate_screenshot("page clicked")
     await backend.settle()
     return await _snapshot_result(exec_context, backend, query=query)
 
@@ -668,6 +671,7 @@ async def browser_hover_at_tool(
         css_y,
     )
     await backend.mouse_move(css_x, css_y)
+    backend.invalidate_screenshot("pointer moved")
     return await _snapshot_result(exec_context, backend, query=query)
 
 
@@ -704,6 +708,11 @@ async def browser_scroll_tool(
         if geometry is not None and geometry.device_pixel_ratio > 0:
             dpr = geometry.device_pixel_ratio
         await backend.mouse_move(css_x, css_y)
+    else:
+        # Park the pointer at the viewport origin before wheeling so a prior
+        # click or hover inside a nested scrollable container does not capture
+        # a page-level scroll.
+        await backend.mouse_move(0.0, 0.0)
 
     css_amount = float(amount) / dpr
     delta_x = 0.0
@@ -753,6 +762,7 @@ async def browser_press_key_tool(
     backend = await get_browser_backend(exec_context)
     logger.info("browser_press_key: %s", mapped)
     await backend.keyboard_press(mapped)
+    backend.invalidate_screenshot("key pressed")
     await backend.settle()
     return await _snapshot_result(exec_context, backend, query=query)
 
@@ -773,6 +783,7 @@ async def browser_fill_tool(
         await backend.fill(ref, text, submit)
     except StaleRefError as exc:
         return await _stale_ref_result(exec_context, backend, exc, query)
+    backend.invalidate_screenshot("input filled")
     if submit:
         await backend.settle()
     return await _snapshot_result(exec_context, backend, query=query)
@@ -795,6 +806,7 @@ async def browser_select_tool(
         await backend.select(ref, value)
     except StaleRefError as exc:
         return await _stale_ref_result(exec_context, backend, exc, query)
+    backend.invalidate_screenshot("option selected")
     return await _snapshot_result(exec_context, backend, query=query)
 
 
@@ -914,6 +926,7 @@ async def browser_exec_tool(
             data={"error": str(exc), "url": backend.current_url},
         )
 
+    backend.invalidate_screenshot("script executed")
     await backend.settle(timeout_ms=2000)
 
     # Surface both the result and the (possibly-changed) URL so the LLM can
@@ -1013,6 +1026,7 @@ async def browser_claim_handback_tool(
             text=f"Browser handback claim failed: {exc}",
             data={"error": "claim_failed", "detail": str(exc)},
         )
+    backend.invalidate_screenshot("session handed back")
     mark_browser_scope_handed_back(await browser_scope_key(exec_context))
     record_sensitive_read(
         exec_context,

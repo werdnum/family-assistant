@@ -776,6 +776,51 @@ class TestCoordinateAndKeyToolGuards:
         assert stub.last_screenshot is None
         assert stub.last_screenshot_invalidation_reason == "page scrolled"
 
+        stub.calls.clear()
+        await browser_dom.browser_scroll_tool(exec_context, "down", amount=300)
+        assert stub.calls == [
+            ("mouse_move", (0.0, 0.0)),
+            ("mouse_wheel", (0.0, 300.0)),
+        ]
+
+    async def test_actions_invalidate_cached_screenshot(
+        self, monkeypatch: pytest.MonkeyPatch, exec_context: ToolExecutionContext
+    ) -> None:
+        stub = _StubCoordBackend()
+
+        def _seed() -> None:
+            stub.last_screenshot = ScreenshotGeometry(
+                url="https://example.test/",
+                image_width=1024,
+                image_height=768,
+                viewport_width=1024.0,
+                viewport_height=768.0,
+                device_pixel_ratio=1.0,
+                scroll_x=0.0,
+                scroll_y=0.0,
+            )
+
+        async def _get_backend(_ctx: ToolExecutionContext) -> _StubCoordBackend:
+            return stub
+
+        monkeypatch.setattr(browser_dom, "get_browser_backend", _get_backend)
+
+        _seed()
+        await browser_dom.browser_click_at_tool(exec_context, 100, 100)
+        assert stub.last_screenshot is None
+
+        _seed()
+        await browser_dom.browser_hover_at_tool(exec_context, 100, 100)
+        assert stub.last_screenshot is None
+
+        _seed()
+        await browser_dom.browser_hover_tool(exec_context, "e1")
+        assert stub.last_screenshot is None
+
+        _seed()
+        await browser_dom.browser_press_key_tool(exec_context, "Escape")
+        assert stub.last_screenshot is None
+
     async def test_press_key_blocks_transfer_chords_in_protected_sessions(
         self, monkeypatch: pytest.MonkeyPatch, exec_context: ToolExecutionContext
     ) -> None:
