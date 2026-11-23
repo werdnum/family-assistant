@@ -26,6 +26,7 @@ from __future__ import annotations
 import base64
 import contextlib
 import logging
+import math
 import os
 from dataclasses import dataclass, field
 from typing import (
@@ -332,14 +333,18 @@ def wrap_exec_code(code: str) -> str:
 
 
 def _coerce_positive_float(value: object) -> float | None:
-    if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
-        return float(value)
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        fval = float(value)
+        if math.isfinite(fval) and fval > 0:
+            return fval
     return None
 
 
 def _coerce_float(value: object) -> float | None:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return float(value)
+        fval = float(value)
+        if math.isfinite(fval):
+            return fval
     return None
 
 
@@ -614,10 +619,7 @@ class LocalPlaywrightBackend:
         page = await self._page()
         return await page.screenshot(type="png", full_page=False)
 
-    async def capture_screenshot(self) -> tuple[bytes, ScreenshotGeometry]:
-        page = await self._page()
-        png = await page.screenshot(type="png", full_page=False)
-        image_width, image_height = parse_png_dimensions(png)
+    async def _read_viewport_geometry(self, page: Page) -> JsonDict | None:
         raw_geom: object = None
         with contextlib.suppress(PlaywrightError):
             raw_geom = await page.evaluate(
@@ -629,11 +631,26 @@ class LocalPlaywrightBackend:
                 "scroll_y: window.scrollY"
                 "})"
             )
+        return raw_geom if isinstance(raw_geom, dict) else None
+
+    async def capture_screenshot(self) -> tuple[bytes, ScreenshotGeometry]:
+        page = await self._page()
+        url_before = page.url
+        geom_before = await self._read_viewport_geometry(page)
+        png = await page.screenshot(type="png", full_page=False)
+        url_after = page.url
+        geom_after = await self._read_viewport_geometry(page)
+        image_width, image_height = parse_png_dimensions(png)
+        stable = (
+            url_before == url_after
+            and geom_before is not None
+            and geom_before == geom_after
+        )
         geometry = _build_screenshot_geometry(
-            url=page.url,
+            url=url_after,
             image_width=image_width,
             image_height=image_height,
-            raw_geometry=raw_geom if isinstance(raw_geom, dict) else None,
+            raw_geometry=geom_after if stable else None,
         )
         self._session.last_screenshot = geometry
         self._session.last_screenshot_invalidation_reason = None
