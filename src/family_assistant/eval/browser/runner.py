@@ -77,6 +77,7 @@ from family_assistant.tools.computer_use import (
     computer_use_type,
     computer_use_wait,
 )
+from family_assistant.tools.computer_use_names import COMPUTER_USE_FUNCTION_NAMES
 from family_assistant.tools.infrastructure import LocalToolsProvider
 from family_assistant.tools.types import (
     ToolCallBatch,
@@ -117,7 +118,14 @@ TrialStatus = Literal[
 ]
 
 DEFAULT_MAX_TOOL_RESULT_CHARS = 32_000
+DEFAULT_OUTPUT_PREVIEW_CHARS = 400
+DEFAULT_RESERVATION_USD = 0.05
 _TIME_MARKER = "\n\nCurrent local date and time: "
+_PERMITTED_SAFETY_DECISIONS: frozenset[str] = frozenset({
+    "allowed",
+    "allow",
+    "regular",
+})
 
 _STUB_TOOL_DEFINITIONS: list[ToolDefinition] = [
     {
@@ -180,15 +188,45 @@ class BudgetExceededError(RuntimeError):
 
 @dataclass
 class SpendBudget:
-    """Async-safe cumulative spend tracker enforcing a hard USD ceiling."""
+    """Async-safe soft spend limit with atomic pre-dispatch reservations.
+
+    Before dispatching a request, callers reserve a conservative estimate via
+    :meth:`try_reserve` and reconcile it with :meth:`settle` once the provider
+    reports actual usage. This prevents concurrent workers near the cap from all
+    dispatching simultaneously; because a provider's final output token count is
+    only known after completion, an already-dispatched request can still
+    overshoot ``max_spend_usd`` slightly.
+    """
 
     max_spend_usd: float
     spent_usd: float = 0.0
+    reserved_usd: float = 0.0
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
     async def check_available(self) -> bool:
         async with self._lock:
-            return self.spent_usd < self.max_spend_usd
+            return (self.spent_usd + self.reserved_usd) < self.max_spend_usd
+
+    async def try_reserve(
+        self, estimate_usd: float = DEFAULT_RESERVATION_USD
+    ) -> float | None:
+        """Atomically reserve ``estimate_usd`` if budget remains, else return ``None``."""
+        async with self._lock:
+            if (self.spent_usd + self.reserved_usd) >= self.max_spend_usd:
+                return None
+            reserve = min(
+                max(estimate_usd, 0.0),
+                max(self.max_spend_usd - self.spent_usd - self.reserved_usd, 0.0),
+            )
+            self.reserved_usd += reserve
+            return reserve
+
+    async def settle(self, reserved_usd: float, actual_usd: float) -> float:
+        """Release ``reserved_usd`` and add ``actual_usd`` to cumulative spend."""
+        async with self._lock:
+            self.reserved_usd = max(self.reserved_usd - max(reserved_usd, 0.0), 0.0)
+            self.spent_usd += max(actual_usd, 0.0)
+            return self.spent_usd
 
     async def record(self, amount_usd: float) -> float:
         async with self._lock:
@@ -204,6 +242,7 @@ class ToolTraceEntry(BaseModel):
     ok: bool
     duration_s: float
     output_chars: int
+    output_preview: str = ""
     has_image: bool = False
     error_preview: str | None = None
 
@@ -446,13 +485,15 @@ def _check_safety_decision(
     tool_name: str, args: dict[str, object]
 ) -> ToolResult | None:
     """Pop Gemini computer-use ``safety_decision`` and fail closed if unpermitted."""
+    if tool_name not in COMPUTER_USE_FUNCTION_NAMES:
+        return None
     safety_decision = args.pop("safety_decision", None)
     if safety_decision is None:
         return None
     decision = (
         safety_decision.get("decision") if isinstance(safety_decision, dict) else None
     )
-    if decision == "allow":
+    if isinstance(decision, str) and decision in _PERMITTED_SAFETY_DECISIONS:
         return None
     explanation = (
         str(safety_decision.get("explanation", ""))
@@ -519,12 +560,15 @@ async def _execute_one_tool_call(
             data=result.data,
         )
     is_err, err_preview = _is_error_result(result)
+    final_text = result.get_text()
+    output_preview = " ".join(final_text.split())[:DEFAULT_OUTPUT_PREVIEW_CHARS]
     trace = ToolTraceEntry(
         name=call.function.name,
         arguments_preview=args_preview,
         ok=not is_err,
         duration_s=round(elapsed, 3),
-        output_chars=len(result.get_text()),
+        output_chars=len(final_text),
+        output_preview=output_preview,
         has_image=bool(result.attachments),
         error_preview=err_preview,
     )
@@ -589,27 +633,35 @@ async def _run_loop(
     budget: SpendBudget | None,
 ) -> None:
     for _ in range(max_iterations):
-        if budget is not None and not await budget.check_available():
-            trial.status = "budget_exceeded"
-            trial.error_message = (
-                f"Stopped before request: cumulative spend reached "
-                f"${budget.spent_usd:.2f} / ${budget.max_spend_usd:.2f}"
-            )
-            return
+        reserved = 0.0
+        if budget is not None:
+            maybe_reserved = await budget.try_reserve()
+            if maybe_reserved is None:
+                trial.status = "budget_exceeded"
+                trial.error_message = (
+                    f"Stopped before request: cumulative spend + in-flight reservations "
+                    f"reached ${budget.spent_usd + budget.reserved_usd:.2f} / "
+                    f"${budget.max_spend_usd:.2f}"
+                )
+                return
+            reserved = maybe_reserved
 
-        output = await _invoke_llm(client, messages, tool_defs)
+        call_cost = 0.0
+        try:
+            output = await _invoke_llm(client, messages, tool_defs)
+            cost_model = output.resolved_model or trial.model
+            call_cost = estimate_call_cost_usd(
+                trial.provider, cost_model, output.reasoning_info
+            )
+        finally:
+            if budget is not None:
+                await budget.settle(reserved, call_cost)
+
         trial.requests += 1
         if output.resolved_model:
             trial.resolved_model = output.resolved_model
-
-        cost_model = output.resolved_model or trial.model
         accumulate_usage(totals, trial.provider, output.reasoning_info)
-        call_cost = estimate_call_cost_usd(
-            trial.provider, cost_model, output.reasoning_info
-        )
         trial.estimated_cost_usd += call_cost
-        if budget is not None:
-            await budget.record(call_cost)
 
         if not output.tool_calls:
             trial.final_reply = output.content

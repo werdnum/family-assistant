@@ -53,6 +53,7 @@ from family_assistant.eval.browser.cases import (
 )
 from family_assistant.eval.browser.judge import (
     append_judgement_jsonl,
+    compute_trial_set_fingerprint,
     judge_case_trials,
     load_judgements_jsonl,
 )
@@ -270,7 +271,7 @@ async def _judge_eval_async(args: argparse.Namespace) -> int:
         return 1
 
     existing_judgements = load_judgements_jsonl(judgements_path) if args.resume else []
-    judged_case_ids = {j.case_id for j in existing_judgements}
+    latest_judgement_by_case = {j.case_id: j for j in existing_judgements}
 
     # Latest non-budget-skipped trial per (case_id, candidate_name)
     dedup: dict[tuple[str, str], int] = {}
@@ -288,14 +289,20 @@ async def _judge_eval_async(args: argparse.Namespace) -> int:
     judge_model = str(client_config["model"])
     judge_client = LLMClientFactory.create_client(client_config)
 
-    to_judge = [
-        cid
-        for cid in sorted(by_case_trials)
-        if cid not in judged_case_ids and cid in case_map
-    ]
+    to_judge: list[str] = []
+    skipped_up_to_date = 0
+    for cid in sorted(by_case_trials):
+        if cid not in case_map:
+            continue
+        prior = latest_judgement_by_case.get(cid)
+        current_fp = compute_trial_set_fingerprint(by_case_trials[cid])
+        if prior is not None and prior.trial_fingerprint == current_fp:
+            skipped_up_to_date += 1
+            continue
+        to_judge.append(cid)
     print(
         f"Judging {len(to_judge)} case(s) with {judge_model} "
-        f"(already judged: {len(judged_case_ids)})"
+        f"(up-to-date cached judgements: {skipped_up_to_date})"
     )
 
     semaphore = asyncio.Semaphore(max(args.concurrency, 1))

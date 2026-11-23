@@ -27,6 +27,7 @@ from family_assistant.eval.browser.judge import (
     CandidateGrade,
     CaseJudgement,
     assign_blind_labels,
+    compute_trial_set_fingerprint,
     judge_case_trials,
 )
 from family_assistant.eval.browser.pricing import (
@@ -42,6 +43,7 @@ from family_assistant.eval.browser.report import (
 from family_assistant.eval.browser.runner import (
     BrowserEvalTrial,
     SpendBudget,
+    ToolTraceEntry,
     append_trial_jsonl,
     completed_trial_keys,
     get_browser_profile_system_prompt,
@@ -56,6 +58,8 @@ from family_assistant.llm import (
     ToolCallItem,
 )
 from family_assistant.llm.messages import MessageReasoningInfo, SystemMessage
+from family_assistant.tools.infrastructure import LocalToolsProvider
+from family_assistant.tools.types import ToolExecutionContext, ToolResult
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
@@ -595,3 +599,160 @@ async def test_visual_candidate_and_safety_decision_refusal(
     assert trial.tool_error_count == 1
     assert trial.tool_trace[0].error_preview == "safety_decision_refused"
     assert trial.final_reply == "Stopped because confirmation is required."
+
+
+@pytest.mark.asyncio
+async def test_visual_allows_production_safe_decisions_and_captures_output_preview() -> (
+    None
+):
+    executed: list[str] = []
+
+    async def _fake_click(
+        exec_context: ToolExecutionContext,
+        x: int,
+        y: int,
+        intent: str = "",
+    ) -> ToolResult:
+        del exec_context, x, y
+        executed.append(intent)
+        return ToolResult(text=f"Clicked successfully: {intent} (price $19.99)")
+
+    provider = LocalToolsProvider(
+        definitions=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "click",
+                    "description": "Click coordinates",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "x": {"type": "integer"},
+                            "y": {"type": "integer"},
+                            "intent": {"type": "string"},
+                        },
+                        "required": ["x", "y"],
+                    },
+                },
+            }
+        ],
+        implementations={"click": _fake_click},
+    )
+    llm = _ScriptedBrowserLLM([
+        LLMOutput(
+            content=None,
+            tool_calls=[
+                ToolCallItem(
+                    id="c1",
+                    type="function",
+                    function=ToolCallFunction(
+                        name="click",
+                        arguments=json.dumps({
+                            "x": 100,
+                            "y": 100,
+                            "intent": "open menu",
+                            "safety_decision": {"decision": "allowed"},
+                        }),
+                    ),
+                ),
+                ToolCallItem(
+                    id="c2",
+                    type="function",
+                    function=ToolCallFunction(
+                        name="click",
+                        arguments=json.dumps({
+                            "x": 200,
+                            "y": 200,
+                            "intent": "select tab",
+                            "safety_decision": {"decision": "regular"},
+                        }),
+                    ),
+                ),
+            ],
+        ),
+        LLMOutput(content="Price is $19.99."),
+    ])
+    case = BrowserEvalCase(id="vis-2", category="retail_search", task="Check price.")
+    trial = await run_browser_trial(
+        llm,  # type: ignore[arg-type]
+        case,
+        candidate_name="visual-hydrogen-medium",
+        mode="visual",
+        provider="google",
+        model="gemini-4-hydrogen",
+        system_prompt="Visual agent.",
+        tools_provider=provider,
+    )
+    assert executed == ["open menu", "select tab"]
+    assert trial.tool_error_count == 0
+    assert "$19.99" in trial.tool_trace[0].output_preview
+
+    # Verify observed tool output reaches the blind judge prompt and fingerprint updates
+    fp_one = compute_trial_set_fingerprint([trial])
+    trial_v2 = trial.model_copy(update={"final_reply": "Updated price $20.00."})
+    assert compute_trial_set_fingerprint([trial_v2]) != fp_one
+
+    trial_with_preview = BrowserEvalTrial(
+        case_id="vis-2",
+        category="retail_search",
+        candidate_name="hydrogen",
+        provider="google",
+        model="gemini-4-hydrogen",
+        started_at="2026-11-23T00:00:00Z",
+        tool_trace=[
+            ToolTraceEntry(
+                name="browser_open",
+                arguments_preview='{"url": "https://example.test"}',
+                ok=True,
+                duration_s=0.5,
+                output_chars=40,
+                output_preview="Observed page snippet: $19.99 in stock",
+            )
+        ],
+        final_reply="$19.99",
+    )
+    judge_llm = _FakeJudgeLLM(
+        BlindCaseJudgement(
+            grades=[
+                BlindCandidateGrade(
+                    label="A",
+                    outcome="complete",
+                    score=5,
+                    grounded=True,
+                    followed_constraints=True,
+                    rationale="Matches observed snippet.",
+                )
+            ],
+            consensus_status="all_agree",
+            consensus_labels=["A"],
+            winner_labels=["A"],
+        )
+    )
+    judgement = await judge_case_trials(
+        judge_llm,  # type: ignore[arg-type]
+        judge_model="claude-opus-5-5",
+        case=case,
+        trials=[trial_with_preview],
+    )
+    assert "Observed page snippet: $19.99 in stock" in judge_llm.last_prompt
+    assert judgement.trial_fingerprint == compute_trial_set_fingerprint([
+        trial_with_preview
+    ])
+
+
+@pytest.mark.asyncio
+async def test_spend_budget_atomic_reservations() -> None:
+    budget = SpendBudget(max_spend_usd=0.08)
+    r1 = await budget.try_reserve(0.05)
+    r2 = await budget.try_reserve(0.05)
+    r3 = await budget.try_reserve(0.05)
+    assert r1 is not None
+    assert r1 == pytest.approx(0.05)
+    assert r2 == pytest.approx(0.03)
+    assert r3 is None
+    assert not await budget.check_available()
+
+    await budget.settle(r1, 0.02)
+    assert await budget.check_available()
+    assert budget.spent_usd == pytest.approx(0.02)
+    assert budget.reserved_usd == pytest.approx(0.03)

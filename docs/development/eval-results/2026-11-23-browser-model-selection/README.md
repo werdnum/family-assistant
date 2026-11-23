@@ -148,6 +148,10 @@ date-picker and login-wall inspection tasks where `visual-flash-3.8` timed out a
 
 - Single trial per `(case, config)` on live external websites; WAF/anti-bot behavior can vary across
   runs (all candidates hit an Akamai WAF block on the hotel availability case).
+- In the 2026-11-23 run, the blind judge assessed grounding from tool-call traces (names, arguments,
+  statuses, output sizes), cross-model agreement across concurrent runs, and historical reference
+  answers; bounded observed tool-output excerpts (`ToolTraceEntry.output_preview`) were added to the
+  harness afterwards so future runs also pass raw observed snippets directly to the judge.
 - One minor Playwright walker edge case surfaced during live runs: `browser_backend.py`'s
   accessibility walker threw `TypeError: Cannot read properties of null (reading 'nodeType')` when
   invoked before `document.body` existed.

@@ -41,6 +41,7 @@ __all__ = [
     "OutcomeLabel",
     "append_judgement_jsonl",
     "assign_blind_labels",
+    "compute_trial_set_fingerprint",
     "judge_case_trials",
     "load_judgements_jsonl",
 ]
@@ -157,11 +158,31 @@ class CaseJudgement(BaseModel):
     category: str
     flags: list[str] = Field(default_factory=list)
     judge_model: str
+    trial_fingerprint: str | None = None
     consensus_status: ConsensusStatus
     consensus_candidates: list[str] = Field(default_factory=list)
     winner_candidates: list[str] = Field(default_factory=list)
     disagreement_summary: str = ""
     grades: list[CandidateGrade] = Field(default_factory=list)
+
+
+def compute_trial_set_fingerprint(trials: Sequence[BrowserEvalTrial]) -> str:
+    """Deterministic digest of the latest trial set for a case.
+
+    Used by ``judge --resume`` so a case is automatically rejudged whenever new
+    candidates are added or any existing candidate is re-run.
+    """
+    hasher = hashlib.sha256()
+    for trial in sorted(trials, key=lambda t: t.candidate_name):
+        reply_digest = hashlib.sha256(
+            (trial.final_reply or "").encode("utf-8")
+        ).hexdigest()[:16]
+        row = (
+            f"{trial.candidate_name}|{trial.started_at}|{trial.status}|"
+            f"{trial.requests}|{trial.tool_calls}|{reply_digest}\n"
+        )
+        hasher.update(row.encode("utf-8"))
+    return hasher.hexdigest()[:16]
 
 
 def assign_blind_labels(
@@ -191,12 +212,16 @@ def _summarize_trial_for_judge(
     *,
     max_reply_chars: int = 4500,
 ) -> str:
-    trace_lines = [
-        f"  - {entry.name}({entry.arguments_preview[:100]}) -> "
-        f"{'ok' if entry.ok else 'ERR: ' + (entry.error_preview or 'failed')} "
-        f"({entry.output_chars} chars{', img' if entry.has_image else ''})"
-        for entry in trial.tool_trace[:20]
-    ]
+    trace_lines: list[str] = []
+    for entry in trial.tool_trace[:20]:
+        line = (
+            f"  - {entry.name}({entry.arguments_preview[:100]}) -> "
+            f"{'ok' if entry.ok else 'ERR: ' + (entry.error_preview or 'failed')} "
+            f"({entry.output_chars} chars{', img' if entry.has_image else ''})"
+        )
+        if entry.output_preview:
+            line += f"\n      observed: {entry.output_preview[:300]}"
+        trace_lines.append(line)
     if len(trial.tool_trace) > 20:
         trace_lines.append(f"  - ... ({len(trial.tool_trace) - 20} more tool calls)")
     trace_block = "\n".join(trace_lines) if trace_lines else "  (no tool calls made)"
@@ -326,6 +351,7 @@ async def judge_case_trials(
         category=case.category,
         flags=list(case.flags),
         judge_model=judge_model,
+        trial_fingerprint=compute_trial_set_fingerprint(list(by_candidate.values())),
         consensus_status=blind_result.consensus_status,
         consensus_candidates=consensus_candidates,
         winner_candidates=winner_candidates,
