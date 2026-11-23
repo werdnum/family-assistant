@@ -43,9 +43,11 @@ from rebrowser_playwright.async_api import Error as PlaywrightError
 
 from family_assistant.tools.browser_session import (
     BrowserSession,
+    ScreenshotGeometry,
     browser_scope_key,
     close_browser_session,
     get_browser_session,
+    parse_png_dimensions,
 )
 from family_assistant.tools.taint_helpers import record_sensitive_read
 
@@ -329,6 +331,50 @@ def wrap_exec_code(code: str) -> str:
     return f"async () => ({stripped})"
 
 
+def _coerce_positive_float(value: object) -> float | None:
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
+        return float(value)
+    return None
+
+
+def _coerce_float(value: object) -> float | None:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    return None
+
+
+def _build_screenshot_geometry(
+    *,
+    url: str,
+    image_width: int,
+    image_height: int,
+    raw_geometry: JsonDict | None,
+) -> ScreenshotGeometry:
+    """Build :class:`ScreenshotGeometry` from PNG dimensions and optional page metadata."""
+    data = raw_geometry or {}
+    dpr = _coerce_positive_float(data.get("device_pixel_ratio")) or 1.0
+    viewport_width = (
+        _coerce_positive_float(data.get("viewport_width")) or image_width / dpr
+    )
+    viewport_height = (
+        _coerce_positive_float(data.get("viewport_height")) or image_height / dpr
+    )
+    scroll_x = _coerce_float(data.get("scroll_x"))
+    scroll_y = _coerce_float(data.get("scroll_y"))
+    scroll_known = scroll_x is not None and scroll_y is not None
+    return ScreenshotGeometry(
+        url=url,
+        image_width=image_width,
+        image_height=image_height,
+        viewport_width=viewport_width,
+        viewport_height=viewport_height,
+        device_pixel_ratio=dpr,
+        scroll_x=scroll_x if scroll_x is not None else 0.0,
+        scroll_y=scroll_y if scroll_y is not None else 0.0,
+        scroll_known=scroll_known,
+    )
+
+
 class BrowserBackendError(RuntimeError):
     """Raised when a backend operation fails (remote HTTP error, JS error, …)."""
 
@@ -388,6 +434,14 @@ class BrowserBackend(Protocol):
     @property
     def screen_height(self) -> int: ...
 
+    @property
+    def last_screenshot(self) -> ScreenshotGeometry | None: ...
+
+    @property
+    def last_screenshot_invalidation_reason(self) -> str | None: ...
+
+    def invalidate_screenshot(self, reason: str = "page changed") -> None: ...
+
     async def goto(self, url: str) -> None: ...
 
     async def raw_snapshot(self, next_ref: int) -> Snapshot: ...
@@ -395,6 +449,8 @@ class BrowserBackend(Protocol):
     async def settle(self, timeout_ms: int = 5000) -> None: ...
 
     async def click(self, ref: str) -> None: ...
+
+    async def hover(self, ref: str) -> None: ...
 
     async def fill(self, ref: str, text: str, submit: bool) -> None: ...
 
@@ -405,6 +461,10 @@ class BrowserBackend(Protocol):
     async def extract_html(self, selector: str | None) -> str: ...
 
     async def screenshot_png(self) -> bytes: ...
+
+    async def capture_screenshot(self) -> tuple[bytes, ScreenshotGeometry]: ...
+
+    async def current_scroll(self) -> tuple[float, float] | None: ...
 
     # ast-grep-ignore: no-dict-any - JS return values are genuinely arbitrary JSON
     async def evaluate(self, code: str) -> Any: ...  # noqa: ANN401
@@ -472,6 +532,18 @@ class LocalPlaywrightBackend:
     def screen_height(self) -> int:
         return self._session.screen_height
 
+    @property
+    def last_screenshot(self) -> ScreenshotGeometry | None:
+        return self._session.last_screenshot
+
+    @property
+    def last_screenshot_invalidation_reason(self) -> str | None:
+        return self._session.last_screenshot_invalidation_reason
+
+    def invalidate_screenshot(self, reason: str = "page changed") -> None:
+        self._session.last_screenshot = None
+        self._session.last_screenshot_invalidation_reason = reason
+
     async def _page(self) -> Page:
         return await self._session.ensure_page()
 
@@ -493,6 +565,7 @@ class LocalPlaywrightBackend:
     async def goto(self, url: str) -> None:
         page = await self._page()
         await page.goto(url)
+        self.invalidate_screenshot("page navigated")
 
     async def raw_snapshot(self, next_ref: int) -> Snapshot:
         page = await self._page()
@@ -507,6 +580,10 @@ class LocalPlaywrightBackend:
     async def click(self, ref: str) -> None:
         locator = await self._locator_for_ref(ref)
         await locator.click()
+
+    async def hover(self, ref: str) -> None:
+        locator = await self._locator_for_ref(ref)
+        await locator.hover()
 
     async def fill(self, ref: str, text: str, submit: bool) -> None:
         locator = await self._locator_for_ref(ref)
@@ -535,7 +612,55 @@ class LocalPlaywrightBackend:
 
     async def screenshot_png(self) -> bytes:
         page = await self._page()
-        return await page.screenshot(type="png")
+        return await page.screenshot(type="png", full_page=False)
+
+    async def capture_screenshot(self) -> tuple[bytes, ScreenshotGeometry]:
+        page = await self._page()
+        png = await page.screenshot(type="png", full_page=False)
+        image_width, image_height = parse_png_dimensions(png)
+        raw_geom: object = None
+        with contextlib.suppress(PlaywrightError):
+            raw_geom = await page.evaluate(
+                "() => ({"
+                "viewport_width: window.innerWidth, "
+                "viewport_height: window.innerHeight, "
+                "device_pixel_ratio: window.devicePixelRatio || 1, "
+                "scroll_x: window.scrollX, "
+                "scroll_y: window.scrollY"
+                "})"
+            )
+        geometry = _build_screenshot_geometry(
+            url=page.url,
+            image_width=image_width,
+            image_height=image_height,
+            raw_geometry=raw_geom if isinstance(raw_geom, dict) else None,
+        )
+        self._session.last_screenshot = geometry
+        self._session.last_screenshot_invalidation_reason = None
+        return png, geometry
+
+    async def current_scroll(self) -> tuple[float, float] | None:
+        page = self._session.page
+        if page is None:
+            return None
+        try:
+            raw = await page.evaluate(
+                "() => ({scroll_x: window.scrollX, scroll_y: window.scrollY})"
+            )
+        except PlaywrightError:
+            return None
+        if not isinstance(raw, dict):
+            return None
+        sx = raw.get("scroll_x")
+        sy = raw.get("scroll_y")
+        if (
+            isinstance(sx, (int, float))
+            and not isinstance(sx, bool)
+            and isinstance(sy, (int, float))
+            and not isinstance(sy, bool)
+        ):
+            return float(sx), float(sy)
+        return None
 
     # ast-grep-ignore: no-dict-any - JS return values are genuinely arbitrary JSON
     async def evaluate(self, code: str) -> Any:  # noqa: ANN401
@@ -576,6 +701,12 @@ class LocalPlaywrightBackend:
     async def mouse_wheel(self, delta_x: float, delta_y: float) -> None:
         page = await self._page()
         await page.mouse.wheel(delta_x, delta_y)
+        # Wait two animation frames so Chromium commits the compositor scroll
+        # and fires ``scroll`` listeners before the next snapshot/screenshot.
+        with contextlib.suppress(PlaywrightError):
+            await page.evaluate(
+                "() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))"
+            )
 
     async def keyboard_type(self, text: str) -> None:
         page = await self._page()
@@ -691,6 +822,8 @@ class RemoteBrowserBackend:
         # ``client`` is an injection seam for tests (e.g. httpx.MockTransport).
         self._client = client or httpx.AsyncClient(timeout=config.timeout_seconds)
         self._last_url: str = ""
+        self._last_screenshot: ScreenshotGeometry | None = None
+        self._last_screenshot_invalidation_reason: str | None = None
         self._authenticated = authenticated
         self._autofill_enabled = autofill_enabled or authenticated is not None
         self.autofill_step_keys: dict[str, str] = {}
@@ -981,6 +1114,8 @@ class RemoteBrowserBackend:
         )
         self._session_id = None
         self._last_url = ""
+        self._last_screenshot = None
+        self._last_screenshot_invalidation_reason = "session reset"
         self.autofill_step_keys.clear()
 
     def _is_unknown_session_response(self, resp: httpx.Response) -> bool:
@@ -1103,8 +1238,21 @@ class RemoteBrowserBackend:
             f"browser-server {action} failed ({resp.status_code}): {detail}"
         )
 
+    @property
+    def last_screenshot(self) -> ScreenshotGeometry | None:
+        return self._last_screenshot
+
+    @property
+    def last_screenshot_invalidation_reason(self) -> str | None:
+        return self._last_screenshot_invalidation_reason
+
+    def invalidate_screenshot(self, reason: str = "page changed") -> None:
+        self._last_screenshot = None
+        self._last_screenshot_invalidation_reason = reason
+
     async def goto(self, url: str) -> None:
         await self._command("navigate", {"url": url})
+        self.invalidate_screenshot("page navigated")
 
     async def raw_snapshot(self, next_ref: int) -> Snapshot:
         result = await self._command("snapshot", {"next_ref": next_ref})
@@ -1144,6 +1292,9 @@ class RemoteBrowserBackend:
     async def click(self, ref: str) -> None:
         self._raise_for_ref_error(await self._command("click", {"ref": ref}), ref)
 
+    async def hover(self, ref: str) -> None:
+        self._raise_for_ref_error(await self._command("hover", {"ref": ref}), ref)
+
     async def fill(self, ref: str, text: str, submit: bool) -> None:
         result = await self._command("type_text", {"ref": ref, "text": text})
         self._raise_for_ref_error(result, ref)
@@ -1174,6 +1325,29 @@ class RemoteBrowserBackend:
                 "browser-server screenshot returned no image data"
             )
         return base64.b64decode(encoded)
+
+    async def capture_screenshot(self) -> tuple[bytes, ScreenshotGeometry]:
+        result = await self._command("screenshot")
+        encoded = result.get("image_base64")
+        if not isinstance(encoded, str):
+            raise BrowserBackendError(
+                "browser-server screenshot returned no image data"
+            )
+        png = base64.b64decode(encoded)
+        image_width, image_height = parse_png_dimensions(png)
+        geometry = _build_screenshot_geometry(
+            url=self.current_url,
+            image_width=image_width,
+            image_height=image_height,
+            raw_geometry=result,
+        )
+        self._last_screenshot = geometry
+        self._last_screenshot_invalidation_reason = None
+        return png, geometry
+
+    async def current_scroll(self) -> tuple[float, float] | None:
+        # Remote credential sessions deny ``exec``, so live scroll is not probed here.
+        return None
 
     # ast-grep-ignore: no-dict-any - JS return values are genuinely arbitrary JSON
     async def evaluate(self, code: str) -> Any:  # noqa: ANN401

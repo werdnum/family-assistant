@@ -12,8 +12,13 @@ from __future__ import annotations
 SNAPSHOT_RETURNING_TOOLS = frozenset({
     "browser_claim_handback",
     "browser_click",
+    "browser_click_at",
     "browser_fill",
+    "browser_hover",
+    "browser_hover_at",
     "browser_open",
+    "browser_press_key",
+    "browser_scroll",
     "browser_select",
     "browser_snapshot",
     "browser_wait",

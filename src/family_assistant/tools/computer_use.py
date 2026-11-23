@@ -26,6 +26,7 @@ from family_assistant.tools.browser_session import (
     close_browser_session,
     denormalize_coordinate,
     get_browser_session,
+    map_key_name,
 )
 from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
 
@@ -63,76 +64,8 @@ __all__ = [
 
 
 def _map_key_name(key: str) -> str:
-    """Map model-emitted key names to Playwright key names.
-
-    Gemini emits lowercase names like "ctrl", "enter", "esc", "page_down";
-    Playwright wants "Control", "Enter", "Escape", "PageDown", etc.
-
-    Args:
-        key: Key name emitted by the model (case-insensitive).
-
-    Returns:
-        Mapped key name suitable for Playwright.
-    """
-    key_lower = key.lower()
-
-    # Direct single-character mappings pass through
-    if len(key_lower) == 1:
-        return key
-
-    # Multi-character key mappings
-    mapping = {
-        "ctrl": "Control",
-        "control": "Control",
-        "alt": "Alt",
-        "option": "Alt",
-        "shift": "Shift",
-        "meta": "Meta",
-        "cmd": "Meta",
-        "command": "Meta",
-        "win": "Meta",
-        "super": "Meta",
-        "enter": "Enter",
-        "return": "Enter",
-        "esc": "Escape",
-        "escape": "Escape",
-        "tab": "Tab",
-        "space": "Space",
-        "backspace": "Backspace",
-        "delete": "Delete",
-        "del": "Delete",
-        "insert": "Insert",
-        "home": "Home",
-        "end": "End",
-        "pageup": "PageUp",
-        "page_up": "PageUp",
-        "pagedown": "PageDown",
-        "page_down": "PageDown",
-        "up": "ArrowUp",
-        "arrowup": "ArrowUp",
-        "arrow_up": "ArrowUp",
-        "down": "ArrowDown",
-        "arrowdown": "ArrowDown",
-        "arrow_down": "ArrowDown",
-        "left": "ArrowLeft",
-        "arrowleft": "ArrowLeft",
-        "arrow_left": "ArrowLeft",
-        "right": "ArrowRight",
-        "arrowright": "ArrowRight",
-        "arrow_right": "ArrowRight",
-    }
-
-    # Function keys f1..f12
-    if key_lower.startswith("f") and len(key_lower) <= 3:
-        try:
-            num = int(key_lower[1:])
-            if 1 <= num <= 12:
-                return f"F{num}"
-        except ValueError:
-            pass
-
-    # Return mapped value or capitalize first letter as fallback
-    return mapping.get(key_lower, key[0].upper() + key[1:] if key else key)
+    """Map model-emitted key names to Playwright key names."""
+    return map_key_name(key)
 
 
 async def _take_screenshot_with_url(backend: BrowserBackend) -> ToolResult:

@@ -24,7 +24,9 @@ from __future__ import annotations
 import asyncio
 import functools
 import logging
+import math
 import random
+import struct
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -75,6 +77,67 @@ BROWSER_TOOL_NAMES: set[str] = set()
 # render at a consistent size across both profiles.
 SCREEN_WIDTH = 1024
 SCREEN_HEIGHT = 768
+
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+_KEY_NAME_MAPPING: dict[str, str] = {
+    "ctrl": "Control",
+    "control": "Control",
+    "controlormeta": "ControlOrMeta",
+    "alt": "Alt",
+    "option": "Alt",
+    "shift": "Shift",
+    "meta": "Meta",
+    "cmd": "Meta",
+    "command": "Meta",
+    "win": "Meta",
+    "super": "Meta",
+    "enter": "Enter",
+    "return": "Enter",
+    "esc": "Escape",
+    "escape": "Escape",
+    "tab": "Tab",
+    "space": "Space",
+    "backspace": "Backspace",
+    "delete": "Delete",
+    "del": "Delete",
+    "insert": "Insert",
+    "home": "Home",
+    "end": "End",
+    "pageup": "PageUp",
+    "page_up": "PageUp",
+    "pagedown": "PageDown",
+    "page_down": "PageDown",
+    "up": "ArrowUp",
+    "arrowup": "ArrowUp",
+    "arrow_up": "ArrowUp",
+    "down": "ArrowDown",
+    "arrowdown": "ArrowDown",
+    "arrow_down": "ArrowDown",
+    "left": "ArrowLeft",
+    "arrowleft": "ArrowLeft",
+    "arrow_left": "ArrowLeft",
+    "right": "ArrowRight",
+    "arrowright": "ArrowRight",
+    "arrow_right": "ArrowRight",
+}
+_TRANSFER_KEYS = frozenset({"c", "x", "v", "insert", "delete"})
+_TRANSFER_MODIFIERS = frozenset({"control", "meta", "controlormeta"})
+
+
+@dataclass(frozen=True, slots=True)
+class ScreenshotGeometry:
+    """Coordinate-space metadata captured alongside a browser screenshot."""
+
+    url: str
+    image_width: int
+    image_height: int
+    viewport_width: float
+    viewport_height: float
+    device_pixel_ratio: float
+    scroll_x: float
+    scroll_y: float
+    scroll_known: bool = True
+
 
 # Refs are numbered from a counter seeded in this range when a conversation's
 # browser state is created, so numbers issued before a process restart do not
@@ -131,6 +194,11 @@ class BrowserSession:
     # surface the UCP hint only when navigation changes origin, rather than
     # repeating it on every action against the same page.
     last_probed_origin: str | None = None
+    # Coordinate-space geometry of the most recent ``browser_screenshot`` on
+    # this session (cleared on navigation or scroll so coordinate actions do
+    # not act on a stale frame).
+    last_screenshot: ScreenshotGeometry | None = None
+    last_screenshot_invalidation_reason: str | None = None
 
     async def ensure_page(self) -> Page:
         """Ensure a browser page is available, creating one if necessary."""
@@ -631,3 +699,83 @@ async def _capture_and_publish_live_frame(
 def denormalize_coordinate(value: int, max_value: int) -> int:
     """Convert normalized coordinate (0-1000) to pixel value."""
     return int(value / 1000 * max_value)
+
+
+def parse_png_dimensions(png: bytes) -> tuple[int, int]:
+    """Return ``(width, height)`` in pixels from a PNG's IHDR chunk."""
+    if len(png) < 24 or png[:8] != _PNG_SIGNATURE or png[12:16] != b"IHDR":
+        raise ValueError("Screenshot bytes are not a valid PNG image")
+    width, height = struct.unpack(">II", png[16:24])
+    if width <= 0 or height <= 0:
+        raise ValueError(f"Invalid PNG dimensions: {width}x{height}")
+    return width, height
+
+
+def map_screenshot_point_to_viewport(
+    x: float, y: float, geometry: ScreenshotGeometry
+) -> tuple[float, float]:
+    """Map screenshot pixel coordinates ``(x, y)`` to viewport CSS pixels.
+
+    Playwright ``page.screenshot(full_page=False)`` renders the current
+    viewport at ``devicePixelRatio`` into an ``image_width x image_height``
+    PNG, while ``page.mouse`` expects viewport-relative CSS coordinates in
+    ``[0, viewport_width) x [0, viewport_height)``. Scroll offset is already
+    reflected in the viewport capture and is not added here.
+    """
+    if not (math.isfinite(x) and math.isfinite(y)):
+        raise ValueError(f"Coordinates must be finite numbers, got ({x!r}, {y!r}).")
+    if x < 0 or x > geometry.image_width or y < 0 or y > geometry.image_height:
+        raise ValueError(
+            f"Coordinates ({x:g}, {y:g}) are outside the last screenshot "
+            f"({geometry.image_width}x{geometry.image_height} px; valid range "
+            f"x: 0..{geometry.image_width - 1}, y: 0..{geometry.image_height - 1})."
+        )
+    css_x = x * (geometry.viewport_width / geometry.image_width)
+    css_y = y * (geometry.viewport_height / geometry.image_height)
+    max_x = max(0.0, geometry.viewport_width - 1e-3)
+    max_y = max(0.0, geometry.viewport_height - 1e-3)
+    return min(css_x, max_x), min(css_y, max_y)
+
+
+def _map_single_key_name(key: str) -> str:
+    """Map a single model-emitted key name to its Playwright key name."""
+    key_lower = key.lower()
+    if len(key_lower) == 1:
+        return key
+    if key_lower in _KEY_NAME_MAPPING:
+        return _KEY_NAME_MAPPING[key_lower]
+    if key_lower.startswith("f") and len(key_lower) <= 3:
+        try:
+            num = int(key_lower[1:])
+        except ValueError:
+            num = 0
+        if 1 <= num <= 12:
+            return f"F{num}"
+    return key[0].upper() + key[1:] if key else key
+
+
+def map_key_name(key: str) -> str:
+    """Map a key or ``+``-joined key chord to Playwright key names."""
+    stripped = key.strip()
+    if not stripped:
+        return ""
+    if len(stripped) > 1 and "+" in stripped:
+        parts = [part.strip() for part in stripped.split("+") if part.strip()]
+        if parts:
+            return "+".join(_map_single_key_name(part) for part in parts)
+    return _map_single_key_name(stripped)
+
+
+def is_transfer_key_chord(key: str) -> bool:
+    """Return whether ``key`` is a clipboard/transfer chord (Ctrl/Cmd+C/X/V/Insert, Shift+Insert/Delete)."""
+    parts = [part.strip().lower() for part in key.split("+") if part.strip()]
+    if not parts:
+        return False
+    base, modifiers = parts[-1], set(parts[:-1])
+    if base in {"keyc", "keyx", "keyv"}:
+        base = base[-1]
+    if base not in _TRANSFER_KEYS:
+        return False
+    if modifiers & _TRANSFER_MODIFIERS:
+        return True
+    return base in {"insert", "delete"} and "shift" in modifiers

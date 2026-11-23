@@ -45,10 +45,19 @@ interaction, you do not need `/browse` at all (see
 - **`browser_open`** — navigate to a URL and return the page snapshot in one step
 - **`browser_snapshot`** — re-snapshot the current page, optionally filtered by `query`
 - **`browser_click`** — click an element by ref
+- **`browser_hover`** — hover an element by ref (e.g. to reveal a hover menu or move the pointer
+  onto another element)
 - **`browser_fill`** — fill an input by ref, optionally pressing Enter to submit
 - **`browser_select`** — select a `<select>` option by label or value
+- **`browser_press_key`** — press a key or key chord (such as `Escape` to dismiss a popup or modal)
+- **`browser_scroll`** — scroll the page, or scroll a container at pixel coordinates from the last
+  screenshot
+- **`browser_click_at`** / **`browser_hover_at`** — click or move the pointer using pixel
+  coordinates from the last `browser_screenshot` (`browser_hover_at(0, 0)` also moves the pointer
+  away without needing a screenshot first)
 - **`browser_wait`** — wait for a load state or CSS selector
-- **`browser_screenshot`** — attach an explicit screenshot to the conversation
+- **`browser_screenshot`** — capture a viewport screenshot with pixel dimensions and viewport
+  geometry
 - **`browser_extract`** — read page content as Markdown
 - **`browser_exec`** — run in-page JavaScript (`page.evaluate`) when fixed actions do not fit
   (shadow DOM, iframes, same-origin JSON endpoints)

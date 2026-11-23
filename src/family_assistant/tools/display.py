@@ -352,6 +352,11 @@ _PHRASES: dict[str, _Phrase] = {
     "browser_open": _Phrase("Opening", "Opened", _plain("", "url")),
     "navigate": _Phrase("Opening", "Opened", _plain("", "url")),
     "browser_snapshot": _Phrase("Reading the page", "Read the page"),
+    "browser_click_at": _Phrase("Clicking on the page", "Clicked on the page"),
+    "browser_hover": _Phrase("Hovering on the page", "Hovered on the page"),
+    "browser_hover_at": _Phrase("Hovering on the page", "Hovered on the page"),
+    "browser_scroll": _Phrase("Scrolling the page", "Scrolled the page"),
+    "browser_press_key": _Phrase("Pressing key", "Pressed key", _plain("", "key")),
     "take_screenshot": _Phrase("Looking at the page", "Looked at the page"),
     "browser_screenshot": _Phrase("Looking at the page", "Looked at the page"),
     "run_authenticated_site_task": _Phrase(
