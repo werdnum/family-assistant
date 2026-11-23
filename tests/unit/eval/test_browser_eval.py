@@ -244,6 +244,14 @@ def test_shipped_candidates_and_system_prompt(monkeypatch: pytest.MonkeyPatch) -
     assert sol_model == "gpt-6.2-sol"
     assert sol_params.get("reasoning_effort") == "medium"
 
+    _, sonnet_provider, sonnet_model, sonnet_params = build_candidate_client(
+        config, BUILTIN_CANDIDATES["sonnet-5.5"]
+    )
+    assert sonnet_provider == "anthropic"
+    assert sonnet_model == "claude-sonnet-5-5"
+    assert sonnet_params.get("output_config", {}).get("effort") == "medium"
+    assert "custom_instructions" not in sonnet_params
+
     with pytest.raises(ValueError, match="Unknown browser eval candidate"):
         resolve_candidates(["nonexistent-model"])
 

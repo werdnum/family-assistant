@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
+from family_assistant.llm.custom_instructions import CUSTOM_INSTRUCTIONS_KEY
 from family_assistant.llm.factory import LLMClientFactory
 from family_assistant.llm.model_tiers import resolve_entry_client_config
 
@@ -37,6 +38,7 @@ class BrowserEvalCandidate:
     tier_id: str
     entry_index: int = 0
     mode: BrowserMode = "dom"
+    strip_custom_instructions: bool = False
     # ast-grep-ignore: no-dict-any - provider-specific llm_parameters override map
     llm_parameters_override: dict[str, Any] = field(default_factory=dict)
     description: str = ""
@@ -94,7 +96,8 @@ BUILTIN_CANDIDATES: dict[str, BrowserEvalCandidate] = {
         name="sonnet-5.5",
         tier_id="claude_sonnet_5_5",
         entry_index=0,
-        description="Claude Sonnet 5.5 (adaptive thinking medium; former browser tier fallback)",
+        strip_custom_instructions=True,
+        description="Claude Sonnet 5.5 (adaptive thinking medium, without chat completion instructions; former browser tier fallback)",
     ),
     "visual-flash-3.8": BrowserEvalCandidate(
         name="visual-flash-3.8",
@@ -160,12 +163,28 @@ def build_candidate_client(
             f"out of range for tier {candidate.tier_id!r} (len={len(tier.chain)})"
         )
     entry = tier.chain[candidate.entry_index]
+    if candidate.strip_custom_instructions and entry.llm_parameters:
+        entry = entry.model_copy(
+            update={
+                "llm_parameters": {
+                    k: v
+                    for k, v in entry.llm_parameters.items()
+                    if k != CUSTOM_INSTRUCTIONS_KEY
+                }
+            }
+        )
     if candidate.llm_parameters_override:
         merged_entry_params = dict(entry.llm_parameters or {})
         merged_entry_params.update(candidate.llm_parameters_override)
         entry = entry.model_copy(update={"llm_parameters": merged_entry_params})
 
-    client_config = resolve_entry_client_config(entry, config.llm_parameters)
+    llm_parameters = config.llm_parameters
+    if candidate.strip_custom_instructions:
+        llm_parameters = {
+            pattern: {k: v for k, v in params.items() if k != CUSTOM_INSTRUCTIONS_KEY}
+            for pattern, params in llm_parameters.items()
+        }
+    client_config = resolve_entry_client_config(entry, llm_parameters)
     if candidate.mode == "visual":
         client_config["enable_computer_use"] = True
     provider = str(client_config["provider"])
