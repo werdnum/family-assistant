@@ -99,7 +99,43 @@ struct ChatConversationSummary: Codable, Equatable, Identifiable {
 
 struct ChatConversationListResponse: Decodable {
     let conversations: [ChatConversationSummary]
-    let count: Int
+    /// Null when the request asked the server not to count (`include_count=false`).
+    let count: Int?
+}
+
+/// One page of a conversation search, and whether another page may follow.
+struct ChatConversationSearchPage {
+    let conversations: [ChatConversationSummary]
+    let hasMore: Bool
+}
+
+/// A query's server matches so far. The first page is shown as soon as it
+/// arrives; later pages load as the list scrolls to its end.
+struct ChatConversationSearchResults {
+    let query: String
+    private(set) var conversations: [ChatConversationSummary]
+    private(set) var hasMore: Bool
+    /// Where the next page starts in the server's ordering. Counted from the
+    /// rows the server returned, not the ones kept after de-duplication.
+    private(set) var nextOffset: Int
+    var loadMoreFailed = false
+
+    init(query: String, firstPage: ChatConversationSearchPage) {
+        self.query = query
+        conversations = firstPage.conversations
+        hasMore = firstPage.hasMore
+        nextOffset = firstPage.conversations.count
+    }
+
+    /// Appends the next page. A conversation that changed while paging can
+    /// move across a page boundary; it keeps its first place so list rows stay
+    /// unique.
+    mutating func append(_ page: ChatConversationSearchPage) {
+        let known = Set(conversations.map(\.conversationID))
+        conversations.append(contentsOf: page.conversations.filter { !known.contains($0.conversationID) })
+        hasMore = page.hasMore
+        nextOffset += page.conversations.count
+    }
 }
 
 /// One frame from the account-global conversation-activity stream

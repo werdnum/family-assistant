@@ -998,9 +998,9 @@ final class ChatViewModel {
     /// Server-side conversation search. Leaves `conversations` untouched — the
     /// caller shows the results only while its query is current — and reports a
     /// failure unless it was a superseded (cancelled) search.
-    func searchConversations(matching query: String) async throws -> [ChatConversationSummary] {
+    func searchConversations(matching query: String, offset: Int = 0) async throws -> ChatConversationSearchPage {
         do {
-            return try await apiClient.searchConversations(query: query)
+            return try await apiClient.searchConversations(query: query, offset: offset)
         } catch {
             if !Task.isCancelled {
                 errorReporter.report(error, component: "Chat.conversationSearch")

@@ -89,6 +89,9 @@ struct ChatAPIClient {
     /// Receives the timing of the requests a send depends on.
     var requestTimingObserver: (@Sendable (ChatRequestTiming) -> Void)?
     private static let conversationPageSize = 100
+    /// Smaller than a list page: search shows its first page while the rest
+    /// waits for scrolling, so the first page is what the person waits for.
+    static let conversationSearchPageSize = 50
     private static let iso8601Formatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -225,7 +228,7 @@ struct ChatAPIClient {
             )
             conversations.append(contentsOf: response.conversations)
 
-            if response.conversations.isEmpty || conversations.count >= response.count {
+            guard let total = response.count, !response.conversations.isEmpty, conversations.count < total else {
                 return conversations
             }
             offset += response.conversations.count
@@ -241,20 +244,39 @@ struct ChatAPIClient {
         try await listConversationPage(limit: Self.conversationPageSize, offset: 0).conversations
     }
 
-    /// Search the caller's conversations by what was said anywhere in them,
-    /// most recent first, paging through every match.
-    func searchConversations(query: String) async throws -> [ChatConversationSummary] {
-        try await listAllConversationPages(query: query)
+    /// One page of the caller's conversations matching `query` anywhere in
+    /// what was said, most recent first. The server is asked not to count
+    /// every match, which costs more than the page for a common word; a full
+    /// page means another may follow.
+    func searchConversations(query: String, offset: Int = 0) async throws -> ChatConversationSearchPage {
+        let pageSize = Self.conversationSearchPageSize
+        let response = try await listConversationPage(
+            limit: pageSize,
+            offset: offset,
+            query: query,
+            includeCount: false
+        )
+        return ChatConversationSearchPage(
+            conversations: response.conversations,
+            hasMore: response.conversations.count >= pageSize
+        )
     }
 
     private func listConversationPage(
         limit: Int,
         offset: Int,
         query: String? = nil,
-        ordinaryOnly: Bool = false
+        ordinaryOnly: Bool = false,
+        includeCount: Bool = true
     ) async throws -> ChatConversationListResponse {
         let (data, response) = try await authorizedGETWithAuthRetry(
-            url: conversationListURL(limit: limit, offset: offset, query: query, ordinaryOnly: ordinaryOnly)
+            url: conversationListURL(
+                limit: limit,
+                offset: offset,
+                query: query,
+                ordinaryOnly: ordinaryOnly,
+                includeCount: includeCount
+            )
         )
         try validate(response: response, data: data)
         return try JSONDecoder.chatDecoder.decode(ChatConversationListResponse.self, from: data)
@@ -996,7 +1018,13 @@ struct ChatAPIClient {
         return UTType(filenameExtension: ext)?.preferredMIMEType ?? "application/octet-stream"
     }
 
-    private func conversationListURL(limit: Int, offset: Int, query: String?, ordinaryOnly: Bool) throws -> URL {
+    private func conversationListURL(
+        limit: Int,
+        offset: Int,
+        query: String?,
+        ordinaryOnly: Bool,
+        includeCount: Bool
+    ) throws -> URL {
         var components = URLComponents(url: try apiURL("/api/v1/chat/conversations"), resolvingAgainstBaseURL: false)
         var queryItems = [
             URLQueryItem(name: "interface_type", value: ChatConstants.interfaceType),
@@ -1008,6 +1036,9 @@ struct ChatAPIClient {
         }
         if ordinaryOnly {
             queryItems.append(URLQueryItem(name: "kind", value: "ordinary"))
+        }
+        if !includeCount {
+            queryItems.append(URLQueryItem(name: "include_count", value: "false"))
         }
         components?.queryItems = queryItems
         guard let url = components?.url else {

@@ -364,6 +364,50 @@ describe('ConversationSidebar', () => {
     expect(searchQueries).toEqual(['passport']);
   });
 
+  it('shows the first page of matches without waiting for later pages', async () => {
+    const user = userEvent.setup();
+    const searchRequests: URLSearchParams[] = [];
+    let releaseSecondPage: () => void = () => {};
+    const secondPageReleased = new Promise<void>((resolve) => {
+      releaseSecondPage = resolve;
+    });
+    const match = (id: string) => ({
+      conversation_id: id,
+      last_message: 'Done',
+      last_timestamp: '2025-01-01T09:00:00Z',
+      message_count: 2,
+      match_excerpt: `passport in ${id}`,
+    });
+    server.use(
+      http.get('/api/v1/chat/conversations', async ({ request }) => {
+        const params = new URL(request.url).searchParams;
+        if (params.get('q') === null) {
+          return HttpResponse.json({ conversations: [], count: 0 });
+        }
+        searchRequests.push(params);
+        const pageSize = Number(params.get('limit'));
+        if (params.get('offset') === '0') {
+          return HttpResponse.json({
+            conversations: Array.from({ length: pageSize }, (_, index) => match(`conv-${index}`)),
+            count: null,
+          });
+        }
+        await secondPageReleased;
+        return HttpResponse.json({ conversations: [match('conv-last')], count: null });
+      })
+    );
+
+    await renderChatApp({ waitForReady: true });
+    await user.type(screen.getByPlaceholderText('Search...'), 'passport');
+
+    expect(await screen.findByTestId('conversation-item-conv-0')).toBeInTheDocument();
+    expect(screen.queryByTestId('conversation-item-conv-last')).not.toBeInTheDocument();
+    releaseSecondPage();
+    expect(await screen.findByTestId('conversation-item-conv-last')).toBeInTheDocument();
+    expect(searchRequests.map((params) => params.get('include_count'))).toEqual(['false', 'false']);
+    expect(searchRequests[1].get('offset')).toBe(searchRequests[0].get('limit'));
+  });
+
   it('shows conversation previews', async () => {
     // Mock conversations with preview text
     server.use(

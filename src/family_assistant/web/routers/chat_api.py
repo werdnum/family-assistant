@@ -535,7 +535,13 @@ class ConversationListResponse(BaseModel):
     conversations: list[ConversationSummary] = Field(
         ..., description="List of conversation summaries"
     )
-    count: int = Field(..., description="Total number of conversations")
+    count: int | None = Field(
+        ...,
+        description=(
+            "Total number of conversations, or null when the request passed"
+            " include_count=false"
+        ),
+    )
 
 
 class ReviewRejectedArtifact(BaseModel):
@@ -3398,6 +3404,7 @@ async def get_conversations(
     date_to: str | None = None,  # Expected as YYYY-MM-DD string
     q: str | None = None,
     kind: Literal["ordinary"] | None = None,
+    include_count: bool = True,
 ) -> ConversationListResponse:
     """
     Get a list of chat conversations for the web interface.
@@ -3417,6 +3424,10 @@ async def get_conversations(
         date_to: Filter conversations with messages before this date (YYYY-MM-DD)
         kind: ``ordinary`` leaves out Homes and threads, which a client lists
             separately
+        include_count: ``false`` skips computing ``count`` (returned as null).
+            A client that pages until it gets fewer than ``limit`` rows does
+            not need it, and for a common search term it costs more than the
+            page.
 
     Returns:
         List of conversation summaries the caller owns, with metadata
@@ -3475,6 +3486,7 @@ async def get_conversations(
         owner_user_ids=owner_user_ids,
         search_query=q,
         ordinary_only=kind == "ordinary",
+        include_count=include_count,
     )
     kinds = await db_context.conversation_threads.kinds_for([
         summary["conversation_id"] for summary in summaries

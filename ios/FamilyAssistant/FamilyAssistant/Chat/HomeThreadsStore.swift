@@ -224,9 +224,9 @@ final class HomeThreadsStore {
         }
     }
 
-    func searchConversations(matching query: String) async throws -> [ChatConversationSummary] {
+    func searchConversations(matching query: String, offset: Int = 0) async throws -> ChatConversationSearchPage {
         do {
-            return try await apiClient.searchConversations(query: query)
+            return try await apiClient.searchConversations(query: query, offset: offset)
         } catch {
             if !Self.isCancellation(error) {
                 errorReporter.report(error, component: "Chat.conversationSearch")
