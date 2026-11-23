@@ -930,7 +930,7 @@ struct ThreadSwitcherView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var startsThread = false
     @State private var searchText = ""
-    @State private var searchResults: (query: String, conversations: [ChatConversationSummary])?
+    @State private var searchResults: ChatConversationSearchResults?
     @State private var searchFailed = false
 
     private static let searchDebounce: Duration = .milliseconds(300)
@@ -1071,6 +1071,9 @@ struct ThreadSwitcherView: View {
                 ForEach(searchResults.conversations) { conversation in
                     conversationButton(conversation)
                 }
+                ConversationSearchMoreRow(results: searchResults) {
+                    await loadMoreSearchResults()
+                }
             }
         } else {
             ProgressView()
@@ -1108,11 +1111,30 @@ struct ThreadSwitcherView: View {
         }
         do {
             try await Task.sleep(for: Self.searchDebounce)
-            let conversations = try await store.searchConversations(matching: query)
-            searchResults = (query, conversations)
+            let firstPage = try await store.searchConversations(matching: query)
+            searchResults = ChatConversationSearchResults(query: query, firstPage: firstPage)
         } catch {
             if !Task.isCancelled {
                 searchFailed = true
+            }
+        }
+    }
+
+    /// Runs while the end of the current matches is on screen; a newer query
+    /// replaces `searchResults`, so a page for an older one is dropped.
+    private func loadMoreSearchResults() async {
+        guard let results = searchResults, results.hasMore, !results.loadMoreFailed else {
+            return
+        }
+        do {
+            let page = try await store.searchConversations(matching: results.query, offset: results.nextOffset)
+            guard searchResults?.query == results.query, searchResults?.nextOffset == results.nextOffset else {
+                return
+            }
+            searchResults?.append(page)
+        } catch {
+            if !Task.isCancelled, searchResults?.query == results.query {
+                searchResults?.loadMoreFailed = true
             }
         }
     }

@@ -12,6 +12,7 @@ import {
 import { Conversation, ConversationSidebarProps, ThreadState, ThreadSummary } from './types';
 
 const SEARCH_DEBOUNCE_MS = 300;
+const SEARCH_PAGE_SIZE = 50;
 
 // Threads that need the user come first.
 type ThreadGroup = ThreadState | 'quiet';
@@ -58,14 +59,20 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
     const abortController = new AbortController();
     const timer = setTimeout(async () => {
       try {
+        // Each page is shown as it lands, so the first matches appear without
+        // waiting for the rest. The server is not asked to count every match,
+        // which costs more than a page for a common word: a short page is the
+        // last one.
         const matches: Conversation[] = [];
+        let offset = 0;
         let hasMore = true;
         while (hasMore) {
           const params = new URLSearchParams({
             interface_type: 'web',
-            limit: '100',
-            offset: String(matches.length),
+            limit: String(SEARCH_PAGE_SIZE),
+            offset: String(offset),
             q: trimmedQuery,
+            include_count: 'false',
           });
           const response = await fetch(`/api/v1/chat/conversations?${params}`, {
             signal: abortController.signal,
@@ -73,11 +80,13 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
           if (!response.ok) {
             throw new Error(`Conversation search failed with status ${response.status}`);
           }
-          const data: { conversations: Conversation[]; count: number } = await response.json();
-          matches.push(...data.conversations);
-          hasMore = data.conversations.length > 0 && matches.length < data.count;
+          const data: { conversations: Conversation[] } = await response.json();
+          const known = new Set(matches.map((conv) => conv.conversation_id));
+          matches.push(...data.conversations.filter((conv) => !known.has(conv.conversation_id)));
+          offset += data.conversations.length;
+          hasMore = data.conversations.length >= SEARCH_PAGE_SIZE;
+          setSearchResults({ query: trimmedQuery, conversations: [...matches] });
         }
-        setSearchResults({ query: trimmedQuery, conversations: matches });
       } catch (error) {
         if (!abortController.signal.aborted) {
           console.error('Conversation search failed:', error);

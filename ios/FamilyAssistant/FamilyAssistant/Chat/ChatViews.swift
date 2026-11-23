@@ -220,7 +220,7 @@ private struct ConversationListView: View {
     @State private var searchText = ""
     /// Server results for the query they were fetched for; results for an older
     /// query are never shown against newer text.
-    @State private var searchResults: (query: String, conversations: [ChatConversationSummary])?
+    @State private var searchResults: ChatConversationSearchResults?
     @State private var searchFailed = false
 
     private static let searchDebounce: Duration = .milliseconds(300)
@@ -277,6 +277,11 @@ private struct ConversationListView: View {
                         .tag(conversation.conversationID)
                         .accessibilityIdentifier("conversation-row-\(conversation.conversationID)")
                 }
+                if let searchResults, searchResults.query == searchQuery {
+                    ConversationSearchMoreRow(results: searchResults) {
+                        await loadMoreSearchResults()
+                    }
+                }
             }
         }
         .searchable(text: $searchText, prompt: "Search chats")
@@ -305,12 +310,55 @@ private struct ConversationListView: View {
         }
         do {
             try await Task.sleep(for: Self.searchDebounce)
-            let conversations = try await viewModel.searchConversations(matching: query)
-            searchResults = (query, conversations)
+            let firstPage = try await viewModel.searchConversations(matching: query)
+            searchResults = ChatConversationSearchResults(query: query, firstPage: firstPage)
         } catch {
             if !Task.isCancelled {
                 searchFailed = true
             }
+        }
+    }
+
+    /// Runs while the end of the current matches is on screen; a newer query
+    /// replaces `searchResults`, so a page for an older one is dropped.
+    private func loadMoreSearchResults() async {
+        guard let results = searchResults, results.hasMore, !results.loadMoreFailed else {
+            return
+        }
+        do {
+            let page = try await viewModel.searchConversations(matching: results.query, offset: results.nextOffset)
+            guard searchResults?.query == results.query, searchResults?.nextOffset == results.nextOffset else {
+                return
+            }
+            searchResults?.append(page)
+        } catch {
+            if !Task.isCancelled, searchResults?.query == results.query {
+                searchResults?.loadMoreFailed = true
+            }
+        }
+    }
+}
+
+/// The end of a search's matches: loads the next page once scrolled into view.
+struct ConversationSearchMoreRow: View {
+    let results: ChatConversationSearchResults
+    let loadMore: () async -> Void
+
+    var body: some View {
+        if results.loadMoreFailed {
+            Label("Couldn’t load more chats. Edit the search to try again.", systemImage: "exclamationmark.triangle")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .accessibilityIdentifier("conversation-search-more-failed")
+        } else if results.hasMore {
+            ProgressView()
+                .frame(maxWidth: .infinity)
+                // Keyed by offset, so a page that lands while the row is still
+                // visible starts the next one.
+                .task(id: results.nextOffset) {
+                    await loadMore()
+                }
+                .accessibilityIdentifier("conversation-search-loading-more")
         }
     }
 }
