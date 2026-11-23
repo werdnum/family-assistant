@@ -26,6 +26,7 @@ from family_assistant.llm.model_tiers import (
     validate_profile_model_tier,
 )
 from family_assistant.llm.providers.anthropic_client import AnthropicClient
+from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.llm.providers.openai_client import OpenAIClient
 from tests.unit.conftest import shipped_profile
 
@@ -113,7 +114,7 @@ def test_sonnet_chat_entries_carry_the_completion_policy(
     assert "Finish the job in this turn." in client.custom_instructions
 
 
-def test_browser_sonnet_fallback_has_no_completion_policy(
+def test_browser_fallback_has_no_completion_policy(
     shipped_config: AppConfig,
 ) -> None:
     """A browsing run has its own prompt; the chat policy stays out of it."""
@@ -123,7 +124,7 @@ def test_browser_sonnet_fallback_has_no_completion_policy(
         "api_key": "test-key",
     })
 
-    assert isinstance(client, AnthropicClient)
+    assert isinstance(client, GoogleGenAIClient)
 
 
 @pytest.mark.parametrize(
@@ -376,14 +377,13 @@ def test_snapshot_browser_profiles_run_the_browser_tier(
     assert profile.processing_config.model_tier == "browser"
 
 
-def test_browser_tier_runs_sol_with_a_sonnet_fallback_at_medium_effort(
+def test_browser_tier_runs_sol_with_a_hydrogen_fallback_at_medium_effort(
     shipped_config: AppConfig,
 ) -> None:
     """End to end: shipped tier -> factory -> the params each entry's request carries.
 
-    Sonnet 5.5 rejects `enabled` + `budget_tokens` mid-conversation, and the
-    browser entry's medium must win over the global `gpt-6.2-sol` high, so both
-    entries' parameters are asserted where they land.
+    Both entries pin medium effort so the browser tier's effort wins over
+    global high-effort defaults on `gpt-6.2-sol` and `gemini-4-hydrogen`.
     """
     resolved = resolve_tier_client_config(
         shipped_config.model_tiers["browser"], shipped_config.llm_parameters
@@ -402,11 +402,10 @@ def test_browser_tier_runs_sol_with_a_sonnet_fallback_at_medium_effort(
     assert primary._get_model_specific_params(primary.model) == {
         "reasoning_effort": "medium"
     }
-    assert isinstance(fallback, AnthropicClient)
-    assert fallback.model == "claude-sonnet-5-5"
-    assert fallback._get_model_specific_params(fallback.model) == {
-        "thinking": {"type": "adaptive"},
-        "output_config": {"effort": "medium"},
+    assert isinstance(fallback, GoogleGenAIClient)
+    assert fallback.model_name == "models/gemini-4-hydrogen"
+    assert fallback._get_model_specific_params(fallback.model_name) == {
+        "thinking_config": {"thinking_level": "medium"},
     }
 
 

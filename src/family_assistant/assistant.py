@@ -25,6 +25,7 @@ from family_assistant.config_models import (
     AppConfig,  # Used at runtime
     ProcessingConfig,  # Used at runtime
     RetryConfig,  # Used at runtime
+    RetryModelConfig,  # Used at runtime
     mcp_servers_for_runtime,
 )
 from family_assistant.config_models import (  # Used at runtime
@@ -94,6 +95,7 @@ from family_assistant.llm.model_tiers import (
     resolve_antigravity_tier_client_config,
     resolve_claude_agent_model,
     resolve_entry_client_config,
+    resolve_entry_model_parameters,
     resolve_profile_llm_model,
     resolve_tier_client_config,
     validate_profile_model_tier,
@@ -2128,10 +2130,22 @@ class Assistant:
         if profile_proc_conf.retry_config is not None:
             return self._build_retry_client_config(profile_conf)
 
+        model_parameters = (
+            resolve_entry_model_parameters(
+                RetryModelConfig(
+                    provider=profile_proc_conf.provider,
+                    model=profile_llm_model,
+                    llm_parameters=profile_proc_conf.llm_parameters,
+                ),
+                self.config.llm_parameters,
+            )
+            if profile_proc_conf.llm_parameters
+            else self.config.llm_parameters
+        )
         # ast-grep-ignore: no-dict-any - Factory config has varying provider keys.
         client_config: dict[str, Any] = {
             "model": profile_llm_model,
-            "model_parameters": self.config.llm_parameters,
+            "model_parameters": model_parameters,
         }
         if profile_proc_conf.provider:
             client_config["provider"] = profile_proc_conf.provider

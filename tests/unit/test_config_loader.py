@@ -30,6 +30,7 @@ import yaml
 from pydantic import BaseModel, SecretStr, ValidationError
 
 from family_assistant import config_loader
+from family_assistant.assistant import Assistant
 from family_assistant.config_loader import (
     ENV_VAR_MAPPINGS,
     PROFILE_OVERRIDABLE_PROCESSING_KEYS,
@@ -52,6 +53,7 @@ from family_assistant.config_models import (
     AppConfig,
     ModelTierConfig,
     ProcessingConfig,
+    RetryConfig,
     RetryModelConfig,
     ServiceProfile,
 )
@@ -2907,6 +2909,98 @@ def test_shipped_telephone_profile_keeps_its_greeting() -> None:
     assert profile.processing_config.greeting_wav_path == (
         "resources/greeting_external.wav"
     )
+
+
+def test_shipped_browser_models_use_hydrogen_medium_for_fallback_and_visual() -> None:
+    """Browser tier fallback and all visual profiles run Hydrogen at medium thinking."""
+    config = load_config(
+        config_file_path="nonexistent-so-only-defaults.yaml",
+        load_dotenv_file=False,
+    )
+
+    browser_chain = config.model_tiers["browser"].chain
+    assert len(browser_chain) == 2
+    assert browser_chain[0].provider == "openai"
+    assert browser_chain[0].model == "gpt-6.2-sol"
+    assert browser_chain[0].llm_parameters == {"reasoning_effort": "medium"}
+    assert browser_chain[1].provider == "google"
+    assert browser_chain[1].model == "gemini-4-hydrogen"
+    assert browser_chain[1].llm_parameters == {
+        "thinking_config": {"thinking_level": "medium"}
+    }
+
+    # Global llm_parameters and the general-purpose Hydrogen preset stay at default thinking.
+    assert "gemini-4-hydrogen" not in config.llm_parameters
+    assert config.model_tiers["gemini_4_hydrogen"].chain[0].llm_parameters is None
+
+    for profile_id in (
+        "browser_visual_profile",
+        "credential_browser_visual_profile",
+        "authenticated_browser_visual_profile",
+    ):
+        profile = next(p for p in config.service_profiles if p.id == profile_id)
+        proc = profile.processing_config
+        assert proc.provider == "google"
+        assert proc.llm_model == "gemini-4-hydrogen"
+        assert proc.enable_computer_use is True
+        assert proc.llm_parameters == {"thinking_config": {"thinking_level": "medium"}}
+
+
+def test_inline_processing_config_llm_parameters_validation_and_override(
+    tmp_path: Path,
+) -> None:
+    """Inline llm_parameters rejects tier/retry combos and drops when operator swaps model."""
+    with pytest.raises(ValueError, match="cannot be combined with model_tier"):
+        ProcessingConfig(
+            model_tier="browser",
+            llm_parameters={"thinking_config": {"thinking_level": "medium"}},
+        )
+
+    with pytest.raises(ValueError, match="cannot be combined with retry_config"):
+        ProcessingConfig(
+            retry_config=RetryConfig(
+                primary=RetryModelConfig(provider="google", model="gemini-4-hydrogen")
+            ),
+            llm_parameters={"thinking_config": {"thinking_level": "medium"}},
+        )
+
+    override_file = tmp_path / "config.yaml"
+    override_file.write_text(
+        "service_profiles:\n"
+        "  - id: browser_visual_profile\n"
+        "    processing_config:\n"
+        "      llm_model: gemini-3.8-flash\n",
+        encoding="utf-8",
+    )
+    config = load_config(config_file_path=str(override_file), load_dotenv_file=False)
+    visual = next(
+        p for p in config.service_profiles if p.id == "browser_visual_profile"
+    )
+    assert visual.processing_config.llm_model == "gemini-3.8-flash"
+    assert visual.processing_config.llm_parameters is None
+
+
+def test_assistant_overlays_inline_profile_llm_parameters() -> None:
+    """Assistant._build_profile_llm_client_config overlays inline llm_parameters per profile."""
+    config = load_config(
+        config_file_path="nonexistent-so-only-defaults.yaml",
+        load_dotenv_file=False,
+    )
+    visual = next(
+        p for p in config.service_profiles if p.id == "browser_visual_profile"
+    )
+    assistant = Assistant(config=config)
+    client_config = assistant._build_profile_llm_client_config(
+        visual, "gemini-4-hydrogen", model_tier=None
+    )
+    assert client_config["provider"] == "google"
+    assert client_config["model"] == "gemini-4-hydrogen"
+    assert client_config["enable_computer_use"] is True
+    assert client_config["model_parameters"]["gemini-4-hydrogen"] == {
+        "thinking_config": {"thinking_level": "medium"}
+    }
+    # Global map must remain untouched.
+    assert "gemini-4-hydrogen" not in config.llm_parameters
 
 
 def test_every_service_profile_field_is_accounted_for() -> None:

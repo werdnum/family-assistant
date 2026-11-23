@@ -207,8 +207,7 @@ model_tiers:
         # then end the turn without running it, leaving the user to say "so check
         # it". The anchor shares the entry with the `claude_sonnet_5_5` preset, so
         # an experiment arm on the preset measures the same recipe this fallback
-        # runs. The `browser` tier's Sonnet fallback deliberately does not carry
-        # it: a browsing run is already a long tool loop with its own prompt.
+        # runs.
         provider: "anthropic"
         model: "claude-sonnet-5-5"
         llm_parameters:
@@ -273,7 +272,9 @@ model_tiers:
   # interactive latency, which is what put Flash on `standard`. Selected only
   # by the browser profiles' `model_tier`; no profile lists it as a choice.
   # Medium effort on both: each step is a small decision over a fresh snapshot,
-  # and a 25-step run multiplies whatever each step costs.
+  # and a 50-step run multiplies whatever each step costs. Hydrogen is a
+  # different provider from Sol and scored closely behind it in the 2026-11-23
+  # browser mini-eval (75% vs 80% pass, well ahead of Sonnet's 55%).
   browser:
     label: "Browser"
     description: "Web browsing over accessibility snapshots."
@@ -282,13 +283,11 @@ model_tiers:
         model: "gpt-6.2-sol"
         llm_parameters:
           reasoning_effort: "medium"
-      - provider: "anthropic"
-        model: "claude-sonnet-5-5"
+      - provider: "google"
+        model: "gemini-4-hydrogen"
         llm_parameters:
-          thinking:
-            type: "adaptive"
-          output_config:
-            effort: "medium"
+          thinking_config:
+            thinking_level: "medium"
   # Exact-model presets. Each is one model with no fallback, so a delegation
   # that names one gets that model's answer or a visible failure -- never
   # another model's answer under its name. They are for a delegating model that
@@ -2049,7 +2048,10 @@ service_profiles:
     processing_config:
       # Using simple format (no retry/fallback for browser tasks)
       provider: "google"
-      llm_model: "gemini-3.8-flash"
+      llm_model: "gemini-4-hydrogen"
+      llm_parameters:
+        thinking_config:
+          thinking_level: "medium"
       # Attach the native Gemini computer-use tool (prompt-injection detection
       # over screenshots is always enabled with it). Actions the model flags
       # with a safety decision require user confirmation before they run.
@@ -2182,7 +2184,10 @@ service_profiles:
     description: "Visual steps for on-demand credential browsing, sharing the protected session of credential_browser_profile. No site registration is required."
     processing_config:
       provider: "google"
-      llm_model: "gemini-3.8-flash"
+      llm_model: "gemini-4-hydrogen"
+      llm_parameters:
+        thinking_config:
+          thinking_level: "medium"
       enable_computer_use: true
       # The remote backend supports single left clicks and complete key chords.
       computer_use_excluded_functions:
@@ -2337,7 +2342,10 @@ service_profiles:
     description: "Visual half of an authenticated-site run, driven by Gemini's native computer-use capability against the same confined browser session. Invoked only by delegation from authenticated_browser_profile."
     processing_config:
       provider: "google"
-      llm_model: "gemini-3.8-flash"
+      llm_model: "gemini-4-hydrogen"
+      llm_parameters:
+        thinking_config:
+          thinking_level: "medium"
       enable_computer_use: true
       # The remote backend supports single left clicks and complete key chords.
       computer_use_excluded_functions:

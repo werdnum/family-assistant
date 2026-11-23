@@ -10,8 +10,8 @@ Three browser modes are available:
 - **`/browse`** (default, DOM-based) — reads the page's accessibility tree and interacts with
   elements by semantic reference (`e12`). Fastest and cheapest; best for reading pages, searching,
   and filling forms anonymously.
-- **`/browse_visual`** (fallback, coordinate-based) — uses Gemini Computer Use (Gemini 3.5 Flash) to
-  click at pixel coordinates from screenshots. Best for `<canvas>`, image maps, and non-DOM
+- **`/browse_visual`** (fallback, coordinate-based) — uses Gemini Computer Use (Gemini 4 Hydrogen)
+  to click at pixel coordinates from screenshots. Best for `<canvas>`, image maps, and non-DOM
   drag-and-drop.
 - **`/browse_authenticated`** (credential browsing) — opens an isolated, protected browser session
   that can autofill stored Keychute credentials on demand. See
