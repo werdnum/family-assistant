@@ -20,3 +20,8 @@ class HomeAssistantConfig(BaseModel):
     context_template: str | None = None
     # Run the state-change event source for automations and event listeners.
     events: bool = True
+    # Trust this server's state-change event payloads like its output_trusted
+    # read tools: event wakes run under the creating profile instead of the
+    # restricted event_handler profile, and the payload adds no trigger taint.
+    # Off by default, like MCPServerConfig.trusted_events.
+    trusted_events: bool = False

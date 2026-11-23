@@ -34,9 +34,9 @@ logger = logging.getLogger(__name__)
 # Restricted profile that event-triggered wakes run under, whether the event
 # listener's action is wake_llm or a script that calls wake_llm(). Event content
 # is untrusted (attacker-influenced email/webhook data), and the woken LLM is the
-# injectable component, so it must not run under a full-trust profile. The one
-# exception is a listener's wake_llm on an MCP server the operator configured
-# with trusted_events, which runs under the listener's origin profile.
+# injectable component, so it must not run under a full-trust profile. The
+# exception is a listener on a source or MCP server the operator configured with
+# trusted_events, which runs under the listener's origin profile.
 EVENT_HANDLER_PROFILE_ID = "event_handler"
 
 
@@ -384,8 +384,8 @@ async def execute_action(
             execution agree. wake_llm carries it too -- handle_llm_callback
             resolves it fail-loud -- except for event listeners, which the event
             processor stamps with the restricted event_handler profile instead,
-            because the triggering event is untrusted (unless it comes from an
-            MCP server configured with trusted_events).
+            because the triggering event is untrusted (unless it comes from a
+            source or MCP server configured with trusted_events).
         created_by_user_id: Creating user for script actions; confirm-gated
             tool calls from the script are addressed to this user.
         definition_taint_tracker: The authoring turn's taint tracker, stamped
@@ -397,7 +397,8 @@ async def execute_action(
             examined the write, which cures nothing.
         tool_call_review_trigger_payload_trusted: Whether the trigger payload
             comes from a source the operator declared trusted, so it adds no
-            taint to the woken turn. Only a trusted_events MCP server sets it.
+            taint to the woken turn or script firing. Set for event sources and
+            MCP servers configured with trusted_events.
         allow_wake_llm: Whether the acting profile may wake the LLM. When False,
             a wake_llm action is refused loudly (see assert_wake_llm_allowed)
             rather than being enqueued for a turn that would escape the profile's
@@ -511,6 +512,8 @@ async def execute_action(
             taint_state=authoring_taint_state(definition_taint_tracker),
             gate_outcome=definition_gate,
         ).to_dict()
+        if tool_call_review_trigger_payload_trusted:
+            script_payload["tool_call_review_trigger_payload_trusted"] = True
         if user_name:
             script_payload["user_name"] = user_name
         if processing_profile_id is not None:

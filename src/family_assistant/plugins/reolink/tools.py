@@ -946,7 +946,7 @@ CAMERA_TOOLS: tuple[ToolRegistration, ...] = (
             ToolTag.SENSITIVE_DATA,
             ToolTag.CAMERA,
             ToolTag.MEDIA,
-            ToolTag.OUTPUT_UNTRUSTED,
+            ToolTag.OUTPUT_TRUSTED,
         )
         for name, implementation in (
             ("search_camera_events", search_camera_events_tool),

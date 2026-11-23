@@ -1232,7 +1232,7 @@ HOME_ASSISTANT_TOOLS: tuple[ToolRegistration, ...] = (
         ToolTag.HOME_AUTOMATION,
         ToolTag.CAMERA,
         ToolTag.MEDIA,
-        ToolTag.OUTPUT_UNTRUSTED,
+        ToolTag.OUTPUT_TRUSTED,
     ),
     _tool(
         "list_home_assistant_entities",

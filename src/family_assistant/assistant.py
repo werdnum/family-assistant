@@ -2355,6 +2355,11 @@ class Assistant:
                         for server_id, server in self.config.mcp_config.mcpServers.items()
                         if server.trusted_events
                     ],
+                    trusted_event_sources=[
+                        EventSourceType.home_assistant.value
+                        for ha_cfg in self.config.plugins.home_assistant.values()
+                        if ha_cfg.events and ha_cfg.trusted_events
+                    ],
                 )
                 logger.info(
                     f"Event processor initialized with {len(event_sources)} sources"

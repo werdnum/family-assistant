@@ -170,5 +170,5 @@ def test_camera_tools_keep_their_names_and_tags() -> None:
             "sensitive_data",
             "camera",
             "media",
-            "output_untrusted",
+            "output_trusted",
         }
