@@ -675,12 +675,38 @@ class ProcessingConfig(BaseModel):
     web_history_idle_gap_minutes: float | None = None
     llm_model: str | None = None
     provider: str | None = None  # 'google', 'openai', 'anthropic'
+    # Per-profile request parameters for an inline model (e.g. a computer-use
+    # visual profile that cannot use `model_tier`), overlaid on top-level
+    # `llm_parameters` under this profile's exact model id only.
+    # ast-grep-ignore: no-dict-any - LLM params are provider-specific and genuinely arbitrary
+    llm_parameters: dict[str, Any] | None = None
     retry_config: RetryConfig | None = None
     # Name of an entry in the top-level `model_tiers` map. A profile names
     # either a tier or an inline model (`provider`/`llm_model`/`retry_config`),
     # never both -- the loader rejects a definition that does both, and a
     # declaration of either kind drops the other when inherited.
     model_tier: str | None = None
+
+    @model_validator(mode="after")
+    def validate_inline_llm_parameters(self) -> ProcessingConfig:
+        if not self.llm_parameters:
+            return self
+        if self.model_tier is not None:
+            msg = (
+                "processing_config.llm_parameters cannot be combined with "
+                f"model_tier '{self.model_tier}': set llm_parameters on the "
+                "tier's chain entry instead."
+            )
+            raise ValueError(msg)
+        if self.retry_config is not None:
+            msg = (
+                "processing_config.llm_parameters cannot be combined with "
+                "retry_config: set llm_parameters on retry_config.primary / "
+                "fallback instead."
+            )
+            raise ValueError(msg)
+        return self
+
     # Whether this profile's tier is fixed by whoever asked (`explicit`) or
     # chosen per request by the Auto classifier (`auto`). Auto never reaches
     # past `auto_model_tiers`, and `model_tier` remains the tier a run lands on

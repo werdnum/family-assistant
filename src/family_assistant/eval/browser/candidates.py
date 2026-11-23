@@ -63,9 +63,9 @@ BUILTIN_CANDIDATES: dict[str, BrowserEvalCandidate] = {
     ),
     "hydrogen-medium": BrowserEvalCandidate(
         name="hydrogen-medium",
-        tier_id="gemini_4_hydrogen",
-        llm_parameters_override={"thinking_config": {"thinking_level": "medium"}},
-        description="Gemini 4 Hydrogen (medium thinking effort)",
+        tier_id="browser",
+        entry_index=1,
+        description="Gemini 4 Hydrogen (medium thinking effort; current shipped browser tier fallback)",
     ),
     "neon": BrowserEvalCandidate(
         name="neon",
@@ -92,15 +92,15 @@ BUILTIN_CANDIDATES: dict[str, BrowserEvalCandidate] = {
     ),
     "sonnet-5.5": BrowserEvalCandidate(
         name="sonnet-5.5",
-        tier_id="browser",
-        entry_index=1,
-        description="Claude Sonnet 5.5 (adaptive thinking medium; current shipped browser tier fallback)",
+        tier_id="claude_sonnet_5_5",
+        entry_index=0,
+        description="Claude Sonnet 5.5 (adaptive thinking medium; former browser tier fallback)",
     ),
     "visual-flash-3.8": BrowserEvalCandidate(
         name="visual-flash-3.8",
         tier_id="gemini_3_8_flash",
         mode="visual",
-        description="Shipped browser_visual_profile: Gemini 3.8 Flash with native Computer Use",
+        description="Legacy visual profile baseline: Gemini 3.8 Flash with native Computer Use",
     ),
     "visual-hydrogen": BrowserEvalCandidate(
         name="visual-hydrogen",
@@ -113,7 +113,7 @@ BUILTIN_CANDIDATES: dict[str, BrowserEvalCandidate] = {
         tier_id="gemini_4_hydrogen",
         mode="visual",
         llm_parameters_override={"thinking_config": {"thinking_level": "medium"}},
-        description="Visual profile on Gemini 4 Hydrogen (medium thinking) with native Computer Use",
+        description="Shipped browser_visual_profile: Gemini 4 Hydrogen (medium thinking) with native Computer Use",
     ),
     "visual-neon-medium": BrowserEvalCandidate(
         name="visual-neon-medium",

@@ -3,7 +3,8 @@
 ## Motivation
 
 The `browser_visual_profile` drives a browser with coordinate-based actions against screenshots. It
-runs `gemini-3.8-flash` with the Gemini API's native computer-use capability, which brings:
+runs `gemini-4-hydrogen` (`thinking_level: medium`) with the Gemini API's native computer-use
+capability (upgraded from `gemini-3.8-flash` after the 2026-11-23 browser mini-eval), which brings:
 
 - A model actually trained for the action loop (better grounding/reliability).
 - Built-in **prompt-injection detection** over screenshot content.

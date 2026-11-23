@@ -673,6 +673,7 @@ def load_prompts_yaml(
 PROFILE_OVERRIDABLE_PROCESSING_KEYS: tuple[str, ...] = (
     "provider",
     "llm_model",
+    "llm_parameters",
     "review_guidance",
     "timezone",
     "history_budget_chars",
@@ -757,7 +758,12 @@ PROFILE_TIER_QUALIFIER_KEYS: tuple[str, ...] = (
 PROFILE_TIER_QUALIFIER_PROCESSING_KEYS: tuple[str, ...] = ("model_selection",)
 
 # The two mutually exclusive ways a profile says which model it runs on.
-MODEL_SELECTION_KEYS: tuple[str, ...] = ("provider", "llm_model", "retry_config")
+MODEL_SELECTION_KEYS: tuple[str, ...] = (
+    "provider",
+    "llm_model",
+    "llm_parameters",
+    "retry_config",
+)
 
 
 def _unstated_tier_qualifiers(
@@ -1197,6 +1203,7 @@ def _superseded_shipped_selection(
         superseded.update(MODEL_SELECTION_KEYS)
     if operator_declares_model or operator_declares_chain:
         superseded.add("model_tier")
+        superseded.add("llm_parameters")
     if not operator_declares_chain and (
         operator_declares_model or operator_clears_chain
     ):
