@@ -967,6 +967,36 @@ async def test_conversation_list_carries_the_generated_summary(
 
 
 @pytest.mark.asyncio
+async def test_conversation_list_can_leave_out_the_count(
+    test_client: AsyncClient,
+    db_context: Database,
+) -> None:
+    for _ in range(2):
+        await db_context.message_history.add_message(
+            UserMessage.from_trusted_user(content="Where is the passport?"),
+            interface_type="web",
+            conversation_id=str(uuid.uuid4()),
+            timestamp=datetime.now(UTC),
+            user_id="test_user",
+        )
+
+    response = await test_client.get(
+        "/api/v1/chat/conversations",
+        params={
+            "interface_type": "web",
+            "q": "passport",
+            "limit": 1,
+            "include_count": "false",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["conversations"]) == 1
+    assert body["count"] is None
+
+
+@pytest.mark.asyncio
 async def test_history_tool_calls_carry_display_phrases(
     test_client: AsyncClient,
     app_fixture: FastAPI,

@@ -83,7 +83,7 @@ async def _seed(db: Database) -> None:
     )
 
 
-async def _search(db: Database, query: str) -> tuple[dict[str, dict], int]:
+async def _search(db: Database, query: str) -> tuple[dict[str, dict], int | None]:
     summaries, total = await db.message_history.get_conversation_summaries(
         limit=100,
         include_subconversations=False,
@@ -241,3 +241,60 @@ async def test_search_matches_whole_words_by_prefix_only_on_postgres(
     results, _ = await _search(db, "newal")
 
     assert results == {}
+
+
+async def _seed_passport_conversations(db: Database, count: int) -> None:
+    for index in range(count):
+        await _add_exchange(
+            db,
+            f"conv_passport_{index}",
+            f"Passport question {index}",
+            "Answered.",
+            minutes=index,
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("limit", "offset", "expected_page"),
+    [(2, 0, 2), (2, 2, 2), (2, 4, 1), (2, 6, 0), (10, 0, 5)],
+)
+async def test_search_count_is_the_total_on_every_page(
+    db_engine: AsyncEngine, limit: int, offset: int, expected_page: int
+) -> None:
+    """Whether the count is counted or follows from a short page, it is the total."""
+    db = Database(engine=db_engine)
+    await _seed_passport_conversations(db, 5)
+
+    summaries, total = await db.message_history.get_conversation_summaries(
+        limit=limit,
+        offset=offset,
+        include_subconversations=False,
+        owner_user_ids={OWNER},
+        search_query="passport",
+    )
+
+    assert len(summaries) == expected_page
+    assert total == 5
+
+
+@pytest.mark.asyncio
+async def test_search_without_count_still_returns_the_page(
+    db_engine: AsyncEngine,
+) -> None:
+    db = Database(engine=db_engine)
+    await _seed_passport_conversations(db, 3)
+
+    summaries, total = await db.message_history.get_conversation_summaries(
+        limit=2,
+        include_subconversations=False,
+        owner_user_ids={OWNER},
+        search_query="passport",
+        include_count=False,
+    )
+
+    assert [s["conversation_id"] for s in summaries] == [
+        "conv_passport_2",
+        "conv_passport_1",
+    ]
+    assert total is None

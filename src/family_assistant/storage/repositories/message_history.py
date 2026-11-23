@@ -4136,7 +4136,8 @@ class MessageHistoryRepository(BaseRepository):
         search_query: str | None = None,
         ordinary_only: bool = False,
         conversation_ids: Collection[str] | None = None,
-    ) -> tuple[list[ConversationSummaryRow], int]:
+        include_count: bool = True,
+    ) -> tuple[list[ConversationSummaryRow], int | None]:
         """
         Get conversation summaries with pagination, optimized for performance.
 
@@ -4165,9 +4166,13 @@ class MessageHistoryRepository(BaseRepository):
                 through. The caller passes the equivalence set of stored ids that
                 canonicalize to its own identity (see
                 ``UserIdentityResolver.owner_ids_canonicalizing_to``).
+            include_count: When False, the total is not computed and ``None``
+                is returned in its place. Counting every match costs more than
+                the page itself for a common search term, so a client that
+                pages until a short page skips it.
 
         Returns:
-            Tuple of (summaries list, total count)
+            Tuple of (summaries list, total count or ``None``)
         """
         ownership_condition = self._sole_owner_condition(owner_user_ids)
 
@@ -4380,19 +4385,17 @@ class MessageHistoryRepository(BaseRepository):
             )
         )
 
-        # Count query - count conversations that have messages with content
-        count_subquery = (
-            select(message_history_table.c.conversation_id)
-            .where(*base_conditions)
-            .distinct()
-            .subquery()
-        )
-        count_query = select(func.count().label("count")).select_from(count_subquery)
-
-        # Execute queries
         summaries_rows = await self._db.fetch_all(summaries_query)
-        count_row = await self._db.fetch_one(count_query)
-        total_count = count_row["count"] if count_row else 0
+        total_count = (
+            await self._count_conversations(
+                base_conditions,
+                limit=limit,
+                offset=offset,
+                page_size=len(summaries_rows),
+            )
+            if include_count
+            else None
+        )
 
         excerpts: dict[str, str] = {}
         if search_terms and summaries_rows:
@@ -4418,6 +4421,33 @@ class MessageHistoryRepository(BaseRepository):
             )
 
         return summaries, total_count
+
+    async def _count_conversations(
+        self,
+        base_conditions: list[ColumnElement[bool]],
+        *,
+        limit: int,
+        offset: int,
+        page_size: int,
+    ) -> int:
+        """How many conversations match ``base_conditions`` in all.
+
+        A page shorter than ``limit`` is the last one, so the total follows
+        from it without another scan -- unless it is empty past the first
+        page, where the offset may overshoot the end.
+        """
+        if page_size < limit and (page_size > 0 or offset == 0):
+            return offset + page_size
+        count_subquery = (
+            select(message_history_table.c.conversation_id)
+            .where(*base_conditions)
+            .distinct()
+            .subquery()
+        )
+        count_row = await self._db.fetch_one(
+            select(func.count().label("count")).select_from(count_subquery)
+        )
+        return count_row["count"] if count_row else 0
 
     async def _search_match_excerpts(
         self,
