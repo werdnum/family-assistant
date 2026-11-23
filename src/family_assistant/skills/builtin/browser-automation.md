@@ -14,11 +14,15 @@ Best for reading pages and filling forms. The model works from an accessibility 
 rather than pixel screenshots, so interactions are cheaper and faster.
 
 - **Activation**: prefix your request with `/browse`.
-- **Tools**: `browser_open`, `browser_snapshot`, `browser_click`, `browser_fill`, `browser_select`,
+- **Tools**: `browser_open`, `browser_snapshot`, `browser_click`, `browser_hover`, `browser_fill`,
+  `browser_select`, `browser_press_key`, `browser_scroll`, `browser_click_at`, `browser_hover_at`,
   `browser_wait`, `browser_screenshot`, `browser_extract`, `browser_exec` (local and remote).
-- **How it works**: each interaction uses a semantic ref like `e12` returned by the previous
-  snapshot, not coordinates. Snapshots can be filtered with a `query` substring to keep context
-  small.
+- **How it works**: prefer semantic refs like `e12` returned by the previous snapshot
+  (`browser_click`, `browser_hover`, `browser_fill`, `browser_select`). Snapshots can be filtered
+  with a `query` substring to keep context small. Use `browser_press_key` (e.g. `Escape`) or
+  `browser_hover_at(0, 0)` to dismiss blocking popups or hover overlays. When a visible control is
+  absent from the accessibility tree, take `browser_screenshot` and act on its pixel coordinates
+  with `browser_click_at`, `browser_hover_at`, or `browser_scroll`.
 - **Escape hatch**: `browser_exec` runs JavaScript in the page via `page.evaluate`. Use it when the
   fixed tools don't fit — shadow DOM, iframes, reading same-origin JSON endpoints, or multi-step DOM
   mutation in one turn.

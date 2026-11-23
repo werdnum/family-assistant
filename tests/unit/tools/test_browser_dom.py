@@ -9,6 +9,7 @@ coercion. The Playwright-driven tool implementations are exercised in
 
 from __future__ import annotations
 
+import struct
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 from uuid import uuid4
@@ -33,7 +34,15 @@ from family_assistant.tools.browser_dom import (
     _ucp_hint_on_url_change,  # noqa: PLC2701  # Testing private URL-change gating
     _validate_ref,  # noqa: PLC2701  # Testing private ref syntax check
 )
-from family_assistant.tools.browser_session import BrowserSession, close_browser_session
+from family_assistant.tools.browser_session import (
+    BrowserSession,
+    ScreenshotGeometry,
+    close_browser_session,
+    is_transfer_key_chord,
+    map_key_name,
+    map_screenshot_point_to_viewport,
+    parse_png_dimensions,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -294,7 +303,13 @@ async def exec_context() -> AsyncIterator[ToolExecutionContext]:
     afterwards so per-origin UCP caches don't leak into other tests or reruns."""
     context = cast(
         "ToolExecutionContext",
-        SimpleNamespace(conversation_id=f"browser-dom-{uuid4()}"),
+        SimpleNamespace(
+            conversation_id=f"browser-dom-{uuid4()}",
+            subconversation_id=None,
+            turn_id=None,
+            tool_call_batch=None,
+            tool_call_id=None,
+        ),
     )
     yield context
     await close_browser_session(context)
@@ -464,3 +479,370 @@ class TestUcpHintOnUrlChange:
 
         assert first is None
         assert second is None
+
+
+def _png_with_size(width: int, height: int) -> bytes:
+    """Minimal valid PNG header carrying an IHDR width and height."""
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + struct.pack(">I", 13)
+        + b"IHDR"
+        + struct.pack(">II", width, height)
+        + b"\x08\x06\x00\x00\x00"
+    )
+
+
+class TestScreenshotGeometryMapping:
+    """PNG dimension parsing and screenshot-pixel to viewport-CSS mapping."""
+
+    def test_parse_png_dimensions_reads_ihdr(self) -> None:
+        assert parse_png_dimensions(_png_with_size(2048, 1536)) == (2048, 1536)
+
+    def test_parse_png_dimensions_rejects_non_png(self) -> None:
+        with pytest.raises(ValueError, match="not a valid PNG"):
+            parse_png_dimensions(b"not a png at all")
+
+    def test_maps_coordinates_at_dpr_1_and_2_and_fractional(self) -> None:
+        geom_dpr1 = ScreenshotGeometry(
+            url="https://example.test/",
+            image_width=1280,
+            image_height=720,
+            viewport_width=1280.0,
+            viewport_height=720.0,
+            device_pixel_ratio=1.0,
+            scroll_x=0.0,
+            scroll_y=500.0,
+        )
+        # Scroll offset must NOT be added — viewport coordinates stay in 0..1280 x 0..720.
+        assert map_screenshot_point_to_viewport(640, 360, geom_dpr1) == (640.0, 360.0)
+
+        geom_dpr2 = ScreenshotGeometry(
+            url="https://example.test/",
+            image_width=2048,
+            image_height=1536,
+            viewport_width=1024.0,
+            viewport_height=768.0,
+            device_pixel_ratio=2.0,
+            scroll_x=0.0,
+            scroll_y=1200.0,
+        )
+        assert map_screenshot_point_to_viewport(1024, 768, geom_dpr2) == (512.0, 384.0)
+
+        geom_mobile = ScreenshotGeometry(
+            url="https://example.test/",
+            image_width=618,
+            image_height=1373,
+            viewport_width=412.0,
+            viewport_height=915.0,
+            device_pixel_ratio=1.5,
+            scroll_x=0.0,
+            scroll_y=0.0,
+        )
+        cx, cy = map_screenshot_point_to_viewport(309, 686.5, geom_mobile)
+        assert cx == pytest.approx(206.0)
+        assert cy == pytest.approx(457.5)
+
+    def test_rejects_out_of_bounds_and_non_finite_coordinates(self) -> None:
+        geom = ScreenshotGeometry(
+            url="https://example.test/",
+            image_width=1024,
+            image_height=768,
+            viewport_width=1024.0,
+            viewport_height=768.0,
+            device_pixel_ratio=1.0,
+            scroll_x=0.0,
+            scroll_y=0.0,
+        )
+        with pytest.raises(ValueError, match="outside the last screenshot"):
+            map_screenshot_point_to_viewport(-1, 10, geom)
+        with pytest.raises(ValueError, match="outside the last screenshot"):
+            map_screenshot_point_to_viewport(1025, 10, geom)
+        with pytest.raises(ValueError, match="finite"):
+            map_screenshot_point_to_viewport(float("nan"), 10, geom)
+        # Exact edge clamps inside viewport rather than failing.
+        edge_x, edge_y = map_screenshot_point_to_viewport(1024, 768, geom)
+        assert edge_x < 1024.0
+        assert edge_y < 768.0
+
+
+class TestKeyMappingAndTransferFence:
+    """Key alias mapping and credential-session clipboard chord detection."""
+
+    def test_maps_single_keys_and_chords(self) -> None:
+        assert map_key_name("esc") == "Escape"
+        assert map_key_name("return") == "Enter"
+        assert map_key_name("shift+tab") == "Shift+Tab"
+        assert map_key_name("ctrl+a") == "Control+a"
+        assert map_key_name("+") == "+"
+
+    def test_detects_clipboard_transfer_chords(self) -> None:
+        for chord in (
+            "Control+c",
+            "Control+C",
+            "Meta+KeyV",
+            "ControlOrMeta+x",
+            "Shift+Insert",
+            "Shift+Delete",
+        ):
+            assert is_transfer_key_chord(chord), chord
+        for allowed in (
+            "Escape",
+            "Enter",
+            "Tab",
+            "Shift+Tab",
+            "ArrowDown",
+            "Control+a",
+        ):
+            assert not is_transfer_key_chord(allowed), allowed
+
+
+class _StubCoordBackend:
+    """Minimal BrowserBackend double for unit testing coordinate & key guards."""
+
+    def __init__(self, *, url: str = "https://example.test/") -> None:
+        self.url = url
+        self.last_screenshot: ScreenshotGeometry | None = None
+        self.last_screenshot_invalidation_reason: str | None = None
+        self.live_scroll: tuple[float, float] | None = (0.0, 0.0)
+        self.calls: list[tuple[str, object]] = []
+
+    @property
+    def current_url(self) -> str:
+        return self.url
+
+    @property
+    def backend_kind(self) -> str:
+        return "local"
+
+    @property
+    def screen_width(self) -> int:
+        return 1024
+
+    @property
+    def screen_height(self) -> int:
+        return 768
+
+    def invalidate_screenshot(self, reason: str = "page changed") -> None:
+        self.last_screenshot = None
+        self.last_screenshot_invalidation_reason = reason
+
+    async def current_scroll(self) -> tuple[float, float] | None:
+        return self.live_scroll
+
+    async def raw_snapshot(self, next_ref: int) -> Snapshot:
+        return {
+            "url": self.url,
+            "title": "Stub",
+            "forms": 0,
+            "elements": 0,
+            "next_ref": next_ref,
+            "roots": [],
+        }
+
+    async def settle(self, timeout_ms: int = 5000) -> None:
+        return None
+
+    async def mouse_click(
+        self, x: float, y: float, *, button: str = "left", click_count: int = 1
+    ) -> None:
+        self.calls.append(("mouse_click", (x, y, button, click_count)))
+
+    async def mouse_move(self, x: float, y: float) -> None:
+        self.calls.append(("mouse_move", (x, y)))
+
+    async def mouse_wheel(self, delta_x: float, delta_y: float) -> None:
+        self.calls.append(("mouse_wheel", (delta_x, delta_y)))
+
+    async def keyboard_press(self, keys: str) -> None:
+        self.calls.append(("keyboard_press", keys))
+
+    async def hover(self, ref: str) -> None:
+        self.calls.append(("hover", ref))
+
+
+class TestCoordinateAndKeyToolGuards:
+    """Unit tests for screenshot staleness, pointer-away, scroll, and key guards."""
+
+    async def test_click_at_requires_valid_screenshot(
+        self, monkeypatch: pytest.MonkeyPatch, exec_context: ToolExecutionContext
+    ) -> None:
+        stub = _StubCoordBackend()
+
+        async def _get_backend(_ctx: ToolExecutionContext) -> _StubCoordBackend:
+            return stub
+
+        monkeypatch.setattr(browser_dom, "get_browser_backend", _get_backend)
+
+        result = await browser_dom.browser_click_at_tool(exec_context, 100, 100)
+        data = result.get_data()
+        assert isinstance(data, dict)
+        assert data["error"] == "no_valid_screenshot"
+        assert not stub.calls
+
+    async def test_hover_at_origin_works_without_screenshot(
+        self, monkeypatch: pytest.MonkeyPatch, exec_context: ToolExecutionContext
+    ) -> None:
+        stub = _StubCoordBackend()
+
+        async def _get_backend(_ctx: ToolExecutionContext) -> _StubCoordBackend:
+            return stub
+
+        monkeypatch.setattr(browser_dom, "get_browser_backend", _get_backend)
+
+        result = await browser_dom.browser_hover_at_tool(exec_context, 0, 0)
+        data = result.get_data()
+        assert isinstance(data, dict)
+        assert "error" not in data
+        assert stub.calls == [("mouse_move", (0.0, 0.0))]
+
+    async def test_click_at_rejects_url_or_scroll_drift(
+        self, monkeypatch: pytest.MonkeyPatch, exec_context: ToolExecutionContext
+    ) -> None:
+        stub = _StubCoordBackend(url="https://example.test/page-2")
+        stub.last_screenshot = ScreenshotGeometry(
+            url="https://example.test/page-1",
+            image_width=1024,
+            image_height=768,
+            viewport_width=1024.0,
+            viewport_height=768.0,
+            device_pixel_ratio=1.0,
+            scroll_x=0.0,
+            scroll_y=0.0,
+        )
+
+        async def _get_backend(_ctx: ToolExecutionContext) -> _StubCoordBackend:
+            return stub
+
+        monkeypatch.setattr(browser_dom, "get_browser_backend", _get_backend)
+
+        url_result = await browser_dom.browser_click_at_tool(exec_context, 100, 100)
+        url_data = url_result.get_data()
+        assert isinstance(url_data, dict)
+        assert url_data["error"] == "stale_screenshot"
+        assert url_data["reason"] == "url_changed"
+
+        stub.last_screenshot = ScreenshotGeometry(
+            url="https://example.test/page-2",
+            image_width=1024,
+            image_height=768,
+            viewport_width=1024.0,
+            viewport_height=768.0,
+            device_pixel_ratio=1.0,
+            scroll_x=0.0,
+            scroll_y=0.0,
+        )
+        stub.live_scroll = (0.0, 250.0)
+        scroll_result = await browser_dom.browser_click_at_tool(exec_context, 100, 100)
+        scroll_data = scroll_result.get_data()
+        assert isinstance(scroll_data, dict)
+        assert scroll_data["error"] == "stale_screenshot"
+        assert scroll_data["reason"] == "scroll_changed"
+        assert not stub.calls
+
+    async def test_scroll_validates_inputs_and_invalidates_screenshot(
+        self, monkeypatch: pytest.MonkeyPatch, exec_context: ToolExecutionContext
+    ) -> None:
+        stub = _StubCoordBackend()
+        stub.last_screenshot = ScreenshotGeometry(
+            url="https://example.test/",
+            image_width=2048,
+            image_height=1536,
+            viewport_width=1024.0,
+            viewport_height=768.0,
+            device_pixel_ratio=2.0,
+            scroll_x=0.0,
+            scroll_y=0.0,
+        )
+
+        async def _get_backend(_ctx: ToolExecutionContext) -> _StubCoordBackend:
+            return stub
+
+        monkeypatch.setattr(browser_dom, "get_browser_backend", _get_backend)
+
+        with pytest.raises(ValueError, match="Invalid scroll direction"):
+            await browser_dom.browser_scroll_tool(exec_context, "diagonal")
+        with pytest.raises(ValueError, match="between 1 and"):
+            await browser_dom.browser_scroll_tool(exec_context, "down", amount=0)
+        with pytest.raises(ValueError, match="both x and y"):
+            await browser_dom.browser_scroll_tool(exec_context, "down", x=100)
+
+        await browser_dom.browser_scroll_tool(
+            exec_context, "down", amount=400, x=1024, y=768
+        )
+        assert stub.calls == [
+            ("mouse_move", (512.0, 384.0)),
+            ("mouse_wheel", (0.0, 200.0)),
+        ]
+        assert stub.last_screenshot is None
+        assert stub.last_screenshot_invalidation_reason == "page scrolled"
+
+        stub.calls.clear()
+        await browser_dom.browser_scroll_tool(exec_context, "down", amount=300)
+        assert stub.calls == [
+            ("mouse_move", (0.0, 0.0)),
+            ("mouse_wheel", (0.0, 300.0)),
+        ]
+
+    async def test_actions_invalidate_cached_screenshot(
+        self, monkeypatch: pytest.MonkeyPatch, exec_context: ToolExecutionContext
+    ) -> None:
+        stub = _StubCoordBackend()
+
+        def _seed() -> None:
+            stub.last_screenshot = ScreenshotGeometry(
+                url="https://example.test/",
+                image_width=1024,
+                image_height=768,
+                viewport_width=1024.0,
+                viewport_height=768.0,
+                device_pixel_ratio=1.0,
+                scroll_x=0.0,
+                scroll_y=0.0,
+            )
+
+        async def _get_backend(_ctx: ToolExecutionContext) -> _StubCoordBackend:
+            return stub
+
+        monkeypatch.setattr(browser_dom, "get_browser_backend", _get_backend)
+
+        _seed()
+        await browser_dom.browser_click_at_tool(exec_context, 100, 100)
+        assert stub.last_screenshot is None
+
+        _seed()
+        await browser_dom.browser_hover_at_tool(exec_context, 100, 100)
+        assert stub.last_screenshot is None
+
+        _seed()
+        await browser_dom.browser_hover_tool(exec_context, "e1")
+        assert stub.last_screenshot is None
+
+        _seed()
+        await browser_dom.browser_press_key_tool(exec_context, "Escape")
+        assert stub.last_screenshot is None
+
+    async def test_press_key_blocks_transfer_chords_in_protected_sessions(
+        self, monkeypatch: pytest.MonkeyPatch, exec_context: ToolExecutionContext
+    ) -> None:
+        stub = _StubCoordBackend()
+
+        async def _get_backend(_ctx: ToolExecutionContext) -> _StubCoordBackend:
+            return stub
+
+        async def _is_protected(_ctx: ToolExecutionContext) -> bool:
+            return True
+
+        monkeypatch.setattr(browser_dom, "get_browser_backend", _get_backend)
+        monkeypatch.setattr(browser_dom, "is_protected_browser_session", _is_protected)
+
+        denied = await browser_dom.browser_press_key_tool(exec_context, "ctrl+c")
+        denied_data = denied.get_data()
+        assert isinstance(denied_data, dict)
+        assert denied_data["error"] == "transfer_chord_denied"
+        assert not stub.calls
+
+        allowed = await browser_dom.browser_press_key_tool(exec_context, "esc")
+        allowed_data = allowed.get_data()
+        assert isinstance(allowed_data, dict)
+        assert "error" not in allowed_data
+        assert stub.calls == [("keyboard_press", "Escape")]

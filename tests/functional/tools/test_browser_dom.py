@@ -22,21 +22,28 @@ from zoneinfo import ZoneInfo
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
+from rebrowser_playwright.async_api import async_playwright
 
 from family_assistant.tools.browser_dom import (
     SnapshotNode,
+    browser_click_at_tool,
     browser_click_tool,
     browser_exec_tool,
     browser_extract_tool,
     browser_fill_tool,
+    browser_hover_at_tool,
+    browser_hover_tool,
     browser_open_tool,
+    browser_press_key_tool,
     browser_screenshot_tool,
+    browser_scroll_tool,
     browser_select_tool,
     browser_snapshot_tool,
     browser_wait_tool,
 )
 from family_assistant.tools.browser_session import (
     close_browser_session,
+    get_browser_session,
 )
 from family_assistant.tools.computer_use import computer_use_navigate
 from family_assistant.tools.types import (
@@ -44,6 +51,7 @@ from family_assistant.tools.types import (
     ToolExecutionContext,
     ToolResult,
 )
+from family_assistant.utils.stealth_browser import launch_stealth_browser
 from tests.mocks.unconnected_database import unconnected_database
 
 if TYPE_CHECKING:
@@ -130,6 +138,152 @@ async def _two_inputs(_request: web.Request) -> web.Response:
     return web.Response(text=TWO_INPUTS_HTML, content_type="text/html")
 
 
+INTERACTIVE_HTML = """<!doctype html>
+<html>
+  <head>
+    <title>Interactive</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 2400px; }
+      #arrow-icon {
+        position: absolute;
+        left: 300px;
+        top: 120px;
+        width: 40px;
+        height: 40px;
+        background: #2563eb;
+      }
+      #lower-icon {
+        position: absolute;
+        left: 200px;
+        top: 1200px;
+        width: 60px;
+        height: 40px;
+        background: #16a34a;
+      }
+      #scroll-box {
+        position: absolute;
+        left: 600px;
+        top: 100px;
+        width: 240px;
+        height: 160px;
+        overflow-y: scroll;
+        border: 1px solid #333;
+      }
+      #scroll-inner {
+        height: 900px;
+      }
+      #status {
+        position: fixed;
+        top: 8px;
+        left: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <p id="status">idle</p>
+    <div id="arrow-icon"></div>
+    <div id="lower-icon"></div>
+    <div id="scroll-box">
+      <div id="scroll-inner">
+        <p id="box-scroll">box:0</p>
+      </div>
+    </div>
+    <script>
+      const status = document.getElementById('status');
+      const arrow = document.getElementById('arrow-icon');
+      arrow.addEventListener('mouseenter', () => { status.textContent = 'hovered-arrow'; });
+      arrow.addEventListener('click', () => { status.textContent = 'clicked-arrow'; });
+      const lower = document.getElementById('lower-icon');
+      lower.addEventListener('click', () => { status.textContent = 'clicked-lower'; });
+      const box = document.getElementById('scroll-box');
+      box.addEventListener('scroll', () => {
+        document.getElementById('box-scroll').textContent = 'box:' + Math.round(box.scrollTop);
+      });
+    </script>
+  </body>
+</html>
+"""
+
+OVERLAYS_HTML = """<!doctype html>
+<html>
+  <head>
+    <title>Overlays</title>
+    <style>
+      body { margin: 40px; }
+      #card-wrap { position: relative; display: inline-block; }
+      #hover-preview {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 220px;
+        right: 0;
+        bottom: 0;
+        background: rgba(0,0,0,0.4);
+        z-index: 10;
+      }
+      #modal {
+        display: block;
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        padding: 12px;
+        background: white;
+        border: 1px solid #333;
+        z-index: 5;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Overlay test</h1>
+    <p id="state">initial</p>
+    <div id="card-wrap">
+      <button id="card-btn" type="button">Hover card</button>
+      <div id="hover-preview"><p>Preview overlay active</p></div>
+    </div>
+    <button id="download-btn" type="button" style="position: fixed; left: 260px; top: 80px;">Download 3MF</button>
+    <div id="modal"><p>Modal open</p></div>
+    <script>
+      const state = document.getElementById('state');
+      const cardBtn = document.getElementById('card-btn');
+      const preview = document.getElementById('hover-preview');
+      const modal = document.getElementById('modal');
+      cardBtn.addEventListener('mouseenter', () => {
+        preview.style.display = 'block';
+        state.textContent = 'overlay-shown';
+      });
+      preview.addEventListener('mouseleave', () => {
+        preview.style.display = 'none';
+        state.textContent = 'overlay-hidden';
+      });
+      document.addEventListener('mousemove', (ev) => {
+        if (ev.clientX <= 5 && ev.clientY <= 5 && preview.style.display === 'block') {
+          preview.style.display = 'none';
+          state.textContent = 'overlay-dismissed';
+        }
+      });
+      document.getElementById('download-btn').addEventListener('click', () => {
+        state.textContent = 'downloaded';
+      });
+      document.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Escape') {
+          modal.style.display = 'none';
+          state.textContent = 'modal-closed';
+        }
+      });
+    </script>
+  </body>
+</html>
+"""
+
+
+async def _interactive(_request: web.Request) -> web.Response:
+    return web.Response(text=INTERACTIVE_HTML, content_type="text/html")
+
+
+async def _overlays(_request: web.Request) -> web.Response:
+    return web.Response(text=OVERLAYS_HTML, content_type="text/html")
+
+
 async def _index(_request: web.Request) -> web.Response:
     return web.Response(text=INDEX_HTML, content_type="text/html")
 
@@ -173,6 +327,8 @@ async def fixture_server() -> AsyncGenerator[BoundFixtureServer]:
     app.router.add_get("/submit", _submit)
     app.router.add_get("/labelledby", _labelledby)
     app.router.add_get("/two-inputs", _two_inputs)
+    app.router.add_get("/interactive", _interactive)
+    app.router.add_get("/overlays", _overlays)
 
     server = TestServer(app)
     await server.start_server()
@@ -690,3 +846,145 @@ def _ref_for_name(snap: ToolResult, name: str) -> str:
             f"No textbox named {name!r} in snapshot:\n{snap.get_text()}"
         )
     return found
+
+
+def _ref_for_role_and_name(snap: ToolResult, role: str, name: str) -> str:
+    data = snap.get_data()
+    assert isinstance(data, dict)
+
+    def walk(nodes: list[SnapshotNode]) -> str | None:
+        for node in nodes:
+            if node["role"] == role and node["name"] == name:
+                return node["ref"]
+            found = walk(node.get("children", []))
+            if found is not None:
+                return found
+        return None
+
+    found = walk(data.get("roots", []))
+    if found is None:
+        raise AssertionError(
+            f"No {role} named {name!r} in snapshot:\n{snap.get_text()}"
+        )
+    return found
+
+
+async def test_screenshot_coordinate_hover_and_click_on_non_a11y_target(
+    fixture_server: BoundFixtureServer, exec_context: ToolExecutionContext
+) -> None:
+    """An unlabelled div missing from the a11y snapshot can be hovered and clicked via screenshot coordinates."""
+    snap = await browser_open_tool(exec_context, fixture_server.url + "/interactive")
+    assert "idle" in snap.get_text()
+
+    shot = await browser_screenshot_tool(exec_context)
+    shot_data = shot.get_data()
+    assert isinstance(shot_data, dict)
+    assert shot_data["width"] == 1024
+    assert shot_data["height"] == 768
+    assert shot_data["viewport_width"] == 1024.0
+    assert shot_data["viewport_height"] == 768.0
+    assert shot_data["device_pixel_ratio"] == 1.0
+
+    hovered = await browser_hover_at_tool(exec_context, 320, 140)
+    assert "hovered-arrow" in hovered.get_text()
+
+    # Hover invalidated the prior screenshot; take a fresh one before clicking.
+    stale = await browser_click_at_tool(exec_context, 320, 140)
+    stale_data = stale.get_data()
+    assert isinstance(stale_data, dict)
+    assert stale_data["error"] == "no_valid_screenshot"
+
+    await browser_screenshot_tool(exec_context)
+    clicked = await browser_click_at_tool(exec_context, 320, 140)
+    assert "clicked-arrow" in clicked.get_text()
+
+
+async def test_coordinate_click_maps_dpr_2_screenshot_to_css_viewport(
+    fixture_server: BoundFixtureServer, exec_context: ToolExecutionContext
+) -> None:
+    """At devicePixelRatio=2, screenshot pixel coordinates divide cleanly to CSS viewport coords."""
+    session = await get_browser_session(exec_context)
+    session.playwright = await async_playwright().start()
+    session.browser = await launch_stealth_browser(session.playwright, headless=True)
+    session.context = await session.browser.new_context(
+        viewport={"width": 1024, "height": 768},
+        device_scale_factor=2,
+    )
+    session.page = await session.context.new_page()
+
+    await browser_open_tool(exec_context, fixture_server.url + "/interactive")
+    shot = await browser_screenshot_tool(exec_context)
+    shot_data = shot.get_data()
+    assert isinstance(shot_data, dict)
+    assert shot_data["width"] == 2048
+    assert shot_data["height"] == 1536
+    assert shot_data["viewport_width"] == 1024.0
+    assert shot_data["viewport_height"] == 768.0
+    assert shot_data["device_pixel_ratio"] == 2.0
+
+    # Target div is at CSS (300..340, 120..160), so its center in the 2x PNG is (640, 280).
+    clicked = await browser_click_at_tool(exec_context, 640, 280)
+    assert "clicked-arrow" in clicked.get_text()
+
+
+async def test_scroll_page_and_container_and_click_after_scroll(
+    fixture_server: BoundFixtureServer, exec_context: ToolExecutionContext
+) -> None:
+    """Scrolling works without a screenshot, invalidates stale screenshots, and viewport clicks work when scrolled."""
+    await browser_open_tool(exec_context, fixture_server.url + "/interactive")
+
+    # Scroll the inner scrollable container using coordinates from a screenshot.
+    await browser_screenshot_tool(exec_context)
+    box_scrolled = await browser_scroll_tool(
+        exec_context, "down", amount=250, x=700, y=180
+    )
+    assert "box:0" not in box_scrolled.get_text()
+
+    # After scrolling, coordinate clicks must refuse until a fresh screenshot is taken.
+    stale_click = await browser_click_at_tool(exec_context, 320, 140)
+    stale_data = stale_click.get_data()
+    assert isinstance(stale_data, dict)
+    assert stale_data["error"] == "no_valid_screenshot"
+
+    # Scroll the main document down directly (without manually moving the pointer
+    # out of #scroll-box first) to bring #lower-icon (top: 1200px) into the viewport.
+    await browser_scroll_tool(exec_context, "down", amount=1000)
+    shot = await browser_screenshot_tool(exec_context)
+    shot_data = shot.get_data()
+    assert isinstance(shot_data, dict)
+    scroll_y = float(shot_data["scroll_y"])
+    assert scroll_y >= 500.0
+
+    # #lower-icon is at document (200..260, 1200..1240), so viewport y is (1220 - scroll_y).
+    viewport_y = 1220.0 - scroll_y
+    assert 0.0 < viewport_y < 768.0
+    clicked = await browser_click_at_tool(exec_context, 230.0, viewport_y)
+    assert "clicked-lower" in clicked.get_text()
+
+
+async def test_hover_by_ref_pointer_away_and_escape_dismiss_overlays(
+    fixture_server: BoundFixtureServer, exec_context: ToolExecutionContext
+) -> None:
+    """Hover by ref opens an overlay; moving pointer away and pressing Escape dismiss overlays without browser_exec."""
+    snap = await browser_open_tool(exec_context, fixture_server.url + "/overlays")
+    assert "Modal open" in snap.get_text()
+
+    # Dismiss the modal with Escape.
+    after_esc = await browser_press_key_tool(exec_context, "Escape")
+    assert "modal-closed" in after_esc.get_text()
+    assert "Modal open" not in after_esc.get_text()
+
+    # Trigger a full-screen hover preview by hovering the card button ref.
+    card_ref = _ref_for_role_and_name(after_esc, "button", "Hover card")
+    download_ref = _ref_for_role_and_name(after_esc, "button", "Download 3MF")
+    after_hover = await browser_hover_tool(exec_context, card_ref)
+    assert "overlay-shown" in after_hover.get_text()
+    assert "Preview overlay active" in after_hover.get_text()
+
+    # Move pointer away to (0, 0) (no prior screenshot required) to clear the overlay, then click.
+    after_away = await browser_hover_at_tool(exec_context, 0, 0)
+    assert "overlay-dismissed" in after_away.get_text()
+    assert "Preview overlay active" not in after_away.get_text()
+
+    after_click = await browser_click_tool(exec_context, download_ref)
+    assert "downloaded" in after_click.get_text()

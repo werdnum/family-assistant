@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import json
+import struct
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 from zoneinfo import ZoneInfo
@@ -624,5 +625,119 @@ async def test_remote_backend_command_timeout_names_the_command() -> None:
         with pytest.raises(BrowserBackendError) as exc:
             await backend.click("e1")
         assert "did not respond to command click within 30s" in str(exc.value)
+    finally:
+        await backend.close()
+
+
+@pytest.mark.asyncio
+async def test_remote_backend_hover_and_capture_screenshot_geometry() -> None:
+    png_2x = (
+        b"\x89PNG\r\n\x1a\n"
+        + struct.pack(">I", 13)
+        + b"IHDR"
+        + struct.pack(">II", 824, 1830)
+        + b"\x08\x06\x00\x00\x00"
+    )
+    png_b64 = base64.b64encode(png_2x).decode("ascii")
+    commands: list[tuple[str, dict[str, object]]] = []
+    screenshot_call = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal screenshot_call
+        if request.url.path == "/v1/sessions":
+            return httpx.Response(
+                200, json={"session_id": "bs_geom", "state": "agent_active"}
+            )
+        if request.url.path.endswith("/agent-command"):
+            body = json.loads(request.content)
+            cmd_type = str(body["type"])
+            cmd_args = dict(body.get("args") or {})
+            commands.append((cmd_type, cmd_args))
+            if cmd_type == "hover":
+                if cmd_args.get("ref") == "e99":
+                    return httpx.Response(
+                        200,
+                        json={
+                            "result": {
+                                "error": True,
+                                "code": "stale_ref",
+                                "ref": "e99",
+                                "cause": "missing",
+                            }
+                        },
+                    )
+                return httpx.Response(
+                    200,
+                    json={
+                        "result": {
+                            "accepted": True,
+                            "url": "https://example.test/item",
+                        }
+                    },
+                )
+            if cmd_type == "screenshot":
+                screenshot_call += 1
+                if screenshot_call == 1:
+                    return httpx.Response(
+                        200,
+                        json={
+                            "result": {
+                                "mime_type": "image/png",
+                                "image_base64": png_b64,
+                                "url": "https://example.test/item",
+                                "viewport_width": 412,
+                                "viewport_height": 915,
+                                "device_pixel_ratio": 2,
+                                "scroll_x": 0,
+                                "scroll_y": 320,
+                            }
+                        },
+                    )
+                # Legacy server response without geometry metadata falls back to PNG IHDR.
+                return httpx.Response(
+                    200,
+                    json={
+                        "result": {
+                            "mime_type": "image/png",
+                            "image_base64": png_b64,
+                        }
+                    },
+                )
+            if cmd_type == "navigate":
+                return httpx.Response(
+                    200, json={"result": {"url": str(cmd_args["url"])}}
+                )
+        return httpx.Response(200, json={})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=5.0)
+    backend = RemoteBrowserBackend(_config(), "conv_geom", client=client)
+    try:
+        await backend.hover("e12")
+        assert commands[-1] == ("hover", {"ref": "e12"})
+
+        with pytest.raises(StaleRefError) as stale_exc:
+            await backend.hover("e99")
+        assert stale_exc.value.ref == "e99"
+
+        raw_png, geom = await backend.capture_screenshot()
+        assert raw_png == png_2x
+        assert geom.image_width == 824
+        assert geom.image_height == 1830
+        assert geom.viewport_width == 412.0
+        assert geom.viewport_height == 915.0
+        assert geom.device_pixel_ratio == 2.0
+        assert geom.scroll_y == 320.0
+        assert geom.scroll_known is True
+        assert backend.last_screenshot == geom
+
+        await backend.goto("https://example.test/next")
+        assert backend.last_screenshot is None
+        assert backend.last_screenshot_invalidation_reason == "page navigated"
+
+        _, fallback_geom = await backend.capture_screenshot()
+        assert fallback_geom.image_width == 824
+        assert fallback_geom.viewport_width == 824.0
+        assert fallback_geom.device_pixel_ratio == 1.0
+        assert fallback_geom.scroll_known is False
     finally:
         await backend.close()

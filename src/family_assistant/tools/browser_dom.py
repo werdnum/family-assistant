@@ -1,7 +1,10 @@
 """Semantic DOM browser automation tools.
 
-These tools drive a Playwright browser session via the accessibility tree
-rather than pixel coordinates, adopting AXI-style conventions:
+These tools drive a Playwright browser session primarily via the accessibility
+tree, adopting AXI-style conventions, with targeted screenshot-space coordinate
+actions (``browser_click_at``, ``browser_hover_at``, ``browser_scroll``) and
+overlay-dismissal primitives (``browser_hover``, ``browser_press_key``) for
+controls missing from the accessibility tree or blocked by hover overlays:
 
 - Every interesting element is assigned a short ref (``e1``, ``e2``, …) by
   tagging it with ``data-fa-ref`` in the page. A node keeps its ref across
@@ -40,6 +43,7 @@ from family_assistant.tools.browser_backend import (
     HandoffUnavailableError,
     StaleRefError,
     get_browser_backend,
+    is_protected_browser_session,
 )
 from family_assistant.tools.browser_page_tools import SNAPSHOT_RETURNING_TOOLS
 from family_assistant.tools.browser_session import (
@@ -47,6 +51,9 @@ from family_assistant.tools.browser_session import (
     browser_operation,
     browser_scope_key,
     get_browser_session,
+    is_transfer_key_chord,
+    map_key_name,
+    map_screenshot_point_to_viewport,
     mark_browser_scope_handed_back,
 )
 from family_assistant.tools.taint_helpers import record_sensitive_read
@@ -128,13 +135,18 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "BROWSER_DOM_TOOLS_DEFINITION",
     "browser_claim_handback_tool",
+    "browser_click_at_tool",
     "browser_click_tool",
     "browser_exec_tool",
     "browser_extract_tool",
     "browser_fill_tool",
+    "browser_hover_at_tool",
+    "browser_hover_tool",
     "browser_open_tool",
+    "browser_press_key_tool",
     "browser_request_handoff_tool",
     "browser_screenshot_tool",
+    "browser_scroll_tool",
     "browser_select_tool",
     "browser_snapshot_tool",
     "browser_wait_tool",
@@ -499,6 +511,79 @@ async def _stale_ref_result(
     return ToolResult(text=f"{exc}\n\n{snapshot.get_text()}", data=data)
 
 
+_VALID_SCROLL_DIRECTIONS = frozenset({"up", "down", "left", "right"})
+_MAX_SCROLL_AMOUNT = 5000
+_SCROLL_DRIFT_TOLERANCE_PX = 5.0
+
+
+async def _resolve_screenshot_coordinates(
+    backend: BrowserBackend, x: float, y: float
+) -> tuple[float, float] | ToolResult:
+    """Validate and map screenshot pixel coordinates ``(x, y)`` to viewport CSS px."""
+    geometry = backend.last_screenshot
+    if geometry is None:
+        reason = backend.last_screenshot_invalidation_reason
+        detail = f" ({reason})" if reason else ""
+        return ToolResult(
+            text=(
+                f"No current browser_screenshot is available for coordinate mapping{detail}. "
+                "Call browser_screenshot first, then retry with pixel coordinates from that image."
+            ),
+            data={
+                "error": "no_valid_screenshot",
+                "reason": reason or "not_taken",
+            },
+        )
+    current_url = backend.current_url
+    if current_url and geometry.url and current_url != geometry.url:
+        backend.invalidate_screenshot("page URL changed")
+        return ToolResult(
+            text=(
+                "The page URL has changed since the last browser_screenshot "
+                f"({geometry.url} -> {current_url}). Call browser_screenshot again before "
+                "using coordinate actions."
+            ),
+            data={
+                "error": "stale_screenshot",
+                "reason": "url_changed",
+                "screenshot_url": geometry.url,
+                "current_url": current_url,
+            },
+        )
+    if geometry.scroll_known:
+        live_scroll = await backend.current_scroll()
+        if live_scroll is not None and (
+            abs(live_scroll[0] - geometry.scroll_x) > _SCROLL_DRIFT_TOLERANCE_PX
+            or abs(live_scroll[1] - geometry.scroll_y) > _SCROLL_DRIFT_TOLERANCE_PX
+        ):
+            backend.invalidate_screenshot("page scrolled")
+            return ToolResult(
+                text=(
+                    "The page scrolled since the last browser_screenshot "
+                    f"(from ({geometry.scroll_x:g}, {geometry.scroll_y:g}) to "
+                    f"({live_scroll[0]:g}, {live_scroll[1]:g})). Call browser_screenshot "
+                    "again before using coordinate actions."
+                ),
+                data={
+                    "error": "stale_screenshot",
+                    "reason": "scroll_changed",
+                },
+            )
+    try:
+        return map_screenshot_point_to_viewport(x, y, geometry)
+    except ValueError as exc:
+        return ToolResult(
+            text=str(exc),
+            data={
+                "error": "coordinates_out_of_bounds",
+                "x": x,
+                "y": y,
+                "width": geometry.image_width,
+                "height": geometry.image_height,
+            },
+        )
+
+
 @browser_operation()
 async def browser_click_tool(
     exec_context: ToolExecutionContext, ref: str, query: str | None = None
@@ -511,6 +596,173 @@ async def browser_click_tool(
         await backend.click(ref)
     except StaleRefError as exc:
         return await _stale_ref_result(exec_context, backend, exc, query)
+    backend.invalidate_screenshot("page clicked")
+    await backend.settle()
+    return await _snapshot_result(exec_context, backend, query=query)
+
+
+@browser_operation()
+async def browser_hover_tool(
+    exec_context: ToolExecutionContext, ref: str, query: str | None = None
+) -> ToolResult:
+    """Hover an element identified by a semantic ref from a snapshot."""
+    backend = await get_browser_backend(exec_context)
+    _validate_ref(ref)
+    logger.info("browser_hover: %s", ref)
+    try:
+        await backend.hover(ref)
+    except StaleRefError as exc:
+        return await _stale_ref_result(exec_context, backend, exc, query)
+    backend.invalidate_screenshot("pointer hovered")
+    return await _snapshot_result(exec_context, backend, query=query)
+
+
+@browser_operation()
+async def browser_click_at_tool(
+    exec_context: ToolExecutionContext,
+    x: float,
+    y: float,
+    query: str | None = None,
+) -> ToolResult:
+    """Click at pixel coordinates ``(x, y)`` from the last ``browser_screenshot``."""
+    backend = await get_browser_backend(exec_context)
+    mapped = await _resolve_screenshot_coordinates(backend, x, y)
+    if isinstance(mapped, ToolResult):
+        return mapped
+    css_x, css_y = mapped
+    logger.info(
+        "browser_click_at: screenshot=(%g, %g) -> viewport=(%g, %g)",
+        x,
+        y,
+        css_x,
+        css_y,
+    )
+    await backend.mouse_click(css_x, css_y)
+    backend.invalidate_screenshot("page clicked")
+    await backend.settle()
+    return await _snapshot_result(exec_context, backend, query=query)
+
+
+@browser_operation()
+async def browser_hover_at_tool(
+    exec_context: ToolExecutionContext,
+    x: float,
+    y: float,
+    query: str | None = None,
+) -> ToolResult:
+    """Move the pointer to pixel coordinates ``(x, y)`` from the last ``browser_screenshot``.
+
+    Passing ``(0, 0)`` is permitted even without a prior screenshot so callers
+    can park the pointer in the top-left corner to dismiss hover overlays.
+    """
+    backend = await get_browser_backend(exec_context)
+    if x == 0 and y == 0:
+        css_x, css_y = 0.0, 0.0
+    else:
+        mapped = await _resolve_screenshot_coordinates(backend, x, y)
+        if isinstance(mapped, ToolResult):
+            return mapped
+        css_x, css_y = mapped
+    logger.info(
+        "browser_hover_at: screenshot=(%g, %g) -> viewport=(%g, %g)",
+        x,
+        y,
+        css_x,
+        css_y,
+    )
+    await backend.mouse_move(css_x, css_y)
+    backend.invalidate_screenshot("pointer moved")
+    return await _snapshot_result(exec_context, backend, query=query)
+
+
+@browser_operation()
+async def browser_scroll_tool(
+    exec_context: ToolExecutionContext,
+    direction: str,
+    amount: int = 400,
+    x: float | None = None,
+    y: float | None = None,
+    query: str | None = None,
+) -> ToolResult:
+    """Scroll the page or a scrollable container at screenshot coordinates ``(x, y)``."""
+    if direction not in _VALID_SCROLL_DIRECTIONS:
+        raise ValueError(
+            f"Invalid scroll direction {direction!r}; expected one of "
+            f"{sorted(_VALID_SCROLL_DIRECTIONS)}."
+        )
+    if amount <= 0 or amount > _MAX_SCROLL_AMOUNT:
+        raise ValueError(
+            f"Scroll amount must be between 1 and {_MAX_SCROLL_AMOUNT}, got {amount}."
+        )
+    if (x is None) != (y is None):
+        raise ValueError("Pass both x and y, or omit both to scroll the page.")
+
+    backend = await get_browser_backend(exec_context)
+    dpr = 1.0
+    if x is not None and y is not None:
+        mapped = await _resolve_screenshot_coordinates(backend, x, y)
+        if isinstance(mapped, ToolResult):
+            return mapped
+        css_x, css_y = mapped
+        geometry = backend.last_screenshot
+        if geometry is not None and geometry.device_pixel_ratio > 0:
+            dpr = geometry.device_pixel_ratio
+        await backend.mouse_move(css_x, css_y)
+    else:
+        # Park the pointer at the viewport origin before wheeling so a prior
+        # click or hover inside a nested scrollable container does not capture
+        # a page-level scroll.
+        await backend.mouse_move(0.0, 0.0)
+
+    css_amount = float(amount) / dpr
+    delta_x = 0.0
+    delta_y = 0.0
+    if direction == "down":
+        delta_y = css_amount
+    elif direction == "up":
+        delta_y = -css_amount
+    elif direction == "right":
+        delta_x = css_amount
+    elif direction == "left":
+        delta_x = -css_amount
+
+    logger.info(
+        "browser_scroll: direction=%s amount=%s (css=%g) at=(%s, %s)",
+        direction,
+        amount,
+        css_amount,
+        x,
+        y,
+    )
+    await backend.mouse_wheel(delta_x, delta_y)
+    backend.invalidate_screenshot("page scrolled")
+    return await _snapshot_result(exec_context, backend, query=query)
+
+
+@browser_operation()
+async def browser_press_key_tool(
+    exec_context: ToolExecutionContext,
+    key: str,
+    query: str | None = None,
+) -> ToolResult:
+    """Press a key or key chord (e.g. ``Escape``, ``Enter``, ``Tab``, ``Shift+Tab``)."""
+    mapped = map_key_name(key)
+    if not mapped:
+        raise ValueError("key must not be empty.")
+    if await is_protected_browser_session(exec_context) and is_transfer_key_chord(
+        mapped
+    ):
+        return ToolResult(
+            text=(
+                f"Key chord {mapped!r} is denied in credential-protected browser sessions "
+                "because clipboard transfer chords cannot be used with protected fields."
+            ),
+            data={"error": "transfer_chord_denied", "key": mapped},
+        )
+    backend = await get_browser_backend(exec_context)
+    logger.info("browser_press_key: %s", mapped)
+    await backend.keyboard_press(mapped)
+    backend.invalidate_screenshot("key pressed")
     await backend.settle()
     return await _snapshot_result(exec_context, backend, query=query)
 
@@ -531,6 +783,7 @@ async def browser_fill_tool(
         await backend.fill(ref, text, submit)
     except StaleRefError as exc:
         return await _stale_ref_result(exec_context, backend, exc, query)
+    backend.invalidate_screenshot("input filled")
     if submit:
         await backend.settle()
     return await _snapshot_result(exec_context, backend, query=query)
@@ -553,6 +806,7 @@ async def browser_select_tool(
         await backend.select(ref, value)
     except StaleRefError as exc:
         return await _stale_ref_result(exec_context, backend, exc, query)
+    backend.invalidate_screenshot("option selected")
     return await _snapshot_result(exec_context, backend, query=query)
 
 
@@ -603,12 +857,37 @@ async def browser_extract_tool(
 async def browser_screenshot_tool(
     exec_context: ToolExecutionContext,
 ) -> ToolResult:
-    """Capture a PNG screenshot of the current page."""
+    """Capture a PNG screenshot of the current viewport and record its geometry."""
     backend = await get_browser_backend(exec_context)
-    png = await backend.screenshot_png()
-    url = backend.current_url
+    png, geometry = await backend.capture_screenshot()
+    url = geometry.url or backend.current_url
+    scroll_note = (
+        f", scroll=({geometry.scroll_x:g}, {geometry.scroll_y:g})"
+        if geometry.scroll_known
+        else ""
+    )
+    text = (
+        f"Screenshot of {url} ({geometry.image_width}x{geometry.image_height} px; "
+        f"viewport {geometry.viewport_width:g}x{geometry.viewport_height:g} CSS px, "
+        f"dpr={geometry.device_pixel_ratio:g}{scroll_note}). "
+        f"Use pixel coordinates x in 0..{geometry.image_width - 1}, "
+        f"y in 0..{geometry.image_height - 1} with browser_click_at, "
+        f"browser_hover_at, or browser_scroll."
+    )
+    data: dict[str, object] = {
+        "url": url,
+        "bytes": len(png),
+        "width": geometry.image_width,
+        "height": geometry.image_height,
+        "viewport_width": geometry.viewport_width,
+        "viewport_height": geometry.viewport_height,
+        "device_pixel_ratio": geometry.device_pixel_ratio,
+        "scroll_x": geometry.scroll_x,
+        "scroll_y": geometry.scroll_y,
+    }
     return ToolResult(
-        data={"url": url, "bytes": len(png)},
+        text=text,
+        data=data,
         attachments=[
             ToolAttachment(
                 content=png,
@@ -647,6 +926,7 @@ async def browser_exec_tool(
             data={"error": str(exc), "url": backend.current_url},
         )
 
+    backend.invalidate_screenshot("script executed")
     await backend.settle(timeout_ms=2000)
 
     # Surface both the result and the (possibly-changed) URL so the LLM can
@@ -746,6 +1026,7 @@ async def browser_claim_handback_tool(
             text=f"Browser handback claim failed: {exc}",
             data={"error": "claim_failed", "detail": str(exc)},
         )
+    backend.invalidate_screenshot("session handed back")
     mark_browser_scope_handed_back(await browser_scope_key(exec_context))
     record_sensitive_read(
         exec_context,
@@ -843,6 +1124,166 @@ BROWSER_DOM_TOOLS_DEFINITION: list[ToolDefinition] = [
                     },
                 },
                 "required": ["ref"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_hover",
+            "description": (
+                "Hover an element by its semantic ref (e.g. 'e12') from a snapshot "
+                "to open a hover menu or move the pointer onto another element "
+                "(for example, to dismiss a hover preview covering a target). "
+                "Returns a snapshot after hovering — pass `query` to keep it small."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ref": {
+                        "type": "string",
+                        "description": "Ref id from a snapshot (e.g. 'e12').",
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Optional case-insensitive substring filter.",
+                    },
+                },
+                "required": ["ref"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_click_at",
+            "description": (
+                "Click at pixel coordinates (x, y) in the pixel space of the most "
+                "recent browser_screenshot (mapped to viewport CSS coordinates "
+                "accounting for device pixel ratio). Use this when a visible "
+                "control (such as an unlabelled icon or dropdown arrow) is missing "
+                "from the accessibility snapshot. Call browser_screenshot first; "
+                "navigating or scrolling invalidates the screenshot. Returns a "
+                "fresh accessibility snapshot after clicking."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "x": {
+                        "type": "number",
+                        "description": "Horizontal pixel coordinate in the last browser_screenshot (0..width-1).",
+                    },
+                    "y": {
+                        "type": "number",
+                        "description": "Vertical pixel coordinate in the last browser_screenshot (0..height-1).",
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Optional case-insensitive substring filter for the returned snapshot.",
+                    },
+                },
+                "required": ["x", "y"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_hover_at",
+            "description": (
+                "Move the pointer to pixel coordinates (x, y) in the pixel space "
+                "of the most recent browser_screenshot. Useful for hovering a "
+                "non-accessible control or moving the pointer to empty space to "
+                "dismiss a blocking hover overlay. Passing (0, 0) moves to the "
+                "top-left corner and works even without taking a screenshot first. "
+                "Returns a fresh accessibility snapshot after moving."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "x": {
+                        "type": "number",
+                        "description": "Horizontal pixel coordinate in the last browser_screenshot (0..width-1), or 0 with y=0 to move to the top-left corner.",
+                    },
+                    "y": {
+                        "type": "number",
+                        "description": "Vertical pixel coordinate in the last browser_screenshot (0..height-1), or 0 with x=0 to move to the top-left corner.",
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Optional case-insensitive substring filter for the returned snapshot.",
+                    },
+                },
+                "required": ["x", "y"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_scroll",
+            "description": (
+                "Scroll the current page — or a scrollable container at screenshot "
+                "pixel coordinates (x, y) — in the given direction. Omit x and y "
+                "to scroll the page without needing a prior screenshot. Scrolling "
+                "invalidates any prior screenshot for coordinate clicks; take a "
+                "fresh browser_screenshot if you need to click by coordinates "
+                "after scrolling. Returns a fresh accessibility snapshot."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "direction": {
+                        "type": "string",
+                        "enum": ["up", "down", "left", "right"],
+                        "description": "Direction to scroll.",
+                    },
+                    "amount": {
+                        "type": "integer",
+                        "description": "Distance to scroll in pixels (1..5000, default 400).",
+                        "default": 400,
+                    },
+                    "x": {
+                        "type": "number",
+                        "description": "Optional horizontal pixel coordinate from the last browser_screenshot to scroll a specific container.",
+                    },
+                    "y": {
+                        "type": "number",
+                        "description": "Optional vertical pixel coordinate from the last browser_screenshot to scroll a specific container.",
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Optional case-insensitive substring filter for the returned snapshot.",
+                    },
+                },
+                "required": ["direction"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_press_key",
+            "description": (
+                "Press a keyboard key or key chord (for example 'Escape' to "
+                "dismiss a modal or popup overlay, 'Enter', 'Tab', 'Shift+Tab', "
+                "'ArrowDown', 'Space'). Clipboard transfer chords (Ctrl/Cmd+C/X/V) "
+                "are denied in credential-protected sessions. Returns a fresh "
+                "accessibility snapshot."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "key": {
+                        "type": "string",
+                        "description": "Key or '+'-joined key chord to press (e.g. 'Escape', 'Enter', 'Shift+Tab').",
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Optional case-insensitive substring filter for the returned snapshot.",
+                    },
+                },
+                "required": ["key"],
             },
         },
     },
@@ -961,9 +1402,12 @@ BROWSER_DOM_TOOLS_DEFINITION: list[ToolDefinition] = [
         "function": {
             "name": "browser_screenshot",
             "description": (
-                "Take a PNG screenshot of the current page. Use sparingly — the "
-                "DOM tools are cheaper. Good for visually verifying state or "
-                "sharing with the user."
+                "Take a PNG screenshot of the current viewport and return its "
+                "pixel dimensions and viewport geometry. Use sparingly — DOM "
+                "snapshots are cheaper. Good for visually verifying state, "
+                "sharing with the user, or locating pixel coordinates for "
+                "browser_click_at / browser_hover_at / browser_scroll when a "
+                "control is missing from the accessibility tree."
             ),
             "parameters": {
                 "type": "object",

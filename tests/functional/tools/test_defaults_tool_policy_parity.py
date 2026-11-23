@@ -73,6 +73,7 @@ CONFINED_NON_SENSITIVE_READ_ALLOWLIST = {
     "browser_snapshot": "current browser page",
     "browser_wait": "current browser page",
     "browser_extract": "current browser page",
+    "browser_scroll": "current browser page",
     "scroll": "current browser page",
     "wait": "current browser page",
     "browser_screenshot": "current browser page",
@@ -706,4 +707,46 @@ def test_engineer_admits_only_tainted_context_providers() -> None:
         "context providers admitted by the engineer must implement "
         "TaintedContextProvider (or be listed in excluded_context_providers): "
         f"{undeclared}"
+    )
+
+
+def test_dom_browser_profiles_expose_coordinate_and_overlay_tools() -> None:
+    """DOM browser profiles expose coordinate and overlay-dismissal tools with expected taint."""
+    _, profiles = _load_resolved_profiles()
+    profile_by_id = {profile.id: profile for profile in profiles}
+    descriptors_by_name = {d.name: d for d in LOCAL_TOOL_DESCRIPTORS}
+
+    coordinate_and_overlay = (
+        "browser_click_at",
+        "browser_hover_at",
+        "browser_scroll",
+        "browser_hover",
+        "browser_press_key",
+    )
+    for profile_id in (
+        "browser_profile",
+        "credential_browser_profile",
+        "authenticated_browser_profile",
+    ):
+        engine = PolicyEngine.from_policy_config(profile_by_id[profile_id].tools_policy)
+        for tool_name in coordinate_and_overlay:
+            descriptor = descriptors_by_name[tool_name]
+            assert (
+                engine.evaluate_for_execution(descriptor, can_confirm=True).decision
+                is ToolPolicyDecision.ALLOW
+            ), (profile_id, tool_name)
+
+    for tool_name in (
+        "browser_click_at",
+        "browser_hover_at",
+        "browser_hover",
+        "browser_press_key",
+    ):
+        assert (
+            resolve_tool_sink_class(descriptors_by_name[tool_name])
+            is SinkClass.ATTACKER_ADDRESSABLE_EGRESS
+        ), tool_name
+    assert (
+        resolve_tool_sink_class(descriptors_by_name["browser_scroll"])
+        is SinkClass.USER_LOCAL
     )
