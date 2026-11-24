@@ -286,10 +286,10 @@ supervision requirements based on input trust level:
    execution, self-scheduled check-back callbacks, and inbound delegations are judged by tool-call
    review. Example: "Why isn't my daily brief firing?" Code execution is granted by the tag pair
    `code_execution` + `worker`, which is what execution *outside* the application carries (a
-   deployment's code-execution MCP server, `spawn_worker`); `code_execution` alone — the stored-script
-   tools — stays denied, as does the shared workspace; `execute_script` comes from
-   `global_tools_policy` and calls only tools the profile already holds. A sandbox run reproduces a failure or
-   reads a repository without giving the profile anything that writes back, and the
+   deployment's code-execution MCP server, `spawn_worker`); `code_execution` alone — the
+   stored-script tools — stays denied, as does the shared workspace; `execute_script` comes from
+   `global_tools_policy` and calls only tools the profile already holds. A sandbox run reproduces a
+   failure or reads a repository without giving the profile anything that writes back, and the
    `sandbox_network` taint sink gates it whenever the turn carries untrusted content. Its model
    tiers work as on `default_assistant` below: it runs on `standard`, all three tiers are selectable
    per request, and Auto runs in shadow mode; its routing guidance is more eager to pick `deep`,
@@ -329,8 +329,8 @@ supervision requirements based on input trust level:
 7. **Coder Profile [C]**: a coding agent — writes and runs code, works with files, reads the web —
    on Google's Antigravity managed agent (`antigravity-preview-09-2026`), in a Google-hosted
    throwaway sandbox. Its **model tier is the agent's reasoning model**: `gemini_3_8_flash` by
-   default, `gemini_4_argon` when a person or a delegating model asks for it, and every tier it can
-   reach must be exactly one Google model (see
+   default, `gemini_4_argon` or `gemini_4_neon` when a person or a delegating model asks for one,
+   and every tier it can reach must be exactly one Google model (see
    [docs/design/antigravity-model-tiers.md](docs/design/antigravity-model-tiers.md)). Used via
    `/coder` or delegation. It acts but reads nothing of the household's: no aggregated context, and
    the agent runs server-side with no FA tool surface, so it works only from the request text. As

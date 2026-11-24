@@ -3975,7 +3975,7 @@ and on an Antigravity profile a tier's single chain entry is that model. So the 
 tier and must not set `provider`, `llm_model` or `retry_config`, and every tier it can reach must be
 exactly one Google model with no `llm_parameters` (the agent has no fallback and takes no request
 parameters). The shipped `coder` defaults to `gemini_3_8_flash` and admits `gemini_4_argon` and
-`gemini_4_carbon` from a person (`allowed_model_tiers`) and from a delegating model
+`gemini_4_neon` from a person (`allowed_model_tiers`) and from a delegating model
 (`delegation_model_tiers`); a deployment can add another model the agent accepts as a one-model tier
 and list it the same way.
 

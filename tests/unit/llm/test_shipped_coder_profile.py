@@ -47,7 +47,7 @@ def _coder_eligibility(shipped_config: AppConfig) -> ModelTierEligibility:
     )
 
 
-_STRONG_CODER_TIERS = ["gemini_4_argon", "gemini_4_carbon"]
+_STRONG_CODER_TIERS = ["gemini_4_argon", "gemini_4_neon"]
 
 
 @pytest.mark.parametrize("tier", _STRONG_CODER_TIERS)
