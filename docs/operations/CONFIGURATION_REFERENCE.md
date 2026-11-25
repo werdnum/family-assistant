@@ -3974,10 +3974,10 @@ revision); a value that is not an Antigravity id is a startup error.
 and on an Antigravity profile a tier's single chain entry is that model. So the profile must name a
 tier and must not set `provider`, `llm_model` or `retry_config`, and every tier it can reach must be
 exactly one Google model with no `llm_parameters` (the agent has no fallback and takes no request
-parameters). The shipped `coder` defaults to `gemini_3_8_flash` and admits `gemini_4_argon` and
-`gemini_4_carbon` from a person (`allowed_model_tiers`) and from a delegating model
-(`delegation_model_tiers`); a deployment can add another model the agent accepts as a one-model tier
-and list it the same way.
+parameters). The shipped `coder` defaults to `gemini_3_8_flash` and admits `gemini_4_hydrogen`,
+`gemini_4_argon` and `gemini_4_neon` from a person (`allowed_model_tiers`) and from a delegating
+model (`delegation_model_tiers`); a deployment can add another model the agent accepts as a
+one-model tier and list it the same way.
 
 `max_total_tokens` caps what a single run may spend; unset leaves the API's own default, which
 together with `max_async_seconds` is the only bound on how long an autonomous run iterates. A

@@ -1474,9 +1474,9 @@ service_profiles:
     description: "Coding agent. Writes and runs code, works with files, and reads the web to get a self-contained programming or computation task DONE — write and test a script, transform or analyse data, debug a snippet, work out a result — returning the finished output rather than instructions. Runs on the Google Antigravity managed agent in a throwaway Google-hosted Linux sandbox,, so it sees nothing but the text of the request: no notes, calendar, documents, Home Assistant or other Family Assistant tools, and no shared workspace. Attachments you pass are mounted as files in its sandbox under /workspace, so hand it the file rather than pasting the contents; files it saves under /workspace/outputs come back to you as attachments on its result (up to 20 files, 50 MB), so ask for a model, image or document as a file when that is what the user wants. Choose it over spawn_worker when the task needs no files from the shared workspace and you want the result back in the conversation; choose spawn_worker when the agent must read or write shared workspace files, and complex_tasks when the task needs the family's own data. It reasons with a fast, inexpensive model by default; ask for a stronger model_tier only for a problem the default has failed at or is plainly not up to, since it costs many times more."
     # The tier is the model the agent reasons with. Flash is the default
     # because it is a fraction of Argon's cost and enough for most requests;
-    # Argon and Carbon are a choice someone makes, never Auto's.
-    allowed_model_tiers: ["gemini_3_8_flash", "gemini_4_argon", "gemini_4_carbon"]
-    delegation_model_tiers: ["gemini_4_argon", "gemini_4_carbon"]
+    # Hydrogen, Argon and Neon are a choice someone makes, never Auto's.
+    allowed_model_tiers: ["gemini_3_8_flash", "gemini_4_hydrogen", "gemini_4_argon", "gemini_4_neon"]
+    delegation_model_tiers: ["gemini_4_hydrogen", "gemini_4_argon", "gemini_4_neon"]
     processing_config:
       model_tier: "gemini_3_8_flash"
       antigravity_config:

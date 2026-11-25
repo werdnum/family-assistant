@@ -26,10 +26,11 @@ default or alternate, and refuses `antigravity_config` without a tier or beside 
 `coder` ships as:
 
 - default `gemini_3_8_flash`, a new one-model preset (`standard` minus its fallback);
-- `gemini_4_argon` selectable by a person (`allowed_model_tiers`) and by a delegating model
-  (`delegation_model_tiers`), which the delegation catalog already advertises per target;
-- no `auto_model_tiers`: Argon is a choice someone makes, not one the classifier makes on cost's
-  behalf.
+- `gemini_4_hydrogen`, `gemini_4_argon` and `gemini_4_neon` selectable by a person
+  (`allowed_model_tiers`) and by a delegating model (`delegation_model_tiers`), which the delegation
+  catalog already advertises per target;
+- no `auto_model_tiers`: Hydrogen, Argon and Neon are a choice someone makes, not one the classifier
+  makes on cost's behalf.
 
 A second `coder_max` profile was the alternative. It would copy the whole security posture of
 `coder` into a second definition and spend context on a second description, for a choice the tier
