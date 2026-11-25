@@ -695,6 +695,7 @@ def test_defaults_yaml_browser_profiles_expose_link_tools_with_static_review(
             "link_list_shipping_addresses",
             "link_check_spend_request",
             "link_cancel_spend_request",
+            "browser_fill_payment",
         ):
             decision = engine.evaluate(descriptors_by_name[allow_tool]).decision
             assert decision is ToolPolicyDecision.ALLOW, (profile_id, allow_tool)
@@ -703,6 +704,43 @@ def test_defaults_yaml_browser_profiles_expose_link_tools_with_static_review(
             descriptors_by_name["link_create_spend_request"]
         ).decision
         assert create_decision is ToolPolicyDecision.REVIEW, profile_id
+
+    for visual_profile_id in (
+        "browser_visual_profile",
+        "credential_browser_visual_profile",
+    ):
+        visual_profile = next(
+            p for p in config.service_profiles if p.id == visual_profile_id
+        )
+        assert visual_profile.tools_policy is not None
+        visual_engine = PolicyEngine.from_layers(
+            defaults=visual_profile.tools_policy,
+            profile=config.global_tools_policy,
+            operator=visual_profile.operator_tools_policy,
+        )
+        assert (
+            visual_engine.evaluate(descriptors_by_name["browser_fill_payment"]).decision
+            is ToolPolicyDecision.ALLOW
+        ), visual_profile_id
+
+    for denied_profile_id in (
+        "default_assistant",
+        "authenticated_browser_profile",
+        "authenticated_browser_visual_profile",
+    ):
+        denied_profile = next(
+            p for p in config.service_profiles if p.id == denied_profile_id
+        )
+        assert denied_profile.tools_policy is not None
+        denied_engine = PolicyEngine.from_layers(
+            defaults=denied_profile.tools_policy,
+            profile=config.global_tools_policy,
+            operator=denied_profile.operator_tools_policy,
+        )
+        assert (
+            denied_engine.evaluate(descriptors_by_name["browser_fill_payment"]).decision
+            is ToolPolicyDecision.DENY
+        ), denied_profile_id
 
 
 @pytest.mark.no_db

@@ -1,7 +1,8 @@
-"""Stripe Link Agent Wallet tools (Milestone 1).
+"""Stripe Link Agent Wallet tools (Milestones 1 & 2).
 
-Provides per-user wallet inspection, saved shipping addresses, and spend-request
-lifecycle tools bound strictly to ``exec_context.user_id``:
+Provides per-user wallet inspection, saved shipping addresses, spend-request
+lifecycle tools, and blind payment fill bound strictly to
+``exec_context.user_id``:
 
 - ``link_wallet_status`` — currency, spend limits, verification status, and
   redacted payment-method summaries (never shipping addresses or full card
@@ -14,6 +15,10 @@ lifecycle tools bound strictly to ``exec_context.user_id``:
 - ``link_check_spend_request`` — inspects status, ``next_action``, and
   ``payment_status_details`` (no credentials).
 - ``link_cancel_spend_request`` — cancels an unused spend request.
+- ``browser_fill_payment`` — retrieves an approved Link virtual card into
+  ``SecretStr`` fields only after verifying status and HTTPS origin match, then
+  asks ``browser-server`` to blindly fill the checkout form without exposing
+  PAN, CVC, or expiry in any tool output or log.
 
 Every Link tool latches the active browser scope into ``checked`` review mode.
 """
@@ -22,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlsplit
 
@@ -29,8 +35,13 @@ from family_assistant.services.link_provider import LinkScope
 from family_assistant.services.link_wallet import LinkWalletError, LinkWalletService
 from family_assistant.services.oauth_credentials import OAuthCredentialError
 from family_assistant.tools.browser_autofill import _AUTOFILL_WAIT_SECONDS
-from family_assistant.tools.browser_backend import get_existing_browser_backend
+from family_assistant.tools.browser_backend import (
+    BrowserBackendError,
+    RemoteBrowserBackend,
+    get_existing_browser_backend,
+)
 from family_assistant.tools.browser_session import (
+    browser_operation,
     browser_scope_key,
     mark_browser_scope_checked,
 )
@@ -63,6 +74,79 @@ _MIN_CONTEXT_LENGTH = 100
 _SPEND_REQUEST_WAIT_SECONDS = float(_AUTOFILL_WAIT_SECONDS)
 _SPEND_REQUEST_POLL_INTERVAL_SECONDS = 2.0
 
+_PAYMENT_REF_SYNTAX = re.compile(r"e[0-9]+")
+_MAX_PAYMENT_FIELD_REFS = 16
+_PAYMENT_FIELD_KINDS: tuple[str, ...] = (
+    "card_number",
+    "card_exp",
+    "card_exp_month",
+    "card_exp_year",
+    "card_cvc",
+    "card_name",
+    "billing_name",
+    "billing_line1",
+    "billing_line2",
+    "billing_city",
+    "billing_state",
+    "billing_postal_code",
+    "billing_country",
+)
+_PAYMENT_FIELD_KIND_SET: frozenset[str] = frozenset(_PAYMENT_FIELD_KINDS)
+
+_PAYMENT_FILL_REFUSAL_GUIDANCE: dict[str, str] = {
+    "insecure_origin": (
+        "Payment fill requires an HTTPS checkout page and an HTTPS merchant_url. "
+        "Do not enter payment details on a plaintext HTTP page."
+    ),
+    "wrong_origin": (
+        "The active browser page origin does not match the approved Link spend "
+        "request's merchant_url. Navigate to the exact approved merchant checkout "
+        "origin, or cancel this spend request and create a new one for the right site."
+    ),
+    "target_invalidated": (
+        "The checkout page changed or navigated while payment fill was running, "
+        "so the fill was aborted. Re-snapshot the checkout page to verify you are "
+        "still on the payment form before retrying."
+    ),
+    "untrusted_payment_frame": (
+        "Candidate payment fields live inside an unrecognized third-party iframe "
+        "outside the trusted payment-processor allowlist. Do not try to work around "
+        "this; call browser_request_handoff so the user can complete payment themselves."
+    ),
+    "ambiguous_fields": (
+        "More than one candidate payment field matched on this page, so nothing "
+        "was filled. Re-snapshot the checkout form and pass explicit field_refs "
+        "(each with ref and kind) to disambiguate."
+    ),
+    "no_eligible_field": (
+        "No eligible payment field was found on this page. Ensure the credit/debit "
+        "card payment section is expanded and visible, re-snapshot, and try again."
+    ),
+    "invalid_ref": (
+        "One or more entries in field_refs are invalid or do not name a visible "
+        "payment control on the page. Take a fresh snapshot and pass valid refs "
+        "like 'e12' paired with a supported payment field kind."
+    ),
+    "remote_browser_required": (
+        "browser_fill_payment requires an active remote browser-server session "
+        "open on the merchant checkout page. Open the checkout page with "
+        "browser_open (local Playwright browsers cannot fill Link virtual cards)."
+    ),
+    "not_found": (
+        "The Link spend request was not found for this user's connected Link "
+        "account. Verify the spend_request_id or create a new spend request."
+    ),
+    "spend_request_not_approved": (
+        "Only an approved Link spend request can be filled into a checkout form."
+    ),
+    "card_unavailable": (
+        "Link did not return usable virtual card details for this spend request. "
+        "Check the spend request with link_check_spend_request or ask the user "
+        "how to proceed."
+    ),
+    "invalid_spend_request_id": "Pass a non-empty spend_request_id.",
+}
+
 LINK_TOOL_REQUIRED_SCOPES: dict[str, frozenset[str]] = {
     "link_wallet_status": frozenset({LinkScope.PAYMENT_METHODS_AGENTIC.value}),
     "link_list_shipping_addresses": frozenset({
@@ -71,6 +155,7 @@ LINK_TOOL_REQUIRED_SCOPES: dict[str, frozenset[str]] = {
     "link_create_spend_request": frozenset({LinkScope.PAYMENT_METHODS_AGENTIC.value}),
     "link_check_spend_request": frozenset({LinkScope.PAYMENT_METHODS_AGENTIC.value}),
     "link_cancel_spend_request": frozenset({LinkScope.PAYMENT_METHODS_AGENTIC.value}),
+    "browser_fill_payment": frozenset({LinkScope.PAYMENT_METHODS_AGENTIC.value}),
 }
 
 
@@ -260,6 +345,71 @@ LINK_WALLET_TOOLS_DEFINITION: list[ToolDefinition] = [
                     "spend_request_id": {
                         "type": "string",
                         "description": "The Link spend request ID to cancel.",
+                    },
+                },
+                "required": ["spend_request_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_fill_payment",
+            "description": (
+                "Blindly fill an approved Stripe Link virtual card into the payment form "
+                "on the active remote browser page (including trusted hosted payment "
+                "iframes such as Stripe Elements, Adyen, Braintree, Shopify, or Square). "
+                "Requires an active browser-server session on the exact HTTPS origin "
+                "matching the approved spend request's merchant_url. Never returns PAN, "
+                "CVC, expiry, or card digits, and monotonically enables read-back "
+                "protection for the remainder of the browser session. After filling, "
+                "review the order summary and submit the payment yourself, or call "
+                "browser_request_handoff if a 3DS challenge or CAPTCHA appears."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "spend_request_id": {
+                        "type": "string",
+                        "description": (
+                            "The ID of the approved Link spend request whose virtual "
+                            "card should be filled into the checkout form."
+                        ),
+                    },
+                    "field_refs": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": _MAX_PAYMENT_FIELD_REFS,
+                        "description": (
+                            "Optional explicit field targets when automatic detection "
+                            "reports ambiguous_fields. Each item pairs a snapshot ref "
+                            "(e.g. 'e12') with the payment field kind to fill into it."
+                        ),
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "ref": {
+                                    "type": "string",
+                                    "description": (
+                                        "Element ref from a snapshot (e.g. 'e12')."
+                                    ),
+                                },
+                                "kind": {
+                                    "type": "string",
+                                    "enum": list(_PAYMENT_FIELD_KINDS),
+                                    "description": "Payment field kind for this ref.",
+                                },
+                            },
+                            "required": ["ref", "kind"],
+                        },
+                    },
+                    "include_billing_address": {
+                        "type": "boolean",
+                        "description": (
+                            "Whether to also fill billing address controls from the "
+                            "virtual card's billing address (default true)."
+                        ),
+                        "default": True,
                     },
                 },
                 "required": ["spend_request_id"],
@@ -816,9 +966,305 @@ async def link_cancel_spend_request_tool(
     return await _guard(_run)
 
 
+def _payment_fill_refused(
+    reason: str,
+    *,
+    origin: str | None = None,
+    detail: str | None = None,
+) -> ToolResult:
+    """Return a structured, credential-free refusal for ``browser_fill_payment``."""
+    guidance = _PAYMENT_FILL_REFUSAL_GUIDANCE.get(
+        reason, "Do not try to work around this."
+    )
+    parts = [f"Payment fill was refused ({reason})."]
+    if detail:
+        parts.append(detail.strip())
+    if guidance:
+        parts.append(guidance)
+    return ToolResult(
+        text=" ".join(parts),
+        data={
+            "status": "refused",
+            "origin": origin,
+            "filled_fields": [],
+            "reason": reason,
+        },
+    )
+
+
+def _validate_payment_field_refs(
+    field_refs: list[dict[str, str]] | None,
+) -> tuple[list[LinkToolJson] | None, str | None, str | None]:
+    """Strictly validate explicit ``field_refs`` targets before calling Link or browser-server."""
+    if field_refs is None:
+        return None, None, None
+    if not isinstance(field_refs, list) or not field_refs:
+        return None, "invalid_ref", "field_refs must be a non-empty list when provided."
+    if len(field_refs) > _MAX_PAYMENT_FIELD_REFS:
+        return (
+            None,
+            "invalid_ref",
+            f"field_refs supports at most {_MAX_PAYMENT_FIELD_REFS} entries.",
+        )
+    validated: list[LinkToolJson] = []
+    seen_refs: set[str] = set()
+    seen_kinds: set[str] = set()
+    for entry in field_refs:
+        if not isinstance(entry, dict) or set(entry.keys()) != {"ref", "kind"}:
+            return (
+                None,
+                "invalid_ref",
+                "Each field_refs entry must be an object with exactly 'ref' and 'kind'.",
+            )
+        ref = entry.get("ref")
+        kind = entry.get("kind")
+        if not isinstance(ref, str) or not _PAYMENT_REF_SYNTAX.fullmatch(ref):
+            return (
+                None,
+                "invalid_ref",
+                f"Invalid ref {ref!r}; expected a snapshot ref like 'e12'.",
+            )
+        if not isinstance(kind, str) or kind not in _PAYMENT_FIELD_KIND_SET:
+            return (
+                None,
+                "invalid_ref",
+                f"Unsupported payment field kind {kind!r}.",
+            )
+        if ref in seen_refs or kind in seen_kinds:
+            return (
+                None,
+                "ambiguous_fields",
+                "Each ref and payment field kind in field_refs must be unique.",
+            )
+        seen_refs.add(ref)
+        seen_kinds.add(kind)
+        validated.append({"ref": ref, "kind": kind})
+    return validated, None, None
+
+
+def _unapproved_spend_request_detail(sr: SpendRequest) -> str:
+    """Build actionable status-specific guidance when a spend request is not approved."""
+    status_str = str(sr.status)
+    if status_str == "pending_approval":
+        url_part = f" Approval URL: {sr.approval_url}." if sr.approval_url else ""
+        return (
+            f"Link spend request {sr.id} is still pending_approval.{url_part} "
+            "Share the approval URL with the user and wait until they approve it."
+        )
+    if (
+        status_str == "requires_action"
+        and sr.status_details is not None
+        and sr.status_details.requires_action is not None
+    ):
+        na = sr.status_details.requires_action.next_action
+        url_part = f" Action URL: {na.action_url}." if na.action_url else ""
+        return (
+            f"Link spend request {sr.id} requires user action "
+            f"(resolution={na.resolution}): {na.display_message}.{url_part}"
+        )
+    if status_str in {"denied", "canceled", "expired"}:
+        return (
+            f"Link spend request {sr.id} is {status_str}. "
+            "Do not retry automatically without user direction."
+        )
+    return (
+        f"Link spend request {sr.id} has status '{status_str}' (expected 'approved')."
+    )
+
+
+def _sanitize_filled_payment_fields(raw_filled: object) -> list[LinkToolJson]:
+    """Keep only allowlisted non-secret keys from browser-server's ``filled`` list."""
+    if not isinstance(raw_filled, list):
+        return []
+    sanitized: list[LinkToolJson] = []
+    for item in raw_filled:
+        if not isinstance(item, dict):
+            continue
+        kind = item.get("kind")
+        frame_origin = item.get("frame_origin")
+        if not isinstance(kind, str) or not isinstance(frame_origin, str):
+            continue
+        entry: LinkToolJson = {"kind": kind, "frame_origin": frame_origin}
+        ref = item.get("ref")
+        if isinstance(ref, str) and ref:
+            entry["ref"] = ref
+        sanitized.append(entry)
+    return sanitized
+
+
+@browser_operation()
+async def browser_fill_payment_tool(
+    exec_context: ToolExecutionContext,
+    spend_request_id: str,
+    field_refs: list[dict[str, str]] | None = None,
+    include_billing_address: bool = True,
+) -> ToolResult:
+    """Blindly fill an approved Link virtual card into the active remote browser page."""
+    await _latch_browser_scope_checked(exec_context)
+
+    cleaned_id = spend_request_id.strip() if isinstance(spend_request_id, str) else ""
+    if not cleaned_id:
+        return _payment_fill_refused(
+            "invalid_spend_request_id", detail="spend_request_id must not be empty."
+        )
+
+    validated_fields, field_refusal, field_detail = _validate_payment_field_refs(
+        field_refs
+    )
+    if field_refusal is not None:
+        return _payment_fill_refused(field_refusal, detail=field_detail)
+
+    backend = await get_existing_browser_backend(exec_context)
+    if backend is None:
+        return _payment_fill_refused(
+            "remote_browser_required",
+            detail="No active remote browser-server session is open.",
+        )
+    if not isinstance(backend, RemoteBrowserBackend):
+        return _payment_fill_refused(
+            "remote_browser_required",
+            detail=(
+                "A local Playwright browser is active; blind payment fill requires "
+                "a remote browser-server session."
+            ),
+        )
+
+    browser_origin = normalize_https_origin(backend.current_url)
+    if browser_origin is None:
+        return _payment_fill_refused(
+            "insecure_origin",
+            detail=(
+                f"Active browser page ({backend.current_url!r}) is not an HTTPS origin."
+            ),
+        )
+
+    async def _run() -> ToolResult:
+        service = LinkWalletService.for_context(exec_context)
+        # Step 1: Metadata-only retrieve (NEVER include=["card"]) to verify
+        # ownership, approved status, and exact HTTPS origin match first.
+        sr = await service.retrieve_spend_request(cleaned_id)
+        if sr is None:
+            return _payment_fill_refused(
+                "not_found",
+                origin=browser_origin,
+                detail=f"Link spend request {cleaned_id!r} was not found.",
+            )
+        if str(sr.status) != "approved":
+            return _payment_fill_refused(
+                "spend_request_not_approved",
+                origin=browser_origin,
+                detail=_unapproved_spend_request_detail(sr),
+            )
+        merchant_origin = normalize_https_origin(sr.merchant_url or "")
+        if merchant_origin is None:
+            return _payment_fill_refused(
+                "insecure_origin",
+                origin=browser_origin,
+                detail=(
+                    f"Approved spend request {cleaned_id!r} does not have a valid "
+                    "HTTPS merchant_url."
+                ),
+            )
+        if merchant_origin != browser_origin:
+            return _payment_fill_refused(
+                "wrong_origin",
+                origin=browser_origin,
+                detail=(
+                    f"Active browser origin ({browser_origin}) does not match "
+                    f"spend request merchant_url origin ({merchant_origin})."
+                ),
+            )
+
+        # Step 2: Only after all checks pass, fetch the SecretStr-wrapped card.
+        with_card = await service.retrieve_spend_request_with_card(cleaned_id)
+        if with_card is None:
+            return _payment_fill_refused(
+                "not_found",
+                origin=browser_origin,
+                detail=f"Link spend request {cleaned_id!r} was not found.",
+            )
+        refreshed_sr, card = with_card
+        if str(refreshed_sr.status) != "approved":
+            return _payment_fill_refused(
+                "spend_request_not_approved",
+                origin=browser_origin,
+                detail=_unapproved_spend_request_detail(refreshed_sr),
+            )
+        refreshed_origin = normalize_https_origin(refreshed_sr.merchant_url or "")
+        if refreshed_origin != browser_origin:
+            return _payment_fill_refused(
+                "wrong_origin",
+                origin=browser_origin,
+                detail=(
+                    f"Active browser origin ({browser_origin}) does not match "
+                    f"spend request merchant_url origin ({refreshed_origin})."
+                ),
+            )
+        if card is None:
+            return _payment_fill_refused(
+                "card_unavailable",
+                origin=browser_origin,
+                detail=(
+                    f"Link spend request {cleaned_id!r} did not include usable "
+                    "virtual card credentials."
+                ),
+            )
+
+        response = await backend.fill_payment(
+            expected_origin=merchant_origin,
+            card=card,
+            include_billing_address=include_billing_address,
+            fields=validated_fields,
+        )
+        if response.get("status") == "filled":
+            filled_origin = str(response.get("origin") or merchant_origin)
+            sanitized_filled = _sanitize_filled_payment_fields(response.get("filled"))
+            kinds = (
+                ", ".join(str(entry["kind"]) for entry in sanitized_filled)
+                or "payment fields"
+            )
+            return ToolResult(
+                text=(
+                    f"Filled approved Link virtual card ({kinds}) into the checkout "
+                    f"form on {filled_origin}. Review the order summary and submit "
+                    "the payment yourself, or call browser_request_handoff if a 3DS "
+                    "challenge or CAPTCHA appears. No card details are included in "
+                    "this result; read-back protection is now active for this session."
+                ),
+                data={
+                    "status": "filled",
+                    "origin": filled_origin,
+                    "filled_fields": sanitized_filled,
+                    "reason": None,
+                },
+            )
+
+        reason = str(response.get("reason") or "refused")
+        raw_origin = response.get("origin")
+        refused_origin = (
+            raw_origin if isinstance(raw_origin, str) and raw_origin else browser_origin
+        )
+        return _payment_fill_refused(reason, origin=refused_origin)
+
+    try:
+        return await _run()
+    except (OAuthCredentialError, LinkWalletError, BrowserBackendError) as exc:
+        return ToolResult(
+            text=f"Error: {exc}",
+            data={
+                "status": "refused",
+                "origin": browser_origin,
+                "filled_fields": [],
+                "reason": "error",
+                "error": str(exc),
+            },
+        )
+
+
 __all__ = [
     "LINK_TOOL_REQUIRED_SCOPES",
     "LINK_WALLET_TOOLS_DEFINITION",
+    "browser_fill_payment_tool",
     "link_cancel_spend_request_tool",
     "link_check_spend_request_tool",
     "link_create_spend_request_tool",

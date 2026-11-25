@@ -56,6 +56,7 @@ if TYPE_CHECKING:
     from rebrowser_playwright.async_api import Locator, Page
 
     from family_assistant.config_models import BrowserHandoffConfig
+    from family_assistant.services.link_wallet import RetrievedLinkCard
     from family_assistant.tools.browser_dom import Snapshot
     from family_assistant.tools.types import ToolExecutionContext
 
@@ -1070,6 +1071,89 @@ class RemoteBrowserBackend:
             raise self._session_lost_error("autofill", session_id)
         self._raise_for_status(resp, "autofill")
         return cast("JsonDict", resp.json())
+
+    async def fill_payment(
+        self,
+        *,
+        expected_origin: str,
+        card: RetrievedLinkCard,
+        include_billing_address: bool = True,
+        fields: list[JsonDict] | None = None,
+    ) -> JsonDict:
+        """Ask browser-server to blindly fill payment card controls on the active page.
+
+        Posts credentials directly to ``POST /v1/sessions/{id}/fill-payment`` without
+        logging or attaching request payloads to exceptions, clears transient dicts
+        immediately, invalidates cached screenshots on fill, and leaves
+        ``autofill_enabled`` unchanged while browser-server latches read-back protection.
+        """
+        session_id = self._session_id
+        if session_id is None:
+            raise BrowserBackendError(
+                "No active browser-server session exists for payment fill. "
+                "Open the merchant checkout page first with browser_open."
+            )
+        card_payload: JsonDict = {
+            "number": card.number.get_secret_value(),
+            "exp_month": card.exp_month,
+            "exp_year": card.exp_year,
+            "cvc": card.cvc.get_secret_value(),
+        }
+        if card.cardholder_name:
+            card_payload["cardholder_name"] = card.cardholder_name
+        payload: JsonDict = {
+            "expected_origin": expected_origin,
+            "card": card_payload,
+        }
+        if include_billing_address and card.billing_address is not None:
+            billing_data = card.billing_address.model_dump(exclude_none=True)
+            if billing_data:
+                payload["billing_address"] = billing_data
+        if fields is not None:
+            payload["fields"] = fields
+
+        try:
+            resp = await self._client.post(
+                f"{self._base_url}/v1/sessions/{session_id}/fill-payment",
+                headers=self._headers(),
+                json=payload,
+            )
+        except httpx.TimeoutException:
+            raise BrowserBackendError(
+                "browser-server did not respond to fill-payment within "
+                f"{self._config.timeout_seconds:g}s. Take a snapshot to check the "
+                "checkout page before retrying."
+            ) from None
+        except httpx.HTTPError as exc:
+            raise BrowserBackendError(
+                f"browser-server fill-payment transport error ({type(exc).__name__})."
+            ) from None
+        finally:
+            card_payload.clear()
+            payload.clear()
+
+        if self._is_session_gone_response(resp) or self._is_lease_lost_response(resp):
+            raise self._session_lost_error("fill-payment", session_id)
+        if not resp.is_success:
+            detail_str = ""
+            with contextlib.suppress(ValueError):
+                err_body = resp.json()
+                if isinstance(err_body, dict) and isinstance(
+                    err_body.get("detail"), str
+                ):
+                    detail_str = f": {err_body['detail'][:200]}"
+            raise BrowserBackendError(
+                f"browser-server fill-payment failed ({resp.status_code}){detail_str}"
+            )
+        try:
+            result = cast("JsonDict", resp.json())
+        except ValueError:
+            raise BrowserBackendError(
+                "browser-server fill-payment returned invalid JSON"
+            ) from None
+        if result.get("status") == "filled":
+            self.invalidate_screenshot("payment filled")
+        return result
 
     async def discard_session(self) -> None:
         """Discard a failed browser session while keeping this backend reusable."""

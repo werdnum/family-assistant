@@ -159,6 +159,7 @@ from family_assistant.tools.image_tools import (
 )
 from family_assistant.tools.link_wallet import (
     LINK_WALLET_TOOLS_DEFINITION,
+    browser_fill_payment_tool,
     link_cancel_spend_request_tool,
     link_check_spend_request_tool,
     link_create_spend_request_tool,
@@ -514,6 +515,7 @@ _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
     "link_create_spend_request": link_create_spend_request_tool,
     "link_check_spend_request": link_check_spend_request_tool,
     "link_cancel_spend_request": link_cancel_spend_request_tool,
+    "browser_fill_payment": browser_fill_payment_tool,
 }
 
 _CORE_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
@@ -1487,6 +1489,14 @@ _CORE_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     ),
     "link_cancel_spend_request": _metadata(
         ToolTag.STATE_CHANGING,
+        ToolTag.CONNECTED_ACCOUNT_DATA,
+        ToolTag.SHOPPING,
+        ToolTag.OUTPUT_MACHINE_DATA,
+    ),
+    "browser_fill_payment": _metadata(
+        ToolTag.BROWSER,
+        ToolTag.STATE_CHANGING,
+        ToolTag.EXTERNAL_COMM,
         ToolTag.CONNECTED_ACCOUNT_DATA,
         ToolTag.SHOPPING,
         ToolTag.OUTPUT_MACHINE_DATA,

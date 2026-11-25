@@ -2,8 +2,10 @@
 
 Constructs ``link.AsyncClient`` backed by :class:`OAuthCredentialResolver` bound
 strictly to the turn's ``exec_context.user_id`` (never a user id supplied in
-tool arguments). Milestone 1 exposes read-only wallet inspection and
-spend-request lifecycle operations without ever requesting ``include=["card"]``.
+tool arguments). Ordinary wallet and spend-request methods never request
+``include=["card"]``; :meth:`LinkWalletService.retrieve_spend_request_with_card`
+is reserved for ``browser_fill_payment`` after status and origin verification
+and wraps PAN and CVC strictly in :class:`pydantic.SecretStr` fields.
 """
 
 from __future__ import annotations
@@ -21,6 +23,14 @@ from link import (
     LinkSDKError,
     LinkTransportError,
 )
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    ValidationError,
+    field_validator,
+)
 
 from family_assistant.services.link_provider import (
     LINK_API_BASE_URL,
@@ -34,6 +44,7 @@ if TYPE_CHECKING:
 
     import httpx
     from link.models import (
+        Card,
         PaymentMethod,
         ShippingAddressRecord,
         SpendRequest,
@@ -57,6 +68,79 @@ _MAX_API_ERROR_MESSAGE_CHARS = 300
 
 class LinkWalletError(Exception):
     """Actionable, credential-free error talking to the Link Agent Wallet API."""
+
+
+class RetrievedBillingAddress(BaseModel):
+    """Billing address associated with an approved Link virtual card."""
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    name: str | None = Field(default=None, max_length=256)
+    line1: str | None = Field(default=None, max_length=256)
+    line2: str | None = Field(default=None, max_length=256)
+    city: str | None = Field(default=None, max_length=128)
+    state: str | None = Field(default=None, max_length=128)
+    postal_code: str | None = Field(default=None, max_length=64)
+    country: str | None = Field(default=None, max_length=128)
+
+
+class RetrievedLinkCard(BaseModel):
+    """Virtual card credentials held in SecretStr fields so repr/dump/errors never leak them."""
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    number: SecretStr
+    exp_month: int = Field(ge=1, le=12)
+    exp_year: int = Field(ge=2000, le=2199)
+    cvc: SecretStr
+    cardholder_name: str | None = Field(default=None, max_length=256)
+    billing_address: RetrievedBillingAddress | None = None
+
+    @field_validator("number", "cvc")
+    @classmethod
+    def _reject_blank_secret(cls, value: SecretStr) -> SecretStr:
+        if not value.get_secret_value().strip():
+            raise ValueError("must not be blank")
+        return value
+
+
+def _build_retrieved_card(raw_card: Card | None) -> RetrievedLinkCard | None:
+    """Wrap a Link SDK ``Card`` into :class:`RetrievedLinkCard` (SecretStr-typed)."""
+    if raw_card is None:
+        return None
+    if not raw_card.number.strip() or not raw_card.cvc or not raw_card.cvc.strip():
+        return None
+    exp_year = (
+        raw_card.exp_year + 2000 if 0 <= raw_card.exp_year < 100 else raw_card.exp_year
+    )
+    billing_address: RetrievedBillingAddress | None = None
+    cardholder_name: str | None = None
+    if raw_card.billing_address is not None:
+        addr = raw_card.billing_address
+        cardholder_name = addr.name.strip() or None
+        billing_address = RetrievedBillingAddress(
+            name=addr.name,
+            line1=addr.line1,
+            line2=addr.line2,
+            city=addr.city,
+            state=addr.state,
+            postal_code=addr.postal_code,
+            country=addr.country,
+        )
+    try:
+        return RetrievedLinkCard(
+            number=SecretStr(raw_card.number.strip()),
+            exp_month=raw_card.exp_month,
+            exp_year=exp_year,
+            cvc=SecretStr(raw_card.cvc.strip()),
+            cardholder_name=cardholder_name,
+            billing_address=billing_address,
+        )
+    except ValidationError:
+        logger.warning("Link returned an invalid virtual card payload")
+        raise LinkWalletError(
+            "Link returned an incomplete or invalid virtual card credential."
+        ) from None
 
 
 def _sanitize_api_error(exc: LinkAPIError) -> str:
@@ -156,6 +240,8 @@ class LinkWalletService:
         scope: LinkScope,
         operation: str,
         fn: Callable[[AsyncClient], Awaitable[T]],
+        *,
+        redact_errors: bool = False,
     ) -> T:
         """Execute a Link SDK call and translate SDK errors cleanly."""
         try:
@@ -165,13 +251,33 @@ class LinkWalletService:
             logger.warning(
                 "Link API failure during %s: status=%s", operation, exc.status
             )
+            if redact_errors:
+                raise LinkWalletError(
+                    f"Link API request failed with status {exc.status}."
+                ) from None
             raise LinkWalletError(_sanitize_api_error(exc)) from exc
         except LinkTransportError as exc:
+            if redact_errors:
+                logger.warning(
+                    "Link transport error during %s: %s",
+                    operation,
+                    type(exc).__name__,
+                )
+                raise LinkWalletError(
+                    "Could not reach the Link API right now — please try again."
+                ) from None
             logger.warning("Link transport error during %s: %s", operation, exc)
             raise LinkWalletError(
                 "Could not reach the Link API right now — please try again."
             ) from exc
         except (LinkResponseError, LinkConfigurationError, LinkSDKError) as exc:
+            if redact_errors:
+                logger.warning(
+                    "Link SDK error during %s: %s", operation, type(exc).__name__
+                )
+                raise LinkWalletError(
+                    f"Unexpected Link error while attempting to {operation}."
+                ) from None
             logger.warning("Link SDK error during %s: %s", operation, exc)
             raise LinkWalletError(
                 f"Unexpected Link error while attempting to {operation}."
@@ -249,6 +355,30 @@ class LinkWalletService:
             lambda client: client.spend_requests.retrieve(spend_request_id),
         )
 
+    async def retrieve_spend_request_with_card(
+        self, spend_request_id: str
+    ) -> tuple[SpendRequest, RetrievedLinkCard | None] | None:
+        """Retrieve an approved spend request with its virtual card in SecretStr fields.
+
+        Only call this from ``browser_fill_payment`` after confirming the spend
+        request is approved and its ``merchant_url`` origin matches the active
+        browser page. Strips raw card fields from the returned ``SpendRequest``
+        so card digits exist only inside :class:`RetrievedLinkCard`.
+        """
+        sr = await self._call(
+            LinkScope.PAYMENT_METHODS_AGENTIC,
+            "retrieve spend request card",
+            lambda client: client.spend_requests.retrieve(
+                spend_request_id, include=["card"]
+            ),
+            redact_errors=True,
+        )
+        if sr is None:
+            return None
+        retrieved_card = _build_retrieved_card(sr.card)
+        sanitized_sr = sr.model_copy(update={"card": None, "link_pay_token": None})
+        return sanitized_sr, retrieved_card
+
     async def cancel_spend_request(self, spend_request_id: str) -> SpendRequest:
         """Cancel an unused spend request."""
         return await self._call(
@@ -261,5 +391,7 @@ class LinkWalletService:
 __all__ = [
     "LinkWalletError",
     "LinkWalletService",
+    "RetrievedBillingAddress",
+    "RetrievedLinkCard",
     "link",
 ]
