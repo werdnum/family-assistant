@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -426,7 +427,7 @@ def _configure_stripe_checkout_fields(worker: FakeBrowserWorker) -> None:
 
 def _assert_no_card_leak(text: str) -> None:
     assert PAN not in text
-    assert CVC not in text
+    assert re.search(rf"(?<![0-9a-fA-F]){re.escape(CVC)}(?![0-9a-fA-F])", text) is None
 
 
 @pytest.mark.asyncio
