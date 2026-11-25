@@ -633,7 +633,32 @@ async def test_check_and_cancel_spend_request_and_scope_latching(
     assert isinstance(check_data, dict)
     assert check_data["status"] == "succeeded"
     assert check_data["payment_status_details"]["outcome"] == "success"
+    check_text = check_res.get_text()
+    assert "outcome=success" in check_text
+    assert "amount=4500 AUD" in check_text
     assert get_browser_session_review_mode(scope) == "checked"
+
+    wallet.server.spend_retrieve_responses = [
+        _base_spend_request(
+            sr_id="sr_declined_1",
+            status="approved",
+            payment_status_details={
+                "outcome": "failed",
+                "code": "card_declined",
+                "decline_code": "insufficient_funds",
+                "amount": 4600,
+                "currency": "aud",
+            },
+        )
+    ]
+    declined_res = await link_check_spend_request_tool(
+        wallet.exec_context, spend_request_id="sr_declined_1"
+    )
+    declined_text = declined_res.get_text()
+    assert "outcome=failed" in declined_text
+    assert "code=card_declined" in declined_text
+    assert "decline_code=insufficient_funds" in declined_text
+    assert "amount=4600 AUD" in declined_text
 
     clear_browser_session_review_modes()
     initialize_browser_session_review_mode(scope, "unchecked")

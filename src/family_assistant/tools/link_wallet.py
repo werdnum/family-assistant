@@ -496,6 +496,18 @@ def _format_spend_request_result(sr: SpendRequest) -> ToolResult:
             f"has status '{status_str}'."
         )
 
+    if sr.payment_status_details is not None:
+        psd = sr.payment_status_details
+        details_parts = [f"outcome={psd.outcome}"]
+        if psd.amount is not None:
+            psd_currency = f" {psd.currency.upper()}" if psd.currency else ""
+            details_parts.append(f"amount={psd.amount}{psd_currency}")
+        if psd.code:
+            details_parts.append(f"code={psd.code}")
+        if psd.decline_code:
+            details_parts.append(f"decline_code={psd.decline_code}")
+        text = f"{text} Payment details: {', '.join(details_parts)}."
+
     return ToolResult(text=text, data=data)
 
 
