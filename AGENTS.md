@@ -329,8 +329,8 @@ supervision requirements based on input trust level:
 7. **Coder Profile [C]**: a coding agent — writes and runs code, works with files, reads the web —
    on Google's Antigravity managed agent (`antigravity-preview-09-2026`), in a Google-hosted
    throwaway sandbox. Its **model tier is the agent's reasoning model**: `gemini_3_8_flash` by
-   default, `gemini_4_argon` or `gemini_4_neon` when a person or a delegating model asks for one,
-   and every tier it can reach must be exactly one Google model (see
+   default, `gemini_4_hydrogen`, `gemini_4_argon` or `gemini_4_neon` when a person or a delegating
+   model asks for one, and every tier it can reach must be exactly one Google model (see
    [docs/design/antigravity-model-tiers.md](docs/design/antigravity-model-tiers.md)). Used via
    `/coder` or delegation. It acts but reads nothing of the household's: no aggregated context, and
    the agent runs server-side with no FA tool surface, so it works only from the request text. As

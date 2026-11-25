@@ -76,12 +76,13 @@ than telling you how you might do it yourself.
 
 Five things to know:
 
-- **It runs on a fast, inexpensive model unless you ask for a stronger one.** For a hard problem, or
-  one it has already got wrong, choose **Gemini 4 Argon** from the level control beside the
-  assistant picker in the web or iOS app, or ask the assistant to "have the coder use Gemini 4
-  Argon". For the very hardest problems, **Gemini 4 Neon** is Google's fast frontier-level model and
-  is dearer again. Both cost many times more, so save them for jobs the usual model isn't up to.
-  Telegram's `/deep` and `/max` don't apply to `/coder`.
+- **It runs on a fast, inexpensive model unless you ask for a stronger one.** **Gemini 4 Hydrogen**
+  is a small step up for a little more. For a hard problem, or one it has already got wrong, choose
+  **Gemini 4 Argon** from the level control beside the assistant picker in the web or iOS app, or
+  ask the assistant to "have the coder use Gemini 4 Argon". For the very hardest problems, **Gemini
+  4 Neon** is Google's fast frontier-level model and is dearer again. Both cost many times more, so
+  save them for jobs the usual model isn't up to. Telegram's `/deep` and `/max` don't apply to
+  `/coder`.
 - **It cannot see your data.** Your notes, calendar, documents, email, and devices are out of reach
   — it works only from what you put in the request. Use `/complex` when the task needs the
   household's own information.
