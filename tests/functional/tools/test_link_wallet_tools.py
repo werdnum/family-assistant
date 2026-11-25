@@ -85,6 +85,7 @@ class _FakeLinkApiServer:
         default_factory=list
     )
     spend_cancel_response: dict[str, object] = field(default_factory=dict)
+    step_up_override: dict[str, object] | None = None
     recorded_requests: list[tuple[str, str, str, dict[str, object] | None]] = field(
         default_factory=list
     )
@@ -119,7 +120,8 @@ class _FakeLinkApiServer:
                             "remaining": 1990000,
                         },
                     },
-                    "agent_wallet_step_up": {
+                    "agent_wallet_step_up": self.step_up_override
+                    or {
                         "status": "not_required",
                         "action_url": None,
                     },
@@ -334,14 +336,29 @@ async def test_wallet_status_tags_ineligible_cards_redacts_addresses_and_latches
     assert by_id["pm_restricted_2"]["ineligibility_reasons"] == ["unsupported_network"]
     assert by_id["pm_no_caps_3"]["eligible"] is True
 
+    # Model-visible text includes spend limits (so the LLM can check them).
+    rendered_text = result.get_text()
+    assert "50000" in rendered_text
+    assert "497500" in rendered_text
+    assert "1990000" in rendered_text
+
     # Never exposes street address, phone, email, or PAN.
-    serialized = json.dumps(data) + (result.text or "")
+    serialized = json.dumps(data) + rendered_text
     assert "99 Secret Street" not in serialized
     assert "+61400000000" not in serialized
     assert "alice@example.com" not in serialized
 
     # Touching link_wallet_status latches the browser scope to checked.
     assert get_browser_session_review_mode(scope) == "checked"
+
+    # When verification requires action, action_url is surfaced in model-visible text.
+    wallet.server.step_up_override = {
+        "status": "required",
+        "action_url": "https://app.link.com/verify/step-up-1",
+    }
+    verify_res = await link_wallet_status_tool(wallet.exec_context)
+    assert "https://app.link.com/verify/step-up-1" in verify_res.get_text()
+    assert "verification=required" in verify_res.get_text()
 
 
 @pytest.mark.asyncio

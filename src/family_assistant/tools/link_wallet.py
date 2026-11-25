@@ -520,10 +520,16 @@ async def link_wallet_status_tool(exec_context: ToolExecutionContext) -> ToolRes
         eligible_count = sum(1 for card in cards if card["eligible"])
         ineligible_count = len(cards) - eligible_count
         currency = info_data["default_currency"] or "unknown"
+        verification_req = info_data["verification_requirement"]
         verification_status = (
-            info_data["verification_requirement"]["status"]
-            if isinstance(info_data["verification_requirement"], dict)
+            verification_req["status"]
+            if isinstance(verification_req, dict)
             else "unknown"
+        )
+        verification_action_url = (
+            verification_req.get("action_url")
+            if isinstance(verification_req, dict)
+            else None
         )
         lines = [
             f"Link wallet status: default currency={currency}, "
@@ -531,6 +537,28 @@ async def link_wallet_status_tool(exec_context: ToolExecutionContext) -> ToolRes
             f"payment methods={len(cards)} ({eligible_count} eligible, "
             f"{ineligible_count} ineligible).",
         ]
+        if verification_action_url:
+            lines.append(f"Verification action URL: {verification_action_url}")
+        spend_limits = info_data["spend_limits"]
+        if isinstance(spend_limits, dict):
+            per_tx = spend_limits["per_transaction"]["limit"]
+            daily = spend_limits["daily"]
+            thirty_day = spend_limits["thirty_day"]
+            per_tx_str = "unlimited" if per_tx is None else str(per_tx)
+            daily_str = (
+                "unlimited"
+                if daily["limit"] is None
+                else f"{daily['limit']} (used {daily['used']}, remaining {daily['remaining']})"
+            )
+            thirty_str = (
+                "unlimited"
+                if thirty_day["limit"] is None
+                else f"{thirty_day['limit']} (used {thirty_day['used']}, remaining {thirty_day['remaining']})"
+            )
+            lines.append(
+                f"Spend limits (minor units): per-transaction={per_tx_str}, "
+                f"daily={daily_str}, 30-day={thirty_str}."
+            )
         for card in cards:
             brand = card["brand"] or "card"
             last4 = card["last4"] or "????"
