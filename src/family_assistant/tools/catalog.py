@@ -1454,12 +1454,12 @@ _CORE_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.SENSITIVE_DATA,
         ToolTag.OUTPUT_TRUSTED,
     ),
-    # Stripe Link Agent Wallet tools. link_wallet_status returns redacted card
-    # summaries and limits without shipping addresses; link_list_shipping_addresses
-    # carries SENSITIVE_DATA so digital checkouts never read home addresses and
-    # reading addresses records a sensitive_read.
+    # Stripe Link Agent Wallet tools. All read-only Link wallet tools carry
+    # SENSITIVE_DATA because they read connected-account financial state
+    # (cards, limits, spend requests, or shipping addresses).
     "link_wallet_status": _metadata(
         ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
         ToolTag.CONNECTED_ACCOUNT_DATA,
         ToolTag.SHOPPING,
         ToolTag.OUTPUT_MACHINE_DATA,
@@ -1480,6 +1480,7 @@ _CORE_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     ),
     "link_check_spend_request": _metadata(
         ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
         ToolTag.CONNECTED_ACCOUNT_DATA,
         ToolTag.SHOPPING,
         ToolTag.OUTPUT_MACHINE_DATA,

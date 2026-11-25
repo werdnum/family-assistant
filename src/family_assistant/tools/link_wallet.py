@@ -197,10 +197,10 @@ LINK_WALLET_TOOLS_DEFINITION: list[ToolDefinition] = [
                         },
                     },
                     "expires_at": {
-                        "type": ["integer", "string"],
+                        "type": "string",
                         "description": (
-                            "Optional expiry as Unix seconds or UTC ISO-8601 timestamp "
-                            "ending in 'Z'."
+                            "Optional expiry as UTC ISO-8601 timestamp ending in 'Z' "
+                            "(e.g. '2026-12-01T22:39:22Z')."
                         ),
                     },
                     "recurring": {
@@ -693,6 +693,7 @@ async def link_create_spend_request_tool(
             expires_at=expires_at,
             recurring=cast("SpendRequestRecurringParams | None", recurring),
         )
+        poll_error: str | None = None
         if sr.status == "pending_approval" and _SPEND_REQUEST_WAIT_SECONDS > 0:
             clock = exec_context.clock or SystemClock()
             deadline = clock.now().timestamp() + _SPEND_REQUEST_WAIT_SECONDS
@@ -702,11 +703,30 @@ async def link_create_spend_request_tool(
                     break
                 step = min(_SPEND_REQUEST_POLL_INTERVAL_SECONDS, remaining)
                 await _wait_for_poll(step)
-                refreshed = await service.retrieve_spend_request(sr.id)
+                try:
+                    refreshed = await service.retrieve_spend_request(sr.id)
+                except (OAuthCredentialError, LinkWalletError) as exc:
+                    logger.warning(
+                        "Link spend request %s was created but status polling failed: %s",
+                        sr.id,
+                        exc,
+                    )
+                    poll_error = str(exc)
+                    break
                 if refreshed is None:
                     break
                 sr = refreshed
-        return _format_spend_request_result(sr)
+        result = _format_spend_request_result(sr)
+        if poll_error is not None:
+            data = dict(cast("LinkToolJson", result.get_data() or {}))
+            data["poll_error"] = poll_error
+            text = (
+                f"{result.text} Note: follow-up status polling failed ({poll_error}); "
+                f"do NOT create a duplicate spend request — check {sr.id} with "
+                "link_check_spend_request or cancel it with link_cancel_spend_request."
+            )
+            return ToolResult(text=text, data=data)
+        return result
 
     return await _guard(_run)
 

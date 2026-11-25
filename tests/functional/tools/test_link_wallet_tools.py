@@ -81,7 +81,7 @@ class _FakeLinkApiServer:
     """Stubs api.link.com endpoints via httpx.MockTransport."""
 
     spend_create_response: dict[str, object] = field(default_factory=dict)
-    spend_retrieve_responses: list[dict[str, object] | None] = field(
+    spend_retrieve_responses: list[dict[str, object] | httpx.Response | None] = field(
         default_factory=list
     )
     spend_cancel_response: dict[str, object] = field(default_factory=dict)
@@ -196,6 +196,8 @@ class _FakeLinkApiServer:
         if request.method == "GET" and path.startswith("/spend_requests/"):
             if self.spend_retrieve_responses:
                 nxt = self.spend_retrieve_responses.pop(0)
+                if isinstance(nxt, httpx.Response):
+                    return nxt
                 if nxt is None:
                     return httpx.Response(404, json={"error": "not_found"})
                 return httpx.Response(200, json=nxt)
@@ -559,6 +561,34 @@ async def test_create_spend_request_polling_pending_and_requires_action_and_neve
     serialized = json.dumps(check_res.get_data()) + (check_res.text or "")
     assert "4111111111114242" not in serialized
     assert "987" not in serialized
+
+    # Case D: if creation succeeds and a subsequent poll fails with 500, preserve
+    # the created spend_request_id and approval_url so the model checks it instead
+    # of creating a duplicate spend request.
+    wallet.server.spend_create_response = _base_spend_request(
+        sr_id="sr_poll_fail_1",
+        status="pending_approval",
+        approval_url="https://link.com/approve/sr_poll_fail_1",
+    )
+    wallet.server.spend_retrieve_responses = [
+        httpx.Response(500, json={"error": {"message": "upstream unavailable"}})
+    ]
+    poll_fail_res = await link_create_spend_request_tool(
+        wallet.exec_context,
+        amount=4500,
+        currency="aud",
+        context=LONG_CONTEXT,
+        merchant_name="Example Roasters",
+        merchant_url="https://shop.example.com/checkout",
+    )
+    poll_fail_data = poll_fail_res.get_data()
+    assert isinstance(poll_fail_data, dict)
+    assert poll_fail_data["spend_request_id"] == "sr_poll_fail_1"
+    assert poll_fail_data["status"] == "pending_approval"
+    assert poll_fail_data["approval_url"] == "https://link.com/approve/sr_poll_fail_1"
+    assert "poll_error" in poll_fail_data
+    assert "do NOT create a duplicate" in (poll_fail_res.text or "")
+    assert "link_check_spend_request" in (poll_fail_res.text or "")
 
 
 @pytest.mark.asyncio
