@@ -2292,8 +2292,10 @@ ______________________________________________________________________
 ### CREDENTIAL_ENCRYPTION_KEY
 
 URL-safe base64-encoded Fernet key used to encrypt stored refresh tokens at rest. Maps to
-`google_integration.credential_encryption_key` and `chatgpt_plan.credential_encryption_key`, so it
-also enables the [ChatGPT plan sign-in](#chatgpt-plan-sign-in-with-chatgpt).
+`google_integration.credential_encryption_key`, `link_integration.credential_encryption_key`, and
+`chatgpt_plan.credential_encryption_key`, so it also enables the
+[Link Agent Wallet integration](#link-agent-wallet-integration) and
+[ChatGPT plan sign-in](#chatgpt-plan-sign-in-with-chatgpt).
 
 | Property  | Value                              |
 | --------- | ---------------------------------- |
@@ -2416,6 +2418,108 @@ part of the floor check:
   shipped `default_profile_settings.tools_policy` carries a priority-20 `confirm` rule for
   `delete_calendar_event` and `modify_calendar_event`, so those remain confirmed whatever the matrix
   says. A soft taint outcome never removes a confirmation that tool policy imposes.
+
+______________________________________________________________________
+
+## Link Agent Wallet Integration
+
+Enables per-user Stripe Link Agent Wallet access (device-code OAuth, wallet status, saved shipping
+addresses, and virtual-card spend requests approved out-of-band in Link). See
+`docs/design/link-agent-wallet.md`.
+
+Each user connects their own Link account in the web app under **Settings → Connected Accounts**
+using Link's RFC 8628 device-code flow. Refresh tokens are stored encrypted in
+`user_oauth_connections` using `CREDENTIAL_ENCRYPTION_KEY`, and rotated refresh tokens returned on
+refresh are persisted atomically under the per-user refresh lock.
+
+```yaml
+link_integration:
+  enabled: false
+  oauth_client_id: "lwlpk_U7Qy7ThG69STZk"
+  oauth_client_secret: ""
+  credential_encryption_key: ""
+  scopes:
+    - "payment_methods.agentic"
+    - "userinfo:read"
+  require_taint_enforcement: false
+```
+
+### LINK_INTEGRATION_ENABLED
+
+Explicit opt-in toggle for the Stripe Link Agent Wallet integration. Maps to
+`link_integration.enabled`.
+
+| Property  | Value   |
+| --------- | ------- |
+| Required  | No      |
+| Default   | `false` |
+| Sensitive | No      |
+| Example   | `true`  |
+
+Because `link_integration.oauth_client_id` ships with Link CLI's public client id, this toggle keeps
+Link quietly disabled on deployments that have not opted in (even when `CREDENTIAL_ENCRYPTION_KEY`
+is already set for Google or ChatGPT plan sign-in).
+
+______________________________________________________________________
+
+### LINK_OAUTH_CLIENT_ID
+
+OAuth client id used for Link device-code authorization and token refresh. Maps to
+`link_integration.oauth_client_id`.
+
+| Property  | Value                  |
+| --------- | ---------------------- |
+| Required  | No                     |
+| Default   | `lwlpk_U7Qy7ThG69STZk` |
+| Sensitive | No                     |
+| Example   | `lwlpk_U7Qy7ThG69STZk` |
+
+Defaults to Link CLI's public client id; override if you register your own Link OAuth application.
+
+______________________________________________________________________
+
+### LINK_OAUTH_CLIENT_SECRET
+
+Optional OAuth client secret for deployments using a confidential Link OAuth client. Maps to
+`link_integration.oauth_client_secret`.
+
+| Property  | Value   |
+| --------- | ------- |
+| Required  | No      |
+| Default   | `""`    |
+| Sensitive | **Yes** |
+| Example   | `...`   |
+
+Omitted from token requests when empty. Redacted from logged configuration and diagnostics exports.
+
+______________________________________________________________________
+
+### link_integration.scopes
+
+Allowlist of Link OAuth scopes requested during device-code authorization.
+
+| Property  | Value                                          |
+| --------- | ---------------------------------------------- |
+| Required  | No                                             |
+| Default   | `payment_methods.agentic`, `userinfo:read`     |
+| Sensitive | No                                             |
+| Example   | `["payment_methods.agentic", "userinfo:read"]` |
+
+Only `payment_methods.agentic` and `userinfo:read` are allowed in v1. Configuring unsupported scopes
+such as `financial_insights.*` disables the integration at startup.
+
+**Enablement conditions** (validated at startup):
+
+1. `link_integration.enabled` is `true`, `oauth_client_id` is non-empty, and a valid Fernet
+   `CREDENTIAL_ENCRYPTION_KEY` is configured.
+2. Every configured scope is in the supported allowlist (`payment_methods.agentic`,
+   `userinfo:read`).
+3. Real web authentication is active (OIDC configured and `users` block populated) — the shared dev
+   `test_user` mode is refused.
+
+Link opts out of the Google-style taint floor: spend control comes from static `decision: "review"`
+on `link_create_spend_request`, mechanical `merchant_url` origin binding, `checked` browser scope
+latching on every Link tool, and Link's own out-of-band biometric approval.
 
 ______________________________________________________________________
 

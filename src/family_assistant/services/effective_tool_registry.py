@@ -16,11 +16,14 @@ import logging
 from typing import TYPE_CHECKING
 
 from family_assistant.plugins.registry import PLUGINS
+from family_assistant.services.link_provider import LINK_PROVIDER
 from family_assistant.services.oauth_integration_state import (
+    OAuthIntegrationState,
     filter_oauth_tool_registrations,
 )
 from family_assistant.tools.catalog import LOCAL_TOOL_REGISTRATIONS
 from family_assistant.tools.documents import _scan_user_docs
+from family_assistant.tools.link_wallet import LINK_TOOL_REQUIRED_SCOPES
 from family_assistant.tools.weather import (
     GET_WEATHER_FORECAST_TOOL_NAME,
     bind_weather_service,
@@ -29,13 +32,24 @@ from family_assistant.weather import is_weather_configured
 
 if TYPE_CHECKING:
     from family_assistant.config_models import AppConfig
-    from family_assistant.services.oauth_integration_state import OAuthIntegrationState
     from family_assistant.tools.metadata import ToolRegistration
     from family_assistant.weather import WeatherService
 
 logger = logging.getLogger(__name__)
 
 _DOCUMENTATION_TOOL_NAME = "get_user_documentation_content"
+
+
+def _disabled_link_state() -> OAuthIntegrationState:
+    """Fail-closed Link state used when a caller does not evaluate Link."""
+    return OAuthIntegrationState(
+        provider=LINK_PROVIDER.name,
+        enabled=False,
+        reason="Link integration is not configured.",
+        taint_enforcement_waived=False,
+        enabled_tool_names=frozenset(),
+        governed_tool_names=frozenset(LINK_TOOL_REQUIRED_SCOPES),
+    )
 
 
 def _with_documentation_inventory(registration: ToolRegistration) -> ToolRegistration:
@@ -57,6 +71,8 @@ def build_effective_local_tool_registrations(
     config: AppConfig,
     google_integration_state: OAuthIntegrationState,
     weather_service: WeatherService | None = None,
+    *,
+    link_integration_state: OAuthIntegrationState | None = None,
 ) -> list[ToolRegistration]:
     """Return the root local registrations the deployment actually serves.
 
@@ -93,4 +109,12 @@ def build_effective_local_tool_registrations(
             )
         else:
             registrations.append(registration)
-    return filter_oauth_tool_registrations(registrations, google_integration_state)
+    registrations = filter_oauth_tool_registrations(
+        registrations, google_integration_state
+    )
+    return filter_oauth_tool_registrations(
+        registrations,
+        link_integration_state
+        if link_integration_state is not None
+        else _disabled_link_state(),
+    )

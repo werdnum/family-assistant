@@ -116,8 +116,17 @@ def _integration_config(
     return integration
 
 
-def _any_config_field_set(integration: OAuthIntegrationConfig) -> bool:
-    """Return True if the operator set any provider config field (tried to enable)."""
+def oauth_integration_configured(integration: OAuthIntegrationConfig) -> bool:
+    """Return True if the operator attempted to enable this OAuth integration.
+
+    Integrations with an explicit ``enabled`` toggle (such as Link, whose
+    public ``oauth_client_id`` has a non-empty default) count as configured
+    only when ``enabled`` is True. Integrations without that toggle count as
+    configured when any credential field is set.
+    """
+    enabled_flag = getattr(integration, "enabled", None)
+    if isinstance(enabled_flag, bool):
+        return enabled_flag
     return bool(
         integration.oauth_client_id
         or integration.oauth_client_secret
@@ -129,14 +138,14 @@ def _missing_credentials_reason(
     spec: OAuthProviderSpec, integration: OAuthIntegrationConfig
 ) -> str | None:
     """Return a reason for missing OAuth credentials, or None when all present."""
-    if not _any_config_field_set(integration):
+    if not oauth_integration_configured(integration):
         return f"{spec.display_name} integration is not configured."
     if not integration.oauth_client_id:
         return (
             f"{spec.display_name} integration is disabled: "
             f"{spec.name.upper()}_OAUTH_CLIENT_ID is not set."
         )
-    if not integration.oauth_client_secret:
+    if spec.requires_client_secret and not integration.oauth_client_secret:
         return (
             f"{spec.display_name} integration is disabled: "
             f"{spec.name.upper()}_OAUTH_CLIENT_SECRET is not set."
@@ -257,7 +266,7 @@ def _taint_floor_reason(
 
     Skips the check entirely when ``require_taint_enforcement`` is False.
     """
-    if not integration.require_taint_enforcement:
+    if not spec.requires_taint_floor or not integration.require_taint_enforcement:
         return None
 
     if config.taint_policy.mode is not TaintPolicyMode.ENFORCE:
@@ -363,7 +372,7 @@ def evaluate_oauth_integration_state(
     """
     integration = _integration_config(spec, config)
     governed_tool_names = frozenset(tool_required_scopes)
-    waived = not integration.require_taint_enforcement
+    waived = spec.requires_taint_floor and not integration.require_taint_enforcement
 
     def disabled(reason: str) -> OAuthIntegrationState:
         return OAuthIntegrationState(

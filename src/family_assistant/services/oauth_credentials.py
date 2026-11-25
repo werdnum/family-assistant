@@ -168,6 +168,11 @@ class OAuthCredentialResolver:
         return self._operation_locks.setdefault((user_id, operation), asyncio.Lock())
 
     @property
+    def http_client(self) -> httpx.AsyncClient:
+        """The async HTTP client shared by this provider's resolver and services."""
+        return self._http_client
+
+    @property
     def configured_scopes(self) -> frozenset[str]:
         """The data scopes this deployment requests at consent.
 
@@ -176,6 +181,30 @@ class OAuthCredentialResolver:
         for a scope does not tell its users to reconnect for it.
         """
         return frozenset(self._config.scopes)
+
+    def seed_access_token(
+        self,
+        user_id: str,
+        generation: str,
+        access_token: str,
+        expires_in: float | None = None,
+    ) -> None:
+        """Seed the in-memory access-token cache after a fresh connect.
+
+        Avoids an immediate refresh right after a device-code or authorization
+        exchange has already minted a valid access token.
+        """
+        if not access_token:
+            return
+        lifetime = (
+            float(expires_in)
+            if isinstance(expires_in, (int, float))
+            and not isinstance(expires_in, bool)
+            and expires_in > 0
+            else _DEFAULT_TOKEN_LIFETIME_SECONDS
+        )
+        expires_at = self._clock.now().timestamp() + lifetime
+        self._store_token(user_id, generation, access_token, expires_at)
 
     async def access_token_for(
         self, exec_context: ToolExecutionContext, scope: str
@@ -258,26 +287,48 @@ class OAuthCredentialResolver:
         generation = connection.credential_generation
         refresh_token = self._encryption.decrypt(connection.refresh_token_encrypted)
 
+        form_data: dict[str, str] = {
+            "grant_type": "refresh_token",
+            "client_id": self._config.oauth_client_id,
+            "refresh_token": refresh_token,
+        }
+        client_secret = self._config.oauth_client_secret.get_secret_value()
+        if client_secret:
+            form_data["client_secret"] = client_secret
+
         try:
             response = await self._http_client.post(
                 self._token_endpoint,
-                data={
-                    "grant_type": "refresh_token",
-                    "client_id": self._config.oauth_client_id,
-                    "client_secret": self._config.oauth_client_secret.get_secret_value(),
-                    "refresh_token": refresh_token,
-                },
+                data=form_data,
             )
         except httpx.HTTPError as exc:
             logger.warning("%s token refresh network error: %s", display_name, exc)
             raise OAuthRefreshFailedError(display_name) from exc
 
         if response.status_code == httpx.codes.OK:
-            token, expiry = self._parse_token_response(response)
-            self._store_token(user_id, generation, token, expiry)
+            token, expiry, rotated_refresh_token = self._parse_token_response(response)
+            should_cache = True
+            if rotated_refresh_token is not None:
+                encrypted_rotated = self._encryption.encrypt(rotated_refresh_token)
+                updated = await db.oauth_connections.update_refresh_token(
+                    user_id,
+                    connection.provider,
+                    expected_generation=generation,
+                    refresh_token_encrypted=encrypted_rotated,
+                )
+                if not updated:
+                    logger.info(
+                        "Skipping rotated %s refresh token persistence for %s: "
+                        "generation changed (likely a concurrent reconnect)",
+                        display_name,
+                        user_id,
+                    )
+                    should_cache = False
+            if should_cache:
+                self._store_token(user_id, generation, token, expiry)
             return token
 
-        if self._is_invalid_grant(response):
+        if self._provider.is_terminal_refresh_error(response):
             await self._handle_invalid_grant(
                 db, user_id, connection.provider, generation
             )
@@ -303,9 +354,24 @@ class OAuthCredentialResolver:
             access_token=token, expires_at=expires_at
         )
 
-    def _parse_token_response(self, response: httpx.Response) -> tuple[str, float]:
-        """Extract the access token and absolute expiry from a 200 response."""
-        payload = response.json()
+    def _parse_token_response(
+        self, response: httpx.Response
+    ) -> tuple[str, float, str | None]:
+        """Extract the access token, absolute expiry, and optional rotated refresh token."""
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            logger.warning(
+                "%s token response was not valid JSON",
+                self._provider.display_name,
+            )
+            raise OAuthRefreshFailedError(self._provider.display_name) from exc
+        if not isinstance(payload, dict):
+            logger.warning(
+                "%s token response was not a JSON object",
+                self._provider.display_name,
+            )
+            raise OAuthRefreshFailedError(self._provider.display_name)
         token = payload.get("access_token")
         if not isinstance(token, str) or not token:
             logger.warning(
@@ -316,22 +382,15 @@ class OAuthCredentialResolver:
         expires_in = payload.get("expires_in")
         lifetime = (
             float(expires_in)
-            if isinstance(expires_in, (int, float))
+            if isinstance(expires_in, (int, float)) and not isinstance(expires_in, bool)
             else _DEFAULT_TOKEN_LIFETIME_SECONDS
         )
         expires_at = self._clock.now().timestamp() + lifetime
-        return token, expires_at
-
-    @staticmethod
-    def _is_invalid_grant(response: httpx.Response) -> bool:
-        """Whether a non-200 response is the provider's revoked/expired signal."""
-        if response.status_code != httpx.codes.BAD_REQUEST:
-            return False
-        try:
-            payload = response.json()
-        except ValueError:
-            return False
-        return isinstance(payload, dict) and payload.get("error") == "invalid_grant"
+        rotated_raw = payload.get("refresh_token")
+        rotated_refresh_token = (
+            rotated_raw if isinstance(rotated_raw, str) and rotated_raw else None
+        )
+        return token, expires_at, rotated_refresh_token
 
     async def _handle_invalid_grant(
         self,

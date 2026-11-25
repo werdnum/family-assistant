@@ -61,11 +61,13 @@ from family_assistant.services.effective_tool_registry import (
     build_effective_local_tool_registrations,
 )
 from family_assistant.services.google_provider import GOOGLE_PROVIDER
+from family_assistant.services.link_provider import LINK_PROVIDER
 from family_assistant.services.oauth_integration_state import (
     evaluate_oauth_integration_state,
 )
 from family_assistant.tools.calendar import GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES
 from family_assistant.tools.google_data import GOOGLE_TOOL_REQUIRED_SCOPES
+from family_assistant.tools.link_wallet import LINK_TOOL_REQUIRED_SCOPES
 from family_assistant.tools.mcp import (
     MCP_SERVER_STATUS_CONNECTED,
     MCPServerStatus,
@@ -262,8 +264,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
         shared_tool_required_scopes=GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES,
     )
+    link_integration_state = evaluate_oauth_integration_state(
+        LINK_PROVIDER,
+        config,
+        auth_enabled=AUTH_ENABLED,
+        tool_required_scopes=LINK_TOOL_REQUIRED_SCOPES,
+        shared_tool_required_scopes={},
+    )
     registrations = build_effective_local_tool_registrations(
-        config, google_integration_state
+        config,
+        google_integration_state,
+        link_integration_state=link_integration_state,
     )
     descriptors: list[ToolDescriptor] = build_local_tool_descriptors(registrations)
     local_count = len(descriptors)

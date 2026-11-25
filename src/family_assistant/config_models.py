@@ -1218,6 +1218,26 @@ class GoogleIntegrationConfig(OAuthIntegrationConfig):
     )
 
 
+class LinkIntegrationConfig(OAuthIntegrationConfig):
+    """Per-user Stripe Link Agent Wallet integration configuration.
+
+    Disabled by default even though ``oauth_client_id`` carries Link CLI's
+    public client id, so an unconfigured deployment stays quietly off until
+    an operator explicitly sets ``enabled: true`` (or ``LINK_INTEGRATION_ENABLED``).
+    """
+
+    enabled: bool = False
+    oauth_client_id: str = "lwlpk_U7Qy7ThG69STZk"
+    oauth_client_secret: SecretStr = SecretStr("")
+    scopes: list[str] = Field(
+        default_factory=lambda: [
+            "payment_methods.agentic",
+            "userinfo:read",
+        ]
+    )
+    require_taint_enforcement: bool = False
+
+
 class ChatGPTPlanConfig(BaseModel):
     """Running OpenAI models on a ChatGPT plan (Sign in with ChatGPT).
 
@@ -2425,6 +2445,9 @@ class AppConfig(BaseSettings):
     apns: ApnsConfig = Field(default_factory=ApnsConfig)
     google_integration: GoogleIntegrationConfig = Field(
         default_factory=GoogleIntegrationConfig
+    )
+    link_integration: LinkIntegrationConfig = Field(
+        default_factory=LinkIntegrationConfig
     )
     chatgpt_plan: ChatGPTPlanConfig = Field(default_factory=ChatGPTPlanConfig)
     gemini_live_config: GeminiLiveConfig = Field(default_factory=GeminiLiveConfig)

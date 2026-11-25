@@ -713,6 +713,27 @@ export const handlers = [
       usage_url: 'https://chatgpt.com/settings/usage',
     });
   }),
+
+  // Mock Link Agent Wallet integration status (default: disabled so Google card tests
+  // do not see extra Connect/Disconnect buttons unless explicitly overridden)
+  http.get('/api/integrations/link', () => {
+    return HttpResponse.json({
+      enabled: false,
+      reason: 'Link Agent Wallet is not configured on this server.',
+      require_taint_enforcement_waived: false,
+      connected: false,
+      provider_account_email: null,
+      status: null,
+      granted_scopes: [],
+      configured_scopes: ['payment_methods.agentic', 'userinfo:read'],
+      missing_configured_scopes: [],
+      last_used_at: null,
+    });
+  }),
+
+  http.delete('/api/integrations/link', () => {
+    return new HttpResponse(null, { status: 204 });
+  }),
 ];
 
 // Helper function to generate test responses based on input
