@@ -205,6 +205,39 @@ class OAuthConnectionsRepository(BaseRepository):
         result = await self._db.execute(stmt)
         return result.rowcount > 0  # type: ignore[union-attr] # rowcount available on CursorResult
 
+    async def update_refresh_token(
+        self,
+        user_id: str,
+        provider: str,
+        expected_generation: str,
+        refresh_token_encrypted: str,
+    ) -> bool:
+        """Persist a rotated refresh token if the connection generation still matches.
+
+        Does NOT bump ``credential_generation`` so in-memory access-token cache
+        entries for this connection remain valid after a routine token rotation.
+        Conditional on ``credential_generation == expected_generation`` and
+        ``status == 'active'`` so a refresh can never overwrite a replacement
+        connection. Returns True iff a row was updated.
+        """
+        now = datetime.now(UTC)
+        stmt = (
+            update(user_oauth_connections_table)
+            .where(
+                user_oauth_connections_table.c.user_id == user_id,
+                user_oauth_connections_table.c.provider == provider,
+                user_oauth_connections_table.c.credential_generation
+                == expected_generation,
+                user_oauth_connections_table.c.status == "active",
+            )
+            .values(
+                refresh_token_encrypted=refresh_token_encrypted,
+                updated_at=now,
+            )
+        )
+        result = await self._db.execute(stmt)
+        return result.rowcount > 0  # type: ignore[union-attr] # rowcount available on CursorResult
+
     async def update_last_used(self, user_id: str, provider: str) -> None:
         """Stamp ``last_used_at`` after a successful API use."""
         now = datetime.now(UTC)

@@ -161,11 +161,13 @@ from family_assistant.services.effective_tool_registry import (
     build_effective_local_tool_registrations,
 )
 from family_assistant.services.google_provider import GOOGLE_PROVIDER
+from family_assistant.services.link_provider import LINK_PROVIDER
 from family_assistant.services.notification_dispatcher import NotificationDispatcher
 from family_assistant.services.oauth_credentials import OAuthCredentialResolver
 from family_assistant.services.oauth_integration_state import (
     OAuthIntegrationState,
     evaluate_oauth_integration_state,
+    oauth_integration_configured,
 )
 from family_assistant.services.push_notification import PushNotificationService
 from family_assistant.services.tool_call_review import ToolCallReviewer
@@ -208,6 +210,7 @@ from family_assistant.tools.infrastructure import (
     PolicyEnforcingToolsProvider,
     TaintTrackingToolsProvider,
 )
+from family_assistant.tools.link_wallet import LINK_TOOL_REQUIRED_SCOPES
 from family_assistant.tools.mcp import MCPToolsProvider
 from family_assistant.tools.memory import MEMORY_WRITE_TOOL_NAMES
 from family_assistant.tools.on_demand import OnDemandToolsView
@@ -898,6 +901,26 @@ class Assistant:
             or integration.credential_encryption_key
         )
 
+    def _log_link_integration_state(self, state: OAuthIntegrationState) -> None:
+        """Log the resolved Link integration state at the right severity.
+
+        Because ``link_integration.oauth_client_id`` carries a public default,
+        a disabled Link integration logs at error only when the operator
+        explicitly enabled it (``link_integration.enabled: true``); otherwise
+        it stays quietly at debug.
+        """
+        if state.enabled:
+            logger.info(
+                "Link integration enabled. Enabled tools: %s",
+                sorted(state.enabled_tool_names),
+            )
+            return
+
+        if oauth_integration_configured(self.config.link_integration):
+            logger.error("Link integration disabled: %s", state.reason)
+        else:
+            logger.debug("Link integration not configured: %s", state.reason)
+
     async def setup_dependencies(self) -> None:
         """Initializes and wires up all core application components."""
         await self._setup_application()
@@ -1218,10 +1241,15 @@ class Assistant:
         assert self.fastapi_app is not None
         assert self.shared_httpx_client is not None
         google_integration_state = self._setup_google_integration()
+        link_integration_state = self._setup_link_integration()
+        self.fastapi_app.state.oauth_credential_resolvers = self.credential_resolvers
 
         logger.info("Creating root ToolsProvider with all available tools")
         root_local_registrations = build_effective_local_tool_registrations(
-            self.config, google_integration_state, self.weather_service
+            self.config,
+            google_integration_state,
+            self.weather_service,
+            link_integration_state=link_integration_state,
         )
         root_local_provider = LocalToolsProvider(
             registrations=root_local_registrations,
@@ -1316,6 +1344,34 @@ class Assistant:
             )
             self.api_backend = HttpApiBackend(self.shared_httpx_client)
         return google_integration_state
+
+    def _setup_link_integration(self) -> OAuthIntegrationState:
+        """Resolve and publish the Stripe Link Agent Wallet integration state."""
+        assert self.fastapi_app is not None
+        assert self.shared_httpx_client is not None
+        link_integration_state = evaluate_oauth_integration_state(
+            LINK_PROVIDER,
+            self.config,
+            auth_enabled=AUTH_ENABLED,
+            tool_required_scopes=LINK_TOOL_REQUIRED_SCOPES,
+            shared_tool_required_scopes={},
+        )
+        self.oauth_integration_states[LINK_PROVIDER.name] = link_integration_state
+        self.fastapi_app.state.oauth_integration_states = self.oauth_integration_states
+        self.fastapi_app.state.oauth_http_client = self.shared_httpx_client
+        self._log_link_integration_state(link_integration_state)
+        if link_integration_state.enabled:
+            encryption = CredentialEncryption(
+                self.config.link_integration.credential_encryption_key.get_secret_value()
+            )
+            self.credential_resolvers[LINK_PROVIDER.name] = OAuthCredentialResolver(
+                LINK_PROVIDER,
+                self.config.link_integration,
+                encryption,
+                self.shared_httpx_client,
+                self.notification_dispatcher,
+            )
+        return link_integration_state
 
     async def _reject_duplicate_tool_names(self) -> None:
         """Close the root provider and fail startup on duplicate tool names."""

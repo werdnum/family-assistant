@@ -13,6 +13,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import ChatGPTPlanCard from './ChatGPTPlanCard';
+import LinkWalletCard from './LinkWalletCard';
 
 const SCOPE_LABELS = {
   'https://www.googleapis.com/auth/gmail.readonly': 'Gmail read access',
@@ -317,6 +318,8 @@ const ConnectedAccounts = () => {
       </Card>
 
       <ChatGPTPlanCard />
+
+      <LinkWalletCard />
 
       <AlertDialog
         open={confirmDisconnect}

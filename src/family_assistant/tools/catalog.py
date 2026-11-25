@@ -157,6 +157,15 @@ from family_assistant.tools.image_tools import (
     IMAGE_TOOLS_DEFINITION,
     highlight_image_tool,
 )
+from family_assistant.tools.link_wallet import (
+    LINK_WALLET_TOOLS_DEFINITION,
+    browser_fill_payment_tool,
+    link_cancel_spend_request_tool,
+    link_check_spend_request_tool,
+    link_create_spend_request_tool,
+    link_list_shipping_addresses_tool,
+    link_wallet_status_tool,
+)
 from family_assistant.tools.mcp_events import (
     MCP_EVENTS_TOOLS_DEFINITION,
     list_mcp_events_tool,
@@ -341,6 +350,7 @@ _LOCAL_TOOL_DEFINITIONS: list[ToolDefinition] = (
     + SHOPPING_TOOLS_DEFINITION
     + REPORT_TECHNICAL_PROBLEM_TOOLS_DEFINITION
     + GOOGLE_DATA_TOOLS_DEFINITION
+    + LINK_WALLET_TOOLS_DEFINITION
     + WEATHER_TOOLS_DEFINITION
 )
 
@@ -499,6 +509,13 @@ _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
     "drive_search": drive_search_tool,
     "drive_get_file": drive_get_file_tool,
     "drive_write_file": drive_write_file_tool,
+    # Stripe Link Agent Wallet tools
+    "link_wallet_status": link_wallet_status_tool,
+    "link_list_shipping_addresses": link_list_shipping_addresses_tool,
+    "link_create_spend_request": link_create_spend_request_tool,
+    "link_check_spend_request": link_check_spend_request_tool,
+    "link_cancel_spend_request": link_cancel_spend_request_tool,
+    "browser_fill_payment": browser_fill_payment_tool,
 }
 
 _CORE_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
@@ -1438,6 +1455,51 @@ _CORE_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.STATE_PERSISTING,
         ToolTag.SENSITIVE_DATA,
         ToolTag.OUTPUT_TRUSTED,
+    ),
+    # Stripe Link Agent Wallet tools. All read-only Link wallet tools carry
+    # SENSITIVE_DATA because they read connected-account financial state
+    # (cards, limits, spend requests, or shipping addresses).
+    "link_wallet_status": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.CONNECTED_ACCOUNT_DATA,
+        ToolTag.SHOPPING,
+        ToolTag.OUTPUT_MACHINE_DATA,
+    ),
+    "link_list_shipping_addresses": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.CONNECTED_ACCOUNT_DATA,
+        ToolTag.SHOPPING,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "link_create_spend_request": _metadata(
+        ToolTag.STATE_CHANGING,
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.CONNECTED_ACCOUNT_DATA,
+        ToolTag.SHOPPING,
+        ToolTag.OUTPUT_MACHINE_DATA,
+    ),
+    "link_check_spend_request": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.CONNECTED_ACCOUNT_DATA,
+        ToolTag.SHOPPING,
+        ToolTag.OUTPUT_MACHINE_DATA,
+    ),
+    "link_cancel_spend_request": _metadata(
+        ToolTag.STATE_CHANGING,
+        ToolTag.CONNECTED_ACCOUNT_DATA,
+        ToolTag.SHOPPING,
+        ToolTag.OUTPUT_MACHINE_DATA,
+    ),
+    "browser_fill_payment": _metadata(
+        ToolTag.BROWSER,
+        ToolTag.STATE_CHANGING,
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.CONNECTED_ACCOUNT_DATA,
+        ToolTag.SHOPPING,
+        ToolTag.OUTPUT_MACHINE_DATA,
     ),
     # Forecast data from a third-party API for the operator-configured
     # location: structured machine data, not free text from other people.

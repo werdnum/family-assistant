@@ -132,6 +132,13 @@ ENV_VAR_MAPPINGS: list[EnvVarMapping] = [
     EnvVarMapping(
         "CREDENTIAL_ENCRYPTION_KEY", "chatgpt_plan.credential_encryption_key"
     ),
+    # Link Agent Wallet integration (per-user Stripe Link)
+    EnvVarMapping("LINK_INTEGRATION_ENABLED", "link_integration.enabled", bool),
+    EnvVarMapping("LINK_OAUTH_CLIENT_ID", "link_integration.oauth_client_id"),
+    EnvVarMapping("LINK_OAUTH_CLIENT_SECRET", "link_integration.oauth_client_secret"),
+    EnvVarMapping(
+        "CREDENTIAL_ENCRYPTION_KEY", "link_integration.credential_encryption_key"
+    ),
     # Profile settings
     EnvVarMapping("DEFAULT_SERVICE_PROFILE_ID", "default_service_profile_id"),
     EnvVarMapping("TIMEZONE", "default_profile_settings.processing_config.timezone"),

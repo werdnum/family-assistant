@@ -46,6 +46,8 @@ NON_AUTHENTICATED_BROWSER_TOOLS: frozenset[str] = frozenset({
     "browser_extract",
     # A model-selected handback can replace this run's confined session.
     "browser_claim_handback",
+    # Reaches the user's Link OAuth wallet outside browser-server's confined session.
+    "browser_fill_payment",
 })
 
 NON_BROWSER_ADMISSIBLE_TOOLS: frozenset[str] = frozenset({

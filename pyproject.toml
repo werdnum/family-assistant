@@ -162,6 +162,7 @@ dependencies = [
     "pillow-heif>=1.8.1",
     "claude-agent-sdk>=0.2.182",
     "httpx2>=2.16.2",
+    "stripe-link-sdk>=0.2.0",
 ]
 
 [project.optional-dependencies]
@@ -551,4 +552,4 @@ explicit = true
 [tool.uv.sources]
 torch = { index = "torch-cpu" }
 telegram-bot-api-mock = { git = "https://github.com/werdnum/telegram-bot-api-mock" }
-browser-handoff-service = { git = "https://github.com/werdnum/browser-server.git", rev = "bfa34c53c9d5b19a65b3ae7d3e3216934e475b08" }
+browser-handoff-service = { git = "https://github.com/werdnum/browser-server.git", rev = "ab0a5594396e2ce1f08961e788bc5e0c13007058" }

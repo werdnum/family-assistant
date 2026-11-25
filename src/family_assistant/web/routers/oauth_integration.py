@@ -22,10 +22,12 @@ import hashlib
 import json
 import logging
 import secrets
-from typing import TYPE_CHECKING, Annotated
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Annotated, Literal, cast
 from urllib.parse import urlencode
 
 import httpx
+import link
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
@@ -36,8 +38,10 @@ from family_assistant.services.credential_encryption import (
     CredentialEncryption,
     CredentialEncryptionError,
 )
+from family_assistant.services.oauth_credentials import OAuthCredentialResolver
 from family_assistant.services.oauth_integration_state import OAuthIntegrationState
 from family_assistant.storage.database import Database
+from family_assistant.utils.clock import Clock, SystemClock
 from family_assistant.web.dependencies import get_current_session_user, get_db
 
 if TYPE_CHECKING:
@@ -61,8 +65,73 @@ class OAuthIntegrationStatus(BaseModel):
     last_used_at: str | None
 
 
+class DeviceStartResponse(BaseModel):
+    """Public verification data returned when starting a device-code flow."""
+
+    flow_id: str
+    verification_uri: str
+    verification_uri_complete: str | None = None
+    user_code: str
+    expires_in: int
+    interval: int
+
+
+class DevicePollRequest(BaseModel):
+    """Poll request carrying the opaque flow id issued by ``/device/start``."""
+
+    flow_id: str
+
+
+class DevicePollPendingResponse(BaseModel):
+    """Device-code authorization is still waiting on the user."""
+
+    status: Literal["pending"] = "pending"
+    interval: int
+
+
+class DevicePollExpiredResponse(BaseModel):
+    """Device-code authorization expired before the user approved it."""
+
+    status: Literal["expired"] = "expired"
+    detail: str
+
+
+class DevicePollDeniedResponse(BaseModel):
+    """The user declined the device-code authorization request."""
+
+    status: Literal["denied"] = "denied"
+    detail: str
+
+
+class DevicePollConnectedResponse(BaseModel):
+    """Device-code authorization completed and the connection is stored."""
+
+    status: Literal["connected"] = "connected"
+    provider_account_email: str | None
+
+
+type DevicePollResponse = (
+    DevicePollPendingResponse
+    | DevicePollExpiredResponse
+    | DevicePollDeniedResponse
+    | DevicePollConnectedResponse
+)
+
+
+@dataclass
+class _PendingDeviceFlow:
+    """In-memory pending device-code flow bound to one user and flow id."""
+
+    device_code: str
+    expires_at: float
+    interval: int
+    scopes: list[str]
+
+
 # Pending flows expire after 10 minutes (enforced on claim + opportunistic cleanup).
 PENDING_FLOW_TTL_SECONDS = 600
+_DEFAULT_DEVICE_POLL_INTERVAL_SECONDS = 5
+_MAX_DEVICE_POLL_INTERVAL_SECONDS = 60
 
 # Settings page the browser lands on after connect/disconnect / errors.
 SETTINGS_REDIRECT_PATH = "/settings/accounts"
@@ -91,18 +160,38 @@ Db = Annotated[Database, Depends(get_db)]
 OAuthClient = Annotated[httpx.AsyncClient, Depends(get_oauth_http_client)]
 
 
+def _oauth_clock(request: Request) -> Clock:
+    """Return the clock used for pending device-flow TTLs (injectable in tests)."""
+    injected = getattr(request.app.state, "oauth_clock", None)
+    if injected is not None and callable(getattr(injected, "now", None)):
+        return cast("Clock", injected)
+    return SystemClock()
+
+
+def _oauth_resolver(
+    request: Request, spec: OAuthProviderSpec
+) -> OAuthCredentialResolver | None:
+    """Return the app's credential resolver for this provider, if wired."""
+    resolvers = getattr(request.app.state, "oauth_credential_resolvers", None)
+    if not isinstance(resolvers, dict):
+        return None
+    resolver = resolvers.get(spec.name)
+    return resolver if isinstance(resolver, OAuthCredentialResolver) else None
+
+
 def _oauth_urls(request: Request, spec: OAuthProviderSpec) -> dict[str, str]:
     """Return the provider's OAuth endpoint URLs, honoring a per-app test override.
 
     ``app.state.oauth_url_overrides`` is a dict keyed by provider name whose
-    values are partial dicts with the keys ``authorize``/``token``/``revoke``/
-    ``userinfo``, merged over the spec's URLs.
+    values are partial dicts with the keys ``authorize``/``device_code``/
+    ``token``/``revoke``/``userinfo``, merged over the spec's URLs.
     """
     defaults = {
-        "authorize": spec.authorize_url,
+        "authorize": spec.authorize_url or "",
+        "device_code": spec.device_code_url or "",
         "token": spec.token_url,
         "revoke": spec.revoke_url,
-        "userinfo": spec.userinfo_url,
+        "userinfo": spec.userinfo_url or "",
     }
     overrides = getattr(request.app.state, "oauth_url_overrides", None)
     if isinstance(overrides, dict):
@@ -242,25 +331,155 @@ async def _resolve_account_email(
         if email:
             return email
 
-    if not access_token:
+    userinfo_url = _oauth_urls(request, spec)["userinfo"]
+    if not access_token or not userinfo_url:
         return None
     try:
         response = await http_client.get(
-            _oauth_urls(request, spec)["userinfo"],
+            userinfo_url,
             headers={"Authorization": f"Bearer {access_token}"},
         )
     except httpx.HTTPError:
         return None
     if response.status_code != 200:
         return None
-    data = response.json()
+    try:
+        data = response.json()
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
     email = data.get("email")
     return email if isinstance(email, str) else None
+
+
+async def _resolve_device_account_email(
+    request: Request,
+    spec: OAuthProviderSpec,
+    http_client: httpx.AsyncClient,
+    access_token: str | None,
+) -> str | None:
+    """Resolve connected account email for a device-code provider."""
+    if not access_token:
+        return None
+    if spec.name == "link":
+        userinfo_url = _oauth_urls(request, spec)["userinfo"]
+        api_base_url = (
+            userinfo_url.removesuffix("/userinfo")
+            if userinfo_url.endswith("/userinfo")
+            else "https://api.link.com"
+        )
+        try:
+            async with link.AsyncClient(
+                access_token=access_token,
+                api_base_url=api_base_url,
+                http_client=http_client,
+                default_headers={"User-Agent": "FamilyAssistant/1.0"},
+            ) as client:
+                user_info = await client.user_info.retrieve()
+        except link.LinkSDKError:
+            logger.warning(
+                "Could not resolve connected %s account email via user_info",
+                spec.display_name,
+                exc_info=True,
+            )
+            return None
+        email = user_info.email
+        return email if isinstance(email, str) and email else None
+    return await _resolve_account_email(request, spec, http_client, None, access_token)
+
+
+def _prune_expired_device_flows(
+    flows: dict[tuple[str, str], _PendingDeviceFlow], now: float
+) -> None:
+    """Drop expired in-memory pending device flows."""
+    expired_keys = [key for key, flow in flows.items() if flow.expires_at <= now]
+    for key in expired_keys:
+        del flows[key]
+
+
+def _parse_device_error(response: httpx.Response) -> tuple[str | None, str | None]:
+    """Extract OAuth device-flow error code and description from a non-200 response."""
+    try:
+        payload = response.json()
+    except ValueError:
+        return None, None
+    if not isinstance(payload, dict):
+        return None, None
+    error = payload.get("error")
+    if isinstance(error, str):
+        description = payload.get("error_description")
+        return error, description if isinstance(description, str) else None
+    if isinstance(error, dict):
+        code = error.get("code")
+        message = error.get("message")
+        return (
+            code if isinstance(code, str) else None,
+            message if isinstance(message, str) else None,
+        )
+    return None, None
+
+
+async def _notify_connected(
+    request: Request,
+    spec: OAuthProviderSpec,
+    user_id: str,
+    account_email: str | None,
+    db: Database,
+) -> None:
+    """Best-effort notification to the user naming the newly connected account."""
+    dispatcher = getattr(request.app.state, "notification_dispatcher", None)
+    if dispatcher is None:
+        return
+    body = (
+        f"{spec.display_name} account {account_email} was connected "
+        "to your Family Assistant account"
+        if account_email
+        else f"Your {spec.display_name} account was connected "
+        "to your Family Assistant account"
+    )
+    try:
+        await dispatcher.send_notification(
+            user_identifier=user_id,
+            title=f"{spec.display_name} account connected",
+            body=body,
+            db_context=db,
+        )
+    except Exception:
+        logger.warning(
+            "Failed to send %s connection notification",
+            spec.display_name,
+            exc_info=True,
+        )
+
+
+def _seed_resolver_token(
+    request: Request,
+    spec: OAuthProviderSpec,
+    user_id: str,
+    generation: str,
+    token_response: dict[str, object],
+) -> None:
+    """Seed the provider's credential resolver cache with a freshly minted token."""
+    resolver = _oauth_resolver(request, spec)
+    access_token = token_response.get("access_token")
+    if resolver is None or not isinstance(access_token, str) or not access_token:
+        return
+    expires_in = token_response.get("expires_in")
+    resolver.seed_access_token(
+        user_id,
+        generation,
+        access_token,
+        expires_in
+        if isinstance(expires_in, (int, float)) and not isinstance(expires_in, bool)
+        else None,
+    )
 
 
 def create_oauth_integration_router(spec: OAuthProviderSpec) -> APIRouter:
     """Build the connect-flow router for one OAuth provider."""
     router = APIRouter()
+    pending_device_flows: dict[tuple[str, str], _PendingDeviceFlow] = {}
 
     @router.get("")
     async def get_integration_status(
@@ -278,7 +497,11 @@ def create_oauth_integration_router(spec: OAuthProviderSpec) -> APIRouter:
         require_taint_enforcement_waived = (
             shared_state.taint_enforcement_waived
             if shared_state is not None
-            else (integration is not None and not integration.require_taint_enforcement)
+            else (
+                spec.requires_taint_floor
+                and integration is not None
+                and not integration.require_taint_enforcement
+            )
         )
 
         # Report the stored connection even when the integration is currently
@@ -299,7 +522,9 @@ def create_oauth_integration_router(spec: OAuthProviderSpec) -> APIRouter:
             require_taint_enforcement_waived=require_taint_enforcement_waived,
             connected=connection is not None,
             provider_account_email=(
-                connection.provider_account_email if connection is not None else None
+                (connection.provider_account_email or None)
+                if connection is not None
+                else None
             ),
             status=connection.status if connection is not None else None,
             granted_scopes=granted_scopes,
@@ -312,201 +537,466 @@ def create_oauth_integration_router(spec: OAuthProviderSpec) -> APIRouter:
             ),
         )
 
-    @router.get("/authorize")
-    async def start_authorize(
-        request: Request,
-        current_user: CurrentUser,
-        db: Db,
-    ) -> RedirectResponse:
-        """Start the authorization-code + PKCE flow and redirect to consent."""
-        integration = _require_enabled(request, spec)
-        user_id = current_user["user_identifier"]
+    if spec.authorize_url is not None:
 
-        state = secrets.token_urlsafe(32)
-        code_verifier, code_challenge = _pkce_pair()
+        @router.get("/authorize")
+        async def start_authorize(
+            request: Request,
+            current_user: CurrentUser,
+            db: Db,
+        ) -> RedirectResponse:
+            """Start the authorization-code + PKCE flow and redirect to consent."""
+            integration = _require_enabled(request, spec)
+            user_id = current_user["user_identifier"]
 
-        await db.oauth_connections.cleanup_expired_flows(PENDING_FLOW_TTL_SECONDS)
-        await db.oauth_connections.create_pending_flow(
-            _sha256_hex(state), code_verifier, user_id
-        )
+            state = secrets.token_urlsafe(32)
+            code_verifier, code_challenge = _pkce_pair()
 
-        scopes = [*_configured_scopes(integration), *spec.identity_scopes]
-        params = {
-            "client_id": integration.oauth_client_id,
-            "redirect_uri": _callback_redirect_uri(request, spec),
-            "response_type": "code",
-            "scope": " ".join(scopes),
-            "state": state,
-            "code_challenge": code_challenge,
-            "code_challenge_method": "S256",
-            **spec.extra_authorize_params,
-        }
-        authorize_url = f"{_oauth_urls(request, spec)['authorize']}?{urlencode(params)}"
-        return RedirectResponse(url=authorize_url, status_code=status.HTTP_302_FOUND)
+            await db.oauth_connections.cleanup_expired_flows(PENDING_FLOW_TTL_SECONDS)
+            await db.oauth_connections.create_pending_flow(
+                _sha256_hex(state), code_verifier, user_id
+            )
 
-    @router.get("/callback", name=f"{spec.name}_integration_callback")
-    async def authorize_callback(
-        request: Request,
-        current_user: CurrentUser,
-        db: Db,
-        http_client: OAuthClient,
-        code: str | None = None,
-        state: str | None = None,
-        error: str | None = None,
-    ) -> RedirectResponse:
-        """Complete the flow: consume the pending flow, exchange, upsert, notify."""
-        integration = _require_enabled(request, spec)
+            scopes = [*_configured_scopes(integration), *spec.identity_scopes]
+            params = {
+                "client_id": integration.oauth_client_id,
+                "redirect_uri": _callback_redirect_uri(request, spec),
+                "response_type": "code",
+                "scope": " ".join(scopes),
+                "state": state,
+                "code_challenge": code_challenge,
+                "code_challenge_method": "S256",
+                **spec.extra_authorize_params,
+            }
+            authorize_url = (
+                f"{_oauth_urls(request, spec)['authorize']}?{urlencode(params)}"
+            )
+            return RedirectResponse(
+                url=authorize_url, status_code=status.HTTP_302_FOUND
+            )
 
-        # The provider reports user-denied consent via the ``error`` param.
-        # Consume the pending flow so the authorization URL dies with the denial
-        # instead of remaining claimable for the rest of its TTL.
-        if error:
-            if state:
-                await db.oauth_connections.claim_pending_flow(
-                    _sha256_hex(state), PENDING_FLOW_TTL_SECONDS
+        @router.get("/callback", name=f"{spec.name}_integration_callback")
+        async def authorize_callback(
+            request: Request,
+            current_user: CurrentUser,
+            db: Db,
+            http_client: OAuthClient,
+            code: str | None = None,
+            state: str | None = None,
+            error: str | None = None,
+        ) -> RedirectResponse:
+            """Complete the flow: consume the pending flow, exchange, upsert, notify."""
+            integration = _require_enabled(request, spec)
+
+            # The provider reports user-denied consent via the ``error`` param.
+            # Consume the pending flow so the authorization URL dies with the denial
+            # instead of remaining claimable for the rest of its TTL.
+            if error:
+                if state:
+                    await db.oauth_connections.claim_pending_flow(
+                        _sha256_hex(state), PENDING_FLOW_TTL_SECONDS
+                    )
+                return _settings_redirect({spec.name: "error", "message": error})
+
+            if not code or not state:
+                return _settings_redirect({
+                    spec.name: "error",
+                    "message": "missing_code_or_state",
+                })
+
+            # a. Atomically claim (single-use consume) the pending flow.
+            flow = await db.oauth_connections.claim_pending_flow(
+                _sha256_hex(state), PENDING_FLOW_TTL_SECONDS
+            )
+            if flow is None:
+                # Tampering / replay / expiry — a JSON error is appropriate; there is
+                # no trusted flow to tie a friendly redirect to.
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Unknown, expired, or already-used state.",
                 )
-            return _settings_redirect({spec.name: "error", "message": error})
 
-        if not code or not state:
-            return _settings_redirect({
-                spec.name: "error",
-                "message": "missing_code_or_state",
-            })
+            # b. The session user must match the flow's initiating user.
+            user_id = current_user["user_identifier"]
+            if user_id != flow.user_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Authenticated user does not match the initiating user of this flow.",
+                )
 
-        # a. Atomically claim (single-use consume) the pending flow.
-        flow = await db.oauth_connections.claim_pending_flow(
-            _sha256_hex(state), PENDING_FLOW_TTL_SECONDS
-        )
-        if flow is None:
-            # Tampering / replay / expiry — a JSON error is appropriate; there is
-            # no trusted flow to tie a friendly redirect to.
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Unknown, expired, or already-used state.",
-            )
+            redirect_uri = _callback_redirect_uri(request, spec)
 
-        # b. The session user must match the flow's initiating user.
-        user_id = current_user["user_identifier"]
-        if user_id != flow.user_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Authenticated user does not match the initiating user of this flow.",
-            )
-
-        redirect_uri = _callback_redirect_uri(request, spec)
-
-        # c. Exchange the code (server-side, including the claimed PKCE code_verifier).
-        try:
-            token_result = await http_client.post(
-                _oauth_urls(request, spec)["token"],
-                data={
-                    "client_id": integration.oauth_client_id,
-                    "client_secret": integration.oauth_client_secret.get_secret_value(),
-                    "code": code,
-                    "grant_type": "authorization_code",
-                    "redirect_uri": redirect_uri,
-                    "code_verifier": flow.code_verifier,
-                },
-            )
-        except httpx.HTTPError:
-            logger.warning(
-                "%s token exchange request failed", spec.display_name, exc_info=True
-            )
-            return _settings_redirect({
-                spec.name: "error",
-                "message": "token_exchange_failed",
-            })
-        if token_result.status_code != 200:
-            # Never echo the code or any token material back to the user.
-            logger.warning(
-                "%s token exchange returned status %s",
-                spec.display_name,
-                token_result.status_code,
-            )
-            return _settings_redirect({
-                spec.name: "error",
-                "message": "token_exchange_failed",
-            })
-        token_response = token_result.json()
-
-        # d. A refresh token is required (we request offline consent via the
-        # provider's extra authorize params).
-        refresh_token = token_response.get("refresh_token")
-        if not isinstance(refresh_token, str) or not refresh_token:
-            logger.warning(
-                "%s token exchange returned no refresh_token", spec.display_name
-            )
-            return _settings_redirect({
-                spec.name: "error",
-                "message": "no_refresh_token",
-            })
-
-        # Granted scopes: partial grants are accepted (store what was granted).
-        granted_scope_str = token_response.get("scope", "")
-        granted_scopes = granted_scope_str.split() if granted_scope_str else []
-
-        # e. Identify the connected account.
-        id_token = token_response.get("id_token")
-        access_token = token_response.get("access_token")
-        account_email = await _resolve_account_email(
-            request,
-            spec,
-            http_client,
-            id_token if isinstance(id_token, str) else None,
-            access_token if isinstance(access_token, str) else None,
-        )
-        if not account_email:
-            logger.warning(
-                "Could not resolve connected %s account email", spec.display_name
-            )
-            return _settings_redirect({
-                spec.name: "error",
-                "message": "account_unresolved",
-            })
-
-        # f. Encrypt the refresh token and upsert the connection.
-        try:
-            encryption = CredentialEncryption(
-                integration.credential_encryption_key.get_secret_value()
-            )
-        except CredentialEncryptionError:
-            logger.exception("Invalid CREDENTIAL_ENCRYPTION_KEY")
-            return _settings_redirect({
-                spec.name: "error",
-                "message": "encryption_key_invalid",
-            })
-        refresh_token_encrypted = encryption.encrypt(refresh_token)
-
-        await db.oauth_connections.upsert_connection(
-            user_id=user_id,
-            provider=spec.name,
-            provider_account_email=account_email,
-            scopes=granted_scopes,
-            refresh_token_encrypted=refresh_token_encrypted,
-        )
-
-        # g. Notify the user, naming the account, so any swap is immediately visible.
-        dispatcher = getattr(request.app.state, "notification_dispatcher", None)
-        if dispatcher is not None:
+            # c. Exchange the code (server-side, including the claimed PKCE code_verifier).
             try:
-                await dispatcher.send_notification(
-                    user_identifier=user_id,
-                    title=f"{spec.display_name} account connected",
-                    body=(
-                        f"{spec.display_name} account {account_email} was connected "
-                        "to your Family Assistant account"
-                    ),
-                    db_context=db,
+                token_result = await http_client.post(
+                    _oauth_urls(request, spec)["token"],
+                    data={
+                        "client_id": integration.oauth_client_id,
+                        "client_secret": integration.oauth_client_secret.get_secret_value(),
+                        "code": code,
+                        "grant_type": "authorization_code",
+                        "redirect_uri": redirect_uri,
+                        "code_verifier": flow.code_verifier,
+                    },
                 )
-            except Exception:
+            except httpx.HTTPError:
                 logger.warning(
-                    "Failed to send %s connection notification",
+                    "%s token exchange request failed", spec.display_name, exc_info=True
+                )
+                return _settings_redirect({
+                    spec.name: "error",
+                    "message": "token_exchange_failed",
+                })
+            if token_result.status_code != 200:
+                # Never echo the code or any token material back to the user.
+                logger.warning(
+                    "%s token exchange returned status %s",
+                    spec.display_name,
+                    token_result.status_code,
+                )
+                return _settings_redirect({
+                    spec.name: "error",
+                    "message": "token_exchange_failed",
+                })
+            token_response = token_result.json()
+
+            # d. A refresh token is required (we request offline consent via the
+            # provider's extra authorize params).
+            refresh_token = token_response.get("refresh_token")
+            if not isinstance(refresh_token, str) or not refresh_token:
+                logger.warning(
+                    "%s token exchange returned no refresh_token", spec.display_name
+                )
+                return _settings_redirect({
+                    spec.name: "error",
+                    "message": "no_refresh_token",
+                })
+
+            # Granted scopes: partial grants are accepted (store what was granted).
+            granted_scope_str = token_response.get("scope", "")
+            granted_scopes = granted_scope_str.split() if granted_scope_str else []
+
+            # e. Identify the connected account.
+            id_token = token_response.get("id_token")
+            access_token = token_response.get("access_token")
+            account_email = await _resolve_account_email(
+                request,
+                spec,
+                http_client,
+                id_token if isinstance(id_token, str) else None,
+                access_token if isinstance(access_token, str) else None,
+            )
+            if not account_email:
+                logger.warning(
+                    "Could not resolve connected %s account email", spec.display_name
+                )
+                return _settings_redirect({
+                    spec.name: "error",
+                    "message": "account_unresolved",
+                })
+
+            # f. Encrypt the refresh token and upsert the connection.
+            try:
+                encryption = CredentialEncryption(
+                    integration.credential_encryption_key.get_secret_value()
+                )
+            except CredentialEncryptionError:
+                logger.exception("Invalid CREDENTIAL_ENCRYPTION_KEY")
+                return _settings_redirect({
+                    spec.name: "error",
+                    "message": "encryption_key_invalid",
+                })
+            refresh_token_encrypted = encryption.encrypt(refresh_token)
+
+            connection = await db.oauth_connections.upsert_connection(
+                user_id=user_id,
+                provider=spec.name,
+                provider_account_email=account_email,
+                scopes=granted_scopes,
+                refresh_token_encrypted=refresh_token_encrypted,
+            )
+            _seed_resolver_token(
+                request, spec, user_id, connection.credential_generation, token_response
+            )
+
+            # g. Notify the user, naming the account, so any swap is immediately visible.
+            await _notify_connected(request, spec, user_id, account_email, db)
+
+            # h. Redirect to the settings page.
+            return _settings_redirect({spec.name: "connected"})
+
+    if spec.device_code_url is not None:
+
+        @router.post("/device/start")
+        async def start_device_flow(
+            request: Request,
+            current_user: CurrentUser,
+            http_client: OAuthClient,
+        ) -> DeviceStartResponse:
+            """Start an RFC 8628 device-authorization flow for the signed-in user."""
+            integration = _require_enabled(request, spec)
+            user_id = current_user["user_identifier"]
+            now = _oauth_clock(request).now().timestamp()
+            _prune_expired_device_flows(pending_device_flows, now)
+
+            scopes = _configured_scopes(integration)
+            device_code_url = _oauth_urls(request, spec)["device_code"]
+            try:
+                response = await http_client.post(
+                    device_code_url,
+                    data={
+                        "client_id": integration.oauth_client_id,
+                        "scope": " ".join(scopes),
+                        "connection_label": "Family Assistant",
+                    },
+                )
+            except httpx.HTTPError as exc:
+                logger.warning(
+                    "%s device-code request failed", spec.display_name, exc_info=True
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"Failed to contact {spec.display_name} authorization service.",
+                ) from exc
+
+            if response.status_code != httpx.codes.OK:
+                logger.warning(
+                    "%s device-code endpoint returned status %s",
+                    spec.display_name,
+                    response.status_code,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"{spec.display_name} authorization service rejected the request.",
+                )
+
+            try:
+                payload = response.json()
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"Invalid response from {spec.display_name} authorization service.",
+                ) from exc
+
+            if not isinstance(payload, dict):
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"Invalid response from {spec.display_name} authorization service.",
+                )
+
+            device_code = payload.get("device_code")
+            verification_uri = payload.get("verification_uri")
+            user_code = payload.get("user_code")
+            if (
+                not isinstance(device_code, str)
+                or not device_code
+                or not isinstance(verification_uri, str)
+                or not verification_uri
+                or not isinstance(user_code, str)
+                or not user_code
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"Incomplete device-code response from {spec.display_name}.",
+                )
+
+            verification_uri_complete_raw = payload.get("verification_uri_complete")
+            verification_uri_complete = (
+                verification_uri_complete_raw
+                if isinstance(verification_uri_complete_raw, str)
+                and verification_uri_complete_raw
+                else None
+            )
+            expires_in_raw = payload.get("expires_in")
+            upstream_expires_in = (
+                int(expires_in_raw)
+                if isinstance(expires_in_raw, (int, float))
+                and not isinstance(expires_in_raw, bool)
+                and expires_in_raw > 0
+                else PENDING_FLOW_TTL_SECONDS
+            )
+            ttl = min(upstream_expires_in, PENDING_FLOW_TTL_SECONDS)
+            interval_raw = payload.get("interval")
+            interval = (
+                int(interval_raw)
+                if isinstance(interval_raw, (int, float))
+                and not isinstance(interval_raw, bool)
+                and interval_raw > 0
+                else _DEFAULT_DEVICE_POLL_INTERVAL_SECONDS
+            )
+
+            flow_id = secrets.token_urlsafe(24)
+            pending_device_flows[(user_id, flow_id)] = _PendingDeviceFlow(
+                device_code=device_code,
+                expires_at=now + ttl,
+                interval=interval,
+                scopes=scopes,
+            )
+
+            return DeviceStartResponse(
+                flow_id=flow_id,
+                verification_uri=verification_uri,
+                verification_uri_complete=verification_uri_complete,
+                user_code=user_code,
+                expires_in=ttl,
+                interval=interval,
+            )
+
+        @router.post("/device/poll")
+        async def poll_device_flow(
+            body: DevicePollRequest,
+            request: Request,
+            current_user: CurrentUser,
+            db: Db,
+            http_client: OAuthClient,
+        ) -> DevicePollResponse:
+            """Poll the provider's device-token endpoint for the signed-in user."""
+            integration = _require_enabled(request, spec)
+            user_id = current_user["user_identifier"]
+            now = _oauth_clock(request).now().timestamp()
+
+            flow_key = (user_id, body.flow_id)
+            pending = pending_device_flows.get(flow_key)
+            if pending is None:
+                _prune_expired_device_flows(pending_device_flows, now)
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Unknown or expired device flow.",
+                )
+
+            if now >= pending.expires_at:
+                pending_device_flows.pop(flow_key, None)
+                _prune_expired_device_flows(pending_device_flows, now)
+                return DevicePollExpiredResponse(
+                    detail="The verification code expired. Start again to connect."
+                )
+
+            _prune_expired_device_flows(pending_device_flows, now)
+
+            form_data: dict[str, str] = {
+                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                "device_code": pending.device_code,
+                "client_id": integration.oauth_client_id,
+            }
+            client_secret = integration.oauth_client_secret.get_secret_value()
+            if client_secret:
+                form_data["client_secret"] = client_secret
+
+            try:
+                token_result = await http_client.post(
+                    _oauth_urls(request, spec)["token"],
+                    data=form_data,
+                )
+            except httpx.HTTPError as exc:
+                logger.warning(
+                    "%s device-token poll request failed",
                     spec.display_name,
                     exc_info=True,
                 )
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"Failed to contact {spec.display_name} token endpoint.",
+                ) from exc
 
-        # h. Redirect to the settings page.
-        return _settings_redirect({spec.name: "connected"})
+            if token_result.status_code != httpx.codes.OK:
+                error_code, detail = _parse_device_error(token_result)
+                if error_code == "authorization_pending":
+                    return DevicePollPendingResponse(interval=pending.interval)
+                if error_code == "slow_down":
+                    pending.interval = min(
+                        pending.interval + 5, _MAX_DEVICE_POLL_INTERVAL_SECONDS
+                    )
+                    return DevicePollPendingResponse(interval=pending.interval)
+                if error_code == "expired_token":
+                    pending_device_flows.pop(flow_key, None)
+                    return DevicePollExpiredResponse(
+                        detail=detail
+                        or "The verification code expired. Start again to connect."
+                    )
+                if error_code == "access_denied":
+                    pending_device_flows.pop(flow_key, None)
+                    return DevicePollDeniedResponse(
+                        detail=detail or "Authorization was denied."
+                    )
+                logger.warning(
+                    "%s device-token poll returned status %s (error=%s)",
+                    spec.display_name,
+                    token_result.status_code,
+                    error_code,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"{spec.display_name} token polling failed.",
+                )
+
+            try:
+                token_response = token_result.json()
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"Invalid token response from {spec.display_name}.",
+                ) from exc
+            if not isinstance(token_response, dict):
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"Invalid token response from {spec.display_name}.",
+                )
+
+            refresh_token = token_response.get("refresh_token")
+            if not isinstance(refresh_token, str) or not refresh_token:
+                logger.warning(
+                    "%s device-token exchange returned no refresh_token",
+                    spec.display_name,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"{spec.display_name} did not return a refresh token.",
+                )
+
+            pending_device_flows.pop(flow_key, None)
+
+            granted_scope_raw = token_response.get("scope")
+            granted_scopes = (
+                granted_scope_raw.split()
+                if isinstance(granted_scope_raw, str) and granted_scope_raw.strip()
+                else list(pending.scopes)
+            )
+            access_token_raw = token_response.get("access_token")
+            access_token = (
+                access_token_raw
+                if isinstance(access_token_raw, str) and access_token_raw
+                else None
+            )
+
+            account_email = await _resolve_device_account_email(
+                request, spec, http_client, access_token
+            )
+
+            try:
+                encryption = CredentialEncryption(
+                    integration.credential_encryption_key.get_secret_value()
+                )
+            except CredentialEncryptionError as exc:
+                logger.exception("Invalid CREDENTIAL_ENCRYPTION_KEY")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Credential encryption key is invalid.",
+                ) from exc
+
+            refresh_token_encrypted = encryption.encrypt(refresh_token)
+            connection = await db.oauth_connections.upsert_connection(
+                user_id=user_id,
+                provider=spec.name,
+                provider_account_email=account_email or "",
+                scopes=granted_scopes,
+                refresh_token_encrypted=refresh_token_encrypted,
+            )
+            _seed_resolver_token(
+                request, spec, user_id, connection.credential_generation, token_response
+            )
+            await _notify_connected(request, spec, user_id, account_email, db)
+
+            return DevicePollConnectedResponse(provider_account_email=account_email)
 
     @router.delete("", status_code=status.HTTP_204_NO_CONTENT)
     async def disconnect_integration(
@@ -536,26 +1026,34 @@ def create_oauth_integration_router(spec: OAuthProviderSpec) -> APIRouter:
         if integration is not None and integration.credential_encryption_key:
             # Best-effort revocation: a decryption failure or a failed revoke
             # still deletes the row below.
+            revoke_url = _oauth_urls(request, spec)["revoke"]
             try:
                 encryption = CredentialEncryption(
                     integration.credential_encryption_key.get_secret_value()
                 )
                 refresh_token = encryption.decrypt(connection.refresh_token_encrypted)
-                await http_client.post(
-                    _oauth_urls(request, spec)["revoke"],
-                    data={"token": refresh_token},
-                )
-            except (
-                CredentialEncryptionError,
-                CredentialDecryptionError,
-                httpx.HTTPError,
-            ):
+            except CredentialEncryptionError, CredentialDecryptionError:
                 logger.warning(
-                    "%s token revocation failed; deleting connection anyway",
+                    "%s token decryption failed during disconnect; deleting connection anyway",
                     spec.display_name,
                     exc_info=True,
                 )
+            else:
+                revoke_data: dict[str, str] = {"token": refresh_token}
+                if not spec.requires_client_secret and integration.oauth_client_id:
+                    revoke_data["client_id"] = integration.oauth_client_id
+                try:
+                    await http_client.post(revoke_url, data=revoke_data)
+                except httpx.HTTPError:
+                    logger.warning(
+                        "%s token revocation failed; deleting connection anyway",
+                        spec.display_name,
+                        exc_info=True,
+                    )
 
         await db.oauth_connections.delete_connection(user_id, spec.name)
+        resolver = _oauth_resolver(request, spec)
+        if resolver is not None:
+            resolver.evict_cached_token(user_id)
 
     return router

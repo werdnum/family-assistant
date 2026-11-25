@@ -3,6 +3,7 @@ import logging
 from fastapi import APIRouter
 
 from family_assistant.services.google_provider import GOOGLE_PROVIDER
+from family_assistant.services.link_provider import LINK_PROVIDER
 
 from .a2a_api import a2a_router
 from .app_auth import api_auth_router
@@ -70,6 +71,11 @@ api_router.include_router(
     create_oauth_integration_router(GOOGLE_PROVIDER),
     prefix=f"/integrations/{GOOGLE_PROVIDER.name}",
     tags=["Google Integration"],
+)
+api_router.include_router(
+    create_oauth_integration_router(LINK_PROVIDER),
+    prefix=f"/integrations/{LINK_PROVIDER.name}",
+    tags=["Link Integration"],
 )
 api_router.include_router(
     chatgpt_plan_api_router,

@@ -3250,6 +3250,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
 
     _NON_UNCHECKED_BROWSER_TOOLS = frozenset({
         "browser_autofill",
+        "browser_fill_payment",
         "browser_report_login_outcome",
         "browser_claim_handback",
     })

@@ -27,6 +27,7 @@ from family_assistant.config_models import (
     ApnsConfig,
     AppConfig,
     ChatGPTPlanConfig,
+    LinkIntegrationConfig,
     MCPConfig,
     MCPServerConfig,
     TypeSafeConfig,
@@ -58,6 +59,11 @@ def test_declared_credential_fields_mask_themselves() -> None:
         chatgpt_plan=ChatGPTPlanConfig(
             credential_encryption_key=SecretStr("chatgpt-fernet-key")
         ),
+        link_integration=LinkIntegrationConfig(
+            enabled=True,
+            oauth_client_secret=SecretStr("link-oauth-secret"),
+            credential_encryption_key=SecretStr("link-fernet-key"),
+        ),
         plugins=PluginsConfig(
             trino={
                 "default": TrinoConfig(
@@ -77,6 +83,8 @@ def test_declared_credential_fields_mask_themselves() -> None:
         "BEGIN PRIVATE KEY",
         "trino-secret",
         "chatgpt-fernet-key",
+        "link-oauth-secret",
+        "link-fernet-key",
     ):
         assert secret not in dumped, secret
     assert "TEAM123" in dumped
