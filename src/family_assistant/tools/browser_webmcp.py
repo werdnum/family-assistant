@@ -122,14 +122,17 @@ async () => {
 }
 """
 
-# ``({ toolName, arguments }) => { ok, result?, truncated?, reason?, detail?, url }``:
+# ``({ toolName, arguments, timeoutMs }) => { ok, result?, truncated?, reason?, detail?, url }``:
 # looks up a same-origin tool and calls ``document.modelContext.executeTool``.
 # Feature-detects Chromium 151's JSON-string args contract versus Chrome 155+'s
 # object contract via ``typeof tool.inputSchema === 'string'``.
+# Passes an ``AbortController.signal`` via ``executeTool``'s third options argument and
+# aborts it at ``timeoutMs`` so timed-out tool callbacks receive cancellation instead of
+# continuing in the background after the server returns ``timeout``.
 # Bounds result payloads and error strings inside the page context before crossing CDP
 # and normalizes non-finite numbers (NaN/Infinity) to ``null`` so JSON serialization never fails.
 WEBMCP_CALL_JS = r"""
-async ({ toolName, arguments: argsObj }) => {
+async ({ toolName, arguments: argsObj, timeoutMs }) => {
   const MAX_RESULT_BYTES = 65536;
   const MAX_DETAIL_CHARS = 1000;
   const enc = new TextEncoder();
@@ -174,8 +177,40 @@ async ({ toolName, arguments: argsObj }) => {
   }
   const safeArgs = argsObj && typeof argsObj === 'object' && !Array.isArray(argsObj) ? argsObj : {};
   const callArg = typeof tool.inputSchema === 'string' ? JSON.stringify(safeArgs) : safeArgs;
+  const deadlineMs = typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 15000;
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  let timedOut = false;
+  let timer = null;
+  const timeoutPromise = new Promise((resolve) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      if (controller) {
+        try {
+          controller.abort(new DOMException('WebMCP tool call timed out', 'TimeoutError'));
+        } catch {
+          controller.abort();
+        }
+      }
+      resolve({ __webmcpTimeout: true });
+    }, deadlineMs);
+  });
   try {
-    const res = await mc.executeTool(tool, callArg);
+    const execPromise = controller
+      ? mc.executeTool(tool, callArg, { signal: controller.signal })
+      : mc.executeTool(tool, callArg);
+    // Attach a no-op rejection handler so an abort rejection after the race settles
+    // never surfaces as an unhandledrejection inside the page.
+    Promise.resolve(execPromise).catch(() => {});
+    const outcome = await Promise.race([execPromise, timeoutPromise]);
+    if (timedOut || (outcome && typeof outcome === 'object' && outcome.__webmcpTimeout === true)) {
+      return {
+        ok: false,
+        reason: 'timeout',
+        detail: `WebMCP tool '${toolName}' timed out after ${(deadlineMs / 1000).toFixed(1)}s`,
+        url: location.href,
+      };
+    }
+    const res = outcome;
     let serialized = null;
     let truncated = false;
     if (res === undefined || res === null) {
@@ -214,6 +249,14 @@ async ({ toolName, arguments: argsObj }) => {
     }
     return { ok: true, result: serialized, truncated, url: location.href };
   } catch (err) {
+    if (timedOut) {
+      return {
+        ok: false,
+        reason: 'timeout',
+        detail: `WebMCP tool '${toolName}' timed out after ${(deadlineMs / 1000).toFixed(1)}s`,
+        url: location.href,
+      };
+    }
     const rawDetail = err && typeof err.message === 'string' ? err.message : String(err);
     return {
       ok: false,
@@ -221,6 +264,8 @@ async ({ toolName, arguments: argsObj }) => {
       detail: truncDetail(rawDetail),
       url: location.href,
     };
+  } finally {
+    if (timer !== null) clearTimeout(timer);
   }
 }
 """

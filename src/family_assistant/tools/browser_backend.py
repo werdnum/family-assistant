@@ -807,9 +807,13 @@ class LocalPlaywrightBackend:
                 await asyncio.wait_for(
                     page.evaluate(
                         WEBMCP_CALL_JS,
-                        {"toolName": tool_name, "arguments": arguments},
+                        {
+                            "toolName": tool_name,
+                            "arguments": arguments,
+                            "timeoutMs": int(timeout_seconds * 1000),
+                        },
                     ),
-                    timeout=timeout_seconds,
+                    timeout=timeout_seconds + 1.0,
                 ),
             )
         except TimeoutError:
@@ -862,7 +866,7 @@ class LocalPlaywrightBackend:
                 else "WebMCP tool call failed"
             )
             return WebMCPCallResult(
-                status="error",
+                status="timeout" if reason == "timeout" else "error",
                 tool_name=tool_name,
                 reason=reason,
                 detail=detail,
