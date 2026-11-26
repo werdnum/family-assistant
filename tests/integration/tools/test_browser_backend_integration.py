@@ -817,20 +817,35 @@ async def test_webmcp_snapshot_and_call_end_to_end_including_authenticated_sessi
         with pytest.raises(BrowserBackendError, match="403"):
             await backend.evaluate("1 + 1")
 
-        # ...but WebMCP calls succeed...
-        added = await backend.webmcp_call("add_to_cart", {"sku": "SHOE-9"})
+        # ...but WebMCP calls succeed when bound to the discovered origin...
+        added = await backend.webmcp_call(
+            "add_to_cart", {"sku": "SHOE-9"}, expected_origin=_CONFINED_ORIGIN
+        )
         assert added["status"] == "ok"
         assert added.get("result") == {"added": "SHOE-9", "count": 1}
 
+        # ...a mismatched expected_origin is refused without running the tool...
+        wrong_origin = await backend.webmcp_call(
+            "add_to_cart",
+            {"sku": "EVIL"},
+            expected_origin="https://other-merchant.example.test",
+        )
+        assert wrong_origin["status"] == "refused"
+        assert wrong_origin.get("reason") == "wrong_origin"
+
         # ...same-origin navigation updates URL (redacted)...
-        nav = await backend.webmcp_call("proceed_to_checkout", {})
+        nav = await backend.webmcp_call(
+            "proceed_to_checkout", {}, expected_origin=_CONFINED_ORIGIN
+        )
         assert nav["status"] == "ok"
         assert nav.get("navigated") is True
         assert nav.get("url") == f"{_CONFINED_ORIGIN}/checkout"
         assert backend.current_url == f"{_CONFINED_ORIGIN}/checkout"
 
         # ...and off-scope navigation is still blocked by confinement!
-        blocked = await backend.webmcp_call("escape_origin", {})
+        blocked = await backend.webmcp_call(
+            "escape_origin", {}, expected_origin=_CONFINED_ORIGIN
+        )
         assert blocked["status"] == "refused"
         assert blocked.get("reason") == "off_scope_blocked"
     finally:

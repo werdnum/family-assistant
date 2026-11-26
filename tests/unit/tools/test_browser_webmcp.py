@@ -96,7 +96,7 @@ class _FakeBackend:
         self._snapshots = list(snapshots)
         self._call_result = call_result
         self.current_url = snapshots[0]["url"]
-        self.calls: list[tuple[str, dict[str, object], float]] = []
+        self.calls: list[tuple[str, dict[str, object], str, float]] = []
         self.settle_calls = 0
 
     async def raw_snapshot(self, next_ref: int) -> Snapshot:
@@ -113,9 +113,10 @@ class _FakeBackend:
         tool_name: str,
         arguments: dict[str, object],
         *,
+        expected_origin: str,
         timeout_seconds: float = 15.0,
     ) -> WebMCPCallResult:
-        self.calls.append((tool_name, arguments, timeout_seconds))
+        self.calls.append((tool_name, arguments, expected_origin, timeout_seconds))
         result_url = self._call_result.get("url")
         if result_url:
             self.current_url = str(result_url)
@@ -282,7 +283,9 @@ async def test_snapshot_deduplicates_webmcp_schemas_and_resets_on_navigation(
         arguments={},
         timeout_seconds=99.0,  # clamped to 30.0
     )
-    assert backend.calls == [("proceed_to_checkout", {}, 30.0)]
+    assert backend.calls == [
+        ("proceed_to_checkout", {}, "https://shop.example.com", 30.0)
+    ]
     assert backend.settle_calls == 1
     data = call_res.get_data()
     assert isinstance(data, dict)
@@ -313,15 +316,33 @@ async def test_webmcp_call_tool_validates_blank_name_and_handles_backend_error(
             tool_name: str,
             arguments: dict[str, object],
             *,
+            expected_origin: str,
             timeout_seconds: float = 15.0,
         ) -> WebMCPCallResult:
-            del tool_name, arguments, timeout_seconds
+            del tool_name, arguments, expected_origin, timeout_seconds
             raise BrowserBackendError("connection reset")
 
     async def _fake_get_backend(_ctx: ToolExecutionContext) -> _BoomBackend:
         return _BoomBackend()
 
     monkeypatch.setattr(browser_dom, "get_browser_backend", _fake_get_backend)
+
+    # Calling a tool before discovering it in a snapshot is refused locally
+    undiscovered = await browser_webmcp_call_tool(_exec_context, tool_name="get_cart")
+    undiscovered_data = undiscovered.get_data()
+    assert isinstance(undiscovered_data, dict)
+    assert undiscovered_data["status"] == "refused"
+    assert undiscovered_data["reason"] == "tool_not_found"
+    assert undiscovered_data.get("error")
+
+    # Seed a discovered tool from a prior snapshot so expected_origin is bound
+    session = await browser_dom.get_browser_session(_exec_context)
+    session.last_webmcp_tools["get_cart"] = {
+        "name": "get_cart",
+        "description": "Read cart",
+        "origin": "https://shop.example.com",
+    }
+
     failed = await browser_webmcp_call_tool(_exec_context, tool_name="get_cart")
     failed_data = failed.get_data()
     assert isinstance(failed_data, dict)
@@ -335,6 +356,7 @@ async def test_webmcp_call_tool_validates_blank_name_and_handles_backend_error(
     for status_val, reason_val in (
         ("error", "tool_error"),
         ("refused", "off_scope_blocked"),
+        ("refused", "wrong_origin"),
         ("timeout", "timeout"),
     ):
 
@@ -346,10 +368,12 @@ async def test_webmcp_call_tool_validates_blank_name_and_handles_backend_error(
                 tool_name: str,
                 arguments: dict[str, object],
                 *,
+                expected_origin: str,
                 timeout_seconds: float = 15.0,
                 _s: str = status_val,
                 _r: str = reason_val,
             ) -> WebMCPCallResult:
+                assert expected_origin == "https://shop.example.com"
                 del arguments, timeout_seconds
                 return WebMCPCallResult(
                     status=_s,
@@ -422,7 +446,12 @@ async def test_remote_backend_webmcp_call_and_error_mapping(
         base_url="http://browser-server.local",
     )
     backend = RemoteBrowserBackend(cfg, "conv-webmcp", client=client)
-    res = await backend.webmcp_call("add_to_cart", {"sku": "A1"}, timeout_seconds=12.0)
+    res = await backend.webmcp_call(
+        "add_to_cart",
+        {"sku": "A1"},
+        expected_origin="https://shop.example.com",
+        timeout_seconds=12.0,
+    )
     assert res["status"] == "ok"
     assert res.get("result") == {"count": 1}
     assert backend.current_url == "https://shop.example.com/cart"
@@ -431,6 +460,7 @@ async def test_remote_backend_webmcp_call_and_error_mapping(
     sent_payload = json.loads(seen[-1].content)
     assert sent_payload == {
         "tool_name": "add_to_cart",
+        "expected_origin": "https://shop.example.com",
         "arguments": {"sku": "A1"},
         "timeout_seconds": 12.0,
     }
@@ -438,7 +468,9 @@ async def test_remote_backend_webmcp_call_and_error_mapping(
     # Lease lost raises BrowserBackendError and clears session
     mode["status"] = 403
     with pytest.raises(BrowserBackendError, match="no longer|not available"):
-        await backend.webmcp_call("add_to_cart", {})
+        await backend.webmcp_call(
+            "add_to_cart", {}, expected_origin="https://shop.example.com"
+        )
     assert backend.session_id is None
 
     # Authenticated session raises AuthenticatedSessionUnavailableError on lease loss
@@ -455,7 +487,9 @@ async def test_remote_backend_webmcp_call_and_error_mapping(
     )
     auth_backend._session_id = "bs_webmcp"  # Simulate bound authenticated session
     with pytest.raises(AuthenticatedSessionUnavailableError):
-        await auth_backend.webmcp_call("add_to_cart", {})
+        await auth_backend.webmcp_call(
+            "add_to_cart", {}, expected_origin="https://shop.example.com"
+        )
     await client.aclose()
 
 

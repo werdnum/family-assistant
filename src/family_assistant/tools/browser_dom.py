@@ -62,6 +62,7 @@ from family_assistant.tools.browser_webmcp import (
     WEBMCP_CALL_MIN_TIMEOUT_SECONDS,
     WebMCPToolDescriptor,
     format_webmcp_snapshot_block,
+    origin_of_url,
     webmcp_tools_fingerprint,
 )
 from family_assistant.tools.taint_helpers import record_sensitive_read
@@ -996,11 +997,31 @@ async def browser_webmcp_call_tool(
 
     backend = await get_browser_backend(exec_context)
     session = await get_browser_session(exec_context)
-    logger.info("browser_webmcp_call: tool=%s", cleaned_name)
+    discovered = session.last_webmcp_tools.get(cleaned_name)
+    expected_origin = discovered.get("origin") if discovered is not None else None
+    if not isinstance(expected_origin, str) or not expected_origin:
+        detail = (
+            f"WebMCP tool {cleaned_name!r} was not discovered in the latest "
+            "browser_snapshot. Call browser_snapshot first to inspect the "
+            "current page's WebMCP tools and origin."
+        )
+        return ToolResult(
+            data={
+                "status": "refused",
+                "error": detail,
+                "tool_name": cleaned_name,
+                "reason": "tool_not_found",
+                "detail": detail,
+                "url": backend.current_url,
+            }
+        )
+
+    logger.info("browser_webmcp_call: tool=%s origin=%s", cleaned_name, expected_origin)
     try:
         call_result = await backend.webmcp_call(
             cleaned_name,
             dict(arguments or {}),
+            expected_origin=expected_origin,
             timeout_seconds=clamped_timeout,
         )
     except BrowserBackendError as exc:
@@ -1018,6 +1039,13 @@ async def browser_webmcp_call_tool(
     if call_result.get("navigated"):
         session.last_webmcp_fingerprint = None
         await backend.settle(timeout_ms=2000)
+        post_url = call_result.get("url") or backend.current_url
+        if (
+            isinstance(post_url, str)
+            and post_url
+            and origin_of_url(post_url) != expected_origin
+        ):
+            session.last_webmcp_tools.clear()
 
     payload: dict[str, object] = dict(call_result)
     if payload.get("status") not in {"ok", "navigated"}:

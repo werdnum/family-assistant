@@ -503,7 +503,7 @@ wheels = [
 [[package]]
 name = "browser-handoff-service"
 version = "0.1.0"
-source = { git = "https://github.com/werdnum/browser-server.git?rev=c94a8acd7faf77c0d27fe600c40b1b1ba52c71a1#c94a8acd7faf77c0d27fe600c40b1b1ba52c71a1" }
+source = { git = "https://github.com/werdnum/browser-server.git?rev=ae0d7603fa824add11f6ff90e94284f626538e65#ae0d7603fa824add11f6ff90e94284f626538e65" }
 dependencies = [
     { name = "cryptography" },
     { name = "fastapi" },
@@ -1113,7 +1113,7 @@ requires-dist = [
     { name = "backoff", specifier = ">=2.2.1" },
     { name = "basedpyright", marker = "extra == 'dev'" },
     { name = "bcrypt", specifier = ">=4.0.0,<5.0.0" },
-    { name = "browser-handoff-service", marker = "extra == 'dev'", git = "https://github.com/werdnum/browser-server.git?rev=c94a8acd7faf77c0d27fe600c40b1b1ba52c71a1" },
+    { name = "browser-handoff-service", marker = "extra == 'dev'", git = "https://github.com/werdnum/browser-server.git?rev=ae0d7603fa824add11f6ff90e94284f626538e65" },
     { name = "caldav", specifier = ">=1.2.0" },
     { name = "claude-agent-sdk", specifier = ">=0.2.182" },
     { name = "cloudcoil-models-kubernetes", specifier = ">=1.32" },

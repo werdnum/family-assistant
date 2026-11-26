@@ -515,6 +515,7 @@ class BrowserBackend(Protocol):
         tool_name: str,
         arguments: dict[str, object],
         *,
+        expected_origin: str,
         timeout_seconds: float = WEBMCP_CALL_DEFAULT_TIMEOUT_SECONDS,
     ) -> WebMCPCallResult: ...
 
@@ -752,9 +753,27 @@ class LocalPlaywrightBackend:
         tool_name: str,
         arguments: dict[str, object],
         *,
+        expected_origin: str,
         timeout_seconds: float = WEBMCP_CALL_DEFAULT_TIMEOUT_SECONDS,
     ) -> WebMCPCallResult:
         page = await self._page()
+        norm_expected = _origin_of_url(expected_origin)
+        current_origin = _origin_of_url(page.url)
+        if (
+            norm_expected is None
+            or not is_webmcp_eligible_origin(norm_expected)
+            or current_origin != norm_expected
+        ):
+            return WebMCPCallResult(
+                status="refused",
+                tool_name=tool_name,
+                reason="wrong_origin",
+                detail=(
+                    f"current document origin ({current_origin}) does not match "
+                    f"expected origin ({expected_origin})"
+                ),
+                url=page.url,
+            )
         encoded_args = json.dumps(arguments, ensure_ascii=False).encode("utf-8")
         if len(encoded_args) > WEBMCP_MAX_ARGS_BYTES:
             return WebMCPCallResult(
@@ -781,6 +800,7 @@ class LocalPlaywrightBackend:
                 page,
                 tool_name=tool_name,
                 arguments=arguments,
+                expected_origin=norm_expected,
                 timeout_seconds=timeout_seconds,
                 url_before=url_before,
                 nav_event=nav_event,
@@ -796,6 +816,7 @@ class LocalPlaywrightBackend:
         *,
         tool_name: str,
         arguments: dict[str, object],
+        expected_origin: str,
         timeout_seconds: float,
         url_before: str,
         nav_event: asyncio.Event,
@@ -810,6 +831,7 @@ class LocalPlaywrightBackend:
                         {
                             "toolName": tool_name,
                             "arguments": arguments,
+                            "expectedOrigin": expected_origin,
                             "timeoutMs": int(timeout_seconds * 1000),
                         },
                     ),
@@ -866,7 +888,13 @@ class LocalPlaywrightBackend:
                 else "WebMCP tool call failed"
             )
             return WebMCPCallResult(
-                status="timeout" if reason == "timeout" else "error",
+                status=(
+                    "timeout"
+                    if reason == "timeout"
+                    else "refused"
+                    if reason == "wrong_origin"
+                    else "error"
+                ),
                 tool_name=tool_name,
                 reason=reason,
                 detail=detail,
@@ -1669,6 +1697,7 @@ class RemoteBrowserBackend:
         tool_name: str,
         arguments: dict[str, object],
         *,
+        expected_origin: str,
         timeout_seconds: float = WEBMCP_CALL_DEFAULT_TIMEOUT_SECONDS,
     ) -> WebMCPCallResult:
         session_id = await self._ensure_session()
@@ -1676,6 +1705,7 @@ class RemoteBrowserBackend:
             session_id,
             tool_name=tool_name,
             arguments=arguments,
+            expected_origin=expected_origin,
             timeout_seconds=timeout_seconds,
         )
         if self._is_session_gone_response(resp) or self._is_lease_lost_response(resp):
@@ -1706,6 +1736,7 @@ class RemoteBrowserBackend:
         *,
         tool_name: str,
         arguments: dict[str, object],
+        expected_origin: str,
         timeout_seconds: float,
     ) -> httpx.Response:
         # Ensure the HTTP transport timeout covers the server-side WebMCP deadline
@@ -1718,6 +1749,7 @@ class RemoteBrowserBackend:
                 headers=self._headers(),
                 json={
                     "tool_name": tool_name,
+                    "expected_origin": expected_origin,
                     "arguments": arguments,
                     "timeout_seconds": timeout_seconds,
                 },

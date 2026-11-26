@@ -209,8 +209,9 @@ async () => {
 }
 """
 
-# ``({ toolName, arguments, timeoutMs }) => { ok, result?, truncated?, reason?, detail?, url }``:
-# looks up a same-origin tool and calls ``document.modelContext.executeTool``.
+# ``({ toolName, arguments, expectedOrigin, timeoutMs }) => { ok, result?, truncated?, reason?, detail?, url }``:
+# looks up a same-origin tool and calls ``document.modelContext.executeTool``
+# only when the live document origin matches ``expectedOrigin``.
 # Feature-detects Chromium 151's JSON-string args contract versus Chrome 155+'s
 # object contract via ``typeof tool.inputSchema === 'string'``.
 # Passes an ``AbortController.signal`` via ``executeTool``'s third options argument and
@@ -219,7 +220,7 @@ async () => {
 # Bounds result payloads and error strings inside the page context before crossing CDP
 # and normalizes non-finite numbers (NaN/Infinity) to ``null`` so JSON serialization never fails.
 WEBMCP_CALL_JS = r"""
-async ({ toolName, arguments: argsObj, timeoutMs }) => {
+async ({ toolName, arguments: argsObj, expectedOrigin, timeoutMs }) => {
   const MAX_INSPECTED = 256;
   const MAX_RESULT_BYTES = 65536;
   const MAX_DETAIL_CHARS = 1000;
@@ -321,6 +322,14 @@ async ({ toolName, arguments: argsObj, timeoutMs }) => {
     visit(root, 0);
     return { json: chunks.join(''), truncated };
   };
+  if (typeof expectedOrigin !== 'string' || !expectedOrigin || location.origin !== expectedOrigin) {
+    return {
+      ok: false,
+      reason: 'wrong_origin',
+      detail: `current document origin (${location.origin}) does not match expected origin (${expectedOrigin})`,
+      url: location.href,
+    };
+  }
   const mc = document.modelContext;
   if (!mc || typeof mc.getTools !== 'function' || typeof mc.executeTool !== 'function') {
     return {
@@ -372,6 +381,14 @@ async ({ toolName, arguments: argsObj, timeoutMs }) => {
     }
     if (timedOut || raw === TIMEOUT_SENTINEL) {
       return timeoutResult();
+    }
+    if (location.origin !== expectedOrigin) {
+      return {
+        ok: false,
+        reason: 'wrong_origin',
+        detail: `current document origin (${location.origin}) does not match expected origin (${expectedOrigin})`,
+        url: location.href,
+      };
     }
     if (!Array.isArray(raw)) {
       return {
@@ -494,6 +511,25 @@ class WebMCPCallResult(TypedDict):
     reason: NotRequired[str | None]
     detail: NotRequired[str | None]
     target_origin: NotRequired[str | None]
+
+
+def origin_of_url(url: str | None) -> str | None:
+    """Return canonical ``scheme://host[:port]`` origin for an HTTP(S) URL, or ``None``."""
+    if not url:
+        return None
+    parts = urlsplit(url.strip())
+    scheme = parts.scheme.lower()
+    if scheme not in {"http", "https"} or not parts.hostname:
+        return None
+    hostname = parts.hostname.lower()
+    host = f"[{hostname}]" if ":" in hostname else hostname
+    try:
+        port = parts.port
+    except ValueError:
+        return None
+    default_port = 443 if scheme == "https" else 80
+    suffix = f":{port}" if port is not None and port != default_port else ""
+    return f"{scheme}://{host}{suffix}"
 
 
 def is_webmcp_eligible_origin(origin: str | None) -> bool:
