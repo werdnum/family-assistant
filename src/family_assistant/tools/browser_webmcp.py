@@ -17,6 +17,7 @@ from typing import NotRequired, TypedDict
 from urllib.parse import urlsplit
 
 WEBMCP_MAX_TOOLS = 32
+WEBMCP_MAX_INSPECTED_TOOLS = 256
 WEBMCP_MAX_NAME_CHARS = 128
 WEBMCP_MAX_TITLE_CHARS = 200
 WEBMCP_MAX_DESCRIPTION_CHARS = 600
@@ -54,6 +55,7 @@ async () => {
   }
   if (!Array.isArray(raw)) return [];
   const MAX_TOOLS = 32;
+  const MAX_INSPECTED = 256;
   const MAX_NAME = 128;
   const MAX_TITLE = 200;
   const MAX_DESC = 600;
@@ -66,8 +68,10 @@ async () => {
   const out = [];
   const seen = new Set();
   let totalBytes = 2;
-  for (const tool of raw) {
+  const limit = Math.min(raw.length, MAX_INSPECTED);
+  for (let i = 0; i < limit; i++) {
     if (out.length >= MAX_TOOLS) break;
+    const tool = raw[i];
     if (!tool || typeof tool.name !== 'string') continue;
     const name = tool.name.trim();
     if (!name || name.length > MAX_NAME || seen.has(name)) continue;
@@ -75,7 +79,7 @@ async () => {
     if (pageOrigin && toolOrigin && toolOrigin !== pageOrigin) continue;
     let schema = null;
     if (typeof tool.inputSchema === 'string') {
-      if (byteLen(tool.inputSchema) > MAX_SCHEMA_BYTES) {
+      if (tool.inputSchema.length > MAX_SCHEMA_BYTES || byteLen(tool.inputSchema) > MAX_SCHEMA_BYTES) {
         schema = { _truncated: true };
       } else {
         try {
@@ -145,6 +149,7 @@ async () => {
 # and normalizes non-finite numbers (NaN/Infinity) to ``null`` so JSON serialization never fails.
 WEBMCP_CALL_JS = r"""
 async ({ toolName, arguments: argsObj, timeoutMs }) => {
+  const MAX_INSPECTED = 256;
   const MAX_RESULT_BYTES = 65536;
   const MAX_DETAIL_CHARS = 1000;
   const enc = new TextEncoder();
@@ -217,9 +222,16 @@ async ({ toolName, arguments: argsObj, timeoutMs }) => {
       };
     }
     const pageOrigin = location.origin;
-    const tool = raw.find(
-      (t) => t && t.name === toolName && (!t.origin || t.origin === pageOrigin)
-    );
+    const limit = Math.min(raw.length, MAX_INSPECTED);
+    let tool = null;
+    for (let i = 0; i < limit; i++) {
+      const t = raw[i];
+      if (!t || typeof t.name !== 'string' || t.name.trim() !== toolName) continue;
+      const toolOrigin = typeof t.origin === 'string' && t.origin.trim() ? t.origin.trim() : pageOrigin;
+      if (pageOrigin && toolOrigin && toolOrigin !== pageOrigin) continue;
+      tool = t;
+      break;
+    }
     if (!tool) {
       return {
         ok: false,
@@ -373,7 +385,7 @@ def sanitize_webmcp_tools(
     seen_names: set[str] = set()
     total_bytes = 2  # "[]"
 
-    for item in raw_tools:
+    for item in raw_tools[:WEBMCP_MAX_INSPECTED_TOOLS]:
         if len(sanitized) >= WEBMCP_MAX_TOOLS:
             break
         if not isinstance(item, dict):

@@ -42,6 +42,7 @@ from family_assistant.tools.browser_session import (
 from family_assistant.tools.browser_webmcp import (
     WEBMCP_CALL_JS,
     WEBMCP_LIST_JS,
+    WEBMCP_MAX_INSPECTED_TOOLS,
     WebMCPCallResult,
     WebMCPToolDescriptor,
     bound_webmcp_result,
@@ -174,6 +175,22 @@ def test_webmcp_helpers_sanitize_bound_and_format() -> None:
     )
     assert [t["name"] for t in tools] == ["get_cart"]
     assert tools[0].get("input_schema") == {"type": "object", "properties": {}}
+
+    capped_rejected = [
+        {
+            "name": f"evil_{i}",
+            "description": "Cross-origin",
+            "origin": "https://evil.example.net",
+        }
+        for i in range(WEBMCP_MAX_INSPECTED_TOOLS)
+    ] + [
+        {
+            "name": "past_cap",
+            "description": "After inspected cap",
+            "origin": "https://shop.example.com",
+        }
+    ]
+    assert sanitize_webmcp_tools(capped_rejected, "https://shop.example.com") == []
 
     parsed, truncated = bound_webmcp_result('{"content":[{"type":"text","text":"ok"}]}')
     assert truncated is False
