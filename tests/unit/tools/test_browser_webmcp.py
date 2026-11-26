@@ -282,6 +282,7 @@ async def test_webmcp_call_tool_validates_blank_name_and_handles_backend_error(
     blank_data = blank.get_data()
     assert isinstance(blank_data, dict)
     assert blank_data["reason"] == "invalid_tool_name"
+    assert blank_data.get("error")
 
     class _BoomBackend:
         current_url = "https://shop.example.com/"
@@ -305,7 +306,52 @@ async def test_webmcp_call_tool_validates_blank_name_and_handles_backend_error(
     assert isinstance(failed_data, dict)
     assert failed_data["status"] == "error"
     assert failed_data["reason"] == "backend_error"
+    assert failed_data.get("error")
     assert "connection reset" in str(failed_data["detail"])
+
+    # Unsuccessful server statuses (error/refused/timeout) also emit a truthy ``error``
+    # marker so ``@browser_operation`` records authenticated-site operation failures.
+    for status_val, reason_val in (
+        ("error", "tool_error"),
+        ("refused", "off_scope_blocked"),
+        ("timeout", "timeout"),
+    ):
+
+        class _StatusBackend:
+            current_url = "https://shop.example.com/"
+
+            async def webmcp_call(
+                self,
+                tool_name: str,
+                arguments: dict[str, object],
+                *,
+                timeout_seconds: float = 15.0,
+                _s: str = status_val,
+                _r: str = reason_val,
+            ) -> WebMCPCallResult:
+                del arguments, timeout_seconds
+                return WebMCPCallResult(
+                    status=_s,
+                    tool_name=tool_name,
+                    reason=_r,
+                    detail=f"failed with {_r}",
+                    url=self.current_url,
+                )
+
+        status_backend = _StatusBackend()
+
+        async def _status_get_backend(
+            _ctx: ToolExecutionContext,
+            _b: _StatusBackend = status_backend,
+        ) -> _StatusBackend:
+            return _b
+
+        monkeypatch.setattr(browser_dom, "get_browser_backend", _status_get_backend)
+        res = await browser_webmcp_call_tool(_exec_context, tool_name="get_cart")
+        res_data = res.get_data()
+        assert isinstance(res_data, dict)
+        assert res_data["status"] == status_val
+        assert res_data.get("error") == f"failed with {reason_val}"
 
 
 @pytest.mark.asyncio
@@ -345,6 +391,7 @@ async def test_remote_backend_webmcp_call_and_error_mapping(
     cfg = BrowserHandoffConfig(
         enabled=True,
         service_url="http://browser-server.local",
+        timeout_seconds=5.0,
         auth=RemoteA2AAuthConfig(
             type="bearer", token_env="BROWSER_HANDOFF_SERVICE_TOKEN"
         ),
@@ -359,6 +406,7 @@ async def test_remote_backend_webmcp_call_and_error_mapping(
     assert res.get("result") == {"count": 1}
     assert backend.current_url == "https://shop.example.com/cart"
     assert seen[-1].url.path == "/v1/sessions/bs_webmcp/webmcp-call"
+    assert seen[-1].extensions["timeout"]["read"] == 17.0
     sent_payload = json.loads(seen[-1].content)
     assert sent_payload == {
         "tool_name": "add_to_cart",

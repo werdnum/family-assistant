@@ -981,6 +981,7 @@ async def browser_webmcp_call_tool(
         return ToolResult(
             data={
                 "status": "error",
+                "error": "tool_name must not be blank",
                 "reason": "invalid_tool_name",
                 "detail": "tool_name must not be blank",
             }
@@ -1006,6 +1007,7 @@ async def browser_webmcp_call_tool(
         return ToolResult(
             data={
                 "status": "error",
+                "error": str(exc),
                 "tool_name": cleaned_name,
                 "reason": "backend_error",
                 "detail": str(exc),
@@ -1018,6 +1020,16 @@ async def browser_webmcp_call_tool(
         await backend.settle(timeout_ms=2000)
 
     payload: dict[str, object] = dict(call_result)
+    if payload.get("status") not in {"ok", "navigated"}:
+        # Expose a truthy ``error`` marker so ``@browser_operation`` records
+        # unsuccessful WebMCP outcomes in ``binding.operation_failures`` during
+        # authenticated-site runs.
+        payload["error"] = str(
+            payload.get("detail")
+            or payload.get("reason")
+            or payload.get("status")
+            or "webmcp_call_failed"
+        )
     if not payload.get("url"):
         payload["url"] = backend.current_url
     return ToolResult(data=payload)

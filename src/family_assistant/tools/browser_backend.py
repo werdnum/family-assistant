@@ -1708,6 +1708,10 @@ class RemoteBrowserBackend:
         arguments: dict[str, object],
         timeout_seconds: float,
     ) -> httpx.Response:
+        # Ensure the HTTP transport timeout covers the server-side WebMCP deadline
+        # plus settle/transport margin even when ``browser_handoff_config.timeout_seconds``
+        # is configured lower than ``timeout_seconds``.
+        http_timeout = max(self._config.timeout_seconds, timeout_seconds + 5.0)
         try:
             return await self._client.post(
                 f"{self._base_url}/v1/sessions/{session_id}/webmcp-call",
@@ -1717,11 +1721,12 @@ class RemoteBrowserBackend:
                     "arguments": arguments,
                     "timeout_seconds": timeout_seconds,
                 },
+                timeout=http_timeout,
             )
         except httpx.TimeoutException as exc:
             raise BrowserBackendError(
                 f"browser-server did not respond to webmcp-call ({tool_name}) within "
-                f"{self._config.timeout_seconds:g}s. Take a snapshot to check the page "
+                f"{http_timeout:g}s. Take a snapshot to check the page "
                 "before retrying."
             ) from exc
         except httpx.HTTPError as exc:
