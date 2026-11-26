@@ -46,6 +46,7 @@ from family_assistant.security.taint import (
 )
 from family_assistant.tools.browser_page_tools import (
     BROWSER_EXEC_TOOL,
+    BROWSER_WEBMCP_CALL_TOOL,
     HANDBACK_SUCCESS_PREFIX,
     HANDBACK_TOOL,
     HANDBACK_URL_PREFIX,
@@ -1480,7 +1481,10 @@ def resolve_browser_action_page(
     ):
         return None
     for message in reversed(messages):
-        if _is_tool_result(message, SNAPSHOT_RETURNING_TOOLS | {BROWSER_EXEC_TOOL}):
+        if _is_tool_result(
+            message,
+            SNAPSHOT_RETURNING_TOOLS | {BROWSER_EXEC_TOOL, BROWSER_WEBMCP_CALL_TOOL},
+        ):
             return _reported_page(message)
     return None
 
@@ -1499,13 +1503,15 @@ def _reported_page(message: LLMMessage) -> dict[str, str] | None:
         return None
     url: object = None
     title: object = None
-    if getattr(message, "name", None) == BROWSER_EXEC_TOOL:
+    if getattr(message, "name", None) in {BROWSER_EXEC_TOOL, BROWSER_WEBMCP_CALL_TOOL}:
         try:
             parsed: object = json.loads(content)
         except ValueError:
             return None
         if isinstance(parsed, dict):
-            url = cast("dict[str, object]", parsed).get("url")
+            parsed_dict = cast("dict[str, object]", parsed)
+            url = parsed_dict.get("url")
+            title = parsed_dict.get("title")
     elif content.startswith(HANDBACK_URL_PREFIX):
         url = content.removeprefix(HANDBACK_URL_PREFIX).split("\n", 1)[0]
     else:

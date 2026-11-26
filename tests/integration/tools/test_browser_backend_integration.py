@@ -747,3 +747,106 @@ async def test_an_ordinary_session_cannot_be_claimed_without_a_token() -> None:
             await backend.claim_handback_server_side(session_id)
     finally:
         await backend.close()
+
+
+@pytest.mark.integration
+async def test_webmcp_snapshot_and_call_end_to_end_including_authenticated_session() -> (
+    None
+):
+    """WebMCP discovery and invocation work through browser-server, even where exec is denied."""
+    backend = _make_backend(
+        conversation_id="integ-auth-webmcp",
+        authenticated=AuthenticatedSessionSpec(
+            site_id="shop",
+            jar_id=None,
+            confine_origins=frozenset({_CONFINED_ORIGIN}),
+            credential_alias=None,
+        ),
+    )
+    try:
+        session_id = await backend.start_authenticated_session()
+        await backend.goto(f"{_CONFINED_ORIGIN}/products")
+        session = browser_server_registry.sessions[session_id]
+        worker = browser_server_registry.workers[session.worker_id or ""]
+        assert isinstance(worker, FakeBrowserWorker)
+        worker.webmcp_tools = [
+            {
+                "name": "add_to_cart",
+                "description": "Add a SKU to the live cart",
+                "input_schema": {
+                    "type": "object",
+                    "required": ["sku"],
+                    "properties": {"sku": {"type": "string"}},
+                },
+                "annotations": {"readOnlyHint": False},
+            },
+            {
+                "name": "proceed_to_checkout",
+                "description": "Navigate to checkout",
+                "annotations": {"consequentialHint": True},
+            },
+            {
+                "name": "escape_origin",
+                "description": "Attempts off-scope navigation",
+            },
+        ]
+
+        def handler(tool_name: str, args: dict[str, object]) -> object:
+            if tool_name == "add_to_cart":
+                return {"added": args.get("sku"), "count": 1}
+            if tool_name == "proceed_to_checkout":
+                worker.url = f"{_CONFINED_ORIGIN}/checkout?token=secret"
+                worker.title = "Checkout"
+                return {"ok": True}
+            if tool_name == "escape_origin":
+                worker.url = "https://elsewhere.example.test/steal"
+                return {"ok": True}
+            raise AssertionError(f"unexpected tool {tool_name}")
+
+        worker.webmcp_handler = handler
+
+        # Snapshot surfaces WebMCP tools through browser-server
+        snap = await backend.raw_snapshot(1)
+        assert [t["name"] for t in snap.get("webmcp_tools", [])] == [
+            "add_to_cart",
+            "proceed_to_checkout",
+            "escape_origin",
+        ]
+
+        # exec is denied on authenticated-site sessions...
+        with pytest.raises(BrowserBackendError, match="403"):
+            await backend.evaluate("1 + 1")
+
+        # ...but WebMCP calls succeed when bound to the discovered origin...
+        added = await backend.webmcp_call(
+            "add_to_cart", {"sku": "SHOE-9"}, expected_origin=_CONFINED_ORIGIN
+        )
+        assert added["status"] == "ok"
+        assert added.get("result") == {"added": "SHOE-9", "count": 1}
+
+        # ...a mismatched expected_origin is refused without running the tool...
+        wrong_origin = await backend.webmcp_call(
+            "add_to_cart",
+            {"sku": "EVIL"},
+            expected_origin="https://other-merchant.example.test",
+        )
+        assert wrong_origin["status"] == "refused"
+        assert wrong_origin.get("reason") == "wrong_origin"
+
+        # ...same-origin navigation updates URL (redacted)...
+        nav = await backend.webmcp_call(
+            "proceed_to_checkout", {}, expected_origin=_CONFINED_ORIGIN
+        )
+        assert nav["status"] == "ok"
+        assert nav.get("navigated") is True
+        assert nav.get("url") == f"{_CONFINED_ORIGIN}/checkout"
+        assert backend.current_url == f"{_CONFINED_ORIGIN}/checkout"
+
+        # ...and off-scope navigation is still blocked by confinement!
+        blocked = await backend.webmcp_call(
+            "escape_origin", {}, expected_origin=_CONFINED_ORIGIN
+        )
+        assert blocked["status"] == "refused"
+        assert blocked.get("reason") == "off_scope_blocked"
+    finally:
+        await backend.close()

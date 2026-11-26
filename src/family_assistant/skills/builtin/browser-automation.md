@@ -16,7 +16,13 @@ rather than pixel screenshots, so interactions are cheaper and faster.
 - **Activation**: prefix your request with `/browse`.
 - **Tools**: `browser_open`, `browser_snapshot`, `browser_click`, `browser_hover`, `browser_fill`,
   `browser_select`, `browser_press_key`, `browser_scroll`, `browser_click_at`, `browser_hover_at`,
-  `browser_wait`, `browser_screenshot`, `browser_extract`, `browser_exec` (local and remote).
+  `browser_wait`, `browser_screenshot`, `browser_extract`, `browser_exec`, `browser_webmcp_call`
+  (local and remote).
+- **WebMCP page tools**: when a site publishes client-side WebMCP tools via `document.modelContext`
+  (for example Shopify Liquid storefronts), `browser_snapshot` surfaces their names and schemas
+  under the untrusted page data block; invoke them via
+  `browser_webmcp_call(tool_name=..., arguments=...)` instead of brittle DOM clicking. Works even in
+  credential-protected sessions where `browser_exec` is denied.
 - **How it works**: prefer semantic refs like `e12` returned by the previous snapshot
   (`browser_click`, `browser_hover`, `browser_fill`, `browser_select`). Snapshots can be filtered
   with a `query` substring to keep context small. Use `browser_press_key` (e.g. `Escape`) or
