@@ -201,6 +201,11 @@ def test_webmcp_helpers_sanitize_bound_and_format() -> None:
     assert truncated is True
     assert cut == "a" * 20
 
+    dense_zeros = [0] * 22000
+    dense_val, dense_truncated = bound_webmcp_result(dense_zeros)
+    assert dense_truncated is False
+    assert dense_val == dense_zeros
+
     sample = _sample_tools()
     full_block = format_webmcp_snapshot_block(sample, full_schemas=True)
     assert "untrusted page metadata" in full_block

@@ -716,10 +716,14 @@ def bound_webmcp_result(
         return (value if math.isfinite(value) else None), False
 
     try:
-        serialized = json.dumps(value, ensure_ascii=False, allow_nan=False)
+        serialized = json.dumps(
+            value, ensure_ascii=False, allow_nan=False, separators=(",", ":")
+        )
     except ValueError:
         value = _strip_non_finite(value)
-        serialized = json.dumps(value, ensure_ascii=False, allow_nan=False)
+        serialized = json.dumps(
+            value, ensure_ascii=False, allow_nan=False, separators=(",", ":")
+        )
     if len(serialized.encode("utf-8")) <= max_bytes:
         return value, False
     return _truncate_utf8(serialized, max_bytes), True
