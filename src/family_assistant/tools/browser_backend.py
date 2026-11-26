@@ -23,11 +23,14 @@ reachable and behavior is byte-for-byte the previous local path.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import contextlib
+import json
 import logging
 import math
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import (
     TYPE_CHECKING,
@@ -38,9 +41,11 @@ from typing import (
     get_args,
     runtime_checkable,
 )
+from urllib.parse import urlsplit
 
 import httpx
 from rebrowser_playwright.async_api import Error as PlaywrightError
+from rebrowser_playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from family_assistant.tools.browser_session import (
     BrowserSession,
@@ -49,6 +54,18 @@ from family_assistant.tools.browser_session import (
     close_browser_session,
     get_browser_session,
     parse_png_dimensions,
+)
+from family_assistant.tools.browser_webmcp import (
+    WEBMCP_CALL_DEFAULT_TIMEOUT_SECONDS,
+    WEBMCP_CALL_JS,
+    WEBMCP_LIST_JS,
+    WEBMCP_LIST_TIMEOUT_SECONDS,
+    WEBMCP_MAX_ARGS_BYTES,
+    WebMCPCallResult,
+    WebMCPToolDescriptor,
+    bound_webmcp_result,
+    is_webmcp_eligible_origin,
+    sanitize_webmcp_tools,
 )
 from family_assistant.tools.taint_helpers import record_sensitive_read
 
@@ -70,6 +87,23 @@ JsonDict = dict[str, Any]
 LoadState = Literal["load", "domcontentloaded", "networkidle"]
 _VALID_LOAD_STATES: tuple[LoadState, ...] = get_args(LoadState)
 
+
+def _origin_of_url(url: str | None) -> str | None:
+    if not url:
+        return None
+    parts = urlsplit(url)
+    if parts.scheme not in {"http", "https"} or not parts.hostname:
+        return None
+    host = f"[{parts.hostname}]" if ":" in parts.hostname else parts.hostname
+    try:
+        port = parts.port
+    except ValueError:
+        return None
+    default_port = 443 if parts.scheme == "https" else 80
+    suffix = f":{port}" if port is not None and port != default_port else ""
+    return f"{parts.scheme}://{host}{suffix}"
+
+
 # In-page accessibility walker and ref resolver, shared VERBATIM with
 # browser-server (``browser_handoff_service.runtime``). A unit test asserts the
 # two copies are equal, so edit both or neither.
@@ -79,6 +113,7 @@ _VALID_LOAD_STATES: tuple[LoadState, ...] = get_args(LoadState)
 # caller-supplied counter, which the conversation's ``BrowserSession`` holds.
 # The ref ``e12`` always resolves to ``[data-fa-ref="e12"]``, and
 # ``CHECK_REF_JS`` decides whether it still names the node it was issued for.
+
 
 _WALKER_HELPERS_JS = r"""
   const REF_ATTR = 'data-fa-ref';
@@ -475,6 +510,14 @@ class BrowserBackend(Protocol):
     # ast-grep-ignore: no-dict-any - JS return values are genuinely arbitrary JSON
     async def evaluate(self, code: str) -> Any: ...  # noqa: ANN401
 
+    async def webmcp_call(
+        self,
+        tool_name: str,
+        arguments: dict[str, object],
+        *,
+        timeout_seconds: float = WEBMCP_CALL_DEFAULT_TIMEOUT_SECONDS,
+    ) -> WebMCPCallResult: ...
+
     async def mouse_click(
         self, x: float, y: float, *, button: str = "left", click_count: int = 1
     ) -> None: ...
@@ -575,8 +618,24 @@ class LocalPlaywrightBackend:
 
     async def raw_snapshot(self, next_ref: int) -> Snapshot:
         page = await self._page()
-        raw = await page.evaluate(SNAPSHOT_JS, next_ref)
-        return cast("Snapshot", raw)
+        raw = cast("Snapshot", await page.evaluate(SNAPSHOT_JS, next_ref))
+        webmcp_tools = await self._list_webmcp_tools(page, raw.get("url") or page.url)
+        if webmcp_tools:
+            raw["webmcp_tools"] = webmcp_tools
+        return raw
+
+    async def _list_webmcp_tools(
+        self, page: Page, raw_url: str
+    ) -> list[WebMCPToolDescriptor]:
+        page_origin = _origin_of_url(raw_url)
+        if not is_webmcp_eligible_origin(page_origin):
+            return []
+        try:
+            async with asyncio.timeout(WEBMCP_LIST_TIMEOUT_SECONDS):
+                raw = await page.evaluate(WEBMCP_LIST_JS)
+        except PlaywrightError, TimeoutError:
+            return []
+        return sanitize_webmcp_tools(raw, page_origin)
 
     async def settle(self, timeout_ms: int = 5000) -> None:
         page = await self._page()
@@ -687,6 +746,150 @@ class LocalPlaywrightBackend:
             return await page.evaluate(wrap_exec_code(code))
         except PlaywrightError as exc:
             raise BrowserBackendError(str(exc)) from exc
+
+    async def webmcp_call(
+        self,
+        tool_name: str,
+        arguments: dict[str, object],
+        *,
+        timeout_seconds: float = WEBMCP_CALL_DEFAULT_TIMEOUT_SECONDS,
+    ) -> WebMCPCallResult:
+        page = await self._page()
+        encoded_args = json.dumps(arguments, ensure_ascii=False).encode("utf-8")
+        if len(encoded_args) > WEBMCP_MAX_ARGS_BYTES:
+            return WebMCPCallResult(
+                status="refused",
+                tool_name=tool_name,
+                reason="arguments_too_large",
+                detail=f"arguments exceed {WEBMCP_MAX_ARGS_BYTES} bytes",
+                url=page.url,
+            )
+        url_before = page.url
+        nav_seen = False
+        nav_event = asyncio.Event()
+        main_frame = page.main_frame
+
+        def _on_frame_navigated(frame: object) -> None:
+            nonlocal nav_seen
+            if frame == main_frame:
+                nav_seen = True
+                nav_event.set()
+
+        page.on("framenavigated", _on_frame_navigated)
+        try:
+            return await self._run_local_webmcp_call(
+                page,
+                tool_name=tool_name,
+                arguments=arguments,
+                timeout_seconds=timeout_seconds,
+                url_before=url_before,
+                nav_event=nav_event,
+                nav_seen_fn=lambda: nav_seen,
+            )
+        finally:
+            with contextlib.suppress(Exception):
+                page.remove_listener("framenavigated", _on_frame_navigated)
+
+    async def _run_local_webmcp_call(
+        self,
+        page: Page,
+        *,
+        tool_name: str,
+        arguments: dict[str, object],
+        timeout_seconds: float,
+        url_before: str,
+        nav_event: asyncio.Event,
+        nav_seen_fn: Callable[[], bool],
+    ) -> WebMCPCallResult:
+        try:
+            raw_res = cast(
+                "JsonDict",
+                await asyncio.wait_for(
+                    page.evaluate(
+                        WEBMCP_CALL_JS,
+                        {"toolName": tool_name, "arguments": arguments},
+                    ),
+                    timeout=timeout_seconds,
+                ),
+            )
+        except TimeoutError:
+            return WebMCPCallResult(
+                status="timeout",
+                tool_name=tool_name,
+                reason="timeout",
+                detail=f"WebMCP tool {tool_name!r} timed out after {timeout_seconds:.1f}s",
+                url=page.url,
+                navigated=bool(nav_seen_fn()) or page.url != url_before,
+            )
+        except PlaywrightError as exc:
+            msg = str(exc).lower()
+            if (
+                "context was destroyed" in msg
+                or "cannot find context" in msg
+                or "frame was detached" in msg
+            ):
+                if not nav_seen_fn() and page.url == url_before:
+                    with contextlib.suppress(TimeoutError):
+                        await asyncio.wait_for(nav_event.wait(), timeout=2.0)
+                with contextlib.suppress(PlaywrightTimeoutError, PlaywrightError):
+                    await page.wait_for_load_state("domcontentloaded", timeout=2000)
+                self.invalidate_screenshot("webmcp tool navigated")
+                return WebMCPCallResult(
+                    status="navigated",
+                    tool_name=tool_name,
+                    navigated=True,
+                    url=page.url,
+                    detail="tool execution triggered a page navigation",
+                )
+            return WebMCPCallResult(
+                status="error",
+                tool_name=tool_name,
+                reason="tool_error",
+                detail=str(exc),
+                url=page.url,
+            )
+
+        self.invalidate_screenshot("webmcp tool executed")
+        if not isinstance(raw_res, dict) or not raw_res.get("ok"):
+            reason = (
+                str(raw_res.get("reason") or "tool_error")
+                if isinstance(raw_res, dict)
+                else "tool_error"
+            )
+            detail = (
+                str(raw_res.get("detail") or "WebMCP tool call failed")
+                if isinstance(raw_res, dict)
+                else "WebMCP tool call failed"
+            )
+            return WebMCPCallResult(
+                status="error",
+                tool_name=tool_name,
+                reason=reason,
+                detail=detail,
+                url=page.url,
+                navigated=bool(nav_seen_fn()) or page.url != url_before,
+            )
+
+        if not nav_seen_fn() and page.url == url_before:
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(nav_event.wait(), timeout=0.35)
+        if nav_seen_fn() or page.url != url_before:
+            with contextlib.suppress(PlaywrightTimeoutError, PlaywrightError):
+                await page.wait_for_load_state("domcontentloaded", timeout=2000)
+
+        bounded, py_truncated = bound_webmcp_result(raw_res.get("result"))
+        title = ""
+        with contextlib.suppress(PlaywrightError):
+            title = await page.title()
+        return WebMCPCallResult(
+            status="ok",
+            tool_name=tool_name,
+            result=bounded,
+            truncated=bool(raw_res.get("truncated")) or py_truncated,
+            navigated=bool(nav_seen_fn()) or page.url != url_before,
+            url=page.url,
+            title=title or None,
+        )
 
     async def mouse_click(
         self, x: float, y: float, *, button: str = "left", click_count: int = 1
@@ -1456,6 +1659,71 @@ class RemoteBrowserBackend:
         if "error" in result:
             raise BrowserBackendError(str(result["error"]))
         return result.get("result")
+
+    async def webmcp_call(
+        self,
+        tool_name: str,
+        arguments: dict[str, object],
+        *,
+        timeout_seconds: float = WEBMCP_CALL_DEFAULT_TIMEOUT_SECONDS,
+    ) -> WebMCPCallResult:
+        session_id = await self._ensure_session()
+        resp = await self._post_webmcp_call(
+            session_id,
+            tool_name=tool_name,
+            arguments=arguments,
+            timeout_seconds=timeout_seconds,
+        )
+        if self._is_session_gone_response(resp) or self._is_lease_lost_response(resp):
+            if self._authenticated is not None:
+                raise AuthenticatedSessionUnavailableError(
+                    f"browser-server refused webmcp-call on the authenticated session "
+                    f"for site {self._authenticated.site_id!r}: the session is gone or "
+                    "the agent no longer holds its lease. Authenticated sessions are "
+                    "never replaced with a fresh one, so this run ends here."
+                )
+            raise self._session_lost_error("webmcp-call", session_id)
+        self._raise_for_status(resp, "webmcp-call")
+        try:
+            payload = cast("WebMCPCallResult", resp.json())
+        except ValueError as exc:
+            raise BrowserBackendError(
+                "browser-server webmcp-call returned invalid JSON"
+            ) from exc
+        url = payload.get("url")
+        if isinstance(url, str) and url:
+            self._last_url = url
+        self.invalidate_screenshot("webmcp tool executed")
+        return payload
+
+    async def _post_webmcp_call(
+        self,
+        session_id: str,
+        *,
+        tool_name: str,
+        arguments: dict[str, object],
+        timeout_seconds: float,
+    ) -> httpx.Response:
+        try:
+            return await self._client.post(
+                f"{self._base_url}/v1/sessions/{session_id}/webmcp-call",
+                headers=self._headers(),
+                json={
+                    "tool_name": tool_name,
+                    "arguments": arguments,
+                    "timeout_seconds": timeout_seconds,
+                },
+            )
+        except httpx.TimeoutException as exc:
+            raise BrowserBackendError(
+                f"browser-server did not respond to webmcp-call ({tool_name}) within "
+                f"{self._config.timeout_seconds:g}s. Take a snapshot to check the page "
+                "before retrying."
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise BrowserBackendError(
+                f"browser-server webmcp-call transport error ({type(exc).__name__})."
+            ) from exc
 
     @property
     def screen_width(self) -> int:

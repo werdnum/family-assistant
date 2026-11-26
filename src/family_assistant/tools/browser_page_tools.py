@@ -27,6 +27,10 @@ SNAPSHOT_RETURNING_TOOLS = frozenset({
 # Runs page script, which can navigate; its result names the URL it left.
 BROWSER_EXEC_TOOL = "browser_exec"
 
+# Invokes a page-declared WebMCP tool, which can also navigate; its JSON result
+# names the URL it left.
+BROWSER_WEBMCP_CALL_TOOL = "browser_webmcp_call"
+
 # A successful handback's text: this prefix, then the URL the session is at.
 HANDBACK_TOOL = "browser_claim_handback"
 HANDBACK_SUCCESS_PREFIX = "Session reclaimed"

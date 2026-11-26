@@ -53,6 +53,7 @@ if TYPE_CHECKING:
         BrowserLiveViewPublisher,
     )
     from family_assistant.services.ucp import MerchantUCPProfile
+    from family_assistant.tools.browser_webmcp import WebMCPToolDescriptor
     from family_assistant.tools.types import ToolExecutionContext, ToolResult
 
 logger = logging.getLogger(__name__)
@@ -194,6 +195,11 @@ class BrowserSession:
     # surface the UCP hint only when navigation changes origin, rather than
     # repeating it on every action against the same page.
     last_probed_origin: str | None = None
+    # Digest and descriptors of the most recent snapshot's WebMCP tools, so
+    # full schemas are rendered once per tool-set change rather than repeated
+    # on every turn.
+    last_webmcp_fingerprint: str | None = None
+    last_webmcp_tools: dict[str, WebMCPToolDescriptor] = field(default_factory=dict)
     # Coordinate-space geometry of the most recent ``browser_screenshot`` on
     # this session (cleared on navigation or scroll so coordinate actions do
     # not act on a stale frame).

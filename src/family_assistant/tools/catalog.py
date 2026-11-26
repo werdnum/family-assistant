@@ -53,6 +53,7 @@ from family_assistant.tools.browser_dom import (
     browser_select_tool,
     browser_snapshot_tool,
     browser_wait_tool,
+    browser_webmcp_call_tool,
 )
 from family_assistant.tools.calendar import (
     CALENDAR_TOOLS_DEFINITION,
@@ -464,6 +465,7 @@ _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
     "browser_extract": browser_extract_tool,
     "browser_screenshot": browser_screenshot_tool,
     "browser_exec": browser_exec_tool,
+    "browser_webmcp_call": browser_webmcp_call_tool,
     "run_authenticated_site_task": run_authenticated_site_task_tool,
     "browser_autofill": browser_autofill_tool,
     "browser_report_login_outcome": browser_report_login_outcome_tool,
@@ -1172,6 +1174,12 @@ _CORE_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_UNTRUSTED,
     ),
     "browser_exec": _metadata(
+        ToolTag.BROWSER,
+        ToolTag.STATE_CHANGING,
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "browser_webmcp_call": _metadata(
         ToolTag.BROWSER,
         ToolTag.STATE_CHANGING,
         ToolTag.EXTERNAL_COMM,
