@@ -552,4 +552,4 @@ explicit = true
 [tool.uv.sources]
 torch = { index = "torch-cpu" }
 telegram-bot-api-mock = { git = "https://github.com/werdnum/telegram-bot-api-mock" }
-browser-handoff-service = { git = "https://github.com/werdnum/browser-server.git", rev = "825f5513e27582eb5e7aa6b5d492362e7b5bfb9d" }
+browser-handoff-service = { git = "https://github.com/werdnum/browser-server.git", rev = "3cc396fffe47e9da6b55cc60a63be717535720de" }

@@ -29,7 +29,12 @@ WEBMCP_CALL_DEFAULT_TIMEOUT_SECONDS = 15.0
 WEBMCP_CALL_MIN_TIMEOUT_SECONDS = 1.0
 WEBMCP_CALL_MAX_TIMEOUT_SECONDS = 30.0
 
-_ANNOTATION_KEYS = ("readOnlyHint", "consequentialHint", "untrustedContentHint")
+_ANNOTATION_KEYS = (
+    "readOnlyHint",
+    "consequentialHint",
+    "untrustedContentHint",
+    "debugging",
+)
 
 # ``() => list[dict]``: reads same-origin WebMCP tools from ``document.modelContext``.
 # Handles both Chromium 151 (JSON-string ``inputSchema``) and Chrome 155+ (object).
@@ -39,7 +44,12 @@ WEBMCP_LIST_JS = r"""
 async () => {
   const mc = document.modelContext;
   if (!mc || typeof mc.getTools !== 'function') return [];
-  const raw = await mc.getTools();
+  let raw;
+  try {
+    raw = await mc.getTools();
+  } catch {
+    return [];
+  }
   if (!Array.isArray(raw)) return [];
   const MAX_TOOLS = 32;
   const MAX_NAME = 128;
@@ -85,7 +95,7 @@ async () => {
     }
     const annotations = {};
     if (tool.annotations && typeof tool.annotations === 'object') {
-      for (const key of ['readOnlyHint', 'consequentialHint', 'untrustedContentHint']) {
+      for (const key of ['readOnlyHint', 'consequentialHint', 'untrustedContentHint', 'debugging']) {
         if (typeof tool.annotations[key] === 'boolean') {
           annotations[key] = tool.annotations[key];
         }
@@ -154,7 +164,18 @@ async ({ toolName, arguments: argsObj, timeoutMs }) => {
       url: location.href,
     };
   }
-  const raw = await mc.getTools();
+  let raw;
+  try {
+    raw = await mc.getTools();
+  } catch (err) {
+    const rawDetail = err && typeof err.message === 'string' ? err.message : String(err);
+    return {
+      ok: false,
+      reason: 'tool_error',
+      detail: truncDetail(rawDetail),
+      url: location.href,
+    };
+  }
   if (!Array.isArray(raw)) {
     return {
       ok: false,
@@ -275,6 +296,7 @@ class WebMCPToolAnnotations(TypedDict, total=False):
     readOnlyHint: bool
     consequentialHint: bool
     untrustedContentHint: bool
+    debugging: bool
 
 
 class WebMCPToolDescriptor(TypedDict):
@@ -402,6 +424,8 @@ def sanitize_webmcp_tools(
                 annotations["untrustedContentHint"] = raw_annotations[
                     "untrustedContentHint"
                 ]
+            if isinstance(raw_annotations.get("debugging"), bool):
+                annotations["debugging"] = raw_annotations["debugging"]
 
         entry: WebMCPToolDescriptor = {
             "name": name,
@@ -528,6 +552,8 @@ def format_webmcp_snapshot_block(
             flags.append("read-only")
         if annotations.get("consequentialHint") is True:
             flags.append("consequential")
+        if annotations.get("debugging") is True:
+            flags.append("debugging")
         flag_text = f" [{', '.join(flags)}]" if flags else ""
         desc = tool["description"].replace("\n", " ").strip()
         header = f"- {tool['name']}{flag_text}"
