@@ -148,6 +148,10 @@ async def _exec_context() -> AsyncIterator[ToolExecutionContext]:
 def test_webmcp_helpers_sanitize_bound_and_format() -> None:
     assert is_webmcp_eligible_origin("https://shop.example.com") is True
     assert is_webmcp_eligible_origin("http://localhost:8000") is True
+    assert is_webmcp_eligible_origin("http://dev.localhost:3000") is True
+    assert is_webmcp_eligible_origin("http://127.0.0.2") is True
+    assert is_webmcp_eligible_origin("http://[::1]:8000") is True
+    assert is_webmcp_eligible_origin("http://localhost.evil.com") is False
     assert is_webmcp_eligible_origin("http://shop.example.com") is False
     assert is_webmcp_eligible_origin(None) is False
 

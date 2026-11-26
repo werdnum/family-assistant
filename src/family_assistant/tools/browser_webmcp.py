@@ -10,9 +10,11 @@ strictly inside the untrusted snapshot/tool-result envelope.
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import math
 from typing import NotRequired, TypedDict
+from urllib.parse import urlsplit
 
 WEBMCP_MAX_TOOLS = 32
 WEBMCP_MAX_NAME_CHARS = 128
@@ -324,12 +326,21 @@ class WebMCPCallResult(TypedDict):
 
 
 def is_webmcp_eligible_origin(origin: str | None) -> bool:
-    """Return True for secure-context origins where ``document.modelContext`` can exist."""
+    """Return True for potentially trustworthy origins where ``document.modelContext`` can exist."""
     if not origin:
         return False
-    if origin.startswith("https://"):
+    parts = urlsplit(origin)
+    if parts.scheme == "https" and parts.hostname:
         return True
-    return origin.startswith(("http://localhost", "http://127.0.0.1", "http://[::1]"))
+    if parts.scheme != "http" or not parts.hostname:
+        return False
+    host = parts.hostname.rstrip(".").lower()
+    if host == "localhost" or host.endswith(".localhost"):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def _truncate_str(value: str, max_chars: int) -> str:
