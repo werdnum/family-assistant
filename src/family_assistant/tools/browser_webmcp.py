@@ -64,6 +64,77 @@ async () => {
   const enc = new TextEncoder();
   const byteLen = (s) => enc.encode(s).length;
   const truncStr = (s, max) => (s.length <= max ? s : s.slice(0, max - 1) + '\u2026');
+  const boundedJsonFit = (root, maxBytes) => {
+    const chunks = [];
+    let used = 0;
+    let steps = 0;
+    let overflow = false;
+    const seen = new Set();
+    const pushRaw = (s) => {
+      if (overflow) return false;
+      const rem = maxBytes - used;
+      if (s.length > rem) { overflow = true; return false; }
+      const b = byteLen(s);
+      if (used + b > maxBytes) { overflow = true; return false; }
+      chunks.push(s);
+      used += b;
+      return true;
+    };
+    const pushStr = (s) => {
+      if (s.length > maxBytes - used) { overflow = true; return false; }
+      return pushRaw(JSON.stringify(s));
+    };
+    const unwrap = (v) => (v && typeof v === 'object' && typeof v.toJSON === 'function' ? v.toJSON() : v);
+    const visit = (val, depth) => {
+      if (overflow) return;
+      if (++steps > maxBytes || depth > 32) { overflow = true; return; }
+      val = unwrap(val);
+      if (val === null || val === undefined) { pushRaw('null'); return; }
+      const t = typeof val;
+      if (t === 'boolean') { pushRaw(val ? 'true' : 'false'); return; }
+      if (t === 'number') { pushRaw(Number.isFinite(val) ? String(val) : 'null'); return; }
+      if (t === 'string') { pushStr(val); return; }
+      if (t === 'bigint') throw new TypeError('BigInt');
+      if (t !== 'object') { pushRaw('null'); return; }
+      if (seen.has(val)) throw new TypeError('Circular');
+      seen.add(val);
+      try {
+        if (Array.isArray(val)) {
+          if (!pushRaw('[')) return;
+          for (let i = 0; i < val.length; i++) {
+            if (i > 0 && !pushRaw(',')) return;
+            const el = unwrap(val[i]);
+            if (el === undefined || typeof el === 'function' || typeof el === 'symbol') {
+              if (!pushRaw('null')) return;
+            } else {
+              visit(el, depth + 1);
+              if (overflow) return;
+            }
+          }
+          pushRaw(']');
+        } else {
+          if (!pushRaw('{')) return;
+          let first = true;
+          for (const k in val) {
+            if (!Object.prototype.hasOwnProperty.call(val, k)) continue;
+            if (++steps > maxBytes) { overflow = true; return; }
+            const v = unwrap(val[k]);
+            if (v === undefined || typeof v === 'function' || typeof v === 'symbol') continue;
+            if (!first && !pushRaw(',')) return;
+            first = false;
+            if (!pushStr(k) || !pushRaw(':')) return;
+            visit(v, depth + 1);
+            if (overflow) return;
+          }
+          pushRaw('}');
+        }
+      } finally {
+        seen.delete(val);
+      }
+    };
+    visit(root, 0);
+    return overflow ? null : chunks.join('');
+  };
   const pageOrigin = location.origin;
   const out = [];
   const seen = new Set();
@@ -93,8 +164,8 @@ async () => {
       }
     } else if (tool.inputSchema && typeof tool.inputSchema === 'object' && !Array.isArray(tool.inputSchema)) {
       try {
-        const s = JSON.stringify(tool.inputSchema);
-        schema = s && byteLen(s) <= MAX_SCHEMA_BYTES ? JSON.parse(s) : { _truncated: true };
+        const s = boundedJsonFit(tool.inputSchema, MAX_SCHEMA_BYTES);
+        schema = s === null ? { _truncated: true } : JSON.parse(s);
       } catch {
         schema = null;
       }
@@ -162,6 +233,94 @@ async ({ toolName, arguments: argsObj, timeoutMs }) => {
     return { value: dec.decode(bytes.subarray(0, end)), truncated: true };
   };
   const truncDetail = (s) => (s.length <= MAX_DETAIL_CHARS ? s : s.slice(0, MAX_DETAIL_CHARS - 1) + '\u2026');
+  const boundedJson = (root, maxBytes) => {
+    const chunks = [];
+    let used = 0;
+    let steps = 0;
+    let truncated = false;
+    const seen = new Set();
+    const pushRaw = (s) => {
+      if (truncated) return false;
+      const rem = maxBytes - used;
+      if (s.length > rem) {
+        const cut = truncUtf8(s.slice(0, rem), rem);
+        if (cut.value) chunks.push(cut.value);
+        used = maxBytes;
+        truncated = true;
+        return false;
+      }
+      const b = enc.encode(s).length;
+      if (used + b > maxBytes) {
+        const cut = truncUtf8(s, rem);
+        if (cut.value) chunks.push(cut.value);
+        used = maxBytes;
+        truncated = true;
+        return false;
+      }
+      chunks.push(s);
+      used += b;
+      return true;
+    };
+    const pushStr = (s) => {
+      const rem = maxBytes - used;
+      if (s.length > rem) {
+        pushRaw(JSON.stringify(s.slice(0, rem)));
+        truncated = true;
+        return false;
+      }
+      return pushRaw(JSON.stringify(s));
+    };
+    const unwrap = (v) => (v && typeof v === 'object' && typeof v.toJSON === 'function' ? v.toJSON() : v);
+    const visit = (val, depth) => {
+      if (truncated) return;
+      if (++steps > maxBytes || depth > 32) { truncated = true; return; }
+      val = unwrap(val);
+      if (val === null || val === undefined) { pushRaw('null'); return; }
+      const t = typeof val;
+      if (t === 'boolean') { pushRaw(val ? 'true' : 'false'); return; }
+      if (t === 'number') { pushRaw(Number.isFinite(val) ? String(val) : 'null'); return; }
+      if (t === 'string') { pushStr(val); return; }
+      if (t === 'bigint') throw new TypeError('BigInt');
+      if (t !== 'object') { pushRaw('null'); return; }
+      if (seen.has(val)) throw new TypeError('Circular');
+      seen.add(val);
+      try {
+        if (Array.isArray(val)) {
+          if (!pushRaw('[')) return;
+          for (let i = 0; i < val.length; i++) {
+            if (i > 0 && !pushRaw(',')) return;
+            const el = unwrap(val[i]);
+            if (el === undefined || typeof el === 'function' || typeof el === 'symbol') {
+              if (!pushRaw('null')) return;
+            } else {
+              visit(el, depth + 1);
+              if (truncated) return;
+            }
+          }
+          pushRaw(']');
+        } else {
+          if (!pushRaw('{')) return;
+          let first = true;
+          for (const k in val) {
+            if (!Object.prototype.hasOwnProperty.call(val, k)) continue;
+            if (++steps > maxBytes) { truncated = true; return; }
+            const v = unwrap(val[k]);
+            if (v === undefined || typeof v === 'function' || typeof v === 'symbol') continue;
+            if (!first && !pushRaw(',')) return;
+            first = false;
+            if (!pushStr(k) || !pushRaw(':')) return;
+            visit(v, depth + 1);
+            if (truncated) return;
+          }
+          pushRaw('}');
+        }
+      } finally {
+        seen.delete(val);
+      }
+    };
+    visit(root, 0);
+    return { json: chunks.join(''), truncated };
+  };
   const mc = document.modelContext;
   if (!mc || typeof mc.getTools !== 'function' || typeof mc.executeTool !== 'function') {
     return {
@@ -173,6 +332,7 @@ async ({ toolName, arguments: argsObj, timeoutMs }) => {
   }
   const deadlineMs = typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 15000;
   const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  const TIMEOUT_SENTINEL = Symbol('webmcpTimeout');
   let timedOut = false;
   let timer = null;
   const timeoutPromise = new Promise((resolve) => {
@@ -185,7 +345,7 @@ async ({ toolName, arguments: argsObj, timeoutMs }) => {
           controller.abort();
         }
       }
-      resolve({ __webmcpTimeout: true });
+      resolve(TIMEOUT_SENTINEL);
     }, deadlineMs);
   });
   const timeoutResult = () => ({
@@ -210,7 +370,7 @@ async ({ toolName, arguments: argsObj, timeoutMs }) => {
         url: location.href,
       };
     }
-    if (timedOut || (raw && typeof raw === 'object' && raw.__webmcpTimeout === true)) {
+    if (timedOut || raw === TIMEOUT_SENTINEL) {
       return timeoutResult();
     }
     if (!Array.isArray(raw)) {
@@ -249,7 +409,7 @@ async ({ toolName, arguments: argsObj, timeoutMs }) => {
     // never surfaces as an unhandledrejection inside the page.
     Promise.resolve(execPromise).catch(() => {});
     const outcome = await Promise.race([execPromise, timeoutPromise]);
-    if (timedOut || (outcome && typeof outcome === 'object' && outcome.__webmcpTimeout === true)) {
+    if (timedOut || outcome === TIMEOUT_SENTINEL) {
       return timeoutResult();
     }
     const res = outcome;
@@ -268,25 +428,24 @@ async ({ toolName, arguments: argsObj, timeoutMs }) => {
       serialized = cut.value;
       truncated = cut.truncated || res.length > MAX_RESULT_BYTES;
     } else {
-      let jsonStr;
       try {
-        jsonStr = JSON.stringify(res);
+        const out = boundedJson(res, MAX_RESULT_BYTES);
+        if (out.truncated) {
+          serialized = out.json;
+          truncated = true;
+        } else {
+          try {
+            serialized = JSON.parse(out.json);
+          } catch {
+            serialized = out.json;
+          }
+        }
       } catch {
-        jsonStr = String(res);
-      }
-      if (typeof jsonStr !== 'string') {
-        serialized = null;
-      } else if (jsonStr.length > MAX_RESULT_BYTES || enc.encode(jsonStr).length > MAX_RESULT_BYTES) {
-        const preSlice = jsonStr.length > MAX_RESULT_BYTES ? jsonStr.slice(0, MAX_RESULT_BYTES) : jsonStr;
+        const fallback = String(res);
+        const preSlice = fallback.length > MAX_RESULT_BYTES ? fallback.slice(0, MAX_RESULT_BYTES) : fallback;
         const cut = truncUtf8(preSlice, MAX_RESULT_BYTES);
         serialized = cut.value;
-        truncated = true;
-      } else {
-        try {
-          serialized = JSON.parse(jsonStr);
-        } catch {
-          serialized = jsonStr;
-        }
+        truncated = cut.truncated || fallback.length > MAX_RESULT_BYTES;
       }
     }
     return { ok: true, result: serialized, truncated, url: location.href };
