@@ -164,40 +164,6 @@ async ({ toolName, arguments: argsObj, timeoutMs }) => {
       url: location.href,
     };
   }
-  let raw;
-  try {
-    raw = await mc.getTools();
-  } catch (err) {
-    const rawDetail = err && typeof err.message === 'string' ? err.message : String(err);
-    return {
-      ok: false,
-      reason: 'tool_error',
-      detail: truncDetail(rawDetail),
-      url: location.href,
-    };
-  }
-  if (!Array.isArray(raw)) {
-    return {
-      ok: false,
-      reason: 'tool_not_found',
-      detail: 'no WebMCP tools are registered on this page',
-      url: location.href,
-    };
-  }
-  const pageOrigin = location.origin;
-  const tool = raw.find(
-    (t) => t && t.name === toolName && (!t.origin || t.origin === pageOrigin)
-  );
-  if (!tool) {
-    return {
-      ok: false,
-      reason: 'tool_not_found',
-      detail: 'tool is not registered on the current document',
-      url: location.href,
-    };
-  }
-  const safeArgs = argsObj && typeof argsObj === 'object' && !Array.isArray(argsObj) ? argsObj : {};
-  const callArg = typeof tool.inputSchema === 'string' ? JSON.stringify(safeArgs) : safeArgs;
   const deadlineMs = typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 15000;
   const controller = typeof AbortController === 'function' ? new AbortController() : null;
   let timedOut = false;
@@ -215,7 +181,53 @@ async ({ toolName, arguments: argsObj, timeoutMs }) => {
       resolve({ __webmcpTimeout: true });
     }, deadlineMs);
   });
+  const timeoutResult = () => ({
+    ok: false,
+    reason: 'timeout',
+    detail: `WebMCP tool '${toolName}' timed out after ${(deadlineMs / 1000).toFixed(1)}s`,
+    url: location.href,
+  });
   try {
+    let raw;
+    try {
+      const toolsPromise = mc.getTools();
+      Promise.resolve(toolsPromise).catch(() => {});
+      raw = await Promise.race([toolsPromise, timeoutPromise]);
+    } catch (err) {
+      if (timedOut) return timeoutResult();
+      const rawDetail = err && typeof err.message === 'string' ? err.message : String(err);
+      return {
+        ok: false,
+        reason: 'tool_error',
+        detail: truncDetail(rawDetail),
+        url: location.href,
+      };
+    }
+    if (timedOut || (raw && typeof raw === 'object' && raw.__webmcpTimeout === true)) {
+      return timeoutResult();
+    }
+    if (!Array.isArray(raw)) {
+      return {
+        ok: false,
+        reason: 'tool_not_found',
+        detail: 'no WebMCP tools are registered on this page',
+        url: location.href,
+      };
+    }
+    const pageOrigin = location.origin;
+    const tool = raw.find(
+      (t) => t && t.name === toolName && (!t.origin || t.origin === pageOrigin)
+    );
+    if (!tool) {
+      return {
+        ok: false,
+        reason: 'tool_not_found',
+        detail: 'tool is not registered on the current document',
+        url: location.href,
+      };
+    }
+    const safeArgs = argsObj && typeof argsObj === 'object' && !Array.isArray(argsObj) ? argsObj : {};
+    const callArg = typeof tool.inputSchema === 'string' ? JSON.stringify(safeArgs) : safeArgs;
     const execPromise = controller
       ? mc.executeTool(tool, callArg, { signal: controller.signal })
       : mc.executeTool(tool, callArg);
@@ -224,12 +236,7 @@ async ({ toolName, arguments: argsObj, timeoutMs }) => {
     Promise.resolve(execPromise).catch(() => {});
     const outcome = await Promise.race([execPromise, timeoutPromise]);
     if (timedOut || (outcome && typeof outcome === 'object' && outcome.__webmcpTimeout === true)) {
-      return {
-        ok: false,
-        reason: 'timeout',
-        detail: `WebMCP tool '${toolName}' timed out after ${(deadlineMs / 1000).toFixed(1)}s`,
-        url: location.href,
-      };
+      return timeoutResult();
     }
     const res = outcome;
     let serialized = null;
@@ -271,12 +278,7 @@ async ({ toolName, arguments: argsObj, timeoutMs }) => {
     return { ok: true, result: serialized, truncated, url: location.href };
   } catch (err) {
     if (timedOut) {
-      return {
-        ok: false,
-        reason: 'timeout',
-        detail: `WebMCP tool '${toolName}' timed out after ${(deadlineMs / 1000).toFixed(1)}s`,
-        url: location.href,
-      };
+      return timeoutResult();
     }
     const rawDetail = err && typeof err.message === 'string' ? err.message : String(err);
     return {
