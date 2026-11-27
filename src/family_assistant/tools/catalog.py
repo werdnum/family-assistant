@@ -739,6 +739,13 @@ _CORE_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.AUTOMATION,
         ToolTag.EXECUTABLE_PERSISTENCE,
         ToolTag.OUTPUT_TRUSTED,
+        # A confined profile such as ops_automation is reachable only through
+        # delegation, so it never has an interactive prompt: a reviewer confirm
+        # must become a durable request or the profile can never change its own
+        # automations. The update is complete without consuming its result, and
+        # the approved call runs on the requesting profile, so the ownership
+        # check still applies.
+        deferred_confirmation_eligible=True,
     ),
     "enable_automation": _metadata(
         ToolTag.STATE_CHANGING,
