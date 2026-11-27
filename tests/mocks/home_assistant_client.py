@@ -19,6 +19,7 @@ from homeassistant_api.models.domains import Domain
 from jinja2.sandbox import ImmutableSandboxedEnvironment
 
 from family_assistant.plugins.home_assistant.client import (
+    DEFAULT_CAMERA_SNAPSHOT_TIMEOUT_SECONDS,
     MAX_TEMPLATE_OUTPUT_CHARS,
     HomeAssistantClientWrapper,
 )
@@ -54,11 +55,16 @@ def make_home_assistant_client(
     *,
     token: str = HA_TEST_TOKEN,
     verify_ssl: bool = True,
+    camera_snapshot_timeout_seconds: float = DEFAULT_CAMERA_SNAPSHOT_TIMEOUT_SECONDS,
 ) -> SpeccedHomeAssistant:
     """A wrapper whose SDK client is a ``spec_set`` autospec of ``homeassistant_api.Client``."""
     api = create_autospec(homeassistant_api.Client, instance=True, spec_set=True)
     wrapper = HomeAssistantClientWrapper(
-        api_url=api_url, token=token, client=api, verify_ssl=verify_ssl
+        api_url=api_url,
+        token=token,
+        client=api,
+        verify_ssl=verify_ssl,
+        camera_snapshot_timeout_seconds=camera_snapshot_timeout_seconds,
     )
     return SpeccedHomeAssistant(wrapper=wrapper, api=api)
 

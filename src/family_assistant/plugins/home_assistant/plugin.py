@@ -79,6 +79,7 @@ class HomeAssistantPlugin(Plugin[HomeAssistantConfig, HomeAssistantInstance]):
                 api_url=config.api_url,
                 token=config.token.get_secret_value(),
                 verify_ssl=config.verify_ssl,
+                camera_snapshot_timeout_seconds=config.camera_snapshot_timeout_seconds,
             ),
             context_template=config.context_template,
             events=config.events,

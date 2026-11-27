@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypedDict
 
@@ -121,6 +122,45 @@ def _entity_from_row(row: dict[str, str]) -> EntityMetadata:
     )
 
 
+DEFAULT_CAMERA_SNAPSHOT_TIMEOUT_SECONDS = 40.0
+CAMERA_SNAPSHOT_ERROR_BODY_EXCERPT_CHARS = 200
+
+
+class CameraSnapshotTimeoutError(TimeoutError):
+    """A camera snapshot request ran past its time limit."""
+
+    def __init__(
+        self, camera_entity_id: str, elapsed_seconds: float, timeout_seconds: float
+    ) -> None:
+        self.camera_entity_id = camera_entity_id
+        self.elapsed_seconds = elapsed_seconds
+        self.timeout_seconds = timeout_seconds
+        super().__init__(
+            f"Camera {camera_entity_id} did not return a snapshot within "
+            f"{timeout_seconds:g}s (gave up after {elapsed_seconds:.1f}s)"
+        )
+
+
+class CameraSnapshotHTTPError(Exception):
+    """Home Assistant answered a camera snapshot request with a non-2xx status."""
+
+    def __init__(
+        self, camera_entity_id: str, status: int, reason: str | None, body_excerpt: str
+    ) -> None:
+        self.camera_entity_id = camera_entity_id
+        self.status = status
+        self.reason = reason
+        self.body_excerpt = body_excerpt
+        message = (
+            f"Camera {camera_entity_id} snapshot request failed with HTTP {status}"
+        )
+        if reason:
+            message += f" {reason}"
+        if body_excerpt:
+            message += f": {body_excerpt}"
+        super().__init__(message)
+
+
 class HomeAssistantClientWrapper:
     """
     Wrapper around homeassistant_api.Client that provides additional functionality.
@@ -136,6 +176,7 @@ class HomeAssistantClientWrapper:
         client: homeassistant_api.Client,
         verify_ssl: bool = True,
         entity_cache_ttl_seconds: int = 120,
+        camera_snapshot_timeout_seconds: float = DEFAULT_CAMERA_SNAPSHOT_TIMEOUT_SECONDS,
     ) -> None:
         """
         Initialize the wrapper.
@@ -146,12 +187,15 @@ class HomeAssistantClientWrapper:
             client: The underlying homeassistant_api.Client instance
             verify_ssl: Whether to verify SSL certificates
             entity_cache_ttl_seconds: TTL for entity list cache in seconds (default: 120)
+            camera_snapshot_timeout_seconds: Total time allowed for one camera
+                snapshot request
         """
         self.api_url = api_url.rstrip("/")  # Store base URL without trailing slash
         self.token = token
         self._client = client
         self.verify_ssl = verify_ssl
         self._entity_cache_ttl_seconds = entity_cache_ttl_seconds
+        self.camera_snapshot_timeout_seconds = camera_snapshot_timeout_seconds
 
         # Cache for entity list (populated by async_get_entity_list_with_metadata)
         self._entity_cache: list[EntityMetadata] | None = None
@@ -507,7 +551,10 @@ class HomeAssistantClientWrapper:
             Raw bytes of the camera snapshot image
 
         Raises:
-            aiohttp.ClientError: If the request fails
+            CameraSnapshotTimeoutError: If the request runs past
+                ``camera_snapshot_timeout_seconds``
+            CameraSnapshotHTTPError: If Home Assistant answers with a non-2xx status
+            aiohttp.ClientError: If the request fails otherwise
         """
 
         # Build the full URL for the camera proxy endpoint
@@ -522,18 +569,43 @@ class HomeAssistantClientWrapper:
         if not self.verify_ssl:
             connector = aiohttp.TCPConnector(ssl=False)
 
-        timeout = aiohttp.ClientTimeout(total=30)
+        limit = self.camera_snapshot_timeout_seconds
+        timeout = aiohttp.ClientTimeout(total=limit)
 
-        async with (
-            aiohttp.ClientSession(connector=connector, timeout=timeout) as session,
-            session.get(url, headers=headers) as response,
-        ):
-            response.raise_for_status()
-            return await response.read()
+        started = time.monotonic()
+        try:
+            async with (
+                aiohttp.ClientSession(connector=connector, timeout=timeout) as session,
+                session.get(url, headers=headers) as response,
+            ):
+                if response.status >= 400:
+                    body = await response.text(errors="replace")
+                    raise CameraSnapshotHTTPError(
+                        camera_entity_id,
+                        response.status,
+                        response.reason,
+                        _body_excerpt(body),
+                    )
+                return await response.read()
+        except TimeoutError as e:
+            raise CameraSnapshotTimeoutError(
+                camera_entity_id, time.monotonic() - started, limit
+            ) from e
+
+
+def _body_excerpt(body: str) -> str:
+    """The start of a response body, on one line, for an error message."""
+    collapsed = " ".join(body.split())
+    if len(collapsed) <= CAMERA_SNAPSHOT_ERROR_BODY_EXCERPT_CHARS:
+        return collapsed
+    return collapsed[:CAMERA_SNAPSHOT_ERROR_BODY_EXCERPT_CHARS] + "…"
 
 
 def create_home_assistant_client(
-    api_url: str, token: str, verify_ssl: bool = True
+    api_url: str,
+    token: str,
+    verify_ssl: bool = True,
+    camera_snapshot_timeout_seconds: float = DEFAULT_CAMERA_SNAPSHOT_TIMEOUT_SECONDS,
 ) -> HomeAssistantClientWrapper:
     """Create the wrapped client for a Home Assistant base URL (without ``/api``)."""
     client = homeassistant_api.Client(
@@ -543,5 +615,9 @@ def create_home_assistant_client(
         verify_ssl=verify_ssl,
     )
     return HomeAssistantClientWrapper(
-        api_url=api_url, token=token, client=client, verify_ssl=verify_ssl
+        api_url=api_url,
+        token=token,
+        client=client,
+        verify_ssl=verify_ssl,
+        camera_snapshot_timeout_seconds=camera_snapshot_timeout_seconds,
     )

@@ -1915,6 +1915,8 @@ plugins:
     default:
       # api_url and token usually come from HOMEASSISTANT_URL / HOMEASSISTANT_API_KEY.
       verify_ssl: true
+      # Total time allowed for one get_camera_snapshot request.
+      camera_snapshot_timeout_seconds: 40
       # Jinja template behind the get_home_status tool: the household overview the
       # assistant reads on demand. Omit it and the tool is not offered.
       context_template: |
@@ -1929,14 +1931,19 @@ plugins:
       trusted_events: false
 ```
 
-| Key                | Default | Notes                                                                                      |
-| ------------------ | ------- | ------------------------------------------------------------------------------------------ |
-| `api_url`          | None    | Base URL, without `/api`. Required to start the instance.                                  |
-| `token`            | None    | Long-lived access token. **Sensitive.** Required to start.                                 |
-| `verify_ssl`       | `true`  |                                                                                            |
-| `context_template` | None    | Backs `get_home_status`; no template means no such tool.                                   |
-| `events`           | `true`  | The `home_assistant` event source.                                                         |
-| `trusted_events`   | `false` | Run `home_assistant` event wakes under their creating profile with no event-payload taint. |
+| Key                               | Default | Notes                                                                                      |
+| --------------------------------- | ------- | ------------------------------------------------------------------------------------------ |
+| `api_url`                         | None    | Base URL, without `/api`. Required to start the instance.                                  |
+| `token`                           | None    | Long-lived access token. **Sensitive.** Required to start.                                 |
+| `verify_ssl`                      | `true`  |                                                                                            |
+| `camera_snapshot_timeout_seconds` | `40`    | Time limit for one `get_camera_snapshot` request.                                          |
+| `context_template`                | None    | Backs `get_home_status`; no template means no such tool.                                   |
+| `events`                          | `true`  | The `home_assistant` event source.                                                         |
+| `trusted_events`                  | `false` | Run `home_assistant` event wakes under their creating profile with no event-payload taint. |
+
+Keep `camera_snapshot_timeout_seconds` longer than the upstream timeout of any gateway in front of
+the cameras (such as go2rtc behind nginx), so the gateway's own error is reported instead of the
+client giving up first.
 
 An instance missing `api_url` or `token` is not started, with a warning at startup, and profiles
 that would use it run without Home Assistant.
