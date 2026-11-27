@@ -2956,6 +2956,12 @@ instructed to), and can create only script automations — never ones that wake 
 Its notes are quarantined, so log text carrying injected content cannot reach a trusted
 conversation.
 
+An automation keeps the profile that created it, and `update_automation` refuses a caller from any
+other profile, so changing one of this profile's automations from the assistant means delegating to
+`ops_automation` with the automation id and the complete replacement script. The profile holds
+`update_automation` for that, but not `get_automation` or `list_automations` (which read every
+profile's automations), so the delegating profile reads the current script and sends the edited one.
+
 To let a profile read those reports, grant it the `ops_diagnostics` visibility label. Without that
 grant the reports are readable only through the web interface. See
 [docs/design/profile-confined-note-writes-and-automation-approvals.md](../design/profile-confined-note-writes-and-automation-approvals.md).
