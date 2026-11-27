@@ -1151,13 +1151,13 @@ def _photo_tool(count: int, size: int) -> Callable[[], Awaitable[ToolResult]]:
 
 
 @pytest.mark.asyncio
-async def test_images_that_do_not_fit_in_a_result_are_left_out_with_a_note(
+async def test_a_result_too_large_to_carry_comes_back_as_a_tool_error(
     db_engine: AsyncEngine,
 ) -> None:
-    # Each image's base64 is a third of the cap, so two fit beside the text.
+    # Each image's base64 is a third of the cap: three together exceed it.
     call = FakeToolUse(name=mcp_tool_name("get_photos"), input={})
     fake = FakeClaudeCode(
-        responses=[FakeResponse([call]), FakeResponse([FakeText("Seen them.")])]
+        responses=[FakeResponse([call]), FakeResponse([FakeText("Too many.")])]
     )
     photos = _photo_tool(3, claude_agent_loop.MAX_TOOL_RESULT_BYTES // 4)
 
@@ -1167,10 +1167,11 @@ async def test_images_that_do_not_fit_in_a_result_are_left_out_with_a_note(
         "Show me the photos",
     )
 
-    content = fake.tool_results[call.id]["content"]
-    assert reply == "Seen them."
-    assert [part["type"] for part in content] == ["text", "image", "image"]
-    assert "1 image(s) not shown" in content[0]["text"]
+    result = fake.tool_results[call.id]
+    assert reply == "Too many."
+    assert result["isError"] is True
+    assert [part["type"] for part in result["content"]] == ["text"]
+    assert result["content"][0]["text"].startswith("3 photos")
 
 
 async def _allow_tool(

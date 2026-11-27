@@ -1433,37 +1433,31 @@ def _mcp_text(text: str, *, is_error: bool = False) -> mcp_types.CallToolResult:
 def _mcp_result(message: ToolMessage) -> mcp_types.CallToolResult:
     """A tool's result as Claude Code receives it: its text and its images.
 
-    Images that would take the result over ``MAX_TOOL_RESULT_BYTES`` are left
-    out, with a note telling the model so. The text needs no cap: the executor
-    has already moved a large text result into an attachment.
+    A result over ``MAX_TOOL_RESULT_BYTES`` comes back as an error carrying
+    only its text, so the model knows the tool ran but saw none of its images.
+    The text needs no cap of its own: the executor has already moved a large
+    text result into an attachment.
     """
-    size = len(json.dumps(message.content, ensure_ascii=False).encode())
-    images: list[mcp_types.ImageContent] = []
-    omitted = 0
-    for attachment in message.transient_attachments or ():
-        if not attachment.mime_type.startswith("image/"):
-            continue
-        data = attachment.get_content_as_base64()
-        if data is None:
-            continue
-        if size + len(data) > MAX_TOOL_RESULT_BYTES:
-            omitted += 1
-            continue
-        size += len(data)
-        images.append(
-            mcp_types.ImageContent(
-                type="image", data=data, mimeType=attachment.mime_type
-            )
-        )
-    text = message.content
-    if omitted:
-        text += (
-            f"\n\n[{omitted} image(s) not shown: together they exceed the"
-            f" {MAX_TOOL_RESULT_BYTES / 2**20:.0f} MB a tool result can carry."
-            " Fetch them in separate calls to see them.]"
+    images = [
+        mcp_types.ImageContent(type="image", data=data, mimeType=attachment.mime_type)
+        for attachment in message.transient_attachments or ()
+        if attachment.mime_type.startswith("image/")
+        and (data := attachment.get_content_as_base64()) is not None
+    ]
+    size = len(json.dumps(message.content, ensure_ascii=False).encode()) + sum(
+        len(image.data) for image in images
+    )
+    if size > MAX_TOOL_RESULT_BYTES:
+        return _mcp_text(
+            f"{message.content}\n\nThe tool ran, but its result is"
+            f" {size / 2**20:.1f} MB with its {len(images)} image(s), more than"
+            f" the {MAX_TOOL_RESULT_BYTES / 2**20:.0f} MB a tool result can"
+            " carry, so none of the images were shown. Fetch fewer images per"
+            " call.",
+            is_error=True,
         )
     content: list[mcp_types.TextContent | mcp_types.ImageContent] = [
-        mcp_types.TextContent(type="text", text=text),
+        mcp_types.TextContent(type="text", text=message.content),
         *images,
     ]
     return mcp_types.CallToolResult(
