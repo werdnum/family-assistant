@@ -91,6 +91,16 @@ def test_ops_policy_allows_script_automation(tmp_path: Path) -> None:
     assert evaluation.decision == ToolPolicyDecision.ALLOW
 
 
+def test_ops_policy_allows_updating_own_automations(tmp_path: Path) -> None:
+    """update_automation refuses another profile's automations, so granting it
+    gives the owning profile the only tool-path to change what it created."""
+    engine = _ops_policy_engine(tmp_path)
+    assert (
+        engine.evaluate(_descriptor("update_automation")).decision
+        == ToolPolicyDecision.ALLOW
+    )
+
+
 def test_ops_policy_allows_diagnostics_and_notes(tmp_path: Path) -> None:
     engine = _ops_policy_engine(tmp_path)
     for name in ("read_error_logs", "add_or_update_note"):
