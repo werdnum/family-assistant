@@ -183,6 +183,16 @@ _SESSION_ENV = {
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
 }
 
+# The most one tool result may put in front of Claude Code, measured as the
+# JSON it travels as: its text plus its images' base64. Well inside the API's
+# request limit, and many full-size photos' worth of downscaled copies.
+MAX_TOOL_RESULT_BYTES = 16 * 1024 * 1024
+# The largest single message the SDK will read from Claude Code. Claude Code
+# echoes a tool result back on its output, possibly more than once (the
+# message and its tool_use_result), so this sits well above any result we
+# send: the SDK's 1 MB default ends the whole turn on one detailed photo.
+SESSION_MESSAGE_LIMIT_BYTES = 4 * MAX_TOOL_RESULT_BYTES
+
 # How often a turn waiting on its session checks whether it has been asked to
 # stop. Nothing else wakes it while a tool or the model is busy.
 _STOP_POLL_SECONDS = 1.0
@@ -1037,6 +1047,7 @@ class ClaudeAgentLoop(LLMStreamingLoop):
             client_app="family-assistant",
             session_store=session_store,
             resume=resume,
+            max_buffer_size=SESSION_MESSAGE_LIMIT_BYTES,
         )
 
     async def _run_stream(
@@ -1420,18 +1431,35 @@ def _mcp_text(text: str, *, is_error: bool = False) -> mcp_types.CallToolResult:
 
 
 def _mcp_result(message: ToolMessage) -> mcp_types.CallToolResult:
-    """A tool's result as Claude Code receives it: its text and its images."""
-    content: list[mcp_types.TextContent | mcp_types.ImageContent] = [
-        mcp_types.TextContent(type="text", text=message.content)
+    """A tool's result as Claude Code receives it: its text and its images.
+
+    A result over ``MAX_TOOL_RESULT_BYTES`` comes back as an error carrying
+    only its text, so the model knows the tool ran but saw none of its images.
+    The text needs no cap of its own: the executor has already moved a large
+    text result into an attachment.
+    """
+    images = [
+        mcp_types.ImageContent(type="image", data=data, mimeType=attachment.mime_type)
+        for attachment in message.transient_attachments or ()
+        if attachment.mime_type.startswith("image/")
+        and (data := attachment.get_content_as_base64()) is not None
     ]
-    for attachment in message.transient_attachments or ():
-        data = attachment.get_content_as_base64()
-        if data is not None and attachment.mime_type.startswith("image/"):
-            content.append(
-                mcp_types.ImageContent(
-                    type="image", data=data, mimeType=attachment.mime_type
-                )
-            )
+    size = len(json.dumps(message.content, ensure_ascii=False).encode()) + sum(
+        len(image.data) for image in images
+    )
+    if size > MAX_TOOL_RESULT_BYTES:
+        return _mcp_text(
+            f"{message.content}\n\nThe tool ran, but its result is"
+            f" {size / 2**20:.1f} MB with its {len(images)} image(s), more than"
+            f" the {MAX_TOOL_RESULT_BYTES / 2**20:.0f} MB a tool result can"
+            " carry, so none of the images were shown. Fetch fewer images per"
+            " call.",
+            is_error=True,
+        )
+    content: list[mcp_types.TextContent | mcp_types.ImageContent] = [
+        mcp_types.TextContent(type="text", text=message.content),
+        *images,
+    ]
     return mcp_types.CallToolResult(
         content=list(content), isError=message.error_traceback is not None
     )

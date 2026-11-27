@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import os
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
@@ -14,8 +16,18 @@ from claude_agent_sdk import (
     ClaudeAgentOptions,
     ClaudeSDKClient,
     CLIConnectionError,
+    HookContext,
+    HookInput,
+    HookJSONOutput,
+    InMemorySessionStore,
     project_key_for_directory,
 )
+
+# The SDK exports no name for the transport that enforces its message limit.
+from claude_agent_sdk._internal.transport.subprocess_cli import (  # noqa: PLC2701
+    SubprocessCLITransport,
+)
+from mcp.server import Server
 from prometheus_client import REGISTRY
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -70,7 +82,11 @@ from family_assistant.storage.delegation_runs import DELEGATION_CONTINUATION_TRI
 from family_assistant.storage.repositories.claude_agent_sessions import (
     ClaudeAgentSessionsRepository,
 )
-from family_assistant.tools.types import ToolExecutionContext
+from family_assistant.tools.types import (
+    ToolAttachment,
+    ToolExecutionContext,
+    ToolResult,
+)
 from tests.mocks.fake_claude_code import (
     SESSION_ID,
     FakeClaudeCode,
@@ -120,7 +136,7 @@ def _service(
     options_seen: list[ClaudeAgentOptions] | None = None,
     default_tier: str = TIER,
     attachment_registry: AttachmentRegistry | None = None,
-    extra_tools: Mapping[str, Callable[..., Awaitable[str]]] | None = None,
+    extra_tools: Mapping[str, Callable[..., Awaitable[str | ToolResult]]] | None = None,
 ) -> ProcessingService:
     tools = MockToolsProvider()
     tools.add_tool("get_weather", get_weather)
@@ -1119,3 +1135,90 @@ async def test_session_replies_carry_the_experiment_and_timing(
         reasoning.get("model_tier_source"),
     ) == ("deep-experiment", TIER, TIER, "experiment")
     assert reasoning.get("duration_ms", -1.0) >= 0.0
+
+
+def _photo_tool(count: int, size: int) -> Callable[[], Awaitable[ToolResult]]:
+    async def get_photos() -> ToolResult:
+        return ToolResult(
+            text=f"{count} photos",
+            attachments=[
+                ToolAttachment(mime_type="image/jpeg", content=bytes([n]) * size)
+                for n in range(count)
+            ],
+        )
+
+    return get_photos
+
+
+@pytest.mark.asyncio
+async def test_a_result_too_large_to_carry_comes_back_as_a_tool_error(
+    db_engine: AsyncEngine,
+) -> None:
+    # Each image's base64 is a third of the cap: three together exceed it.
+    call = FakeToolUse(name=mcp_tool_name("get_photos"), input={})
+    fake = FakeClaudeCode(
+        responses=[FakeResponse([call]), FakeResponse([FakeText("Too many.")])]
+    )
+    photos = _photo_tool(3, claude_agent_loop.MAX_TOOL_RESULT_BYTES // 4)
+
+    reply = await _turn(
+        _service(fake, extra_tools={"get_photos": photos}),
+        db_engine,
+        "Show me the photos",
+    )
+
+    result = fake.tool_results[call.id]
+    assert reply == "Too many."
+    assert result["isError"] is True
+    assert [part["type"] for part in result["content"]] == ["text"]
+    assert result["content"][0]["text"].startswith("3 photos")
+
+
+async def _allow_tool(
+    _input: HookInput, _tool_use_id: str | None, _context: HookContext
+) -> HookJSONOutput:
+    return {}
+
+
+@pytest.mark.asyncio
+async def test_session_transport_reads_a_message_carrying_a_full_size_result(
+    tmp_path: Path,
+) -> None:
+    """The SDK's default 1 MB message limit ended a turn on one detailed photo.
+
+    Driven through the SDK's real subprocess transport, since the fake CLI the
+    other tests use replaces exactly the layer that enforces the limit.
+    """
+    size = 2 * claude_agent_loop.MAX_TOOL_RESULT_BYTES
+    script = tmp_path / "fake_cli.py"
+    script.write_text(
+        "import json\n"
+        f"print(json.dumps({{'type': 'user', 'data': 'A' * {size}}}), flush=True)\n"
+    )
+    cli = tmp_path / "claude"
+    cli.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{script}"\n')
+    cli.chmod(0o755)
+    loop = _service(FakeClaudeCode(responses=[])).claude_agent_loop
+    assert loop is not None
+    options = dataclasses.replace(
+        loop.options_for(
+            model=ClaudeAgentModel(
+                model="claude-opus-5-5", effort=None, custom_instructions=None
+            ),
+            system_prompt="",
+            server=Server("test"),
+            cwd=str(tmp_path),
+            pre_tool_use=_allow_tool,
+            session_store=InMemorySessionStore(),
+            resume=None,
+        ),
+        cli_path=str(cli),
+    )
+    transport = SubprocessCLITransport(prompt="", options=options)
+    await transport.connect()
+    try:
+        sizes = [len(message["data"]) async for message in transport.read_messages()]
+    finally:
+        await transport.close()
+
+    assert sizes == [size]
