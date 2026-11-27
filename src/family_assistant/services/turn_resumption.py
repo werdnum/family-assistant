@@ -68,6 +68,14 @@ INTERRUPTED_TURN_MARKER = (
     "_Interrupted: the assistant restarted while working on this and could not "
     "pick it back up. Ask again if you still need it._"
 )
+# Closes a turn whose process went away while it waited on a confirmation. The
+# durable request outlives the turn, and approving it runs the action and posts
+# its result in the conversation, but nothing carries on from that result.
+AWAITING_CONFIRMATION_INTERRUPTED_MARKER = (
+    "_Interrupted: the assistant restarted while waiting for your approval. The "
+    "request is still open: if you approve it, the action runs and its result is "
+    "posted here. Ask again if you need anything done with that result._"
+)
 
 
 class TurnResumePayload(BaseModel):
@@ -457,8 +465,13 @@ class TurnLeaseRegistry:
         if decision in {ResumeDecision.SUPERSEDED, ResumeDecision.UNKNOWN_TURN}:
             await _close_abandoned_turn(db, payload)
             return
-        if decision is not ResumeDecision.RESUME:
-            # A turn awaiting confirmation stays open for the user's answer.
+        if decision is ResumeDecision.AWAITING_CONFIRMATION:
+            # The confirmation's own approval path runs the action and reports
+            # its result; nothing will run this turn again, so close it now
+            # rather than leave it reading as pending for good.
+            await persist_interrupted_marker(
+                db, payload, content=AWAITING_CONFIRMATION_INTERRUPTED_MARKER
+            )
             return
 
         try:
@@ -499,13 +512,17 @@ async def _close_abandoned_turn(db: Database, payload: TurnResumePayload) -> Non
 
 
 async def persist_interrupted_marker(
-    db: Database, payload: TurnResumePayload, *, timestamp: datetime | None = None
+    db: Database,
+    payload: TurnResumePayload,
+    *,
+    timestamp: datetime | None = None,
+    content: str = INTERRUPTED_TURN_MARKER,
 ) -> None:
     """Close a turn that will not be resumed, so it doesn't read as still pending."""
     turn_rows = await db.message_history.get_by_turn_id(payload.turn_id)
     await db.message_history.add_message(
         AssistantMessage(
-            content=INTERRUPTED_TURN_MARKER,
+            content=content,
             taint_metadata=merge_history_taint(
                 turn_rows, preserve_origin=True
             ).to_metadata(),
