@@ -58,9 +58,14 @@ class TestEventSourceDeduplication:
         built_clients: list[HomeAssistantClientWrapper] = []
 
         def build_client(
-            api_url: str, token: str, verify_ssl: bool = True
+            api_url: str,
+            token: str,
+            verify_ssl: bool = True,
+            camera_snapshot_timeout_seconds: float = 40.0,
         ) -> HomeAssistantClientWrapper:
-            client = create_home_assistant_client(api_url, token, verify_ssl)
+            client = create_home_assistant_client(
+                api_url, token, verify_ssl, camera_snapshot_timeout_seconds
+            )
             built_clients.append(client)
             return client
 

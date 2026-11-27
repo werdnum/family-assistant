@@ -10,7 +10,11 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant_api.errors import HomeassistantAPIError
 
-from family_assistant.plugins.home_assistant.client import EntityMetadata
+from family_assistant.plugins.home_assistant.client import (
+    CameraSnapshotHTTPError,
+    CameraSnapshotTimeoutError,
+    EntityMetadata,
+)
 from family_assistant.plugins.home_assistant.instance import HomeAssistantInstance
 from family_assistant.tools.metadata import (
     ToolRegistration,
@@ -582,8 +586,20 @@ async def get_camera_snapshot_tool(
     try:
         image_content = await ha_client.async_get_camera_snapshot(camera_entity_id)
     except Exception as e:
-        logger.exception(f"Error getting camera snapshot: {e}")
-        return ToolResult(text=f"Error: Failed to retrieve camera snapshot: {e!s}")
+        logger.exception(
+            "Camera snapshot failed for %s (%s): %s",
+            camera_entity_id,
+            type(e).__name__,
+            e,
+        )
+        if isinstance(e, CameraSnapshotTimeoutError | CameraSnapshotHTTPError):
+            detail = str(e)
+        else:
+            # A bare TimeoutError or connection error can stringify to "".
+            detail = f"{camera_entity_id}: {type(e).__name__}"
+            if str(e):
+                detail += f": {e}"
+        return ToolResult(text=f"Error: Failed to retrieve camera snapshot: {detail}")
 
     # Check image size (multimodal limit from config)
     image_size = len(image_content)

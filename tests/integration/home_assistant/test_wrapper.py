@@ -4,7 +4,10 @@ import aiohttp
 import homeassistant_api
 import pytest
 
-from family_assistant.plugins.home_assistant.client import HomeAssistantClientWrapper
+from family_assistant.plugins.home_assistant.client import (
+    CameraSnapshotHTTPError,
+    HomeAssistantClientWrapper,
+)
 from tests.integration.home_assistant.bulk_entities import BULK_ENTITY_ID_PREFIX
 
 
@@ -70,10 +73,9 @@ async def test_camera_snapshot_nonexistent_camera(
     )
 
     try:
-        # Try to get snapshot from non-existent camera
-        # This should raise an HTTP 404 error
-        with pytest.raises(aiohttp.ClientResponseError):
+        with pytest.raises(CameraSnapshotHTTPError) as caught:
             await wrapper.async_get_camera_snapshot("camera.nonexistent_camera")
+        assert caught.value.status == 404
 
     finally:
         await ha_lib_client.async_cache_session.close()
