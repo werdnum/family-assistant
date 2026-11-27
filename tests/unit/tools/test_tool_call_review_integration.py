@@ -50,6 +50,7 @@ from family_assistant.services.tool_call_review import (
     review_prompt_revision,
 )
 from family_assistant.storage.database import Database
+from family_assistant.tools.catalog import LOCAL_TOOL_METADATA_BY_NAME
 from family_assistant.tools.infrastructure import (
     LocalToolsProvider,
     PolicyEnforcingToolsProvider,
@@ -671,6 +672,55 @@ async def test_eligible_unattended_review_confirmation_creates_durable_request(
     assert pending[0]["tool_name"] == "reviewed_tool"
     assert pending[0]["tool_call_id"] == "eligible-unattended-call"
     assert pending[0]["static_policy_reason"] is not None
+
+
+async def test_delegated_automation_update_confirm_creates_durable_request(
+    db_engine: AsyncEngine,
+) -> None:
+    executions = 0
+
+    async def execute(**_kwargs: object) -> ToolResult:
+        nonlocal executions
+        executions += 1
+        return ToolResult(text="updated")
+
+    provider = _provider(
+        cast("ToolImplementation", execute),
+        tool_name="update_automation",
+        reviewer_llm=_ReviewLLM(ToolCallReviewVerdict.CONFIRM),
+        static_decision=ToolPolicyDecision.REVIEW,
+        taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
+        executable_persistence=True,
+        deferred_confirmation_eligible=LOCAL_TOOL_METADATA_BY_NAME[
+            "update_automation"
+        ].deferred_confirmation_eligible,
+    )
+    deferred_confirmation = build_deferred_confirmation_callback(
+        target_user_id="owner-user",
+        source_prefix="From a background task — approve to run:",
+        missing_owner_message=lambda tool_name: f"No owner for {tool_name}",
+    )
+    context = _context(
+        db_engine,
+        TurnTaintState.empty(),
+        confirmation=deferred_confirmation,
+        turn_id="delegated-automation-update",
+    )
+
+    result = await provider.execute_tool(
+        "update_automation",
+        {"destination": "automation-112"},
+        context,
+        "delegated-update-call",
+    )
+
+    assert isinstance(result, str)
+    assert "Waiting on the user to approve" in result
+    assert executions == 0
+    pending = await ConfirmationService(db=context.db_context).list_pending_for_user(
+        user_id="owner-user"
+    )
+    assert [row["tool_name"] for row in pending] == ["update_automation"]
 
 
 async def test_ineligible_unattended_review_confirmation_denies_without_deferral(
