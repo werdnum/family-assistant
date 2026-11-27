@@ -14,6 +14,7 @@ from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.llm.messages import AssistantMessage, UserMessage
 from family_assistant.security.taint import TurnTaintState
 from family_assistant.services.turn_resumption import (
+    AWAITING_CONFIRMATION_INTERRUPTED_MARKER,
     INTERRUPTED_TURN_MARKER,
     TURN_RESUME_TASK_TYPE,
     ResumeDecision,
@@ -386,6 +387,44 @@ async def test_decide_leaves_a_turn_waiting_on_confirmation(
     decision = await registry.decide(db, _payload(conversation_id, turn_id))
 
     assert decision is ResumeDecision.AWAITING_CONFIRMATION
+
+
+async def test_handler_closes_a_turn_waiting_on_confirmation(
+    db_engine: AsyncEngine,
+) -> None:
+    """Nothing runs a turn interrupted while awaiting confirmation again, so it
+    is closed, and the confirmation stays pending for its own approval path."""
+    registry = TurnLeaseRegistry()
+    resumer = _RecordingResumer()
+    registry.register_resumer("fake", resumer)
+    db = Database(db_engine)
+    conversation_id, turn_id = _ids()
+    user_row_id = await _seed_interrupted_turn(db, conversation_id, turn_id)
+    request_id = str(uuid.uuid4())
+    await db.confirmation_requests.create(
+        request_id=request_id,
+        target_user_id=USER,
+        tool_name="list_notes",
+        tool_args={},
+        tool_call_id="call_1",
+        source_message_internal_id=user_row_id,
+        confirmation_prompt="Allow?",
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+    )
+
+    await registry.handle_resume_task(
+        _exec_context(db),
+        _payload(conversation_id, turn_id).model_dump(mode="json"),
+    )
+
+    *_, marker = await db.message_history.get_rows_by_turn_id(turn_id)
+    assert marker["content"] == AWAITING_CONFIRMATION_INTERRUPTED_MARKER
+    assert await db.message_history.has_terminal_reply_for_turn(turn_id)
+    request = await db.confirmation_requests.get(request_id)
+    assert request is not None
+    assert request["status"] == "pending"
+    assert (resumer.calls, resumer.deliveries) == ([], [])
+    assert not [row for row in await _leases(db) if row["status"] == "pending"]
 
 
 async def test_decide_gives_up_after_max_attempts(db_engine: AsyncEngine) -> None:

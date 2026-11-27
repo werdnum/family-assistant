@@ -168,6 +168,34 @@ function buildUnconfirmedReplyError(conversationId: string, turnId: string): Mes
   };
 }
 
+/** Where a turn's marker goes: just after the turn's last message, so it reads
+ * as the end of that turn rather than as news after the turns that followed.
+ * The end of the list when the turn has no messages there. */
+function markerIndexForTurn(messages: Message[], turnId: string): number {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index].turnId === turnId) {
+      return index + 1;
+    }
+  }
+  return messages.length;
+}
+
+/** Insert a turn's "couldn't confirm" marker after the turn's own messages,
+ * stamped with the turn's last activity. Returns a new list. */
+function insertUnconfirmedMarker(
+  messages: Message[],
+  conversationId: string,
+  turnId: string
+): Message[] {
+  const index = markerIndexForTurn(messages, turnId);
+  const marker = buildUnconfirmedReplyError(conversationId, turnId);
+  const turnTail = index > 0 ? messages[index - 1] : undefined;
+  if (turnTail?.turnId === turnId) {
+    marker.createdAt = turnTail.createdAt;
+  }
+  return [...messages.slice(0, index), marker, ...messages.slice(index)];
+}
+
 /** Place a turn's "couldn't confirm" marker into a message list: replace the
  * turn's stranded LOADING_MARKER spinner in place (so the user doesn't see a
  * spinner alongside the marker), else append. Deduped per turn. Does NOT treat
@@ -195,7 +223,7 @@ function surfaceUnconfirmedMarker(
     next[spinnerIndex] = errorMessage;
     return next;
   }
-  return [...messages, errorMessage];
+  return insertUnconfirmedMarker(messages, conversationId, turnId);
 }
 
 /** Keep a visible loading assistant row for turns that history still reports as
@@ -1902,7 +1930,7 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
         });
 
         // Ensure all messages have content as arrays before setting
-        const messagesWithArrayContent = mergeConsecutiveToolOnlyAssistantMessages(
+        let messagesWithArrayContent = mergeConsecutiveToolOnlyAssistantMessages(
           processedMessages.map((msg) => ({
             ...msg,
             content: Array.isArray(msg.content) ? msg.content : msg.content ? [msg.content] : [],
@@ -1977,7 +2005,11 @@ export const ConversationPane: React.FC<ConversationPaneProps> = ({
             unconfirmedTurnsRef.current.delete(turnId);
           } else if (info.markIfNoReply) {
             // A true give-up finished with no reply — surface the marker.
-            messagesWithArrayContent.push(buildUnconfirmedReplyError(convId, turnId));
+            messagesWithArrayContent = insertUnconfirmedMarker(
+              messagesWithArrayContent,
+              convId,
+              turnId
+            );
           } else {
             // A 410 reconcile finished with no reply: the reply was durably
             // persisted before eviction (and may just be lagging) — assume
