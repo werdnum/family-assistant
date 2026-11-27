@@ -375,3 +375,42 @@ async def test_inline_credential_visual_hop_shares_the_credential_scope(
         )
 
     assert child_scope == await browser_scope_key(parent)
+
+
+async def test_parallel_browser_runs_from_a_browser_run_get_separate_scopes(
+    db_engine: AsyncEngine,
+) -> None:
+    """A browser run fanning out to its own profile gives each child its own tab."""
+    db = Database(db_engine)
+    registry = _registry()
+    conversation_id = str(uuid.uuid4())
+    browser_run = await _delegate(
+        db,
+        conversation_id,
+        source_profile_id=ASSISTANT,
+        target_profile_id=BROWSER,
+        source_subconversation_id=None,
+    )
+    first, second = [
+        await _delegate(
+            db,
+            conversation_id,
+            source_profile_id=BROWSER,
+            target_profile_id=BROWSER,
+            source_subconversation_id=browser_run,
+        )
+        for _ in range(2)
+    ]
+
+    first_scope = await browser_scope_key(
+        _context(
+            db, registry, conversation_id, profile_id=BROWSER, subconversation_id=first
+        )
+    )
+    second_scope = await browser_scope_key(
+        _context(
+            db, registry, conversation_id, profile_id=BROWSER, subconversation_id=second
+        )
+    )
+
+    assert first_scope != second_scope

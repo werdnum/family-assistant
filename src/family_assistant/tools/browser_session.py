@@ -442,10 +442,14 @@ async def _continues_parent_tab(
 ) -> bool:
     """Whether a delegated turn works in its parent's tab rather than its own.
 
-    Only when the parent drives the browser and both sit on the same side of
-    the credential-mode split, since ordinary and credential browsing never
-    share a browser context.
+    Only when the parent drives the browser, the child is a different profile
+    (a hop such as the visual one), and both sit on the same side of the
+    credential-mode split, since ordinary and credential browsing never share a
+    browser context. A profile delegating to itself is fanning work out, and
+    its runs go in parallel, so each gets a tab of its own.
     """
+    if source_profile_id == target_profile_id:
+        return False
     service = getattr(exec_context, "processing_service", None)
     app_config = getattr(service, "app_config", None)
     handoff = getattr(app_config, "browser_handoff_config", None)
